@@ -1,0 +1,11 @@
+# Line endings.
+#
+# Every text file in this repository is LF, in the index and on disk, on every
+# platform. `eol=lf` rather than plain `text=auto` on purpose: `text=auto` alone
+# leaves the working tree to `core.autocrlf`, which is a per-machine setting, so
+# two developers would still disagree about what is on disk.
+* text=auto eol=lf
+
+# Windows batch files are only reliably CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -1,0 +1,40 @@
+{
+  "//": [
+    "Mirrors the game's tsconfig.base.json strictness on purpose. A mod compiled under",
+    "looser rules than the engine is a mod whose types agreed with nothing: the seams",
+    "it implements are declared with exactOptionalPropertyTypes and",
+    "noUncheckedIndexedAccess on, and a hook that typechecks here and not there is a",
+    "hook that will be rejected by the only compiler that matters.",
+    "The repository root IS the mod folder - manifest.json and plugin.js sit beside the",
+    "source they are built from, because that pair is what the game fetches and hashes.",
+    "src/ holds the decision code: the world memory, the flow field, the threat",
+    "weights, and one file per errand.",
+    "No composite/declaration: nothing consumes this as a library. plugin.js is the",
+    "artefact, and esbuild produces it - tsc is only ever the typechecker here."
+  ],
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2023"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": [
+      "node"
+    ],
+    "noEmit": true
+  },
+  "include": [
+    "*.ts",
+    "src/**/*.ts"
+  ]
+}

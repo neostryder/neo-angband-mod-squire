@@ -1,0 +1,65 @@
+# Upload a tagged release to Nexus Mods, once the mod has a Nexus listing.
+#
+# Nexus-Mods/upload-action ADDS A VERSION TO AN EXISTING FILE - it has no
+# endpoint to create a mod's first listing. That first listing, and its
+# `file_id`, can only come from a human uploading through the ordinary Nexus
+# website once "Angband" exists there as a listed game (see issue #157). Until
+# then this workflow is dormant: it checks for the repo variables and secret
+# it needs and exits cleanly if they are absent, so tagging a release never
+# fails CI over an integration that has not been set up yet.
+#
+# Required once Nexus setup is done:
+#   secrets.NEXUS_API_KEY  - personal API key (Account Settings -> API Keys)
+#   vars.NEXUS_FILE_ID     - the file's ID on Nexus (from its first manual upload)
+#   vars.NEXUS_MOD_ID      - optional, only needed to also set a changelog
+
+name: nexus-publish
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to publish (e.g. v1.2.0)"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Nexus configuration
+        id: configured
+        run: |
+          if [ -z "${{ vars.NEXUS_FILE_ID }}" ]; then
+            echo "NEXUS_FILE_ID repo variable is not set yet - skipping Nexus upload."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/checkout@v7
+        if: steps.configured.outputs.ready == 'true'
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Package the mod
+        if: steps.configured.outputs.ready == 'true'
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="${tag#v}"
+          echo "version=$version" >> "$GITHUB_ENV"
+          zip -j "neo-angband-mod-squire-$version.zip" manifest.json plugin.js
+
+      - name: Upload to Nexus Mods
+        if: steps.configured.outputs.ready == 'true'
+        uses: Nexus-Mods/upload-action@v1.0.0-beta.10
+        with:
+          api_key: ${{ secrets.NEXUS_API_KEY }}
+          file_id: ${{ vars.NEXUS_FILE_ID }}
+          mod_id: ${{ vars.NEXUS_MOD_ID }}
+          filename: neo-angband-mod-squire-${{ env.version }}.zip
+          version: ${{ env.version }}
+          update_mod_version: true
+          archive_existing_version: true

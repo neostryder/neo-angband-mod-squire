@@ -1,0 +1,28 @@
+# Post a Discord forum announcement when a real version is tagged.
+#
+# This mod has no draft/publish step of its own - a version tag IS the release,
+# so this triggers on the tag push directly rather than on a GitHub Release
+# event. Every real release is announced regardless of version-bump size -
+# patch, minor and major all post; see .github/scripts/discord-announce.mjs.
+name: Discord release announcement
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node .github/scripts/discord-announce.mjs
+        env:
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}

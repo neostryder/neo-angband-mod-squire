@@ -1,0 +1,7 @@
+node_modules/
+*.tsbuildinfo
+.neo-angband/
+.claude/
+CLAUDE.md
+.test-out/
+package-lock.json

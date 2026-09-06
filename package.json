@@ -1,0 +1,45 @@
+{
+  "name": "neo-angband-mod-squire",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Squire: an alternative Angband autoplayer that runs one errand and hands the keyboard back",
+  "license": "GPL-2.0-only",
+  "author": "neostryder (RPGM Tools)",
+  "homepage": "https://github.com/neostryder/neo-angband-mod-squire",
+  "type": "module",
+  "packageManager": "pnpm@11.20.0",
+  "//private": [
+    "Not published to npm, and not intended to be. A mod is distributed as a FOLDER the",
+    "game fetches - manifest.json plus plugin.js, at a tag, verified against a digest",
+    "that ships inside the game. npm is not in that path, and publishing would create a",
+    "second way to get this mod that nothing checks."
+  ],
+  "//dependencies": [
+    "The engine is a devDependency, never a dependency. plugin.js receives it as",
+    "ctx.core at load time; a runtime dependency would mean a second copy of the",
+    "engine's module state living inside the mod, which the builder refuses outright.",
+    "It is here for TYPES: every shape this mod reads out of the agent view is the",
+    "engine's own declaration, so a field that moves fails typecheck here rather than",
+    "surfacing as an errand that walks into a wall.",
+    "The mod SDK is here for tools/build.mjs, which runs its plugin builder to produce",
+    "the committed plugin.js."
+  ],
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "check": "node tools/build.mjs --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "pnpm typecheck && pnpm test && pnpm check"
+  },
+  "devDependencies": {
+    "@rpgm-tools/neo-angband-core": "^1.8.0",
+    "@rpgm-tools/neo-angband-mod-sdk": "^1.8.0",
+    "@types/node": "^22.20.1",
+    "esbuild": "^0.28.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,28 @@
+# This repository is ONE MOD. The split that matters, and the one people get
+# wrong, is between what this mod does and what the mod SYSTEM does - an
+# install that fails, a load order that will not stick, or a conflict report
+# that looks wrong is the game's business, not this repository's.
+blank_issues_enabled: true
+
+contact_links:
+  - name: Discord - ask before you write it up
+    url: https://discord.gg/YegtwbHTBQ
+    about: >-
+      The RPGM Tools server. Quicker than an issue for "is this meant to
+      happen?", and no GitHub account needed.
+
+  - name: The mod would not install, or two mods disagree
+    url: https://github.com/neostryder/neo-angband/issues/new?template=3-mods.yml
+    about: >-
+      That is the mod system rather than this mod. File it against the game and
+      it reaches the code that can fix it.
+
+  - name: The game itself does not match Angband 4.2.6
+    url: https://github.com/neostryder/neo-angband/issues/new?template=1-parity-difference.yml
+    about: >-
+      Turn this mod off first and check it still happens - changing the game is
+      what a mod is for. If it does, the game wants to hear about it.
+
+  - name: Email, if an issue is not the right place
+    url: https://github.com/neostryder/neo-angband/blob/master/SECURITY.md
+    about: strider-angband (at) rpgm.tools

@@ -1,0 +1,30 @@
+# This repository is PUBLIC, and so is the main one. A handful of things must
+# never appear in either: the maintainer's legal name, work email or employer,
+# private project codenames, or absolute paths naming a machine's user account.
+#
+# The scanner and its rules live in the main repository and are used from there,
+# not copied here. Two copies of a rule list drift, and the copy that quietly
+# stops matching is the one nobody opens.
+#
+# THIS IS THE LATER OF TWO GATES. It reads tracked files, so it sees a new file
+# only once that file is committed - which for a public repository is after the
+# bytes are already published. The gate that catches a new file in TIME is the
+# pre-commit hook, and it needs no file in this repository at all:
+#
+#   git config core.hooksPath /path/to/neo-angband/.githooks
+#
+# Run that once per clone. This workflow is what catches whatever got committed
+# around it, and it is deliberately not a substitute.
+name: privacy
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: neostryder/neo-angband/.github/actions/private-scan@master

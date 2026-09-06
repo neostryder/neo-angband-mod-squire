@@ -1,0 +1,28 @@
+# Every neo-angband issue is meant to live on the consolidated
+# neostryder/neo-angband repo, dispositioned by a repo:X label - but this
+# repo is public, so anyone can still open an issue directly here. This
+# relocates it there instead of leaving a second, untracked copy behind.
+name: Redirect issue to main repo
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  redirect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node .github/scripts/redirect-issue-to-main-repo.mjs
+        env:
+          MOD_REPO: ${{ github.repository }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+          ISSUE_TITLE: ${{ github.event.issue.title }}
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_AUTHOR: ${{ github.event.issue.user.login }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          GH_TOKEN: ${{ secrets.CROSS_REPO_ISSUE_TOKEN }}

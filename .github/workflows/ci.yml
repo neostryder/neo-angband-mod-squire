@@ -1,0 +1,40 @@
+# Typecheck, test, and prove the committed plugin.js is current.
+#
+# The tests drive the decision code through a synthetic AgentView rather than a
+# booted game. That is a deliberate choice for an autoplayer: every interesting
+# case here is a SHAPE OF WORLD - a corridor with one frontier left, a sleeping
+# monster the errand must not wake, a hit that lands while the character is
+# walking - and a generated level cannot be asked for one of those on demand. A
+# hand-built view can, and each stop condition then has a test that fails when
+# the condition stops firing.
+#
+# What that trades away is the guarantee the view itself is real, so the shapes
+# are built from the published @rpgm-tools/neo-angband-core types and the build
+# fails when a field this mod reads changes underneath it.
+
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # typecheck, then test, then confirm the committed plugin.js is a current build of
+      # the source. That last one is the check nothing else in the chain can make: the
+      # catalogue's SHA-256 is taken FROM plugin.js, so a stale artefact verifies
+      # perfectly and is the file players run.
+      - run: pnpm verify
