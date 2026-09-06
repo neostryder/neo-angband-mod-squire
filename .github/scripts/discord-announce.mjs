@@ -72,6 +72,12 @@ const REPO_CONFIG = {
     color: 0xc9a227,
     kind: "mod",
   },
+  "neo-angband-mod-upstream-catchup": {
+    title: "Upstream Catchup",
+    emoji: "\u{23E9}", // fast-forward
+    color: 0x00897b,
+    kind: "mod",
+  },
 };
 
 const RELEASE_TAG_ID = "1540858028381962240"; // "Release" tag in #neo-angband-announcements
