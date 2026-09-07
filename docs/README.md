@@ -32,7 +32,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 - **Shape:** `plugin`
 - **Facets:** `plugin`
 - **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`,
-  `state:map.read`
+  `state:map.read`, `state:target.read`
 
 What a capability string permits, and what a mod that asks for one cannot do
 without it, is in [the mod lifecycle

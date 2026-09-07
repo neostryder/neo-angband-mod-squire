@@ -15,7 +15,8 @@
     "command:add",
     "state:player.read",
     "state:monsters.read",
-    "state:map.read"
+    "state:map.read",
+    "state:target.read"
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",

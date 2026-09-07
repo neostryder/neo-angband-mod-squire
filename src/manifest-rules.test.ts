@@ -72,7 +72,7 @@ describe("manifest.json", () => {
 
   it("asks for nothing it does not read", () => {
     /* Least privilege, checked rather than intended. Squire reads the character,
-     * the creatures and the map, and acts. It never opens the message stream,
+     * the creatures, the map and the named target, and acts. It never opens the message stream,
      * the pack, the stores or the spellbooks, so it must never ask to. */
     expect(manifest.capabilities.sort()).toEqual(
       [
@@ -80,6 +80,7 @@ describe("manifest.json", () => {
         "state:map.read",
         "state:monsters.read",
         "state:player.read",
+        "state:target.read",
       ].sort(),
     );
   });
