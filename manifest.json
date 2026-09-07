@@ -26,49 +26,57 @@
       "flag": "squire.errandAutofight",
       "title": "Errand: clear what is in front of me",
       "description": "Hand over with a creature in sight and Squire engages the nearest one it can reach, then stops. It stops on the last hostile falling, on a new creature arriving, on hit points crossing the retreat line, and on anything that would disturb a run.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     },
     {
       "flag": "squire.errandAutoexplore",
       "title": "Errand: explore this floor",
       "description": "Hand over with nothing in sight and Squire walks toward the nearest unmapped ground, then stops. It stops when the floor is walked out, when nothing unmapped can be reached, and on any disturbance.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     },
     {
       "flag": "squire.errandCampaign",
       "title": "Errand: play on until I take the keyboard back",
       "description": "Take precedence over both short errands and carry the character instead: survive, fight, collect, explore, descend, in that order. This is the closest Squire comes to an ordinary autoplayer, and it is off by default because the short errands are the reason this mod exists.",
-      "default": false
+      "default": false,
+      "requiresReload": true
     },
     {
       "flag": "squire.stopOnLowHealth",
       "title": "Stop when I am hurt",
       "description": "End the errand when hit points fall below half. Off, an errand runs to its own end condition and only the campaign's survival rung reacts to damage.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     },
     {
       "flag": "squire.stopOnNewCreature",
       "title": "Stop when something new appears",
       "description": "End the errand the moment a creature that was not already in sight comes into view. This is what keeps exploring from walking a character into a room it did not choose to enter.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     },
     {
       "flag": "squire.wakeSleepers",
       "title": "Attack sleeping creatures",
       "description": "Let the fighting errand pick a sleeping creature as its target. Off, a sleeping creature is left alone and the errand ends rather than starting a fight nothing asked for.",
-      "default": false
+      "default": false,
+      "requiresReload": true
     },
     {
       "flag": "squire.collect",
       "title": "Pick things up on the way",
       "description": "During the long errand, pick up whatever is lying on a square the character has already walked onto. Squire never routes toward an object it can see from across the room, because what it can see there is the live floor rather than what the character remembers, and walking to it would be an advantage a player does not have. Nothing is worn, quaffed, read or sold; collecting is all this does.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     },
     {
       "flag": "squire.descend",
       "title": "Take the stairs down",
       "description": "During the long errand, walk to a known down staircase and use it once the floor has been walked out. Off, the character stays on the floor it is on.",
-      "default": true
+      "default": true,
+      "requiresReload": true
     }
   ],
   "repository": "https://github.com/neostryder/neo-angband-mod-squire"
