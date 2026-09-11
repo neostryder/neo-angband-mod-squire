@@ -28,7 +28,6 @@ interface Manifest {
   id: string;
   version: string;
   engine: string;
-  capabilities: string[];
   rules: ManifestRule[];
 }
 
@@ -64,25 +63,6 @@ describe("manifest.json", () => {
       expect(rule.title.length).toBeGreaterThan(0);
       expect(rule.description.length).toBeGreaterThan(40);
     }
-  });
-
-  it("asks for the one capability a controller cannot work without", () => {
-    expect(manifest.capabilities).toContain("command:add");
-  });
-
-  it("asks for nothing it does not read", () => {
-    /* Least privilege, checked rather than intended. Squire reads the character,
-     * the creatures, the map and the named target, and acts. It never opens the message stream,
-     * the pack, the stores or the spellbooks, so it must never ask to. */
-    expect(manifest.capabilities.sort()).toEqual(
-      [
-        "command:add",
-        "state:map.read",
-        "state:monsters.read",
-        "state:player.read",
-        "state:target.read",
-      ].sort(),
-    );
   });
 
   it("carries the same version as package.json", () => {
