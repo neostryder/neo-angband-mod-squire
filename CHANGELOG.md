@@ -17,7 +17,9 @@ others as they come up) names what kind of change it is. Lists appear in this
 order and each is omitted when empty for a release: Added, Changed, Removed,
 Fixed.
 
-## [Unreleased]
+## 0.1.0 - 2026-09-11
+
+First release.
 
 ### Added
 
