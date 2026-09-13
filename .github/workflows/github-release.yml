@@ -1,0 +1,26 @@
+# Create the GitHub Release as soon as a version tag is pushed.
+#
+# This mod is distributed as a plain folder fetched by the game, so a release
+# records the tag and changelog only; there is no artifact to build or upload.
+name: GitHub Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: node .github/scripts/create-github-release.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
