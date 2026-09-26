@@ -107,24 +107,13 @@ once it has become serious.
 
 ### Why Squire will not walk toward loot it can see
 
-The map view reports how many objects are lying on a grid, and it reports the live
-floor rather than what the character remembers seeing. Routing toward a high count
-would be walking to loot a player has no way to know is there. So collecting is
-limited to what is underfoot on a grid the errand has already arrived at, where the
-count and the character's own knowledge are the same thing.
+The map information Squire receives counts the objects lying on each grid as they really are, not as the character remembers them. Walking toward a big pile the character never saw would be acting on knowledge the player does not have. So Squire only picks up what is underfoot on a grid the errand has already reached, where the count matches what the character knows.
 
-The same line runs through the routing: a path is only ever planned over ground the
-character remembers. The one move that is not is stepping into an unexplored grid
-next to the character, which reads nothing about what is there and is exactly what a
-person does when they walk into the dark.
+Routing follows the same rule: Squire plans paths only over ground the character remembers. The one exception is a step into an unexplored grid right next to the character. That step uses no knowledge of what is there, and it is what a person does when they walk into the dark.
 
 ### Why the long errand exists at all
 
-A mod whose argument is that bounded actions beat an autoplayer still has to be able
-to play, or the argument is untested. The short errands are made of the same
-decisions, and decisions that cannot carry a character down a floor were not going
-to clear a room either. It is off by default because it is not the reason to install
-this.
+Squire's case is that short, bounded errands beat a full autoplayer, and that case only holds if the same decision code can actually play. The short errands are built from the same decisions, and decisions that cannot carry a character down a floor would not clear a room either. The long errand is off by default because it is not why anyone would install Squire.
 
 ## Installing
 
@@ -149,11 +138,7 @@ pnpm install --frozen-lockfile
 pnpm verify
 ```
 
-That typechecks, runs the tests, and confirms the committed `plugin.js` is a
-current build of the source. An install fetches the committed `plugin.js` from a
-pinned tag and runs it as it is; nothing rebuilds it on the way in, so a stale
-artefact can pass every other check and still be the file players run. `pnpm check`
-is the only check that examines it.
+`pnpm verify` typechecks, runs the tests, and confirms that the committed `plugin.js` is a current build of the source. An install fetches the committed `plugin.js` from a pinned tag and runs it as it is, with no rebuild on the way in, so a stale build could pass every other check and still be what players run. `pnpm check` is the only check that examines it.
 
 ```bash
 pnpm build     # rebuild plugin.js after editing the source

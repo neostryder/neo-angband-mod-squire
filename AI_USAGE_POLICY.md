@@ -1,58 +1,50 @@
 # AI Use, Disclosure, and Accountability
 
-This mod is part of the Neo Angband family and uses generative AI as a development tool, the same as the main engine repository. That use is material, not incidental, and this document exists to disclose it plainly for this repository specifically.
+This mod is part of the Neo Angband family, and like the main engine repository it is developed with substantial help from generative AI.
 
-The primary AI tool used during development has been Claude (Anthropic), primarily through Claude Code. It has been used to help write and revise TypeScript, draft tests, trace code paths against this mod's own manifest and design docs, and draft documentation.
+The main tool has been Claude (Anthropic), mostly through Claude Code. It has helped write and revise TypeScript, draft tests, trace code paths against this mod's own manifest and design docs, and draft documentation.
 
 This document was also prepared with AI assistance.
 
-AI assistance does not transfer authorship, responsibility, or engineering judgment away from the maintainer. The maintainer accepts responsibility for every change merged into this repository, regardless of how the first draft of that change was produced.
+Using AI does not shift authorship, responsibility, or engineering judgment away from the maintainer. The maintainer is responsible for every change merged into this repository, however its first draft was produced.
 
-This project's development model is human-first and AI-augmented: a human sets direction, reviews every change, and is accountable for the result; AI tooling accelerates the mechanical work inside that boundary and does not move the boundary itself.
+The development model is human-first and AI-augmented: a human sets direction, reviews every change, and is accountable for the result, while AI tools speed up the mechanical work within those limits.
 
 ## Governing Principle: Human-First, AI-Augmented
 
-**AI may propose. The maintainer decides, verifies, and owns the result.**
+AI can propose changes. The maintainer decides whether to accept them, verifies them, and owns the result.
 
-AI output is treated as working material, not as authority.
+AI output is working material and carries no authority of its own.
 
-A model does not decide whether an implementation is correct, whether this mod's stated behavior is faithful to what its own README and manifest promise, whether a design belongs in this mod, whether a balance change is appropriate, whether a dependency is acceptable, or whether a change is ready to release.
+A person, not a model, decides whether an implementation is correct, whether this mod's stated behavior is faithful to what its own README and manifest promise, whether a design belongs in this mod, whether a balance change is appropriate, whether a dependency is acceptable, and whether a change is ready to release.
 
-Those decisions remain human decisions.
-
-No change is accepted merely because an AI system produced it, explained it convincingly, reviewed it, or reported that its tests passed.
+No change is accepted just because an AI system produced it, explained it convincingly, reviewed it, or reported that its tests passed.
 
 ## What AI Is Used For
 
-AI is useful in this repository for work such as implementation drafting, mechanical translation between representations, codebase navigation, repetitive refactoring, test scaffolding, debugging, comparison of related code paths, and documentation.
+In this repository AI helps with implementation drafting, mechanical translation between representations, codebase navigation, repetitive refactoring, test scaffolding, debugging, comparing related code paths, and documentation.
 
-It is especially useful when a task requires following the same disciplined process across a large amount of code. A language model can inspect and transform code quickly, which allows a solo maintainer to spend more effort on specification, review, testing, investigation, and verification.
+It helps most when the same careful process has to be applied across a large amount of code. A language model can inspect and transform code quickly, which leaves a solo maintainer more time for specification, review, testing, investigation, and verification.
 
-That is the reason for using AI here.
-
-The justification is not that AI is infallible, that AI-generated code is automatically good, or that every developer or project should use it. The justification is that AI can reduce the mechanical cost of development while this repository's acceptance standards remain independent of the model.
+The case for using it here is that AI lowers the mechanical cost of development while this repository's acceptance standards stay independent of the model. That case does not depend on AI being infallible, on AI-generated code being automatically good, or on every developer or project needing to use it.
 
 ## What Establishes Correctness
 
-This mod is not the engine. Neo Angband's own unmodded target - the observable gameplay behavior of Angband 4.2.6 - and the statistical parity harness that measures it are established in the main [neo-angband](https://github.com/neostryder/neo-angband) repository's `docs/PARITY.md`, not here. This mod builds on that faithful core; it does not itself re-establish it.
+Neo Angband's unmodded target (the observable gameplay behavior of Angband 4.2.6) and the statistical parity harness that measures it belong to the main [neo-angband](https://github.com/neostryder/neo-angband) repository and are documented in its `docs/PARITY.md`. This mod builds on that faithful core rather than re-establishing it.
 
-What this mod claims about its own behavior is narrower and is stated in its own `README.md` and `CHANGELOG.md`: what each toggle does, what it changes relative to the faithful core, and, where the change traces back to a specific upstream fact - an Angband GitHub issue, a version where a feature was dropped, a public bug report - that citation.
+This mod's claims about its own behavior are narrower. Its `README.md` and `CHANGELOG.md` state what each toggle does, what it changes relative to the faithful core, and, where a change traces back to a specific upstream fact such as an Angband GitHub issue, a version where a feature was dropped, or a public bug report, that citation.
 
-Tests for this mod's behavior derive their expectations from that stated source, not from an AI model's description of what the code ought to do.
+Tests for this mod take their expected results from those documented sources, not from an AI model's description of what the code ought to do.
 
-This distinction matters:
-
-**AI does not establish correctness. Evidence, cited in this mod's own documentation, does.**
+Correctness claims here rest on the evidence cited in the mod's own documentation rather than on anything an AI tool says.
 
 ## Tests Written With AI Assistance
 
-AI may draft tests, but an AI-written test is not automatically evidence of correctness.
+AI may draft tests, but an AI-written test is not automatically evidence of correctness. Expected results must come from whatever this mod's own documentation says the behavior traces to: an upstream Angband source, a cited issue, or the main engine's own documented behavior. They are never invented to match what the implementation currently does.
 
-Expected results must be grounded in whatever this mod's own documentation says the behavior traces to - an upstream Angband source, a cited issue, or the main engine's own documented behavior - not invented to match whatever the implementation currently does.
+A new regression test should show that it catches the behavior it claims to protect. Where practical, the change is reverted or disabled to confirm that the test fails, then restored to confirm that it passes.
 
-New regression tests are expected to demonstrate that they actually detect the behavior they claim to protect. Where practical, the change is reverted or disabled to confirm that the new test fails, and then restored to confirm that it passes.
-
-A test that merely agrees with an implementation generated by the same model proves very little. This repository therefore tries to keep the source of the requirement independent from the tool that helps implement it.
+A test that only agrees with an implementation generated by the same model proves very little, so this repository tries to keep the source of each requirement independent of the tool that helps implement it.
 
 ## Human Responsibility
 
@@ -62,7 +54,7 @@ AI assistance is not a substitute for being able to explain what a change does, 
 
 Design decisions, compatibility decisions, gameplay decisions, balance decisions, release decisions, and exceptions to this mod's own established rules remain human responsibilities.
 
-This mod exists because Neo Angband's core stays a faithful reproduction of Angband 4.2.6: anything here is a deliberate, optional, off-by-default change layered on top of that core, never a silent edit to it.
+Neo Angband's core stays a faithful reproduction of Angband 4.2.6, and this mod is an optional layer on top of it. Everything in the mod is off by default, and the core itself stays unedited.
 
 ## Licensing and Provenance
 
@@ -76,56 +68,42 @@ If an AI suggestion appears to reproduce recognizable third-party material, intr
 
 ## Security and Private Information
 
-AI-generated code is reviewed with the same security expectations as human-drafted code and with additional awareness that generative systems can confidently suggest nonexistent APIs, inappropriate dependencies, insecure defaults, or code that satisfies a prompt while violating an unstated requirement.
+AI-generated code gets the same security review as human-drafted code, with extra attention to how generative systems go wrong: they can confidently suggest nonexistent APIs, inappropriate dependencies, insecure defaults, or code that satisfies a prompt while violating an unstated requirement.
 
-Secrets, credentials, private keys, private user data, and other information that should not leave its intended trust boundary must not be intentionally supplied to an AI service as development context.
+Secrets, credentials, private keys, private user data, and other information that should stay inside its intended trust boundary must not be intentionally supplied to an AI service as development context.
 
-Dependencies and APIs suggested by an AI tool must be independently verified before use.
+Dependencies and APIs suggested by an AI tool must be verified independently before use.
 
-This repository's existing build, test, lint, security, and private-information controls remain authoritative regardless of how a change was drafted.
+This repository's existing build, test, lint, security, and private-information controls apply in full however a change was drafted.
 
 ## Contributions Using AI
 
-AI-assisted contributions are welcome.
+AI-assisted contributions are welcome, and they are judged on the quality and verifiability of the resulting change, not on whether every character was typed by hand.
 
-The standard applied to a contribution is the quality and verifiability of the resulting change, not whether every character was typed manually.
+Contributors are responsible for the code or documentation they submit. They should understand the change, be able to explain it during review, and provide the same tests, provenance, licensing care, and other evidence expected from a fully hand-written contribution.
 
-A contributor remains responsible for the code or documentation they submit. They should understand the change, be able to explain it during review, and provide the same tests, provenance, licensing care, and other evidence that would be expected from a fully hand-written contribution.
+If generative AI materially drafted or rewrote a contribution, beyond ordinary editor completion or autocomplete, say so in the pull request description. Naming the tool is enough; prompt transcripts are not required.
 
-If generative AI materially drafted or rewrote a contribution beyond ordinary editor completion or autocomplete, disclose that fact in the pull request description. Naming the tool is sufficient; prompt transcripts are not required.
+Disclosure is informational and does not count against the contribution. It lets reviewers apply appropriate scrutiny, and maintainers and other contributors do not have to guess.
 
-Disclosure is informational, not a mark against the contribution. It allows reviewers to apply appropriate scrutiny and avoids forcing maintainers or other contributors to guess.
-
-A contribution may be rejected or returned for further work if its author cannot establish where behavior came from, cannot explain the implementation, cannot resolve a provenance question, or cannot provide adequate verification. The same is true of a contribution written without AI.
+A contribution may be rejected or returned for more work if its author cannot establish where the behavior came from, explain the implementation, resolve a provenance question, or provide adequate verification. Contributions written without AI are held to the same standard.
 
 ## What This Policy Does Not Claim
 
-This project does not claim that generative AI is error-free, ethically uncontroversial, environmentally impact-free, appropriate for every project, or a replacement for software engineering expertise.
+The project does not claim that generative AI is error-free, ethically uncontroversial, free of environmental impact, appropriate for every project, or a replacement for software engineering expertise. Nor does it claim that passing tests prove the absence of bugs, or that every open-source community must accept AI-assisted contributions. Users and contributors are not asked to share the maintainer's opinion about AI.
 
-It does not claim that passing tests prove the absence of bugs.
-
-It does not claim that every open-source community must accept AI-assisted contributions.
-
-It also does not ask users or contributors to share the maintainer's opinion about AI.
-
-It states something narrower: this repository uses AI, the use is disclosed, humans remain accountable for accepted work, and claims made here are expected to rest on inspectable evidence rather than trust in a model or trust in the maintainer.
+This repository uses AI, discloses that use, keeps humans accountable for accepted work, and expects claims made here to rest on inspectable evidence rather than on trust in a model or in the maintainer.
 
 ## Why This Mod Uses It
 
-Building and maintaining a mod - keeping it working against a moving engine, tracing every claimed behavior to a real source, keeping tests, documentation, and a changelog current - is real, ongoing work even at a mod's smaller scale.
+Building and maintaining a mod means keeping it working against a moving engine, tracing every claimed behavior to a real source, and keeping tests, documentation, and a changelog current. That is ongoing work, even at a mod's smaller scale.
 
 AI assistance makes more of that work practical for a solo spare-time project.
 
-The important question for this repository is therefore not whether an AI system ever generated a line of code. It is whether the resulting code can be understood, traced, tested, challenged, and maintained.
-
-That is the standard this mod is built around.
+This repository judges code by whether it can be understood, traced, tested, challenged, and maintained, whether or not an AI system generated any of it.
 
 ## Questions and Criticism
 
-Specific criticism is welcome.
+Specific criticism is welcome. Please raise it if this mod's behavior does not match what its own documentation claims, a test is insufficient, a cited source is wrong or missing, a dependency is questionable, provenance is unclear, licensing is wrong, a security assumption is unsafe, or this policy does not describe this repository's actual practices. Those are actionable engineering issues.
 
-If this mod's behavior does not match what its own documentation claims, a test is insufficient, a cited source is wrong or missing, a dependency is questionable, provenance is unclear, licensing is wrong, a security assumption is unsafe, or this policy does not accurately describe this repository's actual practices, please raise it.
-
-Those are actionable engineering issues.
-
-General opposition to the use of generative AI is also a legitimate position to hold. This project does not require agreement with its AI policy, but the fact that AI assistance is used is an intentional and disclosed development choice and is not reconsidered separately in every issue, pull request, or discussion thread.
+General opposition to generative AI is a legitimate position, and agreement with this policy is not required. The use of AI assistance is an intentional, disclosed choice, though, and it is not reconsidered separately in each issue, pull request, or discussion thread.
