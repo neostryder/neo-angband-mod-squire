@@ -22,6 +22,7 @@ Fixed.
 ### Changed
 
 - [Visible] [UI] **Squire's settings and status lines read more plainly.** Errand and stop-condition descriptions, and a disturbance message, are rewritten for clarity; every errand behaves as before.
+- [Visible] [Docs] **The README explains in plainer words why Squire picks up only what lies underfoot and plans paths over ground the character remembers.** The terms and AI usage policy are reworded too.
 
 ## 0.1.0 - 2026-09-11
 
