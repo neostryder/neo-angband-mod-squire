@@ -19,6 +19,8 @@ Fixed.
 
 ## [Unreleased]
 
+## 0.1.1 - 2026-09-26
+
 ### Changed
 
 - [Visible] [UI] **Squire's settings and status lines read more plainly.** Errand and stop-condition descriptions, and a disturbance message, are rewritten for clarity; every errand behaves as before.
