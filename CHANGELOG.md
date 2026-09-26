@@ -17,6 +17,12 @@ others as they come up) names what kind of change it is. Lists appear in this
 order and each is omitted when empty for a release: Added, Changed, Removed,
 Fixed.
 
+## [Unreleased]
+
+### Changed
+
+- [Visible] [UI] **Squire's settings and status lines read more plainly.** Errand and stop-condition descriptions, and a disturbance message, are rewritten for clarity; every errand behaves as before.
+
 ## 0.1.0 - 2026-09-11
 
 First release.

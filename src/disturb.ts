@@ -112,7 +112,7 @@ export function createWatcher(view: AgentView, options: WatchOptions): Watcher {
       if (p.depth !== startingDepth) {
         return {
           reason: "level-changed",
-          detail: `The floor changed from ${String(startingDepth)} to ${String(p.depth)}.`,
+          detail: `The depth changed from ${String(startingDepth)} to ${String(p.depth)}.`,
         };
       }
 

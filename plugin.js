@@ -139,7 +139,7 @@ function createWatcher(view, options) {
       if (p.depth !== startingDepth) {
         return {
           reason: "level-changed",
-          detail: `The floor changed from ${String(startingDepth)} to ${String(p.depth)}.`
+          detail: `The depth changed from ${String(startingDepth)} to ${String(p.depth)}.`
         };
       }
       const current = afflictionsOf(p.status);

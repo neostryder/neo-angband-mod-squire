@@ -17,11 +17,11 @@ switch has no flag of its own, the game knows it by its section id instead.
 
 | Setting | Identifier | Default | What it does |
 | --- | --- | --- | --- |
-| Errand: clear what is in front of me | `squire.errandAutofight` | on | Hand over with a creature in sight and Squire engages the nearest one it can reach, then stops. |
-| Errand: explore this floor | `squire.errandAutoexplore` | on | Hand over with nothing in sight and Squire walks toward the nearest unmapped ground, then stops. |
-| Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Take precedence over both short errands and carry the character instead: survive, fight, collect, explore, descend, in that order. |
+| Errand: clear what is in front of me | `squire.errandAutofight` | on | Hand over with a creature in sight and Squire attacks the nearest one it can reach. |
+| Errand: explore this floor | `squire.errandAutoexplore` | on | Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. |
+| Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. |
 | Stop when I am hurt | `squire.stopOnLowHealth` | on | End the errand when hit points fall below half. |
-| Stop when something new appears | `squire.stopOnNewCreature` | on | End the errand the moment a creature that was not already in sight comes into view. |
+| Stop when something new appears | `squire.stopOnNewCreature` | on | End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter. |
 | Attack sleeping creatures | `squire.wakeSleepers` | off | Let the fighting errand pick a sleeping creature as its target. |
 | Pick things up on the way | `squire.collect` | on | During the long errand, pick up whatever is lying on a square the character has already walked onto. |
 | Take the stairs down | `squire.descend` | on | During the long errand, walk to a known down staircase and use it once the floor has been walked out. |
