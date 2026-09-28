@@ -19,7 +19,9 @@ function session(previous: boolean, refuse: string | null = null) {
       races: [{ name: "Human" }, { name: "Dwarf" }],
       classes: [{ name: "Warrior" }, { name: "Mage" }],
       previous: previous ? { race: "Human", cls: "Mage", name: "Amram" } : null,
+      namePinned: false,
     }),
+    setName: (name) => (calls.push(`name ${name}`), ok),
     usePrevious: () => (calls.push("usePrevious"), ok),
     chooseRace: (name) => (calls.push(`race ${name}`), ok),
     chooseClass: (name) => (calls.push(`class ${name}`), ok),
@@ -57,7 +59,7 @@ describe("roll-on birth", () => {
     markRollOn(store, 0);
     const { s, calls } = session(true);
     expect(rollOnPresenter(host("like").host, store, () => 5).show(s)).toBe(true);
-    expect(calls).toEqual(["usePrevious", "accept"]);
+    expect(calls).toEqual(["usePrevious", "name Amram", "accept"]);
   });
 
   it("rolls a random race and class for random", () => {

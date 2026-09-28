@@ -2658,12 +2658,18 @@ function rollOnBirth(session, mode, random, log) {
   const cat = session.catalogue();
   const steps2 = [];
   if (mode === "like" && cat.previous !== null) {
+    const previous = cat.previous;
     steps2.push(() => session.usePrevious());
+    if (!cat.namePinned) steps2.push(() => {
+      const named = session.setName(previous.name);
+      return named.ok ? named : session.randomName();
+    });
   } else {
     const race = cat.races[Math.floor(random() * cat.races.length)];
     const cls = cat.classes[Math.floor(random() * cat.classes.length)];
     if (race === void 0 || cls === void 0) return false;
-    steps2.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll(), () => session.randomName());
+    steps2.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll());
+    if (!cat.namePinned) steps2.push(() => session.randomName());
   }
   for (const step of steps2) {
     const result = step();

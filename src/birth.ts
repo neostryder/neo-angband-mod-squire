@@ -23,8 +23,10 @@ export interface BirthSessionLike {
     readonly races: readonly { readonly name: string }[];
     readonly classes: readonly { readonly name: string }[];
     readonly previous: { readonly race: string; readonly cls: string; readonly name: string } | null;
+    readonly namePinned: boolean;
   };
   usePrevious(): BirthResultLike;
+  setName(name: string): BirthResultLike;
   chooseRace(name: string): BirthResultLike;
   chooseClass(name: string): BirthResultLike;
   roll(): BirthResultLike;
@@ -82,12 +84,20 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
   const cat = session.catalogue();
   const steps: (() => BirthResultLike)[] = [];
   if (mode === "like" && cat.previous !== null) {
+    const previous = cat.previous;
+    /* usePrevious copies race, class and stats but not the name, and the game
+     * will not start a character without one. A pinned name is left alone. */
     steps.push(() => session.usePrevious());
+    if (!cat.namePinned) steps.push(() => {
+      const named = session.setName(previous.name);
+      return named.ok ? named : session.randomName();
+    });
   } else {
     const race = cat.races[Math.floor(random() * cat.races.length)];
     const cls = cat.classes[Math.floor(random() * cat.classes.length)];
     if (race === undefined || cls === undefined) return false;
-    steps.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll(), () => session.randomName());
+    steps.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll());
+    if (!cat.namePinned) steps.push(() => session.randomName());
   }
   for (const step of steps) {
     const result = step();
