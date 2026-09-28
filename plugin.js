@@ -1826,7 +1826,7 @@ function recallPlan(item) {
 }
 
 // src/brain/goals.ts
-var NONE_OF_THESE2 = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
+var NONE_OF_THESE2 = "None of the listed options suits this moment.";
 var FALLBACK_STEPS = 8;
 var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
@@ -1867,9 +1867,9 @@ var SWARM_LEAVE_DREADED = 3;
 var REFUSED_COMMANDS = 3;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
-  "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
-  "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
-  "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
+  "Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on.",
+  "Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage.",
+  "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
   "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
@@ -1910,14 +1910,40 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
 function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
+function groupLines(lines2) {
+  const groups = /* @__PURE__ */ new Map();
+  for (const line of lines2) {
+    const key2 = `${line.race}|${line.band}|${line.tags}`;
+    groups.set(key2, [...groups.get(key2) ?? [], line]);
+  }
+  return [...groups.values()].map((group) => {
+    const first = group[0];
+    const nearest = Math.min(...group.map((g) => g.away));
+    const tags = first.tags === "" ? "" : `, ${first.tags}`;
+    return group.length === 1 ? `${first.race}: ${first.band}, ${String(nearest)} steps away${tags}` : `${String(group.length)} ${first.race}: ${first.band} each, the nearest ${String(nearest)} steps away${tags}`;
+  }).join("; ");
+}
 function crowd(s) {
   const at = s.view.player().grid;
   const near = s.awake.filter((m) => steps(at, m.grid) <= 5).length;
   return Math.min(1.8, 1 + 0.2 * Math.max(0, near - 1));
 }
-function ailments(status) {
-  const names = [status.poisoned > 0 ? "poisoned" : "", status.cut > 0 ? "bleeding" : ""].filter((n) => n !== "");
-  return names.length === 0 ? {} : { condition: `The character is ${names.join(" and ")} and loses a little health each turn until it wears off.` };
+function statusOf(view, readable) {
+  const p = view.player();
+  const s = p.status;
+  const lines2 = [
+    s.paralyzed > 0 ? "Paralyzed, so it cannot act." : "",
+    s.afraid > 0 ? "Afraid, so it cannot attack in melee." : "",
+    s.confused > 0 ? "Confused, so it cannot read or cast, and its steps may go astray." : "",
+    s.blind > 0 ? "Blind, so it cannot read, cast or see creatures." : "",
+    !readable && s.blind === 0 && s.confused === 0 ? "In the dark, so it cannot read or cast here." : "",
+    s.stun > 0 ? "Stunned, so its blows and spells fail more often." : "",
+    s.poisoned > 0 ? "Poisoned, losing a little health each turn." : "",
+    s.cut > 0 ? "Bleeding, losing health each turn until healed." : "",
+    p.speed < 110 ? "Slowed, so creatures act more often than it does." : "",
+    p.speed > 110 ? "Hasted, so it acts more often than normal." : ""
+  ].filter((line) => line !== "");
+  return lines2.length === 0 ? "Nothing is affecting the character." : lines2.join(" ");
 }
 function swarmNote(seen) {
   const counts = /* @__PURE__ */ new Map();
@@ -2008,21 +2034,23 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const adjacent2 = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent2 && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     if ((adjacent2 || walkUp) && player.status.afraid === 0) {
-      add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+      const away = steps(at, s.target.grid);
+      add2("fight", adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, fightRisk(s));
     }
     const ranged = within(s, MISSILE_RANGE);
+    const standing = exposure(s);
     if (ranged && s.pack.launcher && s.pack.ammo[0] !== void 0) {
-      add2("shoot", `Fire ${s.pack.ammo[0].name} at the ${s.target.race} with the equipped launcher.`, fightRisk(s) * 0.7);
+      add2("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${s.pack.ammo[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
     if (ranged && s.pack.oil[0] !== void 0) {
-      add2("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game.`, fightRisk(s) * 0.7);
+      add2("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game (carrying ${s.pack.oil[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
     if (ranged && s.pack.attackWand[0] !== void 0) {
-      add2("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, fightRisk(s) * 0.65);
+      add2("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, Math.max(fightRisk(s) * 0.65, standing));
     }
     const spell = s.pack.attackSpell[0];
     if (ranged && spell !== void 0) {
-      add2("cast_attack", `Cast ${spell.name} at the ${s.target.race} (${String(spell.fail)}% chance to fail).`, fightRisk(s) * 0.65);
+      add2("cast_attack", `Cast ${spell.name} at the ${s.target.race}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, Math.max(fightRisk(s) * 0.65, standing));
     }
   }
   const cutBad = player.status.cut > BAD_CUT && s.pack.heal[0] !== void 0;
@@ -2047,7 +2075,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       const leaves = /Teleport Level/i.test(teleport.name);
       add2("teleport", leaves ? `Use ${teleport.name} to leave this level entirely, going one level up or down.` : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
-    add2("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
+    add2("retreat", "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", exposure(s) * 0.8);
   }
   if (!bleeding && s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
     add2("rest", "Rest until hit points and mana recover.", 0.01);
@@ -2093,9 +2121,16 @@ function createGoalPlanner(options) {
   let recallRead = null;
   const stalled = /* @__PURE__ */ new Map();
   let fallbackStalled = null;
+  let lastOutcome = null;
+  let outcomeVersion = 0;
+  function noteOutcome(text) {
+    lastOutcome = text;
+    outcomeVersion += 1;
+  }
   function noteStalls(goal, plan) {
     let issued = 0;
     let startTurn = null;
+    const version = outcomeVersion;
     const step = (v, act) => {
       startTurn ??= v.turn();
       const command = plan.step(v, act);
@@ -2103,6 +2138,9 @@ function createGoalPlanner(options) {
       else if (issued === 0 || v.turn() === startTurn) {
         if (goal === null) fallbackStalled = v.turn();
         else stalled.set(goal, v.turn());
+        noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
+      } else if (outcomeVersion === version) {
+        noteOutcome(`${plan.label}: done.`);
       }
       return command;
     };
@@ -2175,6 +2213,7 @@ function createGoalPlanner(options) {
         if (refused >= REFUSED_COMMANDS) {
           done = true;
           log(`${label}: the game refused the last command and no time passed.`);
+          noteOutcome(`${label}: the game refused the command and no time passed.`);
           return null;
         }
         const ctx = context(v, act, progress, missionCfg);
@@ -2184,6 +2223,7 @@ function createGoalPlanner(options) {
           if (declined !== null) {
             done = true;
             log(`${label}: ${declined.detail}`);
+            noteOutcome(`${label}: ${declined.detail}`);
             return null;
           }
         }
@@ -2191,6 +2231,7 @@ function createGoalPlanner(options) {
         if (isStop(decision2)) {
           done = true;
           log(`${label}: ${decision2.stop.detail}`);
+          noteOutcome(`${label}: ${decision2.stop.detail}`);
           return null;
         }
         lastTurn = turn;
@@ -2427,6 +2468,14 @@ function createGoalPlanner(options) {
       lastAwake = awakeNow;
       const unexplored = reachableFrontier(view, terrain);
       const stairs = knownDownStairs(view, terrain).length > 0;
+      const believed = [];
+      const creatureLines = seen.map((m) => {
+        const real = threatIndex(m, player.level, player.hp, s.dreaded);
+        const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
+        if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
+        const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
+        return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", away: steps(player.grid, m.grid), tags };
+      });
       const question = {
         request: {
           state: {
@@ -2434,21 +2483,15 @@ function createGoalPlanner(options) {
             character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
-            creatures: seen.length === 0 ? "No creatures in sight." : seen.map((m) => {
-              const real = threatIndex(m, player.level, player.hp, s.dreaded);
-              const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
-              const band = THREAT_BANDS[seenAs] ?? "deadly";
-              const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
-              const away = steps(player.grid, m.grid);
-              return `${m.race}: ${band}, ${String(away)} steps away${tags === "" ? "" : `, ${tags}`}`;
-            }).join("; "),
+            creatures: seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines),
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
+            status: statusOf(view, canRead(view)),
+            ...lastOutcome === null ? {} : { last: lastOutcome },
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
-            ...ailments(player.status),
             ...swarmNote(seen),
             ...lessonsFor(view),
-            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }
+            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } } }
           },
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
         },
@@ -2461,14 +2504,15 @@ function createGoalPlanner(options) {
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick2 = decide(answer, answers["in_character"], digest);
       if (pick2 === "none_of_these") {
-        const safest = [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+        const removed = new Set(digest.trace?.removed ?? []);
+        const allowed = digest.offers.filter((o) => !removed.has(o.goal));
+        const likeliest = [...allowed.length > 0 ? allowed : digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        if (safest !== void 0 && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
-          log(`goal: none fit, taking the safest option (${safest.goal})`);
-          return { plan: noteStalls(safest.goal, build(safest.goal, view)) };
+        if (likeliest !== void 0 && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
+          log(`goal: none fit in danger, taking the likeliest listed option (${likeliest.goal})`);
+          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
         }
-        const likeliest = [...digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         if (likeliest !== void 0 && fallbackStalled === view.turn()) {
           log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
           return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
@@ -2492,6 +2536,7 @@ function createGoalPlanner(options) {
     trigger(view, plan) {
       const watched2 = plan;
       const stopped = watched2.watcher?.check(view) ?? null;
+      if (stopped !== null) noteOutcome(`${plan.label} stopped: ${stopped.detail}`);
       return stopped === null ? null : stopped.detail;
     }
   };

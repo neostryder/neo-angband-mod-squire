@@ -84,7 +84,7 @@ describe("goal planner", () => {
     const w = world({ map: CORRIDOR, monsters: worms, player: { status: { poisoned: 5 } } as never });
     const state = asked(planner(w).p.ask(w.view)).request.state as Record<string, unknown>;
     expect(String(state["swarm"])).toContain("3 yellow worm mass");
-    expect(String(state["condition"])).toContain("poisoned");
+    expect(String(state["status"])).toContain("Poisoned");
   });
 
   it("closes a nasty cut before exploring or resting", () => {
@@ -223,14 +223,37 @@ describe("goal planner", () => {
     expect(p.trigger(w.view, choice.plan)).toBeNull();
   });
 
-  it("takes the safest option on none_of_these when the character is hurt", () => {
+  it("takes the model's likeliest listed option on none_of_these when the character is hurt", () => {
     const w = world({ map: CORRIDOR, player: { hp: 4, maxHp: 10 }, monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc", level: 7 }] });
     const { p, logged } = planner(w);
     const q = asked(p.ask(w.view));
-    const fallback = p.choose(pick("none_of_these"), q.context, w.view);
+    const answer = { goal: { type: "choice", choice: "none_of_these", confidence: 0.5, probabilities: { none_of_these: 0.5, retreat: 0.4, fight: 0.1 } } } as const;
+    const fallback = p.choose(answer, q.context, w.view);
     expect(fallback).toHaveProperty("plan");
-    const safest = [...q.context.offers].sort((a, b) => a.risk - b.risk)[0]!.goal;
-    expect(logged.join(" ")).toContain(`taking the safest option (${safest})`);
+    expect(logged.join(" ")).toContain("taking the likeliest listed option (retreat)");
+  });
+
+  it("never rates a ranged attack beside a deadly creature safer than retreating", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 31, sp: 5, maxSp: 9 }, spells: [{ name: "Magic Missile", sidx: 0 }], monsters: [{ grid: { x: 3, y: 1 }, race: "Grip, Farmer Maggot's Dog", level: 5, raceFlags: ["UNIQUE"] }] });
+    const offers = asked(planner(w).p.ask(w.view)).context.offers;
+    const risk = (g: string) => offers.find((o) => o.goal === g)?.risk ?? NaN;
+    expect(risk("retreat")).toBeLessThan(risk("cast_attack"));
+  });
+
+  it("tells the model what the last plan ran into", () => {
+    const w = world({ map: CORRIDOR });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "jackal" }]);
+    p.trigger(w.view, choice.plan);
+    expect(String(asked(p.ask(w.view)).request.state["last"])).toContain("jackal came into view");
+  });
+
+  it("folds creatures of one kind into a single line", () => {
+    const worms = [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, race: "white worm mass", level: 1 }));
+    const w = world({ map: CORRIDOR, monsters: worms });
+    expect(String(asked(planner(w).p.ask(w.view)).request.state["creatures"])).toBe("3 white worm mass: an easy kill each, the nearest 3 steps away");
   });
 
   it("calls a weak creature dangerous when one round could take the character's hit points", () => {
@@ -611,6 +634,7 @@ describe("fear, swarms and refused commands", () => {
 
   it("offers no melee to an afraid character, and offers a way out instead", () => {
     const w = world({ map: CORRIDOR, player: { status: { afraid: 10 } } as never, monsters: [{ grid: { x: 3, y: 1 }, race: "acolyte", level: 2 }] });
+    expect(String(asked(planner(w).p.ask(w.view)).request.state["status"])).toContain("cannot attack in melee");
     const offered = goals(w);
     expect(offered).not.toContain("fight");
     expect(offered).toContain("retreat");
