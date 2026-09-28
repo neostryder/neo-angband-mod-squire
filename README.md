@@ -35,7 +35,7 @@ Squire only knows what the character knows:
 - It plans routes only over ground the character remembers, and picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
-In town, Squire buys what the next trip needs: healing potions, Phase Door, food, light, flasks of oil and, once the character has been to 250 ft, a Word of Recall scroll. When supplies run low in the dungeon, it reads Word of Recall to go home and restock, then reads another to go back down.
+In town, Squire buys what the next trip needs: healing potions, Phase Door, food, light, flasks of oil and, once the character has been to 250 ft, a Word of Recall scroll. When supplies run low at 250 ft or deeper and it has gold to spend, it reads Word of Recall to go home and restock, then reads another to go back down.
 
 If the model can't be reached, Squire finishes the step it is on, stops, and tries again a few times, showing how long it will wait. After that it gives you the keyboard and says how to resume.
 

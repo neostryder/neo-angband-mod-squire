@@ -1702,7 +1702,8 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         visited.add(cell2.feat);
-        log(`shop: done in the ${store.featName}`);
+        const shelf = store.stock.slice(0, 8).map((item) => `${item.name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
+        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
         return act.shopExit();
       }
       const next = neededEntrances(view, terrain, persona, visited)[0];
@@ -1760,6 +1761,7 @@ function threatIndex(monster, characterLevel, characterHp = Infinity) {
   else if (characterHp <= round) band = Math.max(band, 2);
   return band;
 }
+var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 var HANDBOOK = Object.freeze([
@@ -1811,7 +1813,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const needs = supplyNeeds(view, s.pack, persona);
   const recall = recallItem(view);
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
-  if (player.depth > 0 && recall !== null && lowOnSupplies(needs)) {
+  const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
+  const tripPays = starving || player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD;
+  if (player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }

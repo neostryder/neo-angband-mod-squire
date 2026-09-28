@@ -37,7 +37,7 @@ import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
-import { lowOnSupplies, recallItem, supplyNeeds } from "../town/needs.js";
+import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 
 /** Every option this planner can offer. */
@@ -119,6 +119,9 @@ export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags">, c
 export function threatBand(monsterLevel: number, characterLevel: number): ThreatBand {
   return THREAT_BANDS[threatIndex({ level: monsterLevel, raceFlags: [] }, characterLevel)] ?? "deadly";
 }
+
+/** Gold below which a trip to town cannot buy enough healing to be worth a recall scroll. */
+const RECALL_MIN_GOLD = 50;
 
 /** Health share under which escapes are offered even against easy creatures. */
 const ESCAPE_BELOW_HP = 0.7;
@@ -254,7 +257,12 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const needs = supplyNeeds(view, s.pack, persona);
   const recall = recallItem(view);
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
-  if (player.depth > 0 && recall !== null && lowOnSupplies(needs)) {
+  /* A trip home pays only when the shops can fix it: near the surface, or with
+   * no gold, a recall scroll is spent for nothing and the next trip down finds
+   * the same shortage. Starving with no food is the exception, since food is cheap. */
+  const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
+  const tripPays = starving || (player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD);
+  if (player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }

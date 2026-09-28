@@ -310,9 +310,16 @@ describe("persona", () => {
 
 describe("town goals", () => {
   it("offers recall to town when dungeon supplies run low", () => {
-    const w = world({ map: CORRIDOR, pack: ["a Scroll of Word of Recall"] });
+    const w = world({ map: CORRIDOR, player: { depth: 6, maxDepth: 6, gold: 300 }, pack: ["a Scroll of Word of Recall"] });
     const q = asked(planner(w).p.ask(w.view));
     expect(q.context.offers.find((offer) => offer.goal === "recall_town")?.criteria).toContain("low on Cure Light Wounds");
+  });
+
+  it("does not recall home near the surface or with no gold to spend", () => {
+    for (const player of [{ depth: 2, maxDepth: 2, gold: 300 }, { depth: 6, maxDepth: 6, gold: 10 }]) {
+      const w = world({ map: CORRIDOR, player, pack: ["a Scroll of Word of Recall"] });
+      expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).not.toContain("recall_town");
+    }
   });
 
   it("offers shopping from mapped entrances without reading store stock", () => {

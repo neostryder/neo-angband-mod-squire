@@ -80,7 +80,8 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         visited.add(cell.feat);
-        log(`shop: done in the ${store.featName}`);
+        const shelf = store.stock.slice(0, 8).map((item) => `${(item as { name?: string }).name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
+        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
         return act.shopExit();
       }
       const next = neededEntrances(view, terrain, persona, visited)[0];
