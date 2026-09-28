@@ -76,7 +76,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         }
         const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
         if (purchase !== undefined) {
-          log(`shop: buying ${String(purchase.quantity)} ${purchase.name} in the ${store.featName}`);
+          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         visited.add(cell.feat);

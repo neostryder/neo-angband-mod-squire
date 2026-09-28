@@ -1510,7 +1510,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
         }
         const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
         if (purchase !== void 0) {
-          log(`shop: buying ${String(purchase.quantity)} ${purchase.name} in the ${store.featName}`);
+          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         visited.add(cell2.feat);
