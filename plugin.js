@@ -293,11 +293,12 @@ function standingOnHarm(view, terrain, at) {
 }
 function frontiers(view, terrain) {
   const bounds = view.mapBounds();
+  const me = view.player().grid;
   const found = [];
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at = { x, y };
-      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at)) continue;
+      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
       for (const there of neighbours(at)) {
         const cell2 = cellAt(view, there);
         if (cell2 !== null && !cell2.known) {
@@ -1885,9 +1886,19 @@ function exposure(s) {
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
+function reachableStairs(view, terrain) {
+  const stairs = knownDownStairs(view, terrain);
+  if (stairs.length === 0) return false;
+  const me = view.player().grid;
+  if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(me));
+}
 function reachableFrontier(view, terrain) {
   const goals = frontiers(view, terrain);
   if (goals.length === 0) return false;
+  const me = view.player().grid;
+  if (goals.some((g) => g.x === me.x && g.y === me.y)) return true;
   const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
   return Number.isFinite(field.distance(view.player().grid));
 }
@@ -1984,7 +1995,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+  if (!unlit && !learnFirst && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);

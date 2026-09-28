@@ -273,9 +273,21 @@ function within(s: Situation, range: number): boolean {
  * exploring errand would. Frontiers behind lava or walls are not worth offering:
  * in town that made Squire pick explore again and again for nothing.
  */
+/** Whether a remembered down staircase can be walked to, as the descend plan would. */
+function reachableStairs(view: AgentView, terrain: Terrain): boolean {
+  const stairs = knownDownStairs(view, terrain);
+  if (stairs.length === 0) return false;
+  const me = view.player().grid;
+  if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(me));
+}
+
 function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
   const goals = frontiers(view, terrain);
   if (goals.length === 0) return false;
+  const me = view.player().grid;
+  if (goals.some((g) => g.x === me.x && g.y === me.y)) return true;
   const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
   return Number.isFinite(field.distance(view.player().grid));
 }
@@ -406,7 +418,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && knownDownStairs(view, terrain).length > 0 && cfg.descend &&
+  if (!unlit && !learnFirst && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {

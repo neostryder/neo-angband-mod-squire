@@ -79,6 +79,13 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("does not offer stairs it cannot walk to", () => {
+    const walled = world({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
+    expect(planner(walled).p.ask(walled.view)).toHaveProperty("handBack");
+    const open = world({ map: ["#######", "#.@..>#", "#######"], player: { depth: 2, maxDepth: 2 } });
+    expect(asked(planner(open).p.ask(open.view)).context.offers.map((o) => o.goal)).toContain("descend");
+  });
+
   it("learns a new spell before walking on when nothing is awake", () => {
     const w = world({ map: CORRIDOR, pack: ["a Magic for Beginners"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
     const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);

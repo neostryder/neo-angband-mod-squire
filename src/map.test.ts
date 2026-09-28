@@ -122,3 +122,10 @@ describe("frontiers", () => {
     expect(frontiers(w.view, w.terrain)).toEqual([]);
   });
 });
+
+describe("frontiers on arrival", () => {
+  it("count the character's own grid when the map around it is still blank", () => {
+    const w = world({ map: ["     ", "  @  ", "     "] });
+    expect(frontiers(w.view, w.terrain)).toEqual([{ x: 2, y: 1 }]);
+  });
+});

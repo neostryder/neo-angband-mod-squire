@@ -91,11 +91,15 @@ export function standingOnHarm(view: AgentView, terrain: Terrain, at: Loc): bool
  */
 export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   const bounds = view.mapBounds();
+  /* The character's own grid is ground it stands on, even before the game has
+   * remembered it: arriving on a new level, the map can be blank until the
+   * first step. */
+  const me = view.player().grid;
   const found: Loc[] = [];
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
-      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at)) continue;
+      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);
         if (cell !== null && !cell.known) {
