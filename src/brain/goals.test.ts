@@ -87,6 +87,22 @@ describe("goal planner", () => {
     expect(String(state["condition"])).toContain("poisoned");
   });
 
+  it("closes a nasty cut before exploring or resting", () => {
+    const w = world({ map: CORRIDOR, pack: ["3 Potions of Cure Light Wounds"], player: { hp: 18, maxHp: 20, status: { cut: 60 } } as never });
+    const offers = asked(planner(w).p.ask(w.view)).context.offers;
+    expect(offers.find((o) => o.goal === "heal")?.criteria).toContain("closes the bleeding wound");
+    expect(offers.map((o) => o.goal)).not.toContain("explore");
+    expect(offers.map((o) => o.goal)).not.toContain("rest");
+  });
+
+  it("stops walking up to a creature that never moves", () => {
+    const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 5, y: 1 }, race: "grey mold" }] });
+    const { p } = planner(w);
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).toContain("fight");
+    p.ask(w.view);
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("fight");
+  });
+
   it("does not offer stairs it cannot walk to", () => {
     const walled = world({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
     expect(planner(walled).p.ask(walled.view)).toHaveProperty("handBack");
@@ -140,15 +156,22 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).not.toBeNull();
   });
 
-  it("leaves out a goal whose plan did nothing until the turn changes", () => {
-    const w = world({ map: ["#######", "#.@#..#", "#.###.#", "#######"], monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc" }] });
+  it("leaves out a goal whose plan passed no game time until the turn changes", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 10, maxHp: 20 } });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
-    expect(q.context.offers.map((o) => o.goal)).toContain("fight");
-    const choice = p.choose(pick("fight"), q.context, w.view);
+    expect(q.context.offers.map((o) => o.goal)).toContain("rest");
+    const choice = p.choose(pick("rest"), q.context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
     expect(choice.plan.step(w.view, w.act)).toBeNull();
-    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("fight");
+    const again = p.ask(w.view);
+    expect("handBack" in again ? [] : again.context.offers.map((o) => o.goal)).not.toContain("rest");
+  });
+
+  it("does not offer a melee fight with a creature it cannot walk to", () => {
+    const w = world({ map: ["#######", "#.@#..#", "#.###.#", "#######"], monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc" }] });
+    expect(asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("fight");
   });
 
   it("falls back to the errand order on none_of_these, and hands back on a goal it did not offer", () => {

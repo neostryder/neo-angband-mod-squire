@@ -1839,6 +1839,9 @@ var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 var DAMAGE_SHARE_REDECIDE = 0.1;
+var BAD_CUT = 25;
+var NASTY_CUT = 50;
+var STATIONARY_DECISIONS = 3;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
@@ -1849,7 +1852,7 @@ var HANDBOOK = Object.freeze([
   "Wear better gear when it is safe to change equipment.",
   "Map or detect a new dungeon level before exploring it when a source is available."
 ]);
-function situationOf(view, dreaded = /* @__PURE__ */ new Set()) {
+function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set()) {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
@@ -1857,6 +1860,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set()) {
   const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
   return {
     dreaded,
+    stationary,
     view,
     pack: readPack(view),
     awake,
@@ -1897,6 +1901,10 @@ function exposure(s) {
 }
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
+}
+function canReach(view, terrain, grid) {
+  const field = flowFrom({ goals: [grid], canEnter: (g) => g.x === grid.x && g.y === grid.y || isRoutable(view, terrain, g) });
+  return Number.isFinite(field.distance(view.player().grid));
 }
 function reachableStairs(view, terrain) {
   const stairs = knownDownStairs(view, terrain);
@@ -1948,7 +1956,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     }
   }
   if (s.target !== null) {
-    add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+    const adjacent2 = steps(at, s.target.grid) <= 1;
+    const walkUp = !adjacent2 && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    if (adjacent2 || walkUp) {
+      add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+    }
     const ranged = within(s, MISSILE_RANGE);
     if (ranged && s.pack.launcher && s.pack.ammo[0] !== void 0) {
       add2("shoot", `Fire ${s.pack.ammo[0].name} at the ${s.target.race} with the equipped launcher.`, fightRisk(s) * 0.7);
@@ -1964,8 +1976,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add2("cast_attack", `Cast ${spell.name} at the ${s.target.race} (${String(spell.fail)}% chance to fail).`, fightRisk(s) * 0.65);
     }
   }
-  if (hurt && s.pack.heal[0] !== void 0) {
-    add2("heal", `Drink ${s.pack.heal[0].name} to restore hit points.`, exposure(s) * 0.5);
+  const cutBad = player.status.cut > BAD_CUT && s.pack.heal[0] !== void 0;
+  const bleeding = player.status.cut > NASTY_CUT && s.pack.heal[0] !== void 0;
+  if ((hurt || cutBad) && s.pack.heal[0] !== void 0) {
+    add2("heal", `Drink ${s.pack.heal[0].name} to restore hit points.${cutBad ? " It also closes the bleeding wound." : ""}`, exposure(s) * (cutBad ? 0.2 : 0.5));
   }
   const healSpell = s.pack.healSpell[0];
   if (hurt && healSpell !== void 0) {
@@ -1983,7 +1997,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     }
     add2("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
   }
-  if (s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
+  if (!bleeding && s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
     add2("rest", "Rest until hit points and mana recover.", 0.01);
   }
   if (hungry(view) && s.pack.food[0] !== void 0) {
@@ -1991,23 +2005,23 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   const unlit = gear !== void 0 && gear.criteria.includes("has no light");
-  if (gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+  if (!bleeding && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
   }
-  if (newLevel && player.depth > 0 && s.awake.length === 0) {
+  if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
     if (source !== null) add2("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
   }
   const study = studyable(view, triedStudies);
   const learnFirst = study !== null && s.awake.length === 0;
-  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
+  if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
+  if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+  if (!unlit && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
@@ -2133,7 +2147,7 @@ function createGoalPlanner(options) {
   }
   function atTarget(label, view, command) {
     return once(label, view, (ctx) => {
-      const s = situationOf(ctx.view, dreadedNow());
+      const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
       if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
@@ -2239,6 +2253,25 @@ function createGoalPlanner(options) {
         });
     }
   }
+  const stillSince = /* @__PURE__ */ new Map();
+  function stationaryNow(view, update2 = true) {
+    const out = /* @__PURE__ */ new Set();
+    if (!update2) {
+      for (const [id, was] of stillSince) if (was.count >= STATIONARY_DECISIONS) out.add(id);
+      return out;
+    }
+    const live = /* @__PURE__ */ new Set();
+    for (const m of view.monsters()) {
+      if (!m.visible || m.asleep) continue;
+      live.add(m.id);
+      const was = stillSince.get(m.id);
+      const count2 = was !== void 0 && was.x === m.grid.x && was.y === m.grid.y ? was.count + 1 : 1;
+      stillSince.set(m.id, { x: m.grid.x, y: m.grid.y, count: count2 });
+      if (count2 >= STATIONARY_DECISIONS) out.add(m.id);
+    }
+    for (const id of [...stillSince.keys()]) if (!live.has(id)) stillSince.delete(id);
+    return out;
+  }
   function dreadedNow() {
     return options.dreaded?.() ?? /* @__PURE__ */ new Set();
   }
@@ -2282,7 +2315,7 @@ function createGoalPlanner(options) {
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       noteSeen(view);
-      const s = situationOf(view, dreadedNow());
+      const s = situationOf(view, dreadedNow(), stationaryNow(view));
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
       const newLevel = decisionDepth !== player.depth;

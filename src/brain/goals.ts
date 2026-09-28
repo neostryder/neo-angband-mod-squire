@@ -134,6 +134,11 @@ const ESCAPE_BELOW_HP = 0.7;
 const BAND_RISK: readonly number[] = [0.03, 0.15, 0.4, 0.75];
 /** One blow of this share of maximum hit points, or twice it in all since the plan began, sends the decision back to the model. */
 const DAMAGE_SHARE_REDECIDE = 0.1;
+/** Cut timers above these are a bad cut and a nasty cut; a bad cut or worse does not close by itself. */
+const BAD_CUT = 25;
+const NASTY_CUT = 50;
+/** Decisions an awake creature must stay on one grid to count as one that does not move. */
+const STATIONARY_DECISIONS = 3;
 
 /** Rules of the game the model needs for this decision, in a few plain lines. */
 const HANDBOOK: readonly string[] = Object.freeze([
@@ -216,10 +221,12 @@ interface Situation {
   readonly worst: number;
   /** Kinds of creature this character's line has learned to fear. */
   readonly dreaded: ReadonlySet<string>;
+  /** Awake creatures that have stayed on one grid across several decisions. */
+  readonly stationary: ReadonlySet<number>;
   readonly hpShare: number;
 }
 
-function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set()): Situation {
+function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), stationary: ReadonlySet<number> = new Set()): Situation {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
@@ -227,6 +234,7 @@ function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set()):
   const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
   return {
     dreaded,
+    stationary,
     view,
     pack: readPack(view),
     awake,
@@ -302,6 +310,12 @@ function within(s: Situation, range: number): boolean {
  * exploring errand would. Frontiers behind lava or walls are not worth offering:
  * in town that made Squire pick explore again and again for nothing.
  */
+/** Whether a grid can be walked next to over remembered ground. */
+function canReach(view: AgentView, terrain: Terrain, grid: { readonly x: number; readonly y: number }): boolean {
+  const field = flowFrom({ goals: [grid], canEnter: (g) => (g.x === grid.x && g.y === grid.y) || isRoutable(view, terrain, g) });
+  return Number.isFinite(field.distance(view.player().grid));
+}
+
 /** Whether a remembered down staircase can be walked to, as the descend plan would. */
 function reachableStairs(view: AgentView, terrain: Terrain): boolean {
   const stairs = knownDownStairs(view, terrain);
@@ -377,7 +391,13 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
 
   if (s.target !== null) {
-    add("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+    /* Walking up to a creature that stays where it is, a mold or a mushroom
+     * patch, only trades blows with something that would never have followed. */
+    const adjacent = steps(at, s.target.grid) <= 1;
+    const walkUp = !adjacent && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    if (adjacent || walkUp) {
+      add("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+    }
     const ranged = within(s, MISSILE_RANGE);
     if (ranged && s.pack.launcher && s.pack.ammo[0] !== undefined) {
       add("shoot", `Fire ${s.pack.ammo[0].name} at the ${s.target.race} with the equipped launcher.`, fightRisk(s) * 0.7);
@@ -393,8 +413,14 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
       add("cast_attack", `Cast ${spell.name} at the ${s.target.race} (${String(spell.fail)}% chance to fail).`, fightRisk(s) * 0.65);
     }
   }
-  if (hurt && s.pack.heal[0] !== undefined) {
-    add("heal", `Drink ${s.pack.heal[0].name} to restore hit points.`, exposure(s) * 0.5);
+  /* A bad cut does not close by itself, and a character bleeding out dies of it
+   * with no creature near. A healing potion closes it, so drinking one is
+   * offered whenever the cut is bad, and a worse one puts everything that
+   * spends turns on something else on hold. */
+  const cutBad = player.status.cut > BAD_CUT && s.pack.heal[0] !== undefined;
+  const bleeding = player.status.cut > NASTY_CUT && s.pack.heal[0] !== undefined;
+  if ((hurt || cutBad) && s.pack.heal[0] !== undefined) {
+    add("heal", `Drink ${s.pack.heal[0].name} to restore hit points.${cutBad ? " It also closes the bleeding wound." : ""}`, exposure(s) * (cutBad ? 0.2 : 0.5));
   }
   const healSpell = s.pack.healSpell[0];
   if (hurt && healSpell !== undefined) {
@@ -417,7 +443,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     }
     add("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
   }
-  if (s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
+  if (!bleeding && s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
     add("rest", "Rest until hit points and mana recover.", 0.01);
   }
   if (hungry(view) && s.pack.food[0] !== undefined) {
@@ -427,11 +453,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Walking in the dark shows nothing, so while a light sits unused in the pack
    * lighting it comes before exploring or the stairs. */
   const unlit = gear !== undefined && gear.criteria.includes("has no light");
-  if (gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+  if (!bleeding && gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     /* Changing gear spends a turn, which is as risky as any other turn not spent fighting. */
     add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
   }
-  if (newLevel && player.depth > 0 && s.awake.length === 0) {
+  if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
     if (source !== null) add("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
   }
@@ -440,14 +466,14 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* A new spell costs one turn and is always worth having, so with nothing awake
    * in sight it comes before walking on, the way lighting a torch does. */
   const learnFirst = study !== null && s.awake.length === 0;
-  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
+  if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
+  if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && reachableStairs(view, terrain) && cfg.descend &&
+  if (!unlit && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {
@@ -617,7 +643,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /** One command aimed at the current target: set the target, then issue it. */
   function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand): WatchedPlan {
     return once(label, view, (ctx) => {
-      const s = situationOf(ctx.view, dreadedNow());
+      const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
       if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
@@ -727,6 +753,28 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
   }
 
+  /* Where each awake creature in view was first seen still, to tell a mold
+   * from a creature that happens to be standing still for a turn. */
+  const stillSince = new Map<number, { readonly x: number; readonly y: number; readonly count: number }>();
+  function stationaryNow(view: AgentView, update = true): ReadonlySet<number> {
+    const out = new Set<number>();
+    if (!update) {
+      for (const [id, was] of stillSince) if (was.count >= STATIONARY_DECISIONS) out.add(id);
+      return out;
+    }
+    const live = new Set<number>();
+    for (const m of view.monsters()) {
+      if (!m.visible || m.asleep) continue;
+      live.add(m.id);
+      const was = stillSince.get(m.id);
+      const count = was !== undefined && was.x === m.grid.x && was.y === m.grid.y ? was.count + 1 : 1;
+      stillSince.set(m.id, { x: m.grid.x, y: m.grid.y, count });
+      if (count >= STATIONARY_DECISIONS) out.add(m.id);
+    }
+    for (const id of [...stillSince.keys()]) if (!live.has(id)) stillSince.delete(id);
+    return out;
+  }
+
   function dreadedNow(): ReadonlySet<string> {
     return options.dreaded?.() ?? new Set<string>();
   }
@@ -779,7 +827,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       noteSeen(view);
-      const s = situationOf(view, dreadedNow());
+      const s = situationOf(view, dreadedNow(), stationaryNow(view));
       const turn = view.turn();
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
       const newLevel = decisionDepth !== player.depth;
