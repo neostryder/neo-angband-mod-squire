@@ -70,9 +70,10 @@ describe("the Squire plugin", () => {
   });
 
   it("declares no hooks, because it changes no rule", () => {
-    /* register adds the panel and listens to events; it overrides nothing. */
+    /* register adds the panel and listens to events, and birth only accepts a
+     * roll-on creation Squire asked for; neither overrides a rule. */
     expect(plugin.api).toBe(1);
-    expect(Object.keys(plugin).sort()).toEqual(["api", "controller", "register"]);
+    expect(Object.keys(plugin).sort()).toEqual(["api", "birth", "controller", "register"]);
   });
 
   it("says how much terrain it can read, so a diminished run is visible", () => {

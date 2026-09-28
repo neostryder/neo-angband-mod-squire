@@ -1,0 +1,125 @@
+/**
+ * Roll-on: after a character Squire played dies, the next one is born without
+ * the birth screens, when the player turned that on in Setup.
+ *
+ * The runtime asks the game for a new character (`ctx.saves.create`) and the
+ * page reloads into character creation. This presenter takes that one creation
+ * and accepts it at once, either as a copy of the dead character ("like") or as
+ * a random race and class ("random"). Every other creation, including one the
+ * player starts by hand later, gets the game's own screens: the presenter only
+ * acts within a short window after Squire itself asked for the new character.
+ */
+
+import { readConfig, type RollOn } from "./config.js";
+
+/** The part of the host's birth session this presenter uses. */
+export interface BirthResultLike {
+  readonly ok: boolean;
+  readonly reason?: string;
+}
+
+export interface BirthSessionLike {
+  catalogue(): {
+    readonly races: readonly { readonly name: string }[];
+    readonly classes: readonly { readonly name: string }[];
+    readonly previous: { readonly race: string; readonly cls: string; readonly name: string } | null;
+  };
+  usePrevious(): BirthResultLike;
+  chooseRace(name: string): BirthResultLike;
+  chooseClass(name: string): BirthResultLike;
+  roll(): BirthResultLike;
+  randomName(): BirthResultLike;
+  accept(): BirthResultLike;
+}
+
+/** Somewhere to keep the roll-on mark across the reload into creation. */
+export interface MarkStore {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+export const ROLL_ON_KEY = "squire/rollOnAt";
+/** Long enough for the reload into creation, short enough that a later new character is the player's. */
+export const ROLL_ON_WINDOW_MS = 120_000;
+
+/** The tab's session storage, or null where it cannot be used. */
+export function sessionMarks(): MarkStore | null {
+  try {
+    return typeof sessionStorage === "undefined" ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Note that Squire is about to ask for the next character. */
+export function markRollOn(store: MarkStore | null, now: number): void {
+  try {
+    store?.setItem(ROLL_ON_KEY, String(now));
+  } catch {
+    /* Without the mark the game shows its own birth screens, which is safe. */
+  }
+}
+
+/** Whether a roll-on mark is fresh, clearing it either way so it is used once. */
+export function takeRollOn(store: MarkStore | null, now: number): boolean {
+  try {
+    const raw = store?.getItem(ROLL_ON_KEY) ?? null;
+    if (raw === null) return false;
+    store?.removeItem(ROLL_ON_KEY);
+    const at = Number(raw);
+    return Number.isFinite(at) && now - at >= 0 && now - at <= ROLL_ON_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Fill in and accept the creation. Returns false, leaving the game's screens
+ * to take over, when any step is refused.
+ */
+export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wait">, random: () => number, log: (line: string) => void): boolean {
+  const cat = session.catalogue();
+  const steps: (() => BirthResultLike)[] = [];
+  if (mode === "like" && cat.previous !== null) {
+    steps.push(() => session.usePrevious());
+  } else {
+    const race = cat.races[Math.floor(random() * cat.races.length)];
+    const cls = cat.classes[Math.floor(random() * cat.classes.length)];
+    if (race === undefined || cls === undefined) return false;
+    steps.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll(), () => session.randomName());
+  }
+  for (const step of steps) {
+    const result = step();
+    if (!result.ok) {
+      log(`Squire left the next character to you: ${result.reason ?? "the game refused a step"}`);
+      return false;
+    }
+  }
+  const accepted = session.accept();
+  if (!accepted.ok) log(`Squire left the next character to you: ${accepted.reason ?? "the game refused it"}`);
+  return accepted.ok;
+}
+
+/** The host context a birth presenter receives, as far as this file reads it. */
+export interface BirthHost {
+  readonly prefs?: { get(): unknown };
+  readonly log: (msg: string) => void;
+}
+
+/** The presenter `plugin.birth` returns. */
+export function rollOnPresenter(
+  host: BirthHost,
+  store: MarkStore | null = sessionMarks(),
+  now: () => number = Date.now,
+  random: () => number = Math.random,
+): { show(session: BirthSessionLike): boolean | undefined } {
+  return {
+    show(session) {
+      if (!takeRollOn(store, now())) return undefined;
+      const mode = readConfig(host.prefs?.get()).rollOn;
+      if (mode === "wait") return undefined;
+      return rollOnBirth(session, mode, random, host.log) ? true : undefined;
+    },
+  };
+}

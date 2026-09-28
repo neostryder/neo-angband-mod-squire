@@ -27,7 +27,8 @@
     "ui:panel.mount",
     "saves:manage",
     "network:local",
-    "network:squire.rpgm.tools"
+    "network:squire.rpgm.tools",
+    "ui:birth.replace"
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",

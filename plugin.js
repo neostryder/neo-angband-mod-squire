@@ -2621,6 +2621,66 @@ function createDecisionLog(store, runId) {
   };
 }
 
+// src/birth.ts
+var ROLL_ON_KEY = "squire/rollOnAt";
+var ROLL_ON_WINDOW_MS = 12e4;
+function sessionMarks() {
+  try {
+    return typeof sessionStorage === "undefined" ? null : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+function markRollOn(store, now) {
+  try {
+    store?.setItem(ROLL_ON_KEY, String(now));
+  } catch {
+  }
+}
+function takeRollOn(store, now) {
+  try {
+    const raw = store?.getItem(ROLL_ON_KEY) ?? null;
+    if (raw === null) return false;
+    store?.removeItem(ROLL_ON_KEY);
+    const at = Number(raw);
+    return Number.isFinite(at) && now - at >= 0 && now - at <= ROLL_ON_WINDOW_MS;
+  } catch {
+    return false;
+  }
+}
+function rollOnBirth(session, mode, random, log) {
+  const cat = session.catalogue();
+  const steps2 = [];
+  if (mode === "like" && cat.previous !== null) {
+    steps2.push(() => session.usePrevious());
+  } else {
+    const race = cat.races[Math.floor(random() * cat.races.length)];
+    const cls = cat.classes[Math.floor(random() * cat.classes.length)];
+    if (race === void 0 || cls === void 0) return false;
+    steps2.push(() => session.chooseRace(race.name), () => session.chooseClass(cls.name), () => session.roll(), () => session.randomName());
+  }
+  for (const step of steps2) {
+    const result = step();
+    if (!result.ok) {
+      log(`Squire left the next character to you: ${result.reason ?? "the game refused a step"}`);
+      return false;
+    }
+  }
+  const accepted = session.accept();
+  if (!accepted.ok) log(`Squire left the next character to you: ${accepted.reason ?? "the game refused it"}`);
+  return accepted.ok;
+}
+function rollOnPresenter(host, store = sessionMarks(), now = Date.now, random = Math.random) {
+  return {
+    show(session) {
+      if (!takeRollOn(store, now())) return void 0;
+      const mode = readConfig(host.prefs?.get()).rollOn;
+      if (mode === "wait") return void 0;
+      return rollOnBirth(session, mode, random, host.log) ? true : void 0;
+    }
+  };
+}
+
 // src/memory/install.ts
 var KEY = "squire/install-id";
 var UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -3801,6 +3861,7 @@ function createRuntime(host, options = {}) {
     const create = host.saves?.create;
     if (create === void 0) return;
     const like = config.rollOn === "like" ? report.birth : void 0;
+    markRollOn(sessionMarks(), now());
     const result = await create.call(host.saves, like === void 0 ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
     if (!result.ok) host.log(`Squire could not start the next character: ${result.reason ?? "the game refused"}`);
   }
@@ -5011,6 +5072,11 @@ var plugin_default = {
    * Squire enabled, whether or not it has been handed over. */
   register(_host, ctx) {
     attachSquire(ctx, runtime(ctx));
+  },
+  /* Roll-on: accepts the one creation Squire asked for after a death, and
+   * declines every other, so the game shows its own birth screens. */
+  birth(ctx) {
+    return rollOnPresenter(ctx);
   },
   controller(ctx) {
     if (!characterAlreadyAutoplayed(ctx)) return void 0;

@@ -139,6 +139,7 @@ function otherGrantsUsed(): Set<string> {
     if (/\.registerPanelKind\b/u.test(text)) grants.add("ui:panel.mount");
     for (const m of text.matchAll(/events\?\.on\("([a-z-]+)"/gu)) if (m[1] !== undefined) grants.add(`event:${m[1]}`);
     if (/saves\?\.create\b/u.test(text)) grants.add("saves:manage");
+    if (/\brollOnPresenter\(/u.test(text)) grants.add("ui:birth.replace");
     if (/\bserverUrl\b/u.test(text)) grants.add("network:local");
   }
   return grants;

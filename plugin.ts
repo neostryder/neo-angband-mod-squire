@@ -47,6 +47,7 @@ import type { AgentController } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
+import { rollOnPresenter, type BirthHost } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
 
@@ -144,6 +145,12 @@ export default {
    * Squire enabled, whether or not it has been handed over. */
   register(_host: unknown, ctx: ControllerCtx & AttachHost): void {
     attachSquire(ctx, runtime(ctx));
+  },
+
+  /* Roll-on: accepts the one creation Squire asked for after a death, and
+   * declines every other, so the game shows its own birth screens. */
+  birth(ctx: BirthHost) {
+    return rollOnPresenter(ctx);
   },
 
   controller(ctx: ControllerCtx): AgentController | ControllerInstall | undefined {
