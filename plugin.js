@@ -1897,7 +1897,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (knownDownStairs(view, terrain).length > 0 && cfg.descend && (player.depth > 0 || recall === null && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
+  if (knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+   * or no depth yet to return to. Shopping comes first while there is gold. */
+  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   return out;
@@ -4508,7 +4510,7 @@ function createRuntime(host, options = {}) {
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
     const persona = character.persona ?? activePersona(config) ?? defaultPersona();
-    const lineageName = character.lineage ?? report.name;
+    const lineageName = character.lineage ?? (report.name.trim() === "" ? "Squire" : report.name);
     const lineage = config.lineages[lineageName];
     try {
       const storedApprentice = await store.get("squire/apprentice");

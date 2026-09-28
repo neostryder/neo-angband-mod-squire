@@ -377,6 +377,13 @@ describe("town goals", () => {
     const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, gold: 0 } });
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
   });
+
+  it("takes the town stairs with a recall scroll but no depth to return to", () => {
+    const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, maxDepth: 0, gold: 0 }, pack: ["a Scroll of Word of Recall"] });
+    const goals = asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal);
+    expect(goals).toContain("descend");
+    expect(goals).not.toContain("recall_dungeon");
+  });
 });
 
 describe("gear and detection", () => {

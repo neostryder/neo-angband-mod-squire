@@ -350,7 +350,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if (knownDownStairs(view, terrain).length > 0 && cfg.descend &&
-    (player.depth > 0 || (recall === null && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {
+    /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+     * or no depth yet to return to. Shopping comes first while there is gold. */
+    (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {
     add("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   return out;

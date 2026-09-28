@@ -464,7 +464,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
     const persona = character.persona ?? activePersona(config) ?? defaultPersona();
-    const lineageName = character.lineage ?? report.name;
+    /* A character can die nameless; its line still needs a name to be found by. */
+    const lineageName = character.lineage ?? (report.name.trim() === "" ? "Squire" : report.name);
     const lineage = config.lineages[lineageName];
     try {
       const storedApprentice = await store.get("squire/apprentice") as Apprentice | undefined;
