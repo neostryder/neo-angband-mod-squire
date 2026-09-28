@@ -62,18 +62,29 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         const store = view.stores().find((entry) => entry.feat === cell.feat);
         if (store === undefined) {
           visited.add(cell.feat);
+          log("shop: this store has no stock to read");
           return act.shopExit();
         }
         const pack = readPack(view);
         const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
-        if (sale !== undefined) return act.shopSell(sale.handle, sale.quantity);
+        if (sale !== undefined) {
+          log(`shop: selling ${sale.name} in the ${store.featName}`);
+          return act.shopSell(sale.handle, sale.quantity);
+        }
         const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
-        if (purchase !== undefined) return act.shopBuy(purchase.index, purchase.quantity);
+        if (purchase !== undefined) {
+          log(`shop: buying ${String(purchase.quantity)} ${purchase.name} in the ${store.featName}`);
+          return act.shopBuy(purchase.index, purchase.quantity);
+        }
         visited.add(cell.feat);
+        log(`shop: done in the ${store.featName}`);
         return act.shopExit();
       }
       const next = neededEntrances(view, terrain, persona, visited)[0];
-      if (next === undefined) return null;
+      if (next === undefined) {
+        log("shop: no shop left with anything needed");
+        return null;
+      }
       const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {} }, [next]);
       if (travel.kind === "step") return travel.command;
       /* A townsperson in the way is gone in a turn or two, so only a shop that

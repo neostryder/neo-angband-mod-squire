@@ -1026,6 +1026,23 @@ function castable(view) {
   }
   return out;
 }
+function studyable(view, tried = /* @__PURE__ */ new Set()) {
+  const level = view.player().level;
+  const carried = view.inventory().flatMap((item) => {
+    const name = shownName(item);
+    return name === null ? [] : [{ handle: item.handle, name }];
+  });
+  for (const book of view.spellbooks()) {
+    const item = carried.find((c) => book.name.length > 0 && c.name.includes(book.name));
+    if (item === void 0) continue;
+    const spells = [...book.spells].sort((a, b) => a.level - b.level);
+    for (const spell of spells) {
+      if (spell.learned || spell.level > level || tried.has(`${String(level)}:${String(spell.sidx)}`)) continue;
+      return { handle: item.handle, sidx: spell.sidx, spell: spell.name };
+    }
+  }
+  return null;
+}
 function readPack(view) {
   const heal = [];
   const phase = [];
@@ -1481,18 +1498,29 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
         const store = view.stores().find((entry) => entry.feat === cell2.feat);
         if (store === void 0) {
           visited.add(cell2.feat);
+          log("shop: this store has no stock to read");
           return act.shopExit();
         }
         const pack = readPack(view);
         const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
-        if (sale !== void 0) return act.shopSell(sale.handle, sale.quantity);
+        if (sale !== void 0) {
+          log(`shop: selling ${sale.name} in the ${store.featName}`);
+          return act.shopSell(sale.handle, sale.quantity);
+        }
         const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
-        if (purchase !== void 0) return act.shopBuy(purchase.index, purchase.quantity);
+        if (purchase !== void 0) {
+          log(`shop: buying ${String(purchase.quantity)} ${purchase.name} in the ${store.featName}`);
+          return act.shopBuy(purchase.index, purchase.quantity);
+        }
         visited.add(cell2.feat);
+        log(`shop: done in the ${store.featName}`);
         return act.shopExit();
       }
       const next = neededEntrances(view, terrain, persona, visited)[0];
-      if (next === void 0) return null;
+      if (next === void 0) {
+        log("shop: no shop left with anything needed");
+        return null;
+      }
       const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
       } }, [next]);
       if (travel.kind === "step") return travel.command;
@@ -1581,7 +1609,7 @@ function exposure(s) {
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set()) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set()) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -1644,6 +1672,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hungry(view) && s.pack.food[0] !== void 0) {
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
+  const study = studyable(view, triedStudies);
+  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 5)) {
+    add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
+  }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   if (frontiers(view, terrain).length > 0) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
@@ -1661,6 +1693,7 @@ function createGoalPlanner(options) {
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
   const visitedShops = /* @__PURE__ */ new Set();
+  const triedStudies = /* @__PURE__ */ new Set();
   const stalled = /* @__PURE__ */ new Map();
   function noteStalls(goal, plan) {
     let issued = 0;
@@ -1676,10 +1709,21 @@ function createGoalPlanner(options) {
   function context(view, act, progress, with_ = cfg) {
     return { view, act, terrain, cfg: with_, progress, log };
   }
+  let seenDepth = -1;
+  const seenOnLevel = /* @__PURE__ */ new Set();
+  function noteSeen(view) {
+    const depth = view.player().depth;
+    if (depth !== seenDepth) {
+      seenDepth = depth;
+      seenOnLevel.clear();
+    }
+    for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
+  }
   function watch(view) {
     const player = view.player();
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
-    return createWatcher(view, {
+    noteSeen(view);
+    const watcher = createWatcher(view, {
       /* Already under the line: crossing it again is not news, but every
        * further blow is, so the model is asked again after each one. */
       stopOnAnyDamage: hurt,
@@ -1687,6 +1731,8 @@ function createGoalPlanner(options) {
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction
     });
+    for (const id of seenOnLevel) watcher.acknowledge(id);
+    return watcher;
   }
   function watched(plan, view) {
     return { label: plan.label, watcher: watch(view), step: (v, act) => plan.step(v, act) };
@@ -1695,7 +1741,7 @@ function createGoalPlanner(options) {
     const progress = newProgress(view.player().depth);
     const player = view.player();
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
-    const missionCfg = hurt ? { ...with_, stopOnLowHealth: false } : with_;
+    const missionCfg = { ...with_, stopOnNewCreature: false, ...hurt ? { stopOnLowHealth: false } : {} };
     let begun = false;
     let done = false;
     return {
@@ -1810,6 +1856,12 @@ function createGoalPlanner(options) {
         });
       case "rest":
         return once("rest", view, (ctx) => ctx.act.rest());
+      case "study": {
+        const study = studyable(view, triedStudies);
+        if (study === null) return once("nothing to study", view, () => null);
+        triedStudies.add(`${String(view.player().level)}:${String(study.sidx)}`);
+        return once("study", view, (ctx) => ctx.act.raw("study", { handle: study.handle, spell: study.sidx }));
+      }
       case "eat": {
         const food = pack.food[0];
         return once("eat", view, (ctx) => food === void 0 ? null : ctx.act.eat(food.handle));
@@ -1869,10 +1921,11 @@ function createGoalPlanner(options) {
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
+      noteSeen(view);
       const s = situationOf(view);
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops).filter((offer) => !stalled.has(offer.goal));
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -1922,6 +1975,13 @@ function createGoalPlanner(options) {
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick2 = decide(answer, answers["in_character"], digest);
       if (pick2 === "none_of_these") {
+        const safest = [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+        const p = view.player();
+        const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
+        if (safest !== void 0 && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
+          log(`goal: none fit, taking the safest option (${safest.goal})`);
+          return { plan: noteStalls(safest.goal, build(safest.goal, view)) };
+        }
         log("goal: none fit, following the fixed errand order");
         return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
       }
@@ -3844,6 +3904,8 @@ function goalOfCommand(command, view) {
       return "pick_up";
     case "eat":
       return "eat";
+    case "study":
+      return "study";
     case "fire":
       return "shoot";
     case "throw":
@@ -3886,7 +3948,7 @@ function proceduralPick(offers, hpShare) {
     if (safe !== null) return safe;
   }
   if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 var LABEL = {
   fight: "fight in melee",
@@ -3901,6 +3963,7 @@ var LABEL = {
   retreat: "back away",
   rest: "rest",
   eat: "eat",
+  study: "learn a spell",
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",

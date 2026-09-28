@@ -129,6 +129,28 @@ describe("goal planner", () => {
     expect(p.trigger(w.view, choice.plan)).not.toBeNull();
   });
 
+  it("keeps a plan when a creature already seen on this level steps back into view", () => {
+    const dog = { grid: { x: 6, y: 1 }, race: "scruffy little dog", asleep: true };
+    const w = world({ map: CORRIDOR, monsters: [dog] });
+    const { p } = planner(w);
+    asked(p.ask(w.view));
+    w.setMonsters([{ ...dog, visible: false }]);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([dog]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("takes the safest option on none_of_these when the character is hurt", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 4, maxHp: 10 }, monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc", level: 7 }] });
+    const { p, logged } = planner(w);
+    const q = asked(p.ask(w.view));
+    const fallback = p.choose(pick("none_of_these"), q.context, w.view);
+    expect(fallback).toHaveProperty("plan");
+    const safest = [...q.context.offers].sort((a, b) => a.risk - b.risk)[0]!.goal;
+    expect(logged.join(" ")).toContain(`taking the safest option (${safest})`);
+  });
+
   it("calls a weak creature dangerous when one round could take the character's hit points", () => {
     const mercenary = { level: 0, raceFlags: [] };
     expect(threatIndex(mercenary, 1, 10)).toBe(0);
@@ -195,6 +217,17 @@ describe("items and spells", () => {
     const risk = (w: ReturnType<typeof world>) =>
       asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "fight")?.risk ?? 0;
     expect(risk(hurt)).toBeGreaterThan(risk(fresh));
+  });
+
+  it("offers to study an unlearned spell from a carried book, once per level", () => {
+    const w = world({ map: CORRIDOR, pack: ["a Book of Magic Spells [Magic for Beginners]"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((o) => o.goal)).toContain("study");
+    const choice = p.choose(pick("study"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "study", args: { handle: 1, spell: 0 } });
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("study");
   });
 
   it("offers food only when hungry", () => {

@@ -31,7 +31,7 @@ import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question } from "./brain.js";
-import { hungry, readPack, type Pack } from "./pack.js";
+import { hungry, readPack, studyable, type Pack } from "./pack.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
@@ -56,6 +56,7 @@ export type Goal =
   | "pick_up"
   | "explore"
   | "descend"
+  | "study"
   | "recall_town"
   | "shop"
   | "recall_dungeon";
@@ -234,7 +235,7 @@ function within(s: Situation, range: number): boolean {
 }
 
 /** The options that apply right now, each with its description and risk. */
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set()): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set()): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -299,6 +300,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
+  const study = studyable(view, triedStudies);
+  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 5)) {
+    add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
+  }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   if (frontiers(view, terrain).length > 0) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
@@ -319,6 +324,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
   const visitedShops = new Set<number>();
+  /* Studies already tried, as "level:spell", so a study the game refused is not repeated. */
+  const triedStudies = new Set<string>();
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
    * plan, so it is left out until the turn changes. */
@@ -343,10 +350,25 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return { view, act, terrain, cfg: with_, progress, log };
   }
 
+  /* Creatures seen on this level. One that steps out of the light and back is
+   * not news: at night in town that happens every few turns, and treating it
+   * as new ended every plan before it got anywhere. */
+  let seenDepth = -1;
+  const seenOnLevel = new Set<number>();
+  function noteSeen(view: AgentView): void {
+    const depth = view.player().depth;
+    if (depth !== seenDepth) {
+      seenDepth = depth;
+      seenOnLevel.clear();
+    }
+    for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
+  }
+
   function watch(view: AgentView): Watcher {
     const player = view.player();
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
-    return createWatcher(view, {
+    noteSeen(view);
+    const watcher = createWatcher(view, {
       /* Already under the line: crossing it again is not news, but every
        * further blow is, so the model is asked again after each one. */
       stopOnAnyDamage: hurt,
@@ -354,6 +376,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
     });
+    for (const id of seenOnLevel) watcher.acknowledge(id);
+    return watcher;
   }
 
   /** Town errands obey the same interruption rules as dungeon errands. */
@@ -368,7 +392,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     /* A plan chosen while already under the retreat line would otherwise end
      * before its first step. The outer watcher stops it on the next blow instead. */
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
-    const missionCfg = hurt ? { ...with_, stopOnLowHealth: false } : with_;
+    /* The plan's own watcher decides what counts as a new creature, using what
+     * was seen on this level, so the mission's watcher leaves that to it. */
+    const missionCfg = { ...with_, stopOnNewCreature: false, ...(hurt ? { stopOnLowHealth: false } : {}) };
     let begun = false;
     let done = false;
     return {
@@ -494,6 +520,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       case "rest":
         return once("rest", view, (ctx) => ctx.act.rest());
+      case "study": {
+        const study = studyable(view, triedStudies);
+        if (study === null) return once("nothing to study", view, () => null);
+        triedStudies.add(`${String(view.player().level)}:${String(study.sidx)}`);
+        return once("study", view, (ctx) => ctx.act.raw("study", { handle: study.handle, spell: study.sidx }));
+      }
       case "eat": {
         const food = pack.food[0];
         return once("eat", view, (ctx) => (food === undefined ? null : ctx.act.eat(food.handle)));
@@ -564,10 +596,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
+      noteSeen(view);
       const s = situationOf(view);
       const turn = view.turn();
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops).filter((offer) => !stalled.has(offer.goal));
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -632,6 +665,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick = decide(answer, answers["in_character"], digest);
       if (pick === "none_of_these") {
+        /* The errand order fights what is in front of it, which is the wrong
+         * fallback for a character in trouble. Then the safest offer stands in. */
+        const safest = [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+        const p = view.player();
+        const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
+        if (safest !== undefined && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
+          log(`goal: none fit, taking the safest option (${safest.goal})`);
+          return { plan: noteStalls(safest.goal, build(safest.goal, view)) };
+        }
         log("goal: none fit, following the fixed errand order");
         return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
       }

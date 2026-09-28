@@ -64,6 +64,8 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       return "pick_up";
     case "eat":
       return "eat";
+    case "study":
+      return "study";
     case "fire":
       return "shoot";
     case "throw":
@@ -111,7 +113,7 @@ export function proceduralPick(offers: readonly Offer[], hpShare: number): Goal 
     if (safe !== null) return safe;
   }
   if (fight !== undefined) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 
 /** What the apprentice noticed at one decision point. */
@@ -140,6 +142,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   retreat: "back away",
   rest: "rest",
   eat: "eat",
+  study: "learn a spell",
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",

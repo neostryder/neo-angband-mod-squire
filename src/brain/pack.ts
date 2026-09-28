@@ -108,6 +108,37 @@ function castable(view: AgentView): SpellView[] {
   return out;
 }
 
+/** A spell the character could learn now from a book it carries. */
+export interface Studyable {
+  readonly handle: number;
+  readonly sidx: number;
+  readonly spell: string;
+}
+
+/**
+ * The first spell worth studying: in a carried book (matched by the name the
+ * inventory shows), not yet learned, and at or below the character's level.
+ * The view does not say how many spells are left to learn, so a spell whose
+ * study already failed at this level is passed in as `tried` and skipped.
+ */
+export function studyable(view: AgentView, tried: ReadonlySet<string> = new Set()): Studyable | null {
+  const level = view.player().level;
+  const carried = view.inventory().flatMap((item) => {
+    const name = shownName(item);
+    return name === null ? [] : [{ handle: item.handle, name }];
+  });
+  for (const book of view.spellbooks()) {
+    const item = carried.find((c) => book.name.length > 0 && c.name.includes(book.name));
+    if (item === undefined) continue;
+    const spells = [...book.spells].sort((a, b) => a.level - b.level);
+    for (const spell of spells) {
+      if (spell.learned || spell.level > level || tried.has(`${String(level)}:${String(spell.sidx)}`)) continue;
+      return { handle: item.handle, sidx: spell.sidx, spell: spell.name };
+    }
+  }
+  return null;
+}
+
 /** Read the pack and the spell list. */
 export function readPack(view: AgentView): Pack {
   const heal: PackItem[] = [];

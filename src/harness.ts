@@ -129,7 +129,7 @@ export interface WorldSpec {
   /** Worn items, by shown name. */
   readonly worn?: readonly string[];
   /** Castable spells: name, index, mana and failure chance. */
-  readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number }[];
+  readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number; readonly learned?: boolean }[];
   readonly stores?: readonly StoreView[];
 }
 
@@ -309,7 +309,7 @@ export function world(spec: WorldSpec): World {
                 level: 1,
                 mana: sp.mana ?? 1,
                 fail: sp.fail ?? 20,
-                learned: true,
+                learned: sp.learned ?? true,
                 worked: true,
                 forgotten: false,
               })),
