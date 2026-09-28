@@ -81,6 +81,9 @@ export function standingOnHarm(view: AgentView, terrain: Terrain, at: Loc): bool
  * not make its neighbour a frontier. Without that the four map edges would each
  * read as an infinite supply of things left to explore and the errand would
  * never finish.
+ *
+ * A closed door with unknown grids beyond it is a frontier too. A room whose
+ * only exits are doors would otherwise read as fully explored.
  */
 export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   const bounds = view.mapBounds();
@@ -88,7 +91,7 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
-      if (!isKnownGround(view, terrain, at)) continue;
+      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at)) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);
         if (cell !== null && !cell.known) {

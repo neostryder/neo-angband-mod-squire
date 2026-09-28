@@ -281,7 +281,7 @@ function frontiers(view, terrain) {
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at = { x, y };
-      if (!isKnownGround(view, terrain, at)) continue;
+      if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at)) continue;
       for (const there of neighbours(at)) {
         const cell2 = cellAt(view, there);
         if (cell2 !== null && !cell2.known) {

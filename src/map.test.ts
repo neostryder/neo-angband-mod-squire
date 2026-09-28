@@ -93,6 +93,11 @@ describe("frontiers", () => {
     expect(frontiers(w.view, w.terrain)).toEqual([]);
   });
 
+  it("include a closed door with unexplored ground beyond it", () => {
+    const w = world({ map: ["#####", "#.@.+  ", "#####"] });
+    expect(frontiers(w.view, w.terrain)).toEqual([{ x: 4, y: 1 }]);
+  });
+
   it("are empty when everything reachable has been seen", () => {
     const w = world({ map: ["#####", "#...#", "#.@.#", "#####"] });
     expect(frontiers(w.view, w.terrain)).toEqual([]);
