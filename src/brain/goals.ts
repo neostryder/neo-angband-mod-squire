@@ -147,6 +147,7 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
   "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
+  "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
   "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
   "Wear better gear when it is safe to change equipment.",
   "Map or detect a new dungeon level before exploring it when a source is available.",
