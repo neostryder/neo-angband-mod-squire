@@ -127,6 +127,7 @@ function createWatcher(view, options) {
   const known = visibleIds(view);
   const player = view.player();
   let lastHp = player.hp;
+  const startHp = player.hp;
   const startingDepth = player.depth;
   let afflictions = new Set(afflictionsOf(player.status));
   return {
@@ -161,6 +162,13 @@ function createWatcher(view, options) {
         return {
           reason: "hurt",
           detail: `Hit points are down to ${String(hp)} of ${String(p.maxHp)}.`
+        };
+      }
+      const share = options.stopOnDamageShare;
+      if (share !== void 0 && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share || startHp - hp >= p.maxHp * share * 2)) {
+        return {
+          reason: "hurt",
+          detail: `The character took ${String(lost)} damage.`
         };
       }
       if (options.stopOnAnyDamage && lost > 0) {
@@ -1789,6 +1797,7 @@ function threatIndex(monster, characterLevel, characterHp = Infinity) {
 var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
+var DAMAGE_SHARE_REDECIDE = 0.1;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
@@ -1992,7 +2001,9 @@ function createGoalPlanner(options) {
       stopOnAnyDamage: hurt,
       stopOnNewCreature: true,
       stopOnLowHealth: !hurt,
-      retreatFraction: cfg.retreatFraction
+      retreatFraction: cfg.retreatFraction,
+      /* Above the line, a big blow or a run of smaller ones is news too. */
+      stopOnDamageShare: DAMAGE_SHARE_REDECIDE
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;

@@ -129,6 +129,8 @@ const ESCAPE_BELOW_HP = 0.7;
 
 /** Rough chance a band kills a healthy character that stands and fights it. */
 const BAND_RISK: readonly number[] = [0.03, 0.15, 0.4, 0.75];
+/** One blow of this share of maximum hit points, or twice it in all since the plan began, sends the decision back to the model. */
+const DAMAGE_SHARE_REDECIDE = 0.1;
 
 /** Rules of the game the model needs for this decision, in a few plain lines. */
 const HANDBOOK: readonly string[] = Object.freeze([
@@ -478,6 +480,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       stopOnNewCreature: true,
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
+      /* Above the line, a big blow or a run of smaller ones is news too. */
+      stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;

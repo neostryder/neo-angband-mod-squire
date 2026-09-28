@@ -12,6 +12,23 @@ const WATCH: WatchOptions = {
 };
 
 describe("createWatcher", () => {
+  it("stops for a big blow or a run of small ones when asked to", () => {
+    const opts: WatchOptions = { ...WATCH, stopOnAnyDamage: false, stopOnLowHealth: false, stopOnDamageShare: 0.1 };
+    const w = world({ map: ROOM, player: { hp: 100, maxHp: 100 } });
+    const watcher = createWatcher(w.view, opts);
+    w.setPlayer({ hp: 95 });
+    expect(watcher.check(w.view)).toBeNull();
+    w.setPlayer({ hp: 84 });
+    expect(watcher.check(w.view)?.reason).toBe("hurt");
+    const small = createWatcher(w.view, opts);
+    for (const hp of [80, 76, 72, 68]) {
+      w.setPlayer({ hp });
+      expect(small.check(w.view)).toBeNull();
+    }
+    w.setPlayer({ hp: 64 });
+    expect(small.check(w.view)?.reason).toBe("hurt");
+  });
+
   it("reports nothing when nothing has changed", () => {
     const w = world({ map: ROOM });
     const watcher = createWatcher(w.view, WATCH);

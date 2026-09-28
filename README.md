@@ -26,7 +26,7 @@ A character handed to any autoplayer is marked for good, and the game keeps it o
 
 ## How Squire decides
 
-Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door or Teleportation, back away, rest, eat, pick something up, study a new spell, wear better gear, map a new level, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, a hit lands, or hit points cross a line.
+Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door or Teleportation, back away, rest, eat, pick something up, study a new spell, wear better gear, map a new level, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, one hard hit or several smaller ones land, or hit points cross a line.
 
 Squire only knows what the character knows:
 

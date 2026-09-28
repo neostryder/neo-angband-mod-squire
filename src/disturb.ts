@@ -41,6 +41,11 @@ export interface WatchOptions {
   readonly stopOnLowHealth: boolean;
   /** The share of maximum hit points that counts as the retreat line. */
   readonly retreatFraction: number;
+  /**
+   * End when one blow takes at least this share of maximum hit points, or all
+   * the damage since the start takes twice it. Unset means only the rules above.
+   */
+  readonly stopOnDamageShare?: number;
 }
 
 /** A running disturbance check. */
@@ -94,6 +99,7 @@ export function createWatcher(view: AgentView, options: WatchOptions): Watcher {
   const known = visibleIds(view);
   const player = view.player();
   let lastHp = player.hp;
+  const startHp = player.hp;
   const startingDepth = player.depth;
   let afflictions = new Set(afflictionsOf(player.status));
 
@@ -134,6 +140,14 @@ export function createWatcher(view: AgentView, options: WatchOptions): Watcher {
         return {
           reason: "hurt",
           detail: `Hit points are down to ${String(hp)} of ${String(p.maxHp)}.`,
+        };
+      }
+
+      const share = options.stopOnDamageShare;
+      if (share !== undefined && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share || startHp - hp >= p.maxHp * share * 2)) {
+        return {
+          reason: "hurt",
+          detail: `The character took ${String(lost)} damage.`,
         };
       }
 
