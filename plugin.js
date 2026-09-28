@@ -1823,7 +1823,14 @@ function reachableFrontier(view, terrain) {
   const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
   return Number.isFinite(field.distance(view.player().grid));
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false) {
+var RECALL_WAIT_TURNS = 400;
+function recallPending(player, read, turn) {
+  const reported = player.recall;
+  if (typeof reported === "number") return reported > 0;
+  const depth = player.depth;
+  return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
+}
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -1835,7 +1842,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
   const tripPays = starving || player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD;
-  if (player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
+  if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
@@ -1844,7 +1851,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add2("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
-    } else if (recall !== null && player.maxDepth > 1) {
+    } else if (!recallActive && recall !== null && player.maxDepth > 1) {
       add2("recall_dungeon", `Read Word of Recall to return to the deepest level reached, ${String(player.maxDepth * 50)} ft.`, townRisk);
     }
   }
@@ -1921,6 +1928,7 @@ function createGoalPlanner(options) {
   const visitedShops = /* @__PURE__ */ new Set();
   const triedStudies = /* @__PURE__ */ new Set();
   let decisionDepth = null;
+  let recallRead = null;
   const stalled = /* @__PURE__ */ new Map();
   function noteStalls(goal, plan) {
     let issued = 0;
@@ -2031,7 +2039,9 @@ function createGoalPlanner(options) {
       case "recall_town":
       case "recall_dungeon": {
         const item = recallItem(view);
-        return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
+        if (item === null) return once("no recall scroll", view, () => null);
+        recallRead = { turn: view.turn(), depth: view.player().depth };
+        return watched(recallPlan(item), view);
       }
       case "shop":
         return watched(townTripPlan(terrain, personaOf(), visitedShops, log), view);
@@ -2168,7 +2178,7 @@ function createGoalPlanner(options) {
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel).filter((offer) => !stalled.has(offer.goal));
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }

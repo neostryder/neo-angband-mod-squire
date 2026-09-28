@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { createGoalPlanner, healthBand, threatIndex, type GoalDigest } from "./goals.js";
+import { createGoalPlanner, healthBand, RECALL_WAIT_TURNS, recallPending, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import type { Question } from "./brain.js";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
@@ -350,6 +350,23 @@ describe("town goals", () => {
     const w = world({ map: CORRIDOR, player: { depth: 6, maxDepth: 6, gold: 300 }, pack: ["a Scroll of Word of Recall"] });
     const q = asked(planner(w).p.ask(w.view));
     expect(q.context.offers.find((offer) => offer.goal === "recall_town")?.criteria).toContain("low on Cure Light Wounds");
+  });
+
+  it("does not read recall again while one is under way", () => {
+    const w = world({ map: CORRIDOR, player: { depth: 6, maxDepth: 6, gold: 300 }, pack: ["a Scroll of Word of Recall", "a Scroll of Word of Recall"] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("recall_town"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(asked(p.ask(w.view)).context.offers.map((offer) => offer.goal)).not.toContain("recall_town");
+  });
+
+  it("trusts the recall timer when the game reports one", () => {
+    expect(recallPending({ depth: 6, recall: 12 }, null, 0)).toBe(true);
+    expect(recallPending({ depth: 6, recall: 0 }, { turn: 0, depth: 6 }, 10)).toBe(false);
+    expect(recallPending({ depth: 6 }, { turn: 0, depth: 6 }, 10)).toBe(true);
+    expect(recallPending({ depth: 0 }, { turn: 0, depth: 6 }, 10)).toBe(false);
+    expect(recallPending({ depth: 6 }, { turn: 0, depth: 6 }, RECALL_WAIT_TURNS + 1)).toBe(false);
   });
 
   it("does not recall home near the surface or with no gold to spend", () => {

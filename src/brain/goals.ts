@@ -259,7 +259,27 @@ function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
 }
 
 /** The options that apply right now, each with its description and risk. */
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false): Offer[] {
+/** Game turns to wait for a recall to fire before trusting it failed: the delay is 15 to 34 player turns of 10 game turns each. */
+export const RECALL_WAIT_TURNS = 400;
+
+export interface RecallRead {
+  readonly turn: number;
+  readonly depth: number;
+}
+
+/**
+ * Whether a Word of Recall is under way. Newer games report the turns left on
+ * the player view; on older ones Squire goes by its own last reading, which
+ * stops counting once the depth changes or the wait has run out.
+ */
+export function recallPending(player: object, read: RecallRead | null, turn: number): boolean {
+  const reported = (player as { recall?: unknown }).recall;
+  if (typeof reported === "number") return reported > 0;
+  const depth = (player as { depth?: unknown }).depth;
+  return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
+}
+
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -276,7 +296,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
    * the same shortage. Starving with no food is the exception, since food is cheap. */
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
   const tripPays = starving || (player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD);
-  if (player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
+  /* A second reading cancels a recall already under way, so none is offered while one is pending. */
+  if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
@@ -285,7 +306,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
-    } else if (recall !== null && player.maxDepth > 1) {
+    } else if (!recallActive && recall !== null && player.maxDepth > 1) {
       add("recall_dungeon", `Read Word of Recall to return to the deepest level reached, ${String(player.maxDepth * 50)} ft.`, townRisk);
     }
   }
@@ -370,6 +391,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /* Studies already tried, as "level:spell", so a study the game refused is not repeated. */
   const triedStudies = new Set<string>();
   let decisionDepth: number | null = null;
+  /* When and where Squire last read Word of Recall, for games whose view does not report a pending recall. */
+  let recallRead: RecallRead | null = null;
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
    * plan, so it is left out until the turn changes. */
@@ -515,7 +538,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "recall_town":
       case "recall_dungeon": {
         const item = recallItem(view);
-        return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
+        if (item === null) return once("no recall scroll", view, () => null);
+        recallRead = { turn: view.turn(), depth: view.player().depth };
+        return watched(recallPlan(item), view);
       }
       case "shop":
         return watched(townTripPlan(terrain, personaOf(), visitedShops, log), view);
@@ -663,7 +688,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel).filter((offer) => !stalled.has(offer.goal));
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
