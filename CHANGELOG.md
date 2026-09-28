@@ -21,7 +21,7 @@ Fixed.
 
 ### Added
 
-- [Visible] **Squire can ask Jev what to do.** With a Jev API key set, Squire asks Jev which goal to pursue next (fight, explore, rest, back away, pick up or take the stairs) and plays on until you take the keyboard back. If Jev cannot be reached, Squire tries again a few times, then stops and tells you how to resume. Without a key, Squire runs its errands as before.
+- [Visible] **Squire can ask Jev what to do.** With a Jev API key set, Squire asks Jev what to do next and plays on until you take the keyboard back. Jev picks from what makes sense at that moment: fight, shoot, throw oil, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door or Teleportation, back away, rest, eat, pick up, explore or take the stairs. Squire only uses items by the names you can see, so an unidentified potion stays a mystery to it too. If Jev cannot be reached, Squire tries again a few times, then stops and tells you how to resume. Without a key, Squire runs its errands as before.
 
 ### Removed
 

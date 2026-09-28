@@ -1,0 +1,177 @@
+/**
+ * What the character is carrying that matters in a fight, read from the names
+ * the inventory shows.
+ *
+ * The item view also carries the kind's raw name, which names an unidentified
+ * potion's real kind. Squire reads only the shown name, so an unknown flavour
+ * stays unknown to it, as it does to the player. An item with no shown name is
+ * skipped.
+ */
+
+import type { AgentView, ItemView, SpellView } from "@rpgm-tools/neo-angband-core";
+
+/** The food counter's upper edge for the Hungry grade: grade 15 times food_value 100 (player_timed.txt). */
+export const HUNGRY_BELOW = 1500;
+
+/** One item Squire can use, with how strong it is within its kind. */
+export interface PackItem {
+  readonly handle: number;
+  readonly name: string;
+  /** Higher is stronger. For healing, the potion's rank from Cure Light Wounds up. */
+  readonly power: number;
+}
+
+/** One spell Squire can cast now. */
+export interface CastableSpell {
+  readonly sidx: number;
+  readonly name: string;
+  readonly fail: number;
+  readonly mana: number;
+  readonly power: number;
+}
+
+export interface Pack {
+  readonly heal: readonly PackItem[];
+  readonly phase: readonly PackItem[];
+  readonly teleport: readonly PackItem[];
+  readonly oil: readonly PackItem[];
+  readonly attackWand: readonly PackItem[];
+  readonly ammo: readonly PackItem[];
+  readonly food: readonly PackItem[];
+  readonly launcher: boolean;
+  readonly attackSpell: readonly CastableSpell[];
+  readonly healSpell: readonly CastableSpell[];
+  readonly escapeSpell: readonly CastableSpell[];
+}
+
+const HEAL_POTIONS: readonly [RegExp, number][] = [
+  [/\bPotions? of Life\b/i, 6],
+  [/\bPotions? of \*Healing\*/i, 5],
+  [/\bPotions? of Healing\b/i, 4],
+  [/\bPotions? of Cure Critical Wounds\b/i, 3],
+  [/\bPotions? of Cure Serious Wounds\b/i, 2],
+  [/\bPotions? of Cure Light Wounds\b/i, 1],
+];
+
+const ATTACK_WANDS: readonly [RegExp, number][] = [
+  [/\bWands? of Magic Missile\b/i, 1],
+  [/\bWands? of Stinking Cloud\b/i, 1],
+  [/\bWands? of (Lightning|Frost|Fire|Acid) Bolt\b/i, 2],
+  [/\bWands? of Stone to Mud\b/i, 0],
+  [/\bWands? of (Lightning|Frost|Fire|Acid) Ball\b/i, 3],
+  [/\bWands? of (Drain Life|Annihilation|Dragon's (Flame|Frost|Breath))\b/i, 4],
+];
+
+/** Attack spell names across the classes, with a rough strength. */
+const ATTACK_SPELLS: readonly [RegExp, number][] = [
+  [/^(Magic Missile|Nether Bolt|Stinking Cloud)$/i, 1],
+  [/^(Frost Bolt|Fire Bolt|Acid Bolt|Lightning Strike|Orb of Draining|Crush|Spear of Light)$/i, 2],
+  [/^(Frost Ball|Fire Ball|Acid Spray|Mana Bolt|Thrust Away|Disenchant|Dispel Evil|Holy Word)$/i, 3],
+  [/^(Mana Storm|Meteor Swarm|Rift|Unleash Chaos|Annihilate)$/i, 4],
+];
+
+const HEAL_SPELLS: readonly [RegExp, number][] = [
+  [/^(Minor Healing|Cure Light Wounds)$/i, 1],
+  [/^(Healing|Cure Serious Wounds|Heal)$/i, 3],
+];
+
+const ESCAPE_SPELLS: readonly RegExp[] = [/^(Phase Door|Blink|Teleport Self|Portal|Shadow Shift|Warp)$/i];
+
+function shownName(item: ItemView): string | null {
+  const name = (item as { readonly name?: unknown }).name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+
+function rank(name: string, table: readonly [RegExp, number][]): number | null {
+  for (const [re, power] of table) if (re.test(name)) return power;
+  return null;
+}
+
+/** A device or stack reporting it is empty: "(0 charges)". */
+function empty(name: string): boolean {
+  return /\(0 charges?\)/i.test(name);
+}
+
+function byPower<T extends { readonly power: number }>(list: T[]): T[] {
+  return list.sort((a, b) => b.power - a.power);
+}
+
+/** Spells castable now: learned, not forgotten, affordable and not too likely to fail. */
+function castable(view: AgentView): SpellView[] {
+  const sp = view.player().sp;
+  const out: SpellView[] = [];
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (spell.learned && !spell.forgotten && spell.mana <= sp && spell.fail <= 50) out.push(spell);
+    }
+  }
+  return out;
+}
+
+/** Read the pack and the spell list. */
+export function readPack(view: AgentView): Pack {
+  const heal: PackItem[] = [];
+  const phase: PackItem[] = [];
+  const teleport: PackItem[] = [];
+  const oil: PackItem[] = [];
+  const attackWand: PackItem[] = [];
+  const ammo: PackItem[] = [];
+  const food: PackItem[] = [];
+
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null) continue;
+    const entry = (power: number): PackItem => ({ handle: item.handle, name, power });
+    const h = rank(name, HEAL_POTIONS);
+    if (h !== null) heal.push(entry(h));
+    else if (/\bScrolls? of Phase Door\b/i.test(name)) phase.push(entry(1));
+    else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
+      teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
+    else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
+      ammo.push(entry(1));
+    } else if (/\b(Rations? of Food|Slime Molds?|Elvish Waybread|Hard Biscuits?|Honey-cakes?|Flasks? of Whisky|Apples?|Strips? of Venison)\b/i.test(name)) {
+      food.push(entry(1));
+    } else {
+      const w = rank(name, ATTACK_WANDS);
+      if (w !== null && w > 0 && !empty(name)) attackWand.push(entry(w));
+    }
+  }
+
+  const launcher = view.equipment().some((item) => {
+    if (item === null) return false;
+    const name = shownName(item);
+    return name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow|Bow)\b/i.test(name);
+  });
+
+  const attackSpell: CastableSpell[] = [];
+  const healSpell: CastableSpell[] = [];
+  const escapeSpell: CastableSpell[] = [];
+  for (const spell of castable(view)) {
+    const entry = (power: number): CastableSpell => ({ sidx: spell.sidx, name: spell.name, fail: spell.fail, mana: spell.mana, power });
+    const a = rank(spell.name, ATTACK_SPELLS);
+    const hs = rank(spell.name, HEAL_SPELLS);
+    if (a !== null) attackSpell.push(entry(a));
+    else if (hs !== null) healSpell.push(entry(hs));
+    else if (ESCAPE_SPELLS.some((re) => re.test(spell.name))) escapeSpell.push(entry(1));
+  }
+
+  return {
+    heal: byPower(heal),
+    phase,
+    teleport: byPower(teleport),
+    oil,
+    attackWand: byPower(attackWand),
+    ammo,
+    food,
+    launcher,
+    attackSpell: byPower(attackSpell),
+    healSpell: byPower(healSpell),
+    escapeSpell,
+  };
+}
+
+/** Whether the character is hungry enough to eat. */
+export function hungry(view: AgentView): boolean {
+  return view.player().status.food < HUNGRY_BELOW;
+}

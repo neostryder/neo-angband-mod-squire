@@ -109,6 +109,17 @@ export interface WorldSpec {
   readonly player?: PlayerSpec;
   readonly monsters?: readonly MonsterSpec[];
   readonly target?: TargetView | null;
+  /** Carried items, by the name the inventory shows. Handles count up from 1. */
+  readonly pack?: readonly string[];
+  /** Worn items, by shown name. */
+  readonly worn?: readonly string[];
+  /** Castable spells: name, index, mana and failure chance. */
+  readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number }[];
+}
+
+/** An item as the inventory would show it, with only the fields the tests read. */
+export function itemNamed(name: string, handle: number): ItemView {
+  return { handle, name, label: name, tval: 0, sval: 0, pval: 0, number: 1, weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
 }
 
 /** A built world, plus what the errands did to it. */
@@ -257,13 +268,33 @@ export function world(spec: WorldSpec): World {
       };
     },
     mapBounds: () => ({ width, height }),
-    inventory: (): ItemView[] => [],
-    equipment: (): Array<ItemView | null> => [],
+    inventory: (): ItemView[] => (spec.pack ?? []).map((name, i) => itemNamed(name, i + 1)),
+    equipment: (): Array<ItemView | null> => (spec.worn ?? []).map((name, i) => itemNamed(name, 100 + i)),
     floorItems: (): ItemView[] => [],
     target: (): TargetView | null => spec.target ?? null,
     messages: (): string[] => [],
     stores: (): StoreView[] => [],
-    spellbooks: (): SpellbookView[] => [],
+    spellbooks: (): SpellbookView[] =>
+      spec.spells === undefined
+        ? []
+        : [
+            {
+              tval: 0,
+              name: "Magic for Beginners",
+              realm: "arcane",
+              spells: spec.spells.map((sp) => ({
+                name: sp.name,
+                sidx: sp.sidx,
+                bidx: 0,
+                level: 1,
+                mana: sp.mana ?? 1,
+                fail: sp.fail ?? 20,
+                learned: true,
+                worked: true,
+                forgotten: false,
+              })),
+            } as unknown as SpellbookView,
+          ],
     constants: (): GameConstants => ({}) as GameConstants,
   };
 

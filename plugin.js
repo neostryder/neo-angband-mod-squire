@@ -981,18 +981,125 @@ function createBrain(deps) {
   };
 }
 
+// src/brain/pack.ts
+var HUNGRY_BELOW = 1500;
+var HEAL_POTIONS = [
+  [/\bPotions? of Life\b/i, 6],
+  [/\bPotions? of \*Healing\*/i, 5],
+  [/\bPotions? of Healing\b/i, 4],
+  [/\bPotions? of Cure Critical Wounds\b/i, 3],
+  [/\bPotions? of Cure Serious Wounds\b/i, 2],
+  [/\bPotions? of Cure Light Wounds\b/i, 1]
+];
+var ATTACK_WANDS = [
+  [/\bWands? of Magic Missile\b/i, 1],
+  [/\bWands? of Stinking Cloud\b/i, 1],
+  [/\bWands? of (Lightning|Frost|Fire|Acid) Bolt\b/i, 2],
+  [/\bWands? of Stone to Mud\b/i, 0],
+  [/\bWands? of (Lightning|Frost|Fire|Acid) Ball\b/i, 3],
+  [/\bWands? of (Drain Life|Annihilation|Dragon's (Flame|Frost|Breath))\b/i, 4]
+];
+var ATTACK_SPELLS = [
+  [/^(Magic Missile|Nether Bolt|Stinking Cloud)$/i, 1],
+  [/^(Frost Bolt|Fire Bolt|Acid Bolt|Lightning Strike|Orb of Draining|Crush|Spear of Light)$/i, 2],
+  [/^(Frost Ball|Fire Ball|Acid Spray|Mana Bolt|Thrust Away|Disenchant|Dispel Evil|Holy Word)$/i, 3],
+  [/^(Mana Storm|Meteor Swarm|Rift|Unleash Chaos|Annihilate)$/i, 4]
+];
+var HEAL_SPELLS = [
+  [/^(Minor Healing|Cure Light Wounds)$/i, 1],
+  [/^(Healing|Cure Serious Wounds|Heal)$/i, 3]
+];
+var ESCAPE_SPELLS = [/^(Phase Door|Blink|Teleport Self|Portal|Shadow Shift|Warp)$/i];
+function shownName(item) {
+  const name = item.name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+function rank(name, table) {
+  for (const [re, power] of table) if (re.test(name)) return power;
+  return null;
+}
+function empty(name) {
+  return /\(0 charges?\)/i.test(name);
+}
+function byPower(list) {
+  return list.sort((a, b) => b.power - a.power);
+}
+function castable(view) {
+  const sp = view.player().sp;
+  const out = [];
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (spell.learned && !spell.forgotten && spell.mana <= sp && spell.fail <= 50) out.push(spell);
+    }
+  }
+  return out;
+}
+function readPack(view) {
+  const heal = [];
+  const phase = [];
+  const teleport = [];
+  const oil = [];
+  const attackWand = [];
+  const ammo = [];
+  const food = [];
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null) continue;
+    const entry = (power) => ({ handle: item.handle, name, power });
+    const h = rank(name, HEAL_POTIONS);
+    if (h !== null) heal.push(entry(h));
+    else if (/\bScrolls? of Phase Door\b/i.test(name)) phase.push(entry(1));
+    else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
+      teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
+    else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
+      ammo.push(entry(1));
+    } else if (/\b(Rations? of Food|Slime Molds?|Elvish Waybread|Hard Biscuits?|Honey-cakes?|Flasks? of Whisky|Apples?|Strips? of Venison)\b/i.test(name)) {
+      food.push(entry(1));
+    } else {
+      const w = rank(name, ATTACK_WANDS);
+      if (w !== null && w > 0 && !empty(name)) attackWand.push(entry(w));
+    }
+  }
+  const launcher = view.equipment().some((item) => {
+    if (item === null) return false;
+    const name = shownName(item);
+    return name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow|Bow)\b/i.test(name);
+  });
+  const attackSpell = [];
+  const healSpell = [];
+  const escapeSpell = [];
+  for (const spell of castable(view)) {
+    const entry = (power) => ({ sidx: spell.sidx, name: spell.name, fail: spell.fail, mana: spell.mana, power });
+    const a = rank(spell.name, ATTACK_SPELLS);
+    const hs = rank(spell.name, HEAL_SPELLS);
+    if (a !== null) attackSpell.push(entry(a));
+    else if (hs !== null) healSpell.push(entry(hs));
+    else if (ESCAPE_SPELLS.some((re) => re.test(spell.name))) escapeSpell.push(entry(1));
+  }
+  return {
+    heal: byPower(heal),
+    phase,
+    teleport: byPower(teleport),
+    oil,
+    attackWand: byPower(attackWand),
+    ammo,
+    food,
+    launcher,
+    attackSpell: byPower(attackSpell),
+    healSpell: byPower(healSpell),
+    escapeSpell
+  };
+}
+function hungry(view) {
+  return view.player().status.food < HUNGRY_BELOW;
+}
+
 // src/brain/goals.ts
-var GOAL_CRITERIA = Object.freeze({
-  fight: "Attack the nearest creature Squire can reach, and keep fighting until it is dead or something changes.",
-  explore: "Walk toward the nearest unexplored ground on this level. Not for when an awake creature is a real threat.",
-  descend: "Walk to a known down staircase and take it to the next level. Not for when the character is badly hurt.",
-  retreat: "Step away from the awake creatures in sight, to gain distance before they can attack.",
-  rest: "Rest until hit points and mana recover. Only safe with nothing awake in sight.",
-  pick_up: "Pick up the object on the floor under the character."
-});
-var NONE_OF_THESE = "No offered goal fits. Squire falls back to its fixed errand order for a few steps.";
+var NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 var FALLBACK_STEPS = 8;
 var RETREAT_STEPS = 4;
+var MISSILE_RANGE = 10;
 function healthBand(hp, maxHp) {
   if (maxHp <= 0) return "unknown";
   const share = hp / maxHp;
@@ -1001,17 +1108,109 @@ function healthBand(hp, maxHp) {
   if (share >= 0.35) return "badly hurt";
   return "near death";
 }
-function threatBand(monsterLevel, characterLevel) {
-  if (monsterLevel * 2 <= characterLevel) return "an easy kill";
-  if (monsterLevel <= characterLevel) return "a fair fight";
-  if (monsterLevel <= characterLevel + 5) return "dangerous";
-  return "deadly";
+var THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"];
+function threatIndex(monster, characterLevel) {
+  let band;
+  if (monster.level * 2 <= characterLevel) band = 0;
+  else if (monster.level <= characterLevel) band = 1;
+  else if (monster.level <= characterLevel + 5) band = 2;
+  else band = 3;
+  if (monster.raceFlags.includes("UNIQUE")) band = Math.min(3, band + 1);
+  return band;
 }
+var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
-  "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought."
+  "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
+  "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
+  "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character."
 ]);
+function situationOf(view) {
+  const player = view.player();
+  const monsters = view.monsters();
+  const awake = awakeInSight(monsters);
+  const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
+  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level)), -1);
+  return {
+    view,
+    pack: readPack(view),
+    awake,
+    target,
+    worst,
+    hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1
+  };
+}
+function clamp01(n) {
+  return Math.max(0, Math.min(1, n));
+}
+function fightRisk(s) {
+  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level);
+  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4));
+}
+function exposure(s) {
+  if (s.worst < 0) return 0.01;
+  return clamp01((BAND_RISK[s.worst] ?? 0.75) * (1 - s.hpShare) * 1.2);
+}
+function within(s, range) {
+  return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
+}
+function offersFor(s, cfg, terrain) {
+  const view = s.view;
+  const player = view.player();
+  const at = player.grid;
+  const hurt = player.hp < player.maxHp;
+  const out = [];
+  const add2 = (goal, criteria, risk) => out.push({ goal, criteria, risk: clamp01(risk) });
+  if (s.target !== null) {
+    add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
+    const ranged = within(s, MISSILE_RANGE);
+    if (ranged && s.pack.launcher && s.pack.ammo[0] !== void 0) {
+      add2("shoot", `Fire ${s.pack.ammo[0].name} at the ${s.target.race} with the equipped launcher.`, fightRisk(s) * 0.7);
+    }
+    if (ranged && s.pack.oil[0] !== void 0) {
+      add2("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game.`, fightRisk(s) * 0.7);
+    }
+    if (ranged && s.pack.attackWand[0] !== void 0) {
+      add2("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, fightRisk(s) * 0.65);
+    }
+    const spell = s.pack.attackSpell[0];
+    if (ranged && spell !== void 0) {
+      add2("cast_attack", `Cast ${spell.name} at the ${s.target.race} (${String(spell.fail)}% chance to fail).`, fightRisk(s) * 0.65);
+    }
+  }
+  if (hurt && s.pack.heal[0] !== void 0) {
+    add2("heal", `Drink ${s.pack.heal[0].name} to restore hit points.`, exposure(s) * 0.5);
+  }
+  const healSpell = s.pack.healSpell[0];
+  if (hurt && healSpell !== void 0) {
+    add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
+  }
+  if (s.awake.length > 0) {
+    if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
+      const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
+      add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
+    }
+    if (s.pack.teleport[0] !== void 0) {
+      add2("teleport", `Use ${s.pack.teleport[0].name} to escape far from every creature in sight.`, exposure(s) * 0.2);
+    }
+    add2("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
+  }
+  if (s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
+    add2("rest", "Rest until hit points and mana recover.", 0.01);
+  }
+  if (hungry(view) && s.pack.food[0] !== void 0) {
+    add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
+  }
+  if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
+  if (frontiers(view, terrain).length > 0) {
+    add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
+  }
+  if (knownDownStairs(view, terrain).length > 0 && cfg.descend) {
+    add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
+  }
+  return out;
+}
 function createGoalPlanner(options) {
   const { cfg, terrain, log } = options;
   const fightCfg = { ...cfg, wakeSleepers: true };
@@ -1074,68 +1273,110 @@ function createGoalPlanner(options) {
       }
     };
   }
+  function once(label, view, command) {
+    return stepsPlan(label, view, (ctx, i) => i === 0 ? command(ctx) : null);
+  }
+  function atTarget(label, view, command) {
+    return once(label, view, (ctx) => {
+      const s = situationOf(ctx.view);
+      if (s.target === null) return null;
+      if (!ctx.act.setTargetMonster(s.target.id)) return null;
+      return command(ctx);
+    });
+  }
   function build(goal, view) {
+    const pack = readPack(view);
     switch (goal) {
       case "fight":
-        return { plan: missionPlan("fight", autofight(), view, fightCfg) };
-      case "explore":
-        return { plan: missionPlan("explore", autoexplore(), view) };
-      case "descend":
-        return {
-          plan: stepsPlan("take the stairs down", view, (ctx) => {
-            const at = ctx.view.player().grid;
-            const stairs = knownDownStairs(ctx.view, terrain);
-            if (stairs.some((s) => s.x === at.x && s.y === at.y)) {
-              return ctx.view.player().depth === view.player().depth ? ctx.act.descend() : null;
-            }
-            const travel = travelTo(ctx, stairs);
-            return travel.kind === "step" ? travel.command : null;
-          })
-        };
+        return missionPlan("fight", autofight(), view, fightCfg);
+      case "shoot": {
+        const ammo = pack.ammo[0];
+        return atTarget("shoot", view, (ctx) => ctx.act.fire(ammo?.handle ?? 0));
+      }
+      case "throw_oil": {
+        const oil = pack.oil[0];
+        return atTarget("throw oil", view, (ctx) => ctx.act.throw(oil?.handle ?? 0));
+      }
+      case "aim_wand": {
+        const wand = pack.attackWand[0];
+        return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
+      }
+      case "cast_attack": {
+        const spell = pack.attackSpell[0];
+        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0));
+      }
+      case "heal": {
+        const potion = pack.heal[0];
+        return once(`drink ${potion?.name ?? "a potion"}`, view, (ctx) => potion === void 0 ? null : ctx.act.quaff(potion.handle));
+      }
+      case "cast_heal": {
+        const spell = pack.healSpell[0];
+        return once(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => spell === void 0 ? null : ctx.act.cast(spell.sidx));
+      }
+      case "phase": {
+        const scroll = pack.phase[0];
+        const spell = pack.escapeSpell[0];
+        return once("phase away", view, (ctx) => {
+          if (scroll !== void 0) return ctx.act.read(scroll.handle);
+          if (spell !== void 0) return ctx.act.cast(spell.sidx);
+          return null;
+        });
+      }
+      case "teleport": {
+        const item = pack.teleport[0];
+        return once("teleport away", view, (ctx) => {
+          if (item === void 0) return null;
+          return /Staff/i.test(item.name) ? ctx.act.useStaff(item.handle) : ctx.act.read(item.handle);
+        });
+      }
       case "retreat":
-        return {
-          plan: stepsPlan("back away", view, (ctx, i) => {
-            if (i >= RETREAT_STEPS) return null;
-            const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
-            return away.kind === "step" ? away.command : null;
-          })
-        };
+        return stepsPlan("back away", view, (ctx, i) => {
+          if (i >= RETREAT_STEPS) return null;
+          const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
+          return away.kind === "step" ? away.command : null;
+        });
       case "rest":
-        return { plan: stepsPlan("rest", view, (ctx, i) => i === 0 ? ctx.act.rest() : null) };
+        return once("rest", view, (ctx) => ctx.act.rest());
+      case "eat": {
+        const food = pack.food[0];
+        return once("eat", view, (ctx) => food === void 0 ? null : ctx.act.eat(food.handle));
+      }
       case "pick_up":
-        return { plan: stepsPlan("pick up", view, (ctx, i) => i === 0 ? ctx.act.pickup() : null) };
+        return once("pick up", view, (ctx) => ctx.act.pickup());
+      case "explore":
+        return missionPlan("explore", autoexplore(), view);
+      case "descend":
+        return stepsPlan("take the stairs down", view, (ctx) => {
+          const at = ctx.view.player().grid;
+          const stairs = knownDownStairs(ctx.view, terrain);
+          if (stairs.some((s) => s.x === at.x && s.y === at.y)) {
+            return ctx.view.player().depth === view.player().depth ? ctx.act.descend() : null;
+          }
+          const travel = travelTo(ctx, stairs);
+          return travel.kind === "step" ? travel.command : null;
+        });
     }
   }
   return {
     ask(view) {
       const player = view.player();
       if (player.dead) return { handBack: "The character has died." };
-      const at = player.grid;
-      const monsters = view.monsters();
-      const awake = awakeInSight(monsters);
-      const seen = inSight(monsters);
-      const target = pickTarget(monsters, at, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-      const unexplored = frontiers(view, terrain).length;
-      const stairs = knownDownStairs(view, terrain);
-      const underfoot = hasFloorObject(view, at);
-      const offered = [];
-      if (target !== null) offered.push("fight");
-      if (awake.length > 0) offered.push("retreat");
-      if (awake.length === 0 && (player.hp < player.maxHp || player.sp < player.maxSp)) offered.push("rest");
-      if (underfoot) offered.push("pick_up");
-      if (unexplored > 0) offered.push("explore");
-      if (stairs.length > 0 && cfg.descend) offered.push("descend");
-      if (offered.length === 0) {
+      const s = situationOf(view);
+      const offers = offersFor(s, cfg, terrain);
+      if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
       const criteria = {};
-      for (const goal2 of offered) criteria[goal2] = GOAL_CRITERIA[goal2];
+      for (const offer of offers) criteria[offer.goal] = offer.criteria;
       criteria["none_of_these"] = NONE_OF_THESE;
       const goal = {
         type: "choice",
-        instructions: "You are playing Angband, a dungeon game where death is permanent. Which goal gives this character the best chance to survive and keep making progress?",
+        instructions: "You are playing Angband, a dungeon game where death is permanent. Which option gives this character the best chance to survive and keep making progress?",
         criteria
       };
+      const seen = inSight(view.monsters());
+      const unexplored = frontiers(view, terrain).length > 0;
+      const stairs = knownDownStairs(view, terrain).length > 0;
       const question = {
         request: {
           state: {
@@ -1143,15 +1384,19 @@ function createGoalPlanner(options) {
             character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
-            creatures: seen.length === 0 ? "No creatures in sight." : seen.map(
-              (m) => `${m.race}: ${threatBand(m.level, player.level)}${m.asleep ? ", asleep" : ""}${m.afraid ? ", afraid" : ""}`
-            ).join("; "),
-            ground: standingOnHarm(view, terrain, at) ? "The ground here is hurting the character." : "Safe ground.",
-            level: `${unexplored > 0 ? "Unexplored ground remains." : "The level is explored."} ${stairs.length > 0 ? "A down staircase is known." : "No down staircase is known."}`
+            creatures: seen.length === 0 ? "No creatures in sight." : seen.map((m) => {
+              const band = THREAT_BANDS[threatIndex(m, player.level)] ?? "deadly";
+              const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
+              const away = steps(player.grid, m.grid);
+              return `${m.race}: ${band}, ${String(away)} steps away${tags === "" ? "" : `, ${tags}`}`;
+            }).join("; "),
+            ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
+            level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
+            ...hungry(view) ? { hunger: "The character is hungry." } : {}
           },
           questions: { goal }
         },
-        context: { depth: player.depth, offered }
+        context: { depth: player.depth, offers }
       };
       return question;
     },
@@ -1163,11 +1408,12 @@ function createGoalPlanner(options) {
         log("goal: none fit, following the fixed errand order");
         return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
       }
-      if (!digest.offered.includes(pick)) {
-        return { handBack: "The model picked a goal Squire did not offer, so the keyboard is yours." };
+      const offer = digest.offers.find((o) => o.goal === pick);
+      if (offer === void 0) {
+        return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
-      log(`goal: ${pick} (${Math.round((answer.probabilities[pick] ?? 0) * 100)}%)`);
-      return build(pick, view);
+      log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
+      return { plan: build(offer.goal, view) };
     },
     trigger(view, plan) {
       const watched = plan;
