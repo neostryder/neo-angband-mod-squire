@@ -57,6 +57,21 @@ export function fullyKnown(name: string): boolean {
     (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name));
 }
 
+/**
+ * Whether two shown names are the same kind of item, ignoring the count, the
+ * article and a light's turns of fuel. Two torches that differ only in fuel
+ * are no reason to swap.
+ */
+export function sameKind(a: string, b: string): boolean {
+  const plain = (name: string) => name.toLowerCase()
+    .replace(/\(\d+ turns\)/g, "")
+    .replace(/^(an?|the|\d+)\s+/, "")
+    .replace(/(?:es|s)(?=\s|$)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return plain(a) === plain(b);
+}
+
 function cursed(name: string): boolean {
   return /\{[^}]*curs[^}]*\}|\bcursed\b/i.test(name);
 }
@@ -162,7 +177,7 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
     const visible = base === null ? null : visibleValue(name, item.tval, base);
     const oldVisible = oldBase === null || oldName === null || replaced === null ? null : visibleValue(oldName, replaced.tval, oldBase);
     if (visible !== null && oldVisible !== null && visible < oldVisible) continue;
-    if (oldName === name && base === oldBase) continue;
+    if (oldName !== null && sameKind(oldName, name) && base === oldBase) continue;
     const metric = item.tval === TV.LIGHT ? "light radius" : item.tval === TV.BOW ? "launcher multiplier" :
       WEAPONS.includes(item.tval) ? "base damage" : "base armour class";
     const detail = base !== null && oldBase !== null && base > oldBase

@@ -1263,6 +1263,10 @@ function fullyKnown(name) {
   const marks = [...name.matchAll(/\{([^}]*)\}/g)].flatMap((match) => (match[1] ?? "").toLowerCase().split(/,\s*/));
   return marks.every((mark) => mark === "cursed" || mark === "ignore") && (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name));
 }
+function sameKind(a, b) {
+  const plain = (name) => name.toLowerCase().replace(/\(\d+ turns\)/g, "").replace(/^(an?|the|\d+)\s+/, "").replace(/(?:es|s)(?=\s|$)/g, "").replace(/\s+/g, " ").trim();
+  return plain(a) === plain(b);
+}
 function cursed(name) {
   return /\{[^}]*curs[^}]*\}|\bcursed\b/i.test(name);
 }
@@ -1360,7 +1364,7 @@ function gearCandidates(view) {
     const visible = base === null ? null : visibleValue(name, item.tval, base);
     const oldVisible = oldBase === null || oldName === null || replaced === null ? null : visibleValue(oldName, replaced.tval, oldBase);
     if (visible !== null && oldVisible !== null && visible < oldVisible) continue;
-    if (oldName === name && base === oldBase) continue;
+    if (oldName !== null && sameKind(oldName, name) && base === oldBase) continue;
     const metric = item.tval === TV.LIGHT ? "light radius" : item.tval === TV.BOW ? "launcher multiplier" : WEAPONS.includes(item.tval) ? "base damage" : "base armour class";
     const detail = base !== null && oldBase !== null && base > oldBase ? ` Its shown ${metric} is ${String(base)} instead of ${String(oldBase)}.` : "";
     out.push({
