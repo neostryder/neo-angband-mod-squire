@@ -18,7 +18,7 @@ import type { Answer, SystemOneRequest } from "./brain/systemone.js";
 import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
-import { markRollOn, sessionMarks } from "./birth.js";
+import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -554,11 +554,26 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   async function rollOn(report: RunReportLike): Promise<void> {
     if (report.outcome !== "death" || config.rollOn === "wait" || brain === null) return;
     const create = host.saves?.create;
-    if (create === undefined) return;
+    /* When no new character is coming, nothing Squire armed for one may be left
+     * behind: a later character the player makes by hand is not an heir, and its
+     * birth screens are the player's. */
+    const abandon = (why: string | null) => {
+      takeRollOn(sessionMarks(), now());
+      if (config.pendingHeir !== null) self.saveConfig({ ...config, pendingHeir: null });
+      if (why !== null) host.log(`Squire could not start the next character: ${why}`);
+    };
+    if (create === undefined) {
+      abandon(null);
+      return;
+    }
     const like = config.rollOn === "like" ? report.birth : undefined;
     markRollOn(sessionMarks(), now());
-    const result = await create.call(host.saves, like === undefined ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
-    if (!result.ok) host.log(`Squire could not start the next character: ${result.reason ?? "the game refused"}`);
+    try {
+      const result = await create.call(host.saves, like === undefined ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
+      if (!result.ok) abandon(result.reason ?? "the game refused");
+    } catch (error) {
+      abandon(String(error));
+    }
   }
 
   return self;

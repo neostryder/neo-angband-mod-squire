@@ -4647,11 +4647,23 @@ function createRuntime(host, options = {}) {
   async function rollOn(report) {
     if (report.outcome !== "death" || config.rollOn === "wait" || brain === null) return;
     const create = host.saves?.create;
-    if (create === void 0) return;
+    const abandon = (why) => {
+      takeRollOn(sessionMarks(), now());
+      if (config.pendingHeir !== null) self.saveConfig({ ...config, pendingHeir: null });
+      if (why !== null) host.log(`Squire could not start the next character: ${why}`);
+    };
+    if (create === void 0) {
+      abandon(null);
+      return;
+    }
     const like = config.rollOn === "like" ? report.birth : void 0;
     markRollOn(sessionMarks(), now());
-    const result = await create.call(host.saves, like === void 0 ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
-    if (!result.ok) host.log(`Squire could not start the next character: ${result.reason ?? "the game refused"}`);
+    try {
+      const result = await create.call(host.saves, like === void 0 ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
+      if (!result.ok) abandon(result.reason ?? "the game refused");
+    } catch (error) {
+      abandon(String(error));
+    }
   }
   return self;
 }
