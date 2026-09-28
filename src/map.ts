@@ -112,6 +112,20 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   return found;
 }
 
+/** Every staircase the character remembers, up and down. */
+export function knownStairs(view: AgentView, terrain: Terrain): Loc[] {
+  const bounds = view.mapBounds();
+  const found: Loc[] = [];
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell = view.cell(x, y);
+      if (cell === null || !cell.known) continue;
+      if (terrain.isDownStair(cell.feat) || terrain.isUpStair(cell.feat)) found.push({ x, y });
+    }
+  }
+  return found;
+}
+
 /** Every down staircase the character remembers. */
 export function knownDownStairs(view: AgentView, terrain: Terrain): Loc[] {
   const bounds = view.mapBounds();

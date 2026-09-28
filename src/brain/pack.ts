@@ -198,7 +198,10 @@ export function readPack(view: AgentView): Pack {
   const ammo: PackItem[] = [];
   const food: PackItem[] = [];
 
-  for (const item of view.inventory()) {
+  /* Missiles and throwing items live in the quiver, which the pack list leaves
+   * out. Games from before the quiver read have no way to show it. */
+  const quiver = (view as { quiver?: () => ItemView[] }).quiver?.() ?? [];
+  for (const item of [...view.inventory(), ...quiver]) {
     const name = shownName(item);
     if (name === null) continue;
     const entry = (power: number): PackItem => ({ handle: item.handle, name, power });

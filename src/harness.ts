@@ -62,13 +62,14 @@ export const FEAT = {
   ALCHEMY: 7,
   WEAPON: 8,
   ARMOUR: 9,
+  UP_STAIR: 10,
 } as const;
 
 /** The terrain classification matching FEAT. */
 export function harnessTerrain(): Terrain {
   return {
     isDownStair: (feat) => feat === FEAT.DOWN_STAIR,
-    isUpStair: () => false,
+    isUpStair: (feat) => feat === FEAT.UP_STAIR,
     isClosedDoor: (feat) => feat === FEAT.DOOR_CLOSED,
     isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.ARMOUR,
     shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury" })[feat] ?? null,
@@ -94,6 +95,8 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.DOOR_CLOSED, passable: false, known: true, objectCount: 0 };
     case ">":
       return { feat: FEAT.DOWN_STAIR, passable: true, known: true, objectCount: 0 };
+    case "<":
+      return { feat: FEAT.UP_STAIR, passable: true, known: true, objectCount: 0 };
     case "~":
       return { feat: FEAT.LAVA, passable: true, known: true, objectCount: 0 };
     case "*":
@@ -127,6 +130,8 @@ export interface WorldSpec {
   readonly target?: TargetView | null;
   /** Carried items, by the name the inventory shows. Handles count up from 1. */
   readonly pack?: readonly string[];
+  /** Item names in the quiver, in slot order. */
+  readonly quiver?: readonly string[];
   /** Worn items, by shown name. */
   readonly worn?: readonly string[];
   /** Castable spells: name, index, mana and failure chance. */
@@ -330,6 +335,11 @@ export function world(spec: WorldSpec): World {
           ],
     constants: (): GameConstants => ({}) as GameConstants,
   };
+  /* Newer games also show the quiver; older ones do not have the read at all. */
+  if (spec.quiver !== undefined) {
+    const quiver = spec.quiver;
+    Object.assign(view, { quiver: (): ItemView[] => quiver.map((name, i) => itemNamed(name, 200 + i)) });
+  }
 
   const record = (command: AgentCommand): AgentCommand => {
     issued.push(command);

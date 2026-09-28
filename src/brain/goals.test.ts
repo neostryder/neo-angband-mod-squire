@@ -602,3 +602,61 @@ describe("dreaded creatures", () => {
     expect(threatIndex({ level: 0, raceFlags: [], race: "mean-looking mercenary" }, 1, 10, new Set(["mean-looking mercenary"]))).toBe(2);
   });
 });
+
+describe("fear, swarms and refused commands", () => {
+  const ROOM = ["##########", "#<@......#", "#........#", "#........#", "##########"];
+  const worms = (n: number) => Array.from({ length: n }, (_, i) => ({ grid: { x: 3 + i, y: 3 }, race: "green worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
+  const goals = (w: ReturnType<typeof world>, dreaded: readonly string[] = []) =>
+    asked(createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, dreaded: () => new Set(dreaded) }).ask(w.view)).context.offers.map((o) => o.goal);
+
+  it("offers no melee to an afraid character, and offers a way out instead", () => {
+    const w = world({ map: CORRIDOR, player: { status: { afraid: 10 } } as never, monsters: [{ grid: { x: 3, y: 1 }, race: "acolyte", level: 2 }] });
+    const offered = goals(w);
+    expect(offered).not.toContain("fight");
+    expect(offered).toContain("retreat");
+  });
+
+  it("offers to leave the level once breeders fill the room", () => {
+    expect(goals(world({ map: ROOM, player: { depth: 2 }, monsters: worms(5) }))).not.toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2 }, monsters: worms(6) }))).toContain("leave_level");
+  });
+
+  it("leaves sooner when a breeder of that kind has hurt the line before", () => {
+    expect(goals(world({ map: ROOM, player: { depth: 2 }, monsters: worms(3) }), ["green worm mass"])).toContain("leave_level");
+  });
+
+  it("walks to the nearest stairs to leave a swarm", () => {
+    const w = world({ map: ROOM, player: { depth: 2 }, monsters: worms(6) });
+    const { p } = planner(w);
+    const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ dir: 4 });
+  });
+
+  it("does not stop a plan for one more of a breeder already seen, but does for anything else", () => {
+    const w = world({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2 }, monsters: worms(2) });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([...worms(3)]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+    w.setMonsters([...worms(3), { grid: { x: 8, y: 1 }, race: "jackal", level: 1 }]);
+    expect(p.trigger(w.view, choice.plan)).not.toBeNull();
+  });
+
+  it("gives up an errand whose commands pass no game time", () => {
+    const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 6, y: 1 }, race: "cave orc", level: 3 }] });
+    const { p, logged } = planner(w);
+    const choice = p.choose(pick("fight"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    let issued = 0;
+    while (choice.plan.step(w.view, w.act) !== null && issued < 10) issued += 1;
+    expect(issued).toBeLessThanOrEqual(3);
+    expect(logged.join("\n")).toContain("no time passed");
+  });
+
+  it("sees missiles in the quiver", () => {
+    const w = world({ map: CORRIDOR, worn: ["a Sling (x2)"], quiver: ["20 Iron Shots"], monsters: [{ grid: { x: 6, y: 1 }, race: "cave orc", level: 3 }] });
+    expect(goals(w)).toContain("shoot");
+  });
+});

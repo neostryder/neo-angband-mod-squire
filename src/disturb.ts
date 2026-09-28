@@ -28,7 +28,7 @@
  * autoplayer normally does not have, because an autoplayer WANTS the creature.
  */
 
-import type { AgentView, PlayerStatusView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView, PlayerStatusView } from "@rpgm-tools/neo-angband-core";
 import type { Stop } from "./mission.js";
 
 /** What a watcher is allowed to stop for. */
@@ -46,6 +46,12 @@ export interface WatchOptions {
    * the damage since the start takes twice it. Unset means only the rules above.
    */
   readonly stopOnDamageShare?: number;
+  /**
+   * Creatures that are not news even when new to view, such as one more worm
+   * from a mass already seen breeding. Asked again on every check, so one that
+   * stops being routine, by coming adjacent, still ends the errand.
+   */
+  readonly routine?: (monster: MonsterView, view: AgentView) => boolean;
 }
 
 /** A running disturbance check. */
@@ -162,6 +168,7 @@ export function createWatcher(view: AgentView, options: WatchOptions): Watcher {
         for (const monster of now.monsters()) {
           if (!monster.visible) continue;
           if (known.has(monster.id)) continue;
+          if (options.routine?.(monster, now) === true) continue;
           known.add(monster.id);
           return {
             reason: "creature-appeared",

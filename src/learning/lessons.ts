@@ -19,10 +19,12 @@ export interface LessonTemplateVars {
   readonly race?: string;
   readonly action?: string;
   readonly depth?: number;
+  /** How many of the creature's kind were in sight, when it came as a breeding swarm. */
+  readonly swarm?: number;
 }
 
 function sentence(event: LessonOutcome, decision: string, vars: LessonTemplateVars): string {
-  const foe = vars.race ?? "a creature";
+  const foe = vars.race === undefined ? "a creature" : vars.swarm === undefined ? vars.race : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
   const action = vars.action ?? decision.replace(/_/g, " ");
   const place = vars.depth === undefined ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
   switch (event) {

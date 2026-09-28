@@ -15,6 +15,12 @@ describe("lessons", () => {
     expect(lessonFrom("loss", signature, "fight", 104).line).toContain("Lost ground");
   });
 
+  it("names a breeding swarm as the foe", () => {
+    const swarm = lessonFrom("near-death", signature, "fight", 105, { race: "green worm mass", depth: 2, swarm: 27 });
+    expect(swarm.line).toBe("Nearly died at 100 ft to a swarm of green worm mass (27 in sight) after choosing to fight.");
+    expect(dreadedRaces([swarm]).has("green worm mass")).toBe(true);
+  });
+
   it("retrieves pinned lessons first and adjusts weights", () => {
     const a = lessonFrom("died", signature, "fight", 1);
     const b = { ...lessonFrom("escaped", signature, "phase", 2), pinned: true };

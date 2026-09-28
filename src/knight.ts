@@ -162,6 +162,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",
+  leave_level: "leave the level",
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",

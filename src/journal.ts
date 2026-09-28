@@ -12,6 +12,7 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import type { ChoiceAnswer, ScoreAnswer, SystemOneRequest } from "./brain/systemone.js";
 import type { AskResult } from "./brain/backend.js";
 import { readPack } from "./brain/pack.js";
+import { swarmOf, SWARM_LEAVE_DREADED } from "./brain/goals.js";
 import type { LoggedDecision } from "./memory/log.js";
 import { applyDrift, type DriftEvent } from "./persona/drift.js";
 import type { Persona } from "./persona/persona.js";
@@ -125,10 +126,11 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
     if (result.changes.length > 0) deps.setPersona(result.persona);
   }
 
-  function learn(outcome: LessonOutcome, view: AgentView, race: string | undefined): void {
+  function learn(outcome: LessonOutcome, view: AgentView, race: string | undefined, swarm?: number): void {
     const decision = lastDecision?.choice ?? "unknown";
     const lesson = lessonFrom(outcome, signatureFor(view), decision, view.turn(), {
       ...(race === undefined ? {} : { race }),
+      ...(swarm === undefined ? {} : { swarm }),
       depth: view.player().depth,
     });
     lessons = [...lessons.filter((l) => l.id !== lesson.id), lesson].slice(-MAX_LESSONS);
@@ -189,12 +191,15 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
           drift("level-up");
         }
         if (now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead) {
-          const race = worstRace(view);
+          /* A swarm of breeders is the culprit even when none of them is the strongest creature in sight. */
+          const swarm = swarmOf(view.monsters());
+          const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
+          const race = swarmed?.race ?? worstRace(view);
           record(
             { kind: "near-death", turn, depth: now.depth, text: race === undefined ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...(race === undefined ? {} : { race }) },
             true,
           );
-          learn("near-death", view, race);
+          learn("near-death", view, race, swarmed?.count);
           drift("near-death");
           if (pending !== null) pending.bad = true;
         }

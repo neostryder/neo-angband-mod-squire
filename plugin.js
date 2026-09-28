@@ -187,6 +187,7 @@ function createWatcher(view, options) {
         for (const monster of now.monsters()) {
           if (!monster.visible) continue;
           if (known.has(monster.id)) continue;
+          if (options.routine?.(monster, now) === true) continue;
           known.add(monster.id);
           return {
             reason: "creature-appeared",
@@ -306,6 +307,18 @@ function frontiers(view, terrain) {
           break;
         }
       }
+    }
+  }
+  return found;
+}
+function knownStairs(view, terrain) {
+  const bounds = view.mapBounds();
+  const found = [];
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known) continue;
+      if (terrain.isDownStair(cell2.feat) || terrain.isUpStair(cell2.feat)) found.push({ x, y });
     }
   }
   return found;
@@ -443,6 +456,9 @@ function autofight() {
       }
       if (!engageable(target, { wakeSleepers: true, reach: REACH })) {
         return stop("target-gone", `The ${target.race} is out of sight.`);
+      }
+      if (ctx.view.player().status.afraid > 0) {
+        return stop("blocked", "The character is too afraid to fight in melee.");
       }
       if (adjacent(at, target.grid)) {
         const blow = strike(ctx, target.grid);
@@ -1108,7 +1124,8 @@ function readPack(view) {
   const attackWand = [];
   const ammo = [];
   const food = [];
-  for (const item of view.inventory()) {
+  const quiver = view.quiver?.() ?? [];
+  for (const item of [...view.inventory(), ...quiver]) {
     const name = shownName(item);
     if (name === null) continue;
     const entry = (power) => ({ handle: item.handle, name, power });
@@ -1842,6 +1859,9 @@ var DAMAGE_SHARE_REDECIDE = 0.1;
 var BAD_CUT = 25;
 var NASTY_CUT = 50;
 var STATIONARY_DECISIONS = 3;
+var SWARM_LEAVE = 6;
+var SWARM_LEAVE_DREADED = 3;
+var REFUSED_COMMANDS = 3;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
@@ -1851,17 +1871,31 @@ var HANDBOOK = Object.freeze([
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
   "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
   "Wear better gear when it is safe to change equipment.",
-  "Map or detect a new dungeon level before exploring it when a source is available."
+  "Map or detect a new dungeon level before exploring it when a source is available.",
+  "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
+  "While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit."
 ]);
+function swarmOf(monsters) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const m of monsters) {
+    if (m.visible && m.raceFlags.includes("MULTIPLY")) counts.set(m.race, (counts.get(m.race) ?? 0) + 1);
+  }
+  let best = null;
+  for (const [race, count2] of counts) if (best === null || count2 > best.count) best = { race, count: count2 };
+  return best;
+}
 function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set()) {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
   const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
+  const swarm = swarmOf(monsters);
   return {
     dreaded,
     stationary,
+    swarm,
+    swarming: swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
     view,
     pack: readPack(view),
     awake,
@@ -1891,7 +1925,7 @@ function swarmNote(seen) {
 function fightRisk(s) {
   const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
   const band = Math.max(target, s.worst);
-  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
+  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
 function exposure(s) {
   if (s.worst < 0) return 0.01;
@@ -1909,6 +1943,14 @@ function canReach(view, terrain, grid) {
 }
 function reachableStairs(view, terrain) {
   const stairs = knownDownStairs(view, terrain);
+  if (stairs.length === 0) return false;
+  const me = view.player().grid;
+  if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(me));
+}
+function reachableAnyStairs(view, terrain) {
+  const stairs = knownStairs(view, terrain);
   if (stairs.length === 0) return false;
   const me = view.player().grid;
   if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
@@ -1962,7 +2004,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (s.target !== null) {
     const adjacent2 = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent2 && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
-    if (adjacent2 || walkUp) {
+    if ((adjacent2 || walkUp) && player.status.afraid === 0) {
       add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
     }
     const ranged = within(s, MISSILE_RANGE);
@@ -1989,7 +2031,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hurt && healSpell !== void 0) {
     add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
-  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP)) {
+  if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    add2("leave_level", `Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+  }
+  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
@@ -2071,10 +2116,19 @@ function createGoalPlanner(options) {
     if (depth !== seenDepth) {
       seenDepth = depth;
       seenOnLevel.clear();
+      breedersOnLevel.clear();
     }
     const live = new Set(view.monsters().map((m) => m.id));
     for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
-    for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
+    for (const m of view.monsters()) {
+      if (!m.visible) continue;
+      seenOnLevel.add(m.id);
+      if (m.raceFlags.includes("MULTIPLY")) breedersOnLevel.add(m.race);
+    }
+  }
+  const breedersOnLevel = /* @__PURE__ */ new Set();
+  function routineBreeder(m, now) {
+    return m.raceFlags.includes("MULTIPLY") && breedersOnLevel.has(m.race) && steps(now.player().grid, m.grid) > 1;
   }
   function watch(view) {
     const player = view.player();
@@ -2090,7 +2144,8 @@ function createGoalPlanner(options) {
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
-      stopOnDamageShare: DAMAGE_SHARE_REDECIDE
+      stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
+      routine: routineBreeder
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;
@@ -2105,11 +2160,20 @@ function createGoalPlanner(options) {
     const missionCfg = { ...with_, stopOnNewCreature: false, ...hurt ? { stopOnLowHealth: false } : {} };
     let begun = false;
     let done = false;
+    let lastTurn = null;
+    let refused = 0;
     return {
       label,
       watcher: watch(view),
       step(v, act) {
         if (done || progress.steps >= limit) return null;
+        const turn = v.turn();
+        refused = lastTurn !== null && turn === lastTurn ? refused + 1 : 0;
+        if (refused >= REFUSED_COMMANDS) {
+          done = true;
+          log(`${label}: the game refused the last command and no time passed.`);
+          return null;
+        }
         const ctx = context(v, act, progress, missionCfg);
         if (!begun) {
           begun = true;
@@ -2126,6 +2190,7 @@ function createGoalPlanner(options) {
           log(`${label}: ${decision2.stop.detail}`);
           return null;
         }
+        lastTurn = turn;
         return decision2.command;
       }
     };
@@ -2247,6 +2312,16 @@ function createGoalPlanner(options) {
         return once("pick up", view, (ctx) => ctx.act.pickup());
       case "explore":
         return missionPlan("explore", autoexplore({ allowAwake: true }), view);
+      case "leave_level":
+        return stepsPlan("take the nearest stairs", view, (ctx) => {
+          const here = ctx.view.player();
+          if (here.depth !== view.player().depth) return null;
+          const cell2 = ctx.view.cell(here.grid.x, here.grid.y);
+          if (cell2 !== null && terrain.isDownStair(cell2.feat)) return ctx.act.descend();
+          if (cell2 !== null && terrain.isUpStair(cell2.feat)) return ctx.act.ascend();
+          const travel = travelTo(ctx, knownStairs(ctx.view, terrain));
+          return travel.kind === "step" ? travel.command : null;
+        });
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx) => {
           const at = ctx.view.player().grid;
@@ -3201,7 +3276,7 @@ function similarity(a, b) {
 
 // src/learning/lessons.ts
 function sentence(event, decision2, vars) {
-  const foe = vars.race ?? "a creature";
+  const foe = vars.race === void 0 ? "a creature" : vars.swarm === void 0 ? vars.race : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
   const action = vars.action ?? decision2.replace(/_/g, " ");
   const place = vars.depth === void 0 ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
   switch (event) {
@@ -3723,10 +3798,11 @@ function createJournal(initial, deps) {
     const result = applyDrift(persona, event, rng);
     if (result.changes.length > 0) deps.setPersona(result.persona);
   }
-  function learn(outcome, view, race) {
+  function learn(outcome, view, race, swarm) {
     const decision2 = lastDecision?.choice ?? "unknown";
     const lesson = lessonFrom(outcome, signatureFor(view), decision2, view.turn(), {
       ...race === void 0 ? {} : { race },
+      ...swarm === void 0 ? {} : { swarm },
       depth: view.player().depth
     });
     lessons = [...lessons.filter((l) => l.id !== lesson.id), lesson].slice(-MAX_LESSONS);
@@ -3781,12 +3857,14 @@ function createJournal(initial, deps) {
           drift("level-up");
         }
         if (now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead) {
-          const race = worstRace(view);
+          const swarm = swarmOf(view.monsters());
+          const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
+          const race = swarmed?.race ?? worstRace(view);
           record2(
             { kind: "near-death", turn, depth: now.depth, text: race === void 0 ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...race === void 0 ? {} : { race } },
             true
           );
-          learn("near-death", view, race);
+          learn("near-death", view, race, swarmed?.count);
           drift("near-death");
           if (pending !== null) pending.bad = true;
         }
@@ -4031,6 +4109,7 @@ var LABEL = {
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",
+  leave_level: "leave the level",
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",

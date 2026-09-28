@@ -147,3 +147,12 @@ describe("autofight", () => {
     expect(stopOf(errand.step()).reason).toBe("target-gone");
   });
 });
+
+describe("autofight while afraid", () => {
+  it("stops instead of swinging, since the game refuses the blow without spending a turn", () => {
+    const w = world({ map: HALL, player: { status: { afraid: 5 } } as never, monsters: [{ grid: { x: 3, y: 2 } }] });
+    const errand = run(w, autofight());
+    expect(errand.begin()).toBeNull();
+    expect(stopOf(errand.step()).detail).toContain("afraid");
+  });
+});

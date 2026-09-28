@@ -22,7 +22,7 @@ import type { SquireCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createWatcher, type Watcher } from "../disturb.js";
 import { steps } from "../grid.js";
-import { frontiers, hasFloorObject, isRoutable, knownDownStairs, standingOnHarm } from "../map.js";
+import { frontiers, hasFloorObject, isRoutable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import { flowFrom } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
 import { awakeInSight, inSight, pickTarget } from "../threat.js";
@@ -58,6 +58,7 @@ export type Goal =
   | "pick_up"
   | "explore"
   | "descend"
+  | "leave_level"
   | "study"
   | "wear"
   | "detect"
@@ -140,6 +141,12 @@ const BAD_CUT = 25;
 const NASTY_CUT = 50;
 /** Decisions an awake creature must stay on one grid to count as one that does not move. */
 const STATIONARY_DECISIONS = 3;
+/** Breeders of one kind in sight that make leaving the level worth offering. */
+export const SWARM_LEAVE = 6;
+/** The same, for a kind of breeder that has already killed or nearly killed one of the line. */
+export const SWARM_LEAVE_DREADED = 3;
+/** Commands in a row that pass no game time before an errand is given up as refused. */
+const REFUSED_COMMANDS = 3;
 
 /** Rules of the game the model needs for this decision, in a few plain lines. */
 const HANDBOOK: readonly string[] = Object.freeze([
@@ -152,6 +159,8 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
   "Wear better gear when it is safe to change equipment.",
   "Map or detect a new dungeon level before exploring it when a source is available.",
+  "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
+  "While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
 ]);
 
 /** One option offered to the model. */
@@ -225,7 +234,22 @@ interface Situation {
   readonly dreaded: ReadonlySet<string>;
   /** Awake creatures that have stayed on one grid across several decisions. */
   readonly stationary: ReadonlySet<number>;
+  /** The biggest group of one kind of breeder in sight, or null when there is none. */
+  readonly swarm: { readonly race: string; readonly count: number } | null;
+  /** Whether that group is big enough to leave the level over. */
+  readonly swarming: boolean;
   readonly hpShare: number;
+}
+
+/** The biggest group of one kind of breeding creature in sight. */
+export function swarmOf(monsters: readonly MonsterView[]): { race: string; count: number } | null {
+  const counts = new Map<string, number>();
+  for (const m of monsters) {
+    if (m.visible && m.raceFlags.includes("MULTIPLY")) counts.set(m.race, (counts.get(m.race) ?? 0) + 1);
+  }
+  let best: { race: string; count: number } | null = null;
+  for (const [race, count] of counts) if (best === null || count > best.count) best = { race, count };
+  return best;
 }
 
 function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), stationary: ReadonlySet<number> = new Set()): Situation {
@@ -234,9 +258,12 @@ function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), 
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
   const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
+  const swarm = swarmOf(monsters);
   return {
     dreaded,
     stationary,
+    swarm,
+    swarming: swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
     view,
     pack: readPack(view),
     awake,
@@ -287,7 +314,8 @@ function swarmNote(seen: readonly { readonly race: string }[]): { swarm?: string
 function fightRisk(s: Situation): number {
   const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
   const band = Math.max(target, s.worst);
-  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
+  /* A fight with a swarm does not end: each kill makes room for more. */
+  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
 
 /**
@@ -321,6 +349,16 @@ function canReach(view: AgentView, terrain: Terrain, grid: { readonly x: number;
 /** Whether a remembered down staircase can be walked to, as the descend plan would. */
 function reachableStairs(view: AgentView, terrain: Terrain): boolean {
   const stairs = knownDownStairs(view, terrain);
+  if (stairs.length === 0) return false;
+  const me = view.player().grid;
+  if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(me));
+}
+
+/** Whether any remembered staircase, up or down, can be walked to. */
+function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
+  const stairs = knownStairs(view, terrain);
   if (stairs.length === 0) return false;
   const me = view.player().grid;
   if (stairs.some((g) => g.x === me.x && g.y === me.y)) return true;
@@ -400,7 +438,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
      * patch, only trades blows with something that would never have followed. */
     const adjacent = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
-    if (adjacent || walkUp) {
+    /* The game refuses every blow from an afraid character without spending a turn. */
+    if ((adjacent || walkUp) && player.status.afraid === 0) {
       add("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
     }
     const ranged = within(s, MISSILE_RANGE);
@@ -431,9 +470,15 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hurt && healSpell !== undefined) {
     add("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
+  /* Breeders are easy one at a time, so the escapes below would not be offered
+   * for them; leaving is offered for their numbers instead. */
+  if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    add("leave_level", `Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+  }
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
-  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP)) {
+  /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
+  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
@@ -546,13 +591,25 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     if (depth !== seenDepth) {
       seenDepth = depth;
       seenOnLevel.clear();
+      breedersOnLevel.clear();
     }
     /* The game reuses a dead creature's id for the next one it makes, so an id
      * no longer on the level is forgotten; a summoned creature that takes it is
      * then news. Forgetting only makes Squire stop for more, never less. */
     const live = new Set(view.monsters().map((m) => m.id));
     for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
-    for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
+    for (const m of view.monsters()) {
+      if (!m.visible) continue;
+      seenOnLevel.add(m.id);
+      if (m.raceFlags.includes("MULTIPLY")) breedersOnLevel.add(m.race);
+    }
+  }
+
+  /* Kinds of breeder already seen on this level. One more of them coming into
+   * view is how breeding looks, not news: a worm mass ended a plan every turn. */
+  const breedersOnLevel = new Set<string>();
+  function routineBreeder(m: MonsterView, now: AgentView): boolean {
+    return m.raceFlags.includes("MULTIPLY") && breedersOnLevel.has(m.race) && steps(now.player().grid, m.grid) > 1;
   }
 
   function watch(view: AgentView): Watcher {
@@ -570,6 +627,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
+      routine: routineBreeder,
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;
@@ -592,11 +650,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const missionCfg = { ...with_, stopOnNewCreature: false, ...(hurt ? { stopOnLowHealth: false } : {}) };
     let begun = false;
     let done = false;
+    /* The game can refuse a command without spending time, such as a blow from
+     * an afraid character. Nothing then changes for the watcher to notice, so
+     * the errand would repeat the refused command forever. */
+    let lastTurn: number | null = null;
+    let refused = 0;
     return {
       label,
       watcher: watch(view),
       step(v, act) {
         if (done || progress.steps >= limit) return null;
+        const turn = v.turn();
+        refused = lastTurn !== null && turn === lastTurn ? refused + 1 : 0;
+        if (refused >= REFUSED_COMMANDS) {
+          done = true;
+          log(`${label}: the game refused the last command and no time passed.`);
+          return null;
+        }
         const ctx = context(v, act, progress, missionCfg);
         if (!begun) {
           begun = true;
@@ -613,6 +683,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           log(`${label}: ${decision.stop.detail}`);
           return null;
         }
+        lastTurn = turn;
         return decision.command;
       },
     };
@@ -746,6 +817,16 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "explore":
         /* The model saw every awake creature before choosing to explore. */
         return missionPlan("explore", autoexplore({ allowAwake: true }), view);
+      case "leave_level":
+        return stepsPlan("take the nearest stairs", view, (ctx) => {
+          const here = ctx.view.player();
+          if (here.depth !== view.player().depth) return null;
+          const cell = ctx.view.cell(here.grid.x, here.grid.y);
+          if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
+          if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+          const travel = travelTo(ctx, knownStairs(ctx.view, terrain));
+          return travel.kind === "step" ? travel.command : null;
+        });
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx) => {
           const at = ctx.view.player().grid;

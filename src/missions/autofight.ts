@@ -125,6 +125,11 @@ export function autofight(): Mission {
         return stop("target-gone", `The ${target.race} is out of sight.`);
       }
 
+      /* The game refuses every blow from an afraid character without spending a
+       * turn, so trying again only repeats the refusal. */
+      if (ctx.view.player().status.afraid > 0) {
+        return stop("blocked", "The character is too afraid to fight in melee.");
+      }
       if (adjacent(at, target.grid)) {
         const blow = strike(ctx, target.grid);
         if (blow === null) return stop("blocked", "The target cannot be struck from here.");
