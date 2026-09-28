@@ -32,7 +32,7 @@
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",
-  "description": "An alternative autoplayer. Instead of taking over the character and playing it, Squire runs one short errand and then gives you the keyboard back: clear what is in front of you, walk out the rest of this floor, or play on until you say stop.\n\nEvery errand has hard stop conditions, and the mod is built around them. Squire stops as soon as something changes: a creature appears, a hit lands, hit points fall past the line, or a status effect takes hold. Pressing any key takes the keyboard back at once.\n\nSquire does not change the game's rules. It issues the same commands you could, through the same agent seam any other autoplayer uses. It draws no random numbers, neither its own nor the game's, so the same situation always leads to the same decision and your save stays reproducible.",
+  "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press any key to take the keyboard back.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire runs one short errand instead: clear what is in front of you, or explore the floor, then give the keyboard back. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
   "rules": [
     {
       "flag": "squire.errandAutofight",
@@ -51,14 +51,14 @@
     {
       "flag": "squire.errandCampaign",
       "title": "Errand: play on until I take the keyboard back",
-      "description": "Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. This is the closest Squire comes to an ordinary autoplayer. Off by default, since the short errands are what this mod is for.",
+      "description": "With no model, take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. Off by default.",
       "default": false,
       "requiresReload": true
     },
     {
       "flag": "squire.useModel",
-      "title": "Let Jev choose what to do",
-      "description": "When a Jev API key is set, Squire asks Jev which goal to pursue next (fight, explore, rest, back away or take the stairs) and plays on until you take the keyboard back. Without a key, Squire runs its errands as before. In the desktop app, Squire can read the key from the TYPESAFE_API_KEY or JEV_API_KEY environment variable after you agree. On by default.",
+      "title": "Let a model choose what to do",
+      "description": "When a model is set up in the Squire panel (Jev with an API key, Laya, or another server), Squire asks it what to do at each decision and plays on until you take the keyboard back. With this off, or with no model set up, Squire runs its errands. On by default.",
       "default": true,
       "requiresReload": true
     },

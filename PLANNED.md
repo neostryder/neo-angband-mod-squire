@@ -29,18 +29,6 @@ a key without that key being read as "take the keyboard back", or a way for a mo
 to register a runnable player command with a binding. Either belongs in the game
 rather than here, because it is the input door's decision and not this mod's.
 
-### Numeric settings
-
-**The gap.** The retreat line (half of maximum hit points) and a short errand's
-decision allowance (two hundred) are the two boundaries an errand is measured
-against, and neither is adjustable.
-
-**Why not fixed here.** The manifest rule schema carries a boolean `default` and
-nothing else. There is no numeric or range rule type to declare one with, and
-spelling a number as a row of booleans would be worse than the gap.
-
-**What a fix needs.** A numeric or range rule in the host's rule schema.
-
 ### A message the player reads when an errand ends
 
 **The gap.** The reason an errand ended goes to the mod log. A player watching the
@@ -75,14 +63,13 @@ is not going to work; they need a way to be asked for.
 
 ## Decisions the errands do not make
 
-Named here so the omissions are visible rather than looking like oversights. None
-of them is required for a bounded errand, and each one is a fair amount of work.
+The errands run only when no model is set up. With a model, Squire uses items, casts and studies spells, and shops in town. The errands themselves use no items, cast nothing, make no equipment decisions, never enter a shop and explore only by walking.
 
-- **No item use.** Nothing is quaffed, read, aimed or activated, including at low
-  hit points: the survival rung backs away or rests instead. Reading an item well
-  enough to use it correctly needs the object registry and the character's own
-  awareness of a flavour, which is a body of work rather than a rung.
-- **No equipment decisions.** Nothing is worn, taken off, bought or sold.
-- **No spellcasting.**
-- **No shopping.** Squire has no reason to enter a store and does not read them.
-- **No detection or mapping.** An errand explores by walking.
+## Not built yet
+
+- **An adjustable retreat line.** The retreat line (half of maximum hit points) and a short errand's two hundred decisions are fixed.
+- **Equipment.** With a model, Squire still never wears, takes off, buys or sells weapons and armour.
+- **Detection and mapping.** Squire explores by walking and doesn't read Magic Mapping or cast detection spells.
+- **Playing on a phone through Squire Link.** Squire Link can run beside the model and be published over HTTPS, but Squire's permissions reach only this computer and your home network, so Squire can't use a published address yet.
+- **Patron mode.** Watching Squire play and stepping in now and then, with a meter that refills over time, comes in the release after 1.0.
+- **Run cards** (neostryder/neo-angband#303).
