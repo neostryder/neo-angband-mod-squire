@@ -103,7 +103,7 @@ export function roundEstimate(level: number): number {
   return 8 + 3 * level;
 }
 
-export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags">, characterLevel: number, characterHp = Infinity): number {
+export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags"> & { readonly race?: string }, characterLevel: number, characterHp = Infinity, dreaded: ReadonlySet<string> = new Set()): number {
   let band: number;
   if (monster.level * 2 <= characterLevel) band = 0;
   else if (monster.level <= characterLevel) band = 1;
@@ -114,6 +114,9 @@ export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags">, c
   const round = roundEstimate(monster.level);
   if (characterHp <= round / 2) band = 3;
   else if (characterHp <= round) band = Math.max(band, 2);
+  /* A kind of creature that killed or nearly killed one of this line is
+   * treated as dangerous at least, whatever its level says. */
+  if (monster.race !== undefined && dreaded.has(monster.race)) band = Math.max(band, 2);
   return band;
 }
 
@@ -189,6 +192,8 @@ export interface GoalPlannerOptions {
   readonly persona?: Persona | null | (() => Persona | null);
   /** Lesson lines relevant to this moment, from the character and its ancestors. */
   readonly lessons?: (view: AgentView) => readonly string[];
+  /** Kinds of creature that killed or nearly killed one of this character's line. */
+  readonly dreaded?: () => ReadonlySet<string>;
   /** Rescale the best-move answer from past outcomes. Never applied to the in-character answer. */
   readonly calibrate?: (probs: Readonly<Record<string, number>>) => Record<string, number>;
   /** Random draws for persona volatility and quirks. */
@@ -209,16 +214,19 @@ interface Situation {
   readonly target: MonsterView | null;
   /** The worst awake threat band in sight, or -1 when nothing awake is in sight. */
   readonly worst: number;
+  /** Kinds of creature this character's line has learned to fear. */
+  readonly dreaded: ReadonlySet<string>;
   readonly hpShare: number;
 }
 
-function situationOf(view: AgentView): Situation {
+function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set()): Situation {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
   return {
+    dreaded,
     view,
     pack: readPack(view),
     awake,
@@ -267,7 +275,7 @@ function swarmNote(seen: readonly { readonly race: string }[]): { swarm?: string
 
 /** The death risk of a fight: the worst awake creature in sight, not only the one being hit. */
 function fightRisk(s: Situation): number {
-  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
+  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
   const band = Math.max(target, s.worst);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
 }
@@ -609,7 +617,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /** One command aimed at the current target: set the target, then issue it. */
   function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand): WatchedPlan {
     return once(label, view, (ctx) => {
-      const s = situationOf(ctx.view);
+      const s = situationOf(ctx.view, dreadedNow());
       if (s.target === null) return null;
       if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
@@ -719,6 +727,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
   }
 
+  function dreadedNow(): ReadonlySet<string> {
+    return options.dreaded?.() ?? new Set<string>();
+  }
+
   function lessonsFor(view: AgentView): { lessons?: string } {
     const persona = personaOf();
     let lines = options.lessons?.(view) ?? [];
@@ -767,7 +779,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       noteSeen(view);
-      const s = situationOf(view);
+      const s = situationOf(view, dreadedNow());
       const turn = view.turn();
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
       const newLevel = decisionDepth !== player.depth;
@@ -806,7 +818,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
                 ? "No creatures in sight."
                 : seen
                     .map((m) => {
-                      const real = threatIndex(m, player.level, player.hp);
+                      const real = threatIndex(m, player.level, player.hp, s.dreaded);
                       /* A persona's optimism or delusion changes what the character believes, not the safety floor. */
                       const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
                       const band = THREAT_BANDS[seenAs] ?? "deadly";
@@ -856,7 +868,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
           return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
         }
-        log("goal: none fit, following the fixed errand order");
+        const rated = digest.offers.map((o) => `${o.goal} ${String(Math.round((answer.probabilities[o.goal] ?? 0) * 100))}%`).join(", ");
+        log(`goal: none fit (${rated}), following the fixed errand order`);
         return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS)) };
       }
       const offer = digest.offers.find((o) => o.goal === pick);

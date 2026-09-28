@@ -43,6 +43,17 @@ export function lessonFrom(event: LessonOutcome, signature: SituationSignature, 
   };
 }
 
+/** Kinds of creature that killed or nearly killed a character, read from the lesson ids. */
+export function dreadedRaces(lessons: readonly Lesson[]): Set<string> {
+  const out = new Set<string>();
+  for (const lesson of lessons) {
+    if (lesson.outcome !== "died" && lesson.outcome !== "near-death") continue;
+    const race = lesson.id.split(":").slice(3).join(":");
+    if (race !== "") out.add(race);
+  }
+  return out;
+}
+
 /** Pinned lessons lead; other ties retain their input order. */
 export function retrieve(lessons: readonly Lesson[], signature: SituationSignature, limit: number): Lesson[] {
   return lessons.map((lesson, index) => ({ lesson, index, score: similarity(lesson.signature, signature) * lesson.weight }))

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyBlame, blameQuestion, fade, lessonFrom, reinforce, retrieve } from "./lessons.js";
+import { applyBlame, blameQuestion, dreadedRaces, fade, lessonFrom, reinforce, retrieve } from "./lessons.js";
 import { signatureOf } from "./signature.js";
 
 const signature = signatureOf({ depth: 18, classId: "mage", level: 10, races: ["cave troll"], hp: 20, maxHp: 100, resources: ["phase"] });
@@ -33,5 +33,17 @@ describe("lessons", () => {
     expect(blameQuestion(records).criteria["1"]).toContain("troll");
     expect(applyBlame({ type: "choice", choice: "1", confidence: 1, probabilities: {} }, records)).toBe("1");
     expect(applyBlame({ type: "choice", choice: "missing", confidence: 1, probabilities: {} }, records)).toBeNull();
+  });
+});
+
+describe("dreadedRaces", () => {
+  it("names the creatures behind deaths and near deaths only", () => {
+    const sig = { depthBand: 0, classId: "mage", levelBand: 0, families: [], hpBand: 0 as const, resources: [] };
+    const lessons = [
+      lessonFrom("died", sig, "fight", 10, { race: "mean-looking mercenary" }),
+      lessonFrom("near-death", sig, "shop", 20, { race: "aimless-looking merchant" }),
+      lessonFrom("escaped", sig, "phase", 30, { race: "cave spider" }),
+    ];
+    expect([...dreadedRaces(lessons)].sort()).toEqual(["aimless-looking merchant", "mean-looking mercenary"]);
   });
 });

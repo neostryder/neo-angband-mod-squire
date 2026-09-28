@@ -19,6 +19,7 @@ import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, ty
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
+import { dreadedRaces } from "./learning/lessons.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -415,6 +416,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
+        dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
       }),
       tally,

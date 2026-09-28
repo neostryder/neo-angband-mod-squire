@@ -1822,7 +1822,7 @@ var THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"];
 function roundEstimate(level) {
   return 8 + 3 * level;
 }
-function threatIndex(monster, characterLevel, characterHp = Infinity) {
+function threatIndex(monster, characterLevel, characterHp = Infinity, dreaded = /* @__PURE__ */ new Set()) {
   let band;
   if (monster.level * 2 <= characterLevel) band = 0;
   else if (monster.level <= characterLevel) band = 1;
@@ -1832,6 +1832,7 @@ function threatIndex(monster, characterLevel, characterHp = Infinity) {
   const round = roundEstimate(monster.level);
   if (characterHp <= round / 2) band = 3;
   else if (characterHp <= round) band = Math.max(band, 2);
+  if (monster.race !== void 0 && dreaded.has(monster.race)) band = Math.max(band, 2);
   return band;
 }
 var RECALL_MIN_GOLD = 50;
@@ -1848,13 +1849,14 @@ var HANDBOOK = Object.freeze([
   "Wear better gear when it is safe to change equipment.",
   "Map or detect a new dungeon level before exploring it when a source is available."
 ]);
-function situationOf(view) {
+function situationOf(view, dreaded = /* @__PURE__ */ new Set()) {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
   return {
+    dreaded,
     view,
     pack: readPack(view),
     awake,
@@ -1882,7 +1884,7 @@ function swarmNote(seen) {
   return many.length === 0 ? {} : { swarm: `${many.join(" and ")} in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.` };
 }
 function fightRisk(s) {
-  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
+  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
   const band = Math.max(target, s.worst);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
 }
@@ -2131,7 +2133,7 @@ function createGoalPlanner(options) {
   }
   function atTarget(label, view, command) {
     return once(label, view, (ctx) => {
-      const s = situationOf(ctx.view);
+      const s = situationOf(ctx.view, dreadedNow());
       if (s.target === null) return null;
       if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
@@ -2237,6 +2239,9 @@ function createGoalPlanner(options) {
         });
     }
   }
+  function dreadedNow() {
+    return options.dreaded?.() ?? /* @__PURE__ */ new Set();
+  }
   function lessonsFor(view) {
     const persona = personaOf();
     let lines2 = options.lessons?.(view) ?? [];
@@ -2277,7 +2282,7 @@ function createGoalPlanner(options) {
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       noteSeen(view);
-      const s = situationOf(view);
+      const s = situationOf(view, dreadedNow());
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
       const newLevel = decisionDepth !== player.depth;
@@ -2309,7 +2314,7 @@ function createGoalPlanner(options) {
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
             creatures: seen.length === 0 ? "No creatures in sight." : seen.map((m) => {
-              const real = threatIndex(m, player.level, player.hp);
+              const real = threatIndex(m, player.level, player.hp, s.dreaded);
               const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
               const band = THREAT_BANDS[seenAs] ?? "deadly";
               const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
@@ -2347,7 +2352,8 @@ function createGoalPlanner(options) {
           log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
           return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
         }
-        log("goal: none fit, following the fixed errand order");
+        const rated = digest.offers.map((o) => `${o.goal} ${String(Math.round((answer.probabilities[o.goal] ?? 0) * 100))}%`).join(", ");
+        log(`goal: none fit (${rated}), following the fixed errand order`);
         return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS)) };
       }
       const offer = digest.offers.find((o) => o.goal === pick2);
@@ -3064,6 +3070,156 @@ function rollOnPresenter(host, store = sessionMarks(), now = Date.now, random = 
   };
 }
 
+// src/learning/signature.ts
+var FAMILIES = [
+  [/\bzephyr hound|\bhounds?\b/i, "hound"],
+  [/\bdragons?|\bdrakes?\b/i, "dragon"],
+  [/\bghosts?|\bwraiths?|\bspectres?|\bspirits?\b/i, "ghost"],
+  [/\bzombies?|\bskeletons?|\bundead|\bliches?\b/i, "undead"],
+  [/\b(?:jell(?:y|ies)|molds?)\b/i, "jelly"],
+  [/\b(?:jackals?|dogs?|wolves?|canines?)\b/i, "dog"],
+  [/\bspiders?\b/i, "spider"],
+  [/\bsnakes?\b/i, "snake"],
+  [/\brats?\b/i, "rat"],
+  [/\bworms?\b/i, "worm"],
+  [/\bbats?\b/i, "bat"],
+  [/\bbirds?\b/i, "bird"],
+  [/\binsects?\b/i, "insect"],
+  [/\beyes?\b/i, "eye"],
+  [/\b(?:orcs?|kobolds?|spiders?|snakes?|rats?|worms?|giants?|trolls?|ogres?|bats?|birds?|insects?|humans?|men|elf|elves|dwarf|dwarves|hobbits?|yeeks?|golems?|demons?|vortices|vortexes|vortex|eyes?)\b/i, ""]
+];
+var WORD_FAMILIES = {
+  orc: "orc",
+  kobold: "kobold",
+  spider: "spider",
+  snake: "snake",
+  rat: "rat",
+  worm: "worm",
+  giant: "giant",
+  troll: "troll",
+  ogre: "ogre",
+  bat: "bat",
+  bird: "bird",
+  insect: "insect",
+  human: "human",
+  man: "human",
+  men: "human",
+  elf: "elf",
+  elves: "elf",
+  dwarf: "dwarf",
+  dwarves: "dwarf",
+  hobbit: "hobbit",
+  yeek: "yeek",
+  golem: "golem",
+  demon: "demon",
+  vortex: "vortex",
+  vortices: "vortex",
+  vortexes: "vortex",
+  eye: "eye",
+  eyes: "eye"
+};
+function familyOf(race) {
+  for (const [pattern, family] of FAMILIES) {
+    const match = pattern.exec(race);
+    if (match !== null) {
+      if (family) return family;
+      const word = match[0].toLowerCase();
+      return WORD_FAMILIES[word] ?? WORD_FAMILIES[word.replace(/s$/, "")] ?? "other";
+    }
+  }
+  return "other";
+}
+function signatureOf(input) {
+  const share = input.maxHp > 0 ? input.hp / input.maxHp : 1;
+  const hpBand = share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3;
+  return {
+    depthBand: Math.floor(Math.max(0, input.depth) / 5),
+    classId: input.classId,
+    levelBand: Math.floor(Math.max(0, input.level) / 5),
+    families: [...new Set(input.races.map(familyOf))].sort(),
+    hpBand,
+    resources: [...new Set(input.resources)].sort()
+  };
+}
+function overlap(a, b) {
+  const left = new Set(a);
+  const right = new Set(b);
+  const union = /* @__PURE__ */ new Set([...left, ...right]);
+  if (union.size === 0) return 1;
+  let shared = 0;
+  for (const item of left) if (right.has(item)) shared += 1;
+  return shared / union.size;
+}
+function similarity(a, b) {
+  const depth = 1 / (1 + Math.abs(a.depthBand - b.depthBand));
+  const level = 1 / (1 + Math.abs(a.levelBand - b.levelBand));
+  return 0.4 * overlap(a.families, b.families) + 0.3 * depth + 0.1 * (a.classId === b.classId ? 1 : 0) + 0.1 * level + 0.05 * (1 - Math.abs(a.hpBand - b.hpBand) / 3) + 0.05 * overlap(a.resources, b.resources);
+}
+
+// src/learning/lessons.ts
+function sentence(event, decision2, vars) {
+  const foe = vars.race ?? "a creature";
+  const action = vars.action ?? decision2.replace(/_/g, " ");
+  const place = vars.depth === void 0 ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
+  switch (event) {
+    case "died":
+      return `Died ${place} to ${foe} after choosing to ${action}.`;
+    case "near-death":
+      return `Nearly died ${place} to ${foe} after choosing to ${action}.`;
+    case "escaped":
+      return `Escaped ${foe} by choosing to ${action}.`;
+    case "unique-kill":
+      return `Defeated ${foe} by choosing to ${action}.`;
+    case "loss":
+      return `Lost ground to ${foe} after choosing to ${action}.`;
+  }
+}
+function lessonFrom(event, signature, decision2, turn, templateVars = {}) {
+  return {
+    id: `${String(turn)}:${event}:${decision2}:${templateVars.race ?? ""}`,
+    signature,
+    decision: decision2,
+    outcome: event,
+    line: sentence(event, decision2, templateVars),
+    weight: 1,
+    created: turn,
+    lastUsed: turn,
+    pinned: false
+  };
+}
+function dreadedRaces(lessons) {
+  const out = /* @__PURE__ */ new Set();
+  for (const lesson of lessons) {
+    if (lesson.outcome !== "died" && lesson.outcome !== "near-death") continue;
+    const race = lesson.id.split(":").slice(3).join(":");
+    if (race !== "") out.add(race);
+  }
+  return out;
+}
+function retrieve(lessons, signature, limit) {
+  return lessons.map((lesson, index) => ({ lesson, index, score: similarity(lesson.signature, signature) * lesson.weight })).sort((a, b) => Number(b.lesson.pinned) - Number(a.lesson.pinned) || b.score - a.score || a.index - b.index).slice(0, Math.max(0, Math.floor(limit))).map(({ lesson }) => lesson);
+}
+function rate(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+function fade(lessons, turnNow, learningRate01) {
+  const decay = rate(learningRate01);
+  return lessons.map((lesson) => {
+    if (lesson.pinned) return lesson;
+    const intervals = Math.max(0, (turnNow - lesson.lastUsed) / 1e3);
+    return { ...lesson, weight: lesson.weight * Math.pow(1 - decay, intervals) };
+  }).filter((lesson) => lesson.pinned || lesson.weight >= 0.1);
+}
+function blameQuestion(records) {
+  const criteria = {};
+  for (const record2 of records) criteria[record2.id] = `${record2.plan}: ${record2.summary}`;
+  criteria["none_of_these"] = "No listed decision contributed most to the death.";
+  return { type: "choice", instructions: "Which earlier decision contributed most to this death? Choose one listed decision or none_of_these.", criteria };
+}
+function applyBlame(answer, records) {
+  return records.some((record2) => record2.id === answer.choice) ? answer.choice : null;
+}
+
 // src/memory/install.ts
 var KEY = "squire/install-id";
 var UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -3283,147 +3439,6 @@ function update(book, key2, sample) {
 }
 function refit(book) {
   return Object.fromEntries(Object.entries(book).map(([key2, entry]) => [key2, entry.kind === "noul" ? { ...entry, fit: fitPlatt(entry.samples) } : { ...entry, temperature: fitTemperature(entry.samples) }]));
-}
-
-// src/learning/signature.ts
-var FAMILIES = [
-  [/\bzephyr hound|\bhounds?\b/i, "hound"],
-  [/\bdragons?|\bdrakes?\b/i, "dragon"],
-  [/\bghosts?|\bwraiths?|\bspectres?|\bspirits?\b/i, "ghost"],
-  [/\bzombies?|\bskeletons?|\bundead|\bliches?\b/i, "undead"],
-  [/\b(?:jell(?:y|ies)|molds?)\b/i, "jelly"],
-  [/\b(?:jackals?|dogs?|wolves?|canines?)\b/i, "dog"],
-  [/\bspiders?\b/i, "spider"],
-  [/\bsnakes?\b/i, "snake"],
-  [/\brats?\b/i, "rat"],
-  [/\bworms?\b/i, "worm"],
-  [/\bbats?\b/i, "bat"],
-  [/\bbirds?\b/i, "bird"],
-  [/\binsects?\b/i, "insect"],
-  [/\beyes?\b/i, "eye"],
-  [/\b(?:orcs?|kobolds?|spiders?|snakes?|rats?|worms?|giants?|trolls?|ogres?|bats?|birds?|insects?|humans?|men|elf|elves|dwarf|dwarves|hobbits?|yeeks?|golems?|demons?|vortices|vortexes|vortex|eyes?)\b/i, ""]
-];
-var WORD_FAMILIES = {
-  orc: "orc",
-  kobold: "kobold",
-  spider: "spider",
-  snake: "snake",
-  rat: "rat",
-  worm: "worm",
-  giant: "giant",
-  troll: "troll",
-  ogre: "ogre",
-  bat: "bat",
-  bird: "bird",
-  insect: "insect",
-  human: "human",
-  man: "human",
-  men: "human",
-  elf: "elf",
-  elves: "elf",
-  dwarf: "dwarf",
-  dwarves: "dwarf",
-  hobbit: "hobbit",
-  yeek: "yeek",
-  golem: "golem",
-  demon: "demon",
-  vortex: "vortex",
-  vortices: "vortex",
-  vortexes: "vortex",
-  eye: "eye",
-  eyes: "eye"
-};
-function familyOf(race) {
-  for (const [pattern, family] of FAMILIES) {
-    const match = pattern.exec(race);
-    if (match !== null) {
-      if (family) return family;
-      const word = match[0].toLowerCase();
-      return WORD_FAMILIES[word] ?? WORD_FAMILIES[word.replace(/s$/, "")] ?? "other";
-    }
-  }
-  return "other";
-}
-function signatureOf(input) {
-  const share = input.maxHp > 0 ? input.hp / input.maxHp : 1;
-  const hpBand = share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3;
-  return {
-    depthBand: Math.floor(Math.max(0, input.depth) / 5),
-    classId: input.classId,
-    levelBand: Math.floor(Math.max(0, input.level) / 5),
-    families: [...new Set(input.races.map(familyOf))].sort(),
-    hpBand,
-    resources: [...new Set(input.resources)].sort()
-  };
-}
-function overlap(a, b) {
-  const left = new Set(a);
-  const right = new Set(b);
-  const union = /* @__PURE__ */ new Set([...left, ...right]);
-  if (union.size === 0) return 1;
-  let shared = 0;
-  for (const item of left) if (right.has(item)) shared += 1;
-  return shared / union.size;
-}
-function similarity(a, b) {
-  const depth = 1 / (1 + Math.abs(a.depthBand - b.depthBand));
-  const level = 1 / (1 + Math.abs(a.levelBand - b.levelBand));
-  return 0.4 * overlap(a.families, b.families) + 0.3 * depth + 0.1 * (a.classId === b.classId ? 1 : 0) + 0.1 * level + 0.05 * (1 - Math.abs(a.hpBand - b.hpBand) / 3) + 0.05 * overlap(a.resources, b.resources);
-}
-
-// src/learning/lessons.ts
-function sentence(event, decision2, vars) {
-  const foe = vars.race ?? "a creature";
-  const action = vars.action ?? decision2.replace(/_/g, " ");
-  const place = vars.depth === void 0 ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
-  switch (event) {
-    case "died":
-      return `Died ${place} to ${foe} after choosing to ${action}.`;
-    case "near-death":
-      return `Nearly died ${place} to ${foe} after choosing to ${action}.`;
-    case "escaped":
-      return `Escaped ${foe} by choosing to ${action}.`;
-    case "unique-kill":
-      return `Defeated ${foe} by choosing to ${action}.`;
-    case "loss":
-      return `Lost ground to ${foe} after choosing to ${action}.`;
-  }
-}
-function lessonFrom(event, signature, decision2, turn, templateVars = {}) {
-  return {
-    id: `${String(turn)}:${event}:${decision2}:${templateVars.race ?? ""}`,
-    signature,
-    decision: decision2,
-    outcome: event,
-    line: sentence(event, decision2, templateVars),
-    weight: 1,
-    created: turn,
-    lastUsed: turn,
-    pinned: false
-  };
-}
-function retrieve(lessons, signature, limit) {
-  return lessons.map((lesson, index) => ({ lesson, index, score: similarity(lesson.signature, signature) * lesson.weight })).sort((a, b) => Number(b.lesson.pinned) - Number(a.lesson.pinned) || b.score - a.score || a.index - b.index).slice(0, Math.max(0, Math.floor(limit))).map(({ lesson }) => lesson);
-}
-function rate(value) {
-  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
-}
-function fade(lessons, turnNow, learningRate01) {
-  const decay = rate(learningRate01);
-  return lessons.map((lesson) => {
-    if (lesson.pinned) return lesson;
-    const intervals = Math.max(0, (turnNow - lesson.lastUsed) / 1e3);
-    return { ...lesson, weight: lesson.weight * Math.pow(1 - decay, intervals) };
-  }).filter((lesson) => lesson.pinned || lesson.weight >= 0.1);
-}
-function blameQuestion(records) {
-  const criteria = {};
-  for (const record2 of records) criteria[record2.id] = `${record2.plan}: ${record2.summary}`;
-  criteria["none_of_these"] = "No listed decision contributed most to the death.";
-  return { type: "choice", instructions: "Which earlier decision contributed most to this death? Choose one listed decision or none_of_these.", criteria };
-}
-function applyBlame(answer, records) {
-  return records.some((record2) => record2.id === answer.choice) ? answer.choice : null;
 }
 
 // src/learning/lineage.ts
@@ -4589,6 +4604,7 @@ function createRuntime(host, options = {}) {
         persona: () => persona === null ? null : character.persona,
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
+        dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs)
       }),
       tally,

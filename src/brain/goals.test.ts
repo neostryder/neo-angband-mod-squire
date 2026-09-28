@@ -565,3 +565,10 @@ describe("gear and detection", () => {
     expect(goalLabel("wear")).toBe("wear gear");
   });
 });
+
+describe("dreaded creatures", () => {
+  it("rate a kind that killed an ancestor as dangerous at least", () => {
+    expect(threatIndex({ level: 0, raceFlags: [], race: "mean-looking mercenary" }, 1, 10)).toBe(0);
+    expect(threatIndex({ level: 0, raceFlags: [], race: "mean-looking mercenary" }, 1, 10, new Set(["mean-looking mercenary"]))).toBe(2);
+  });
+});
