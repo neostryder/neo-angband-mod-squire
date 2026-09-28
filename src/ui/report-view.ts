@@ -9,6 +9,8 @@ import { drawCard, shareLinks, type CardContext } from "../report/card.js";
 import { reportJson, reportMarkdown } from "../report/render.js";
 import type { RunSummary } from "../report/summary.js";
 import { download, fill, h } from "./dom.js";
+import { drawRadar } from "../lessons/radar.js";
+import { defaultPersona } from "../persona/persona.js";
 
 export function mountReport(body: HTMLElement, rt: Runtime): () => void {
   const view = h("div");
@@ -30,6 +32,18 @@ export function mountReport(body: HTMLElement, rt: Runtime): () => void {
     if (g !== null) drawCard(g as unknown as CardContext, model);
     const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "victory" ? "Won the game." : "Retired."}`;
     const links = shareLinks(text);
+    const apprenticeship = model.apprenticeship;
+    const radar = apprenticeship === undefined ? null : h("canvas", { width: "600", height: "260" });
+    const radarCtx = radar?.getContext("2d");
+    if (radarCtx !== null && radarCtx !== undefined && apprenticeship !== undefined) {
+      const squire = defaultPersona();
+      const knight = defaultPersona();
+      for (const trait of apprenticeship.squireRadar) squire.sliders[trait.id] = trait.value;
+      for (const trait of apprenticeship.knightRadar) knight.sliders[trait.id] = trait.value;
+      drawRadar(radarCtx, squire, 150, 130, 70, "#d9ac64");
+      drawRadar(radarCtx, knight, 450, 130, 70, "#8fd18f",
+        Object.fromEntries(apprenticeship.knightRadar.map((trait) => [trait.id, trait.confidence])));
+    }
     const base = hl.name.replace(/[^A-Za-z0-9_-]+/g, "_") || "squire";
     fill(
       view,
@@ -40,6 +54,11 @@ export function mountReport(body: HTMLElement, rt: Runtime): () => void {
       h("p", {}, `Went against advice ${String(model.divergence.count)} times. Used ${model.tokens.inputTokens.toLocaleString()} input tokens${model.tokens.usd > 0 ? `, about $${model.tokens.usd.toFixed(3)}` : ""}.`),
       model.chronicleHighlights.length === 0 ? null : h("div", {}, h("h3", {}, "Chronicle"), ...model.chronicleHighlights.map((l) => h("div", { class: "entry" }, l))),
       model.lessonsLearned.length === 0 ? null : h("div", {}, h("h3", {}, "Lessons"), ...model.lessonsLearned.slice(-8).map((l) => h("div", { class: "entry" }, l))),
+      apprenticeship === undefined ? null : h("div", {}, h("h3", {}, "Apprenticeship"),
+        h("p", {}, `${apprenticeship.rank} rank, agreed ${String(Math.round(apprenticeship.agreementShare * 100))}%.`),
+        h("p", {}, apprenticeship.latestExam === null ? "No exam yet." : `Exam: matched your choice ${String(apprenticeship.latestExam.matched)} of ${String(apprenticeship.latestExam.scored)} times`),
+        ...apprenticeship.surprises.map((line) => h("div", { class: "entry" }, line)),
+        h("div", { class: "row" }, h("span", {}, "Squire"), h("span", {}, "Your style")), radar),
       h("h3", {}, "Share"),
       card,
       h(

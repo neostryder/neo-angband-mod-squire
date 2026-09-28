@@ -27,6 +27,7 @@ import { createJournal, emptyJournal, heirFrom, withAncestor, type Journal, type
 import { buildRunSummary, summaryForTelemetry, type RunReport, type RunSummary } from "./report/summary.js";
 import { defaultPersona } from "./persona/persona.js";
 import { createSender } from "./telemetry/sender.js";
+import type { Apprentice } from "./knight.js";
 
 /** The parts of the host's plugin context Squire uses, declared so the mod builds without the host's source. */
 export interface SquireHost {
@@ -127,6 +128,8 @@ export interface Runtime {
   send(request: SystemOneRequest): ReturnType<typeof ask>;
   tally(): Tally;
   onDecision(listener: DecisionListener): () => void;
+  /** The view behind the most recently reported decision. */
+  decisionView(): AgentView | null;
   /** Build the controller the host installs, once the key check settles. */
   controllerFor(cfg: SquireCfg, terrain: Terrain, errands: () => AgentController): AgentController;
   /** The brain, while one is running. */
@@ -273,6 +276,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    decisionView: () => lastView,
 
     controllerFor(cfg, terrain, errands) {
       const backend = backendFor(config);
@@ -438,6 +442,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const lineageName = character.lineage ?? report.name;
     const lineage = config.lineages[lineageName];
     try {
+      const storedApprentice = await store.get("squire/apprentice") as Apprentice | undefined;
       summary = buildRunSummary({
         report,
         runLog: journal.runLog(),
@@ -450,6 +455,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         calibration: {},
         ...(blamed === null ? {} : { blamedDecisionId: blamed }),
         chronicleHighlights: journal.chronicle().slice(-5),
+        ...(storedApprentice === undefined ? {} : { apprentice: storedApprentice }),
       });
       await store.set(`squire/reports/${character.runId}`, summary);
     } catch (error) {

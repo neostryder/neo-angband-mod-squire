@@ -24,6 +24,14 @@ import {
 } from "./knight.js";
 import type { Goal } from "./brain/goals.js";
 import { mountPanel } from "./ui/panel.js";
+import { inferPersona, type InferredPersona } from "./learning/ranks.js";
+import type { CoachingExample } from "./learning/coaching.js";
+import { commandEvidence, signatureForView } from "./lessons/evidence.js";
+import { subscribeExam } from "./lessons/exam.js";
+import { saveInferredPersona } from "./lessons/persona.js";
+import { ghostAfterCommand, ghostHint } from "./lessons/ghost.js";
+import { activePersona } from "./config.js";
+import type { Persona } from "./persona/persona.js";
 
 type EventHandler = (name: string, payload: unknown) => void;
 
@@ -65,6 +73,12 @@ export interface Lessons {
   watchThis(): void;
   /** Answer "Why, sir?" for a notebook entry. */
   why(entry: NotebookEntry, reason: string): void;
+  inferred(): InferredPersona;
+  squirePersona(): Persona | null;
+  savePersona(use: boolean): void;
+  ghostEnabled(): boolean;
+  setGhost(enabled: boolean): void;
+  takeExam(): void;
 }
 
 const APPRENTICE_KEY = "squire/apprentice";
@@ -102,13 +116,22 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
   let demonstrations = 0;
   let previous: Moment | null = null;
   let asking = false;
+  let decisionSerial = 0;
+  let pendingRest: number | null = null;
+  const exam = subscribeExam(rt, () => apprentice.entries, (result) => {
+    save({ ...apprentice, examArmed: false, exams: [...apprentice.exams, result].slice(-10),
+      entries: [...apprentice.entries, { turn: rt.decisionView()?.turn() ?? 0, squire: "rest" as const, knight: "rest" as const,
+        agreed: true, line: `Exam: matched your choice ${String(result.matched)} of ${String(result.scored)} times`, demonstration: false }].slice(-200) });
+  }, () => save({ ...apprentice, examArmed: false }));
   void rt
     .store()
     .get(APPRENTICE_KEY)
     .then((stored) => {
       const s = stored as Partial<Apprentice> | undefined;
       if (s !== undefined && Array.isArray(s.entries) && typeof s.agreed === "number" && typeof s.total === "number") {
-        apprentice = { entries: s.entries, agreed: s.agreed, total: s.total };
+        apprentice = { ...emptyApprentice(), ...s, entries: s.entries, agreed: s.agreed, total: s.total,
+          commands: Array.isArray(s.commands) ? s.commands : [], exams: Array.isArray(s.exams) ? s.exams : [] };
+        if (apprentice.examArmed) exam.arm();
         for (const l of listeners) l(apprentice);
       }
     });
@@ -125,7 +148,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
       : noTerrain();
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {} });
 
-  function record(squire: Goal, knight: Goal, view: AgentView): void {
+  function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();
     const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
@@ -138,19 +161,41 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
         agreed: squire === knight,
         line: noteLine(squire, knight, share),
         demonstration,
+        signature: signatureForView(view),
+        dangerousNear,
+        ...(confidence === undefined ? {} : { confidence }),
       }),
     );
+    if (rt.config().knightsLessons.ghost && serial === decisionSerial) {
+      save({ ...apprentice, ghostHint: ghostHint(squire, knight, view), ghostGoal: squire === knight ? null : squire });
+    }
   }
 
   ctx.events?.on("player-command", (_name, payload) => {
+    exam.end();
     if (rt.brain() !== null) return;
     const view = viewNow();
     if (view === null) return;
+    const serial = ++decisionSerial;
     /* The journal follows the whole run, including the turns the player
      * plays, so the depth chart and report have no gaps. */
     rt.observe(view);
     if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload as PlayerCommand, view);
+    const evidence = commandEvidence(payload as PlayerCommand, knight, view);
+    const dangerousNear = evidence?.dangerousNear ?? false;
+    if (pendingRest !== null) {
+      save({ ...apprentice, commands: apprentice.commands.map((item, index) => index === pendingRest
+        ? { ...item, restedToFull: view.player().hp >= view.player().maxHp } : item) });
+      pendingRest = null;
+    }
+    if (evidence !== null) {
+      const commands = [...apprentice.commands, evidence].slice(-1000);
+      pendingRest = evidence.kind === "rest" ? commands.length - 1 : null;
+      save({ ...apprentice, commands });
+    }
+    if (apprentice.ghostHint !== null && ghostAfterCommand(apprentice.ghostHint, apprentice.ghostGoal, knight) === null)
+      save({ ...apprentice, ghostHint: null, ghostGoal: null });
     const moment = momentOf(view);
     const point = isDecisionPoint(previous, moment, knight);
     previous = moment;
@@ -163,7 +208,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     const offline = proceduralPick(question.context.offers, share);
     const backend = rt.backend();
     if (backend === null || asking) {
-      if (offline !== null) record(offline, knight, view);
+      if (offline !== null) record(offline, knight, view, dangerousNear, serial);
       return;
     }
     /* One question in flight at a time: a player moving quickly should not
@@ -176,9 +221,10 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
         const answer = result.answers["goal"];
         const pick = answer?.type === "choice" ? answer.choice : "none_of_these";
         const squire = question.context.offers.find((o) => o.goal === pick)?.goal ?? offline;
-        if (squire !== null && squire !== undefined) record(squire, knight, view);
+        if (squire !== null && squire !== undefined) record(squire, knight, view, dangerousNear, serial,
+          answer?.type === "choice" ? answer.confidence : undefined);
       } else if (offline !== null) {
-        record(offline, knight, view);
+        record(offline, knight, view, dangerousNear, serial);
       }
     });
   });
@@ -197,6 +243,29 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
         ...apprentice,
         entries: apprentice.entries.map((e) => (e === entry ? { ...e, reason } : e)),
       });
+    },
+    inferred() {
+      const examples: CoachingExample[] = apprentice.entries.filter((entry) => entry.signature !== undefined).map((entry) => ({
+        situation: { dangerousNear: entry.dangerousNear === true }, offered: [],
+        squirePick: entry.squire, playerPick: entry.knight, question: "goal", source: entry.demonstration ? "watch" : "takeover",
+        weight: entry.demonstration ? 2 : 1,
+      }));
+      return inferPersona(examples, apprentice.commands);
+    },
+    squirePersona: () => rt.character().persona ?? activePersona(rt.config()),
+    savePersona(use) {
+      saveInferredPersona(rt, lessons.inferred().persona, ctx.character?.key?.() ?? "Player", use);
+    },
+    ghostEnabled: () => rt.config().knightsLessons.ghost,
+    setGhost(enabled) {
+      const config = rt.config();
+      rt.saveConfig({ ...config, knightsLessons: { ...config.knightsLessons, ghost: enabled } });
+      if (!enabled) save({ ...apprentice, ghostHint: null, ghostGoal: null });
+    },
+    takeExam() {
+      if (apprentice.entries.filter((entry) => entry.signature !== undefined).length < 40) return;
+      exam.arm();
+      save({ ...apprentice, examArmed: true });
     },
   };
 

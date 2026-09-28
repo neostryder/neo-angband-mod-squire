@@ -61,6 +61,10 @@ export function drawCard(ctx: CardContext, model: RunSummary, theme: CardTheme =
     ctx.font = "22px sans-serif";
     fitted(ctx, model.headline.outcome === "death" ? `Cause: ${model.headline.cause}` : model.headline.cause, 56, 274, 650);
     ctx.fillText(`Deepest: ${String(model.headline.deepestFeet)} ft`, 56, 318);
+    if (model.apprenticeship !== undefined) {
+      ctx.font = "18px sans-serif";
+      fitted(ctx, `Apprentice: ${model.apprenticeship.rank} rank, agreed ${String(Math.round(model.apprenticeship.agreementShare * 100))}%`, 56, 341, 650);
+    }
     ctx.fillStyle = theme.muted;
     ctx.font = "18px sans-serif";
     ctx.fillText("Top kills", 56, 370);
