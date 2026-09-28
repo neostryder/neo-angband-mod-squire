@@ -9,7 +9,7 @@ import { LAYA_DEFAULT_URL } from "../config.js";
 import { describeLevel, type ConsentLevel } from "../telemetry/consent.js";
 import { DEFAULT_ENDPOINT, createSender } from "../telemetry/sender.js";
 import { installId } from "../memory/install.js";
-import { fill, h } from "./dom.js";
+import { download, fill, h } from "./dom.js";
 
 const BRAINS: readonly [BackendChoice, string, string][] = [
   ["jev", "Jev", "TypeSafe's hosted model. Fast and strong; it needs an API key and charges a small amount per decision."],
@@ -104,6 +104,23 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     },
   }, "Test connection");
 
+  const shadowEnabled = h("input", { type: "checkbox", checked: config.layaShadow.enabled });
+  shadowEnabled.addEventListener("change", () => update({ layaShadow: { ...config.layaShadow, enabled: shadowEnabled.checked } }));
+  const shadowUrl = h("input", { type: "text", value: config.layaShadow.url, placeholder: LAYA_DEFAULT_URL });
+  shadowUrl.addEventListener("change", () => update({ layaShadow: { ...config.layaShadow, url: shadowUrl.value.trim() || LAYA_DEFAULT_URL } }));
+  const rowCount = h("p", { class: "muted" }, "Counting saved rows...");
+  void rt.layaRowCount().then((count) => { rowCount.textContent = `${String(count)} training rows saved.`; });
+  const shadowBox = h(
+    "div",
+    {},
+    h("h3", {}, "Train Laya while Jev plays"),
+    h("label", {}, shadowEnabled, " Send decisions to Laya (off by default)"),
+    h("p", { class: "muted" }, "Squire sends each decision to Laya too. It never acts on Laya's answer."),
+    h("label", {}, "Laya address (default: localhost:8010)", shadowUrl),
+    h("button", { class: "act", onclick: async () => download("squire-laya-rows.jsonl", await rt.exportLayaRows(), "application/x-ndjson") }, "Save Laya training rows"),
+    rowCount,
+  );
+
   const telemetry = telemetryBox(rt, () => config, update);
 
   const rollOn = h("select");
@@ -117,6 +134,7 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     h("h3", {}, "Pick a brain"),
     brainBox,
     serverBox,
+    shadowBox,
     h("div", {}, test),
     status,
     h("h3", {}, "When a character dies"),

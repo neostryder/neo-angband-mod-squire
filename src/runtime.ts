@@ -28,6 +28,8 @@ import { createJournal, emptyJournal, heirFrom, withAncestor, type Journal, type
 import { buildRunSummary, summaryForTelemetry, type RunReport, type RunSummary } from "./report/summary.js";
 import { defaultPersona } from "./persona/persona.js";
 import { createSender } from "./telemetry/sender.js";
+import { createRows, countRows, exportRows } from "./laya/rows.js";
+import { createShadow } from "./laya/shadow.js";
 
 /** The parts of the host's plugin context Squire uses, declared so the mod builds without the host's source. */
 export interface SquireHost {
@@ -141,6 +143,8 @@ export interface Runtime {
   onChronicle(listener: (line: string) => void): () => void;
   store(): KvStore;
   exportDecisions(): string;
+  exportLayaRows(): Promise<string>;
+  layaRowCount(): Promise<number>;
   /** This run's logged decisions, once the saved log has been read back. */
   decisions(): Promise<readonly LoggedDecision[]>;
   /** The host's HTTP relay, or null on a game too old to have one. */
@@ -176,6 +180,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   /* Read the saved log back before appending, or a reload would restart the
    * numbering and overwrite the first chunk. */
   const logLoaded = log.load().catch(() => {});
+  const layaRows = createRows(store, character.runId);
+  const shadow = createShadow({ net: host.net ?? null, rows: layaRows, install: logLoaded.then(() => installId(store)), runId: character.runId, now, log: host.log });
   const listeners = new Set<DecisionListener>();
   let brain: Brain | null = null;
   let lastTurn = 0;
@@ -322,6 +328,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    async exportLayaRows() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
+    async layaRowCount() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return countRows(store); },
     decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null,
   };
@@ -412,6 +420,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
             },
           }),
     });
+    void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== undefined && lastView !== null) journal.decided(logged, lastView);
     unsavedSpend += 1;
