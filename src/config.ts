@@ -31,6 +31,8 @@ export interface SquireConfig {
   readonly serverUrl: string;
   /** The model name to send, for servers that want one. Empty sends none. */
   readonly serverModel: string;
+  /** Send Jev's decisions to a local Laya server for training rows. */
+  readonly layaShadow: { readonly enabled: boolean; readonly url: string };
   /** The most tokens of context a server takes, for trimming the backstory. */
   readonly contextTokens: number;
   readonly caps: { readonly perSessionUsd: number; readonly perDayUsd: number };
@@ -63,6 +65,7 @@ export function defaultConfig(): SquireConfig {
     backend: "jev",
     serverUrl: LAYA_DEFAULT_URL,
     serverModel: "",
+    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL },
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
@@ -126,11 +129,13 @@ export function readConfig(stored: unknown): SquireConfig {
   const telemetry = rec(data["telemetry"]) ?? {};
   const knights = rec(data["knightsLessons"]) ?? {};
   const spend = rec(data["spend"]) ?? {};
+  const layaShadow = rec(data["layaShadow"]) ?? {};
   const personas = Array.isArray(data["personas"]) ? data["personas"].slice(0, 50).map((p) => normalize(p)) : base.personas;
   return {
     backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
     serverUrl: str(data["serverUrl"], base.serverUrl),
     serverModel: str(data["serverModel"], base.serverModel, 100),
+    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL) },
     contextTokens: numberIn(data["contextTokens"], 512, 200_000, base.contextTokens),
     caps: {
       perSessionUsd: numberIn(caps["perSessionUsd"], 0, 1000, 0),
