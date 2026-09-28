@@ -2660,7 +2660,7 @@ function rollOnBirth(session, mode, random, log) {
   if (mode === "like" && cat.previous !== null) {
     const previous = cat.previous;
     steps2.push(() => session.usePrevious());
-    if (!cat.namePinned) steps2.push(() => {
+    if (!cat.namePinned && previous.name.trim() !== "") steps2.push(() => {
       const named = session.setName(previous.name);
       return named.ok ? named : session.randomName();
     });
@@ -2675,6 +2675,13 @@ function rollOnBirth(session, mode, random, log) {
     const result = step();
     if (!result.ok) {
       log(`Squire left the next character to you: ${result.reason ?? "the game refused a step"}`);
+      return false;
+    }
+  }
+  if (!cat.namePinned && session.draft().name.trim() === "") {
+    const named = session.randomName();
+    if (!named.ok) {
+      log(`Squire left the next character to you: ${named.reason ?? "the game refused a name"}`);
       return false;
     }
   }

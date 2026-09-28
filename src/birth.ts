@@ -25,6 +25,7 @@ export interface BirthSessionLike {
     readonly previous: { readonly race: string; readonly cls: string; readonly name: string } | null;
     readonly namePinned: boolean;
   };
+  draft(): { readonly name: string };
   usePrevious(): BirthResultLike;
   setName(name: string): BirthResultLike;
   chooseRace(name: string): BirthResultLike;
@@ -88,7 +89,7 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
     /* usePrevious copies race, class and stats but not the name, and the game
      * will not start a character without one. A pinned name is left alone. */
     steps.push(() => session.usePrevious());
-    if (!cat.namePinned) steps.push(() => {
+    if (!cat.namePinned && previous.name.trim() !== "") steps.push(() => {
       const named = session.setName(previous.name);
       return named.ok ? named : session.randomName();
     });
@@ -103,6 +104,14 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
     const result = step();
     if (!result.ok) {
       log(`Squire left the next character to you: ${result.reason ?? "the game refused a step"}`);
+      return false;
+    }
+  }
+  /* The game refuses a blank name, and a previous character can have none. */
+  if (!cat.namePinned && session.draft().name.trim() === "") {
+    const named = session.randomName();
+    if (!named.ok) {
+      log(`Squire left the next character to you: ${named.reason ?? "the game refused a name"}`);
       return false;
     }
   }

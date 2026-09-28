@@ -11,22 +11,24 @@ function marks(): MarkStore {
   };
 }
 
-function session(previous: boolean, refuse: string | null = null) {
+function session(previous: boolean, refuse: string | null = null, previousName = "Amram") {
   const calls: string[] = [];
   const ok = { ok: true };
+  let current = "";
   const s: BirthSessionLike = {
     catalogue: () => ({
       races: [{ name: "Human" }, { name: "Dwarf" }],
       classes: [{ name: "Warrior" }, { name: "Mage" }],
-      previous: previous ? { race: "Human", cls: "Mage", name: "Amram" } : null,
+      previous: previous ? { race: "Human", cls: "Mage", name: previousName } : null,
       namePinned: false,
     }),
-    setName: (name) => (calls.push(`name ${name}`), ok),
+    setName: (name) => (calls.push(`name ${name}`), (current = name), ok),
+    draft: () => ({ name: current }),
     usePrevious: () => (calls.push("usePrevious"), ok),
     chooseRace: (name) => (calls.push(`race ${name}`), ok),
     chooseClass: (name) => (calls.push(`class ${name}`), ok),
     roll: () => (calls.push("roll"), refuse === "roll" ? { ok: false, reason: "no" } : ok),
-    randomName: () => (calls.push("randomName"), ok),
+    randomName: () => (calls.push("randomName"), (current = "Rolled"), ok),
     accept: () => (calls.push("accept"), ok),
   };
   return { s, calls };
@@ -60,6 +62,14 @@ describe("roll-on birth", () => {
     const { s, calls } = session(true);
     expect(rollOnPresenter(host("like").host, store, () => 5).show(s)).toBe(true);
     expect(calls).toEqual(["usePrevious", "name Amram", "accept"]);
+  });
+
+  it("rolls a name when the last character had none", () => {
+    const store = marks();
+    markRollOn(store, 0);
+    const { s, calls } = session(true, null, "");
+    expect(rollOnPresenter(host("like").host, store, () => 5).show(s)).toBe(true);
+    expect(calls).toEqual(["usePrevious", "randomName", "accept"]);
   });
 
   it("rolls a random race and class for random", () => {
