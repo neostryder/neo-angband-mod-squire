@@ -45,6 +45,11 @@
 import type * as Core from "@rpgm-tools/neo-angband-core";
 import type { AgentController } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
+import { ask, JEV, type NetLike } from "./src/brain/backend.js";
+import { bootController, keyReady, type SecretsLike } from "./src/brain/boot.js";
+import { createBrain, type Token } from "./src/brain/brain.js";
+import { createGoalPlanner } from "./src/brain/goals.js";
+import { createTally } from "./src/brain/tally.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
 
@@ -79,6 +84,15 @@ interface ControllerCtx {
    * file reads rather than imported: `GameState` is an internal host type and
    * not part of the published surface.
    */
+  /** The host's HTTP relay (`ctx.net`), present when the manifest names a `network:` host. */
+  readonly net?: NetLike & { readonly secrets: SecretsLike };
+  /** One input wait, whole. Squire reads only its token. */
+  readonly snapshot?: () => { readonly token: Token } | null;
+  /** Present while this mod holds the keyboard. */
+  readonly controller?: {
+    setStatus(status: { readonly label?: string; readonly reason?: string }): void;
+    markNondeterministic(): void;
+  };
   readonly state: {
     readonly actor: {
       /**
@@ -136,10 +150,68 @@ function terrainFrom(ctx: ControllerCtx): Terrain {
   return readTerrain(features.allFeatures(), tf);
 }
 
+/** The procedural errands: Squire with no model. */
+function errandController(ctx: ControllerCtx, cfg: ReturnType<typeof cfgFromFlags>, terrain: Terrain): AgentController {
+  return createSquire({ cfg, terrain, log: ctx.log }).controller;
+}
+
+/**
+ * Squire with a model. The planner asks Jev which goal to pursue, and the errand
+ * code carries it out.
+ */
+function modelController(
+  ctx: ControllerCtx,
+  net: NetLike,
+  cfg: ReturnType<typeof cfgFromFlags>,
+  terrain: Terrain,
+): AgentController {
+  const now = () => Date.now();
+  const brain = createBrain({
+    backend: JEV,
+    planner: createGoalPlanner({ cfg, terrain, log: ctx.log }),
+    tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+    send: (request) => ask(net, JEV, request, now),
+    token: () => ctx.snapshot?.()?.token ?? null,
+    now,
+    log: ctx.log,
+    status: (label, reason) => ctx.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
+  });
+  ctx.log(`Squire has the keyboard and asks ${JEV.label} what to do`);
+  return brain.controller;
+}
+
+/**
+ * Pick the model or the errands once the key check settles. A model's answers
+ * cannot be replayed from the save's seed, so the save is marked the moment the
+ * model takes over, and only then. Without the host's marking call Squire stays
+ * on the errands rather than play unmarked.
+ */
+function pickController(
+  ctx: ControllerCtx,
+  net: NetLike,
+  cfg: ReturnType<typeof cfgFromFlags>,
+  terrain: Terrain,
+): AgentController {
+  const mark = ctx.controller?.markNondeterministic;
+  if (mark === undefined) {
+    ctx.log("This version of the game cannot mark the save for a model, so Squire runs its errands without one");
+    return errandController(ctx, cfg, terrain);
+  }
+  mark.call(ctx.controller);
+  return modelController(ctx, net, cfg, terrain);
+}
+
+/** The host's richer controller return. */
+interface ControllerInstall {
+  readonly controller: AgentController;
+  /** Keep the ordinary death, with its tombstone and run report, instead of reincarnating in place. */
+  readonly onDeath: "end";
+}
+
 export default {
   api: 1,
 
-  controller(ctx: ControllerCtx): AgentController | undefined {
+  controller(ctx: ControllerCtx): AgentController | ControllerInstall | undefined {
     /* Returning undefined is a decline, and the host leaves the human at the
      * keyboard. This is the normal case: the mod is installed and enabled, and
      * this character has never been handed to an autoplayer. */
@@ -148,12 +220,10 @@ export default {
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);
 
-    const squire = createSquire({ cfg, terrain, log: ctx.log });
-
     ctx.log(
       terrain.size > 0
-        ? `Squire has the keyboard, reading ${String(terrain.size)} terrain features`
-        : "Squire has the keyboard, but no terrain registry: it will not take stairs or open doors",
+        ? `Squire is reading ${String(terrain.size)} terrain features`
+        : "Squire has no terrain registry: it will not take stairs or open doors",
     );
     const changed = changedFrom(cfg);
     ctx.log(
@@ -162,6 +232,20 @@ export default {
         : `Squire's settings differ from stock: ${changed.join(", ")}`,
     );
 
-    return squire.controller;
+    const net = ctx.net;
+    if (!cfg.useModel || net === undefined) {
+      if (cfg.useModel) ctx.log("This version of the game cannot send Squire's requests, so Squire runs its errands without a model");
+      return errandController(ctx, cfg, terrain);
+    }
+
+    const ready = keyReady(net.secrets, JEV, net.transport === "relay", ctx.log);
+    return {
+      controller: bootController(
+        ready,
+        () => pickController(ctx, net, cfg, terrain),
+        () => errandController(ctx, cfg, terrain),
+      ),
+      onDeath: "end",
+    };
   },
 };

@@ -98,6 +98,9 @@ function pickTarget(monsters, from, options) {
   }
   return best;
 }
+function inSight(monsters) {
+  return monsters.filter((monster) => monster.visible);
+}
 function awakeInSight(monsters) {
   return monsters.filter((monster) => monster.visible && !monster.asleep);
 }
@@ -640,12 +643,610 @@ function createSquire(options) {
   };
 }
 
+// src/brain/systemone.ts
+function estimateTokens(text) {
+  return Math.ceil(text.length / 4);
+}
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+function num(value) {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+function parseOne(name, question, raw) {
+  if (!isRecord(raw)) return `the server sent no answer to "${name}"`;
+  if (raw["type"] !== question.type) {
+    return `the server answered "${name}" as a ${String(raw["type"])}, not a ${question.type}`;
+  }
+  switch (question.type) {
+    case "noul": {
+      const p = num(raw["noul"]);
+      if (p === null) return `the answer to "${name}" had no probability`;
+      return { type: "noul", p };
+    }
+    case "choice": {
+      const choice = raw["choice"];
+      const probs = raw["probabilities"];
+      if (typeof choice !== "string" || !(choice in question.criteria)) {
+        return `the answer to "${name}" picked an option that was not offered`;
+      }
+      if (!isRecord(probs)) return `the answer to "${name}" had no probabilities`;
+      const probabilities = {};
+      for (const option of Object.keys(question.criteria)) {
+        probabilities[option] = num(probs[option]) ?? 0;
+      }
+      return { type: "choice", choice, confidence: num(raw["confidence"]) ?? 0, probabilities };
+    }
+    case "score": {
+      const score = num(raw["score"]);
+      const probs = raw["probabilities"];
+      if (score === null) return `the answer to "${name}" had no score`;
+      const probabilities = question.criteria.map(
+        (_, i) => isRecord(probs) ? num(probs[String(i)]) ?? 0 : 0
+      );
+      return { type: "score", score, confidence: num(raw["confidence"]) ?? 0, probabilities };
+    }
+  }
+}
+function parseReply(request, requestBody, replyBody) {
+  let raw;
+  try {
+    raw = JSON.parse(replyBody);
+  } catch {
+    return { ok: false, problem: "the server's reply was not JSON" };
+  }
+  if (!isRecord(raw) || !isRecord(raw["answers"])) {
+    return { ok: false, problem: "the server's reply had no answers" };
+  }
+  const answersRaw = raw["answers"];
+  const answers = {};
+  for (const [name, question] of Object.entries(request.questions)) {
+    const parsed = parseOne(name, question, answersRaw[name]);
+    if (typeof parsed === "string") return { ok: false, problem: parsed };
+    answers[name] = parsed;
+  }
+  const usageRaw = isRecord(raw["usage"]) ? raw["usage"] : {};
+  const inputTokens = num(usageRaw["input_tokens"]);
+  const outputTokens = num(usageRaw["output_tokens"]);
+  const usage = inputTokens === null ? { inputTokens: estimateTokens(requestBody), outputTokens: outputTokens ?? 0, estimated: true } : { inputTokens, outputTokens: outputTokens ?? 0, estimated: false };
+  const model = typeof raw["model"] === "string" ? raw["model"] : null;
+  return { ok: true, model, answers, usage };
+}
+
+// src/brain/backend.ts
+var JEV = Object.freeze({
+  kind: "jev",
+  label: "Jev",
+  url: "https://api.typesafe.ai/v1/systemone",
+  model: "jev-latest",
+  secret: "jev",
+  metered: true,
+  usdPerMillionInput: 0.04,
+  timeoutMs: 15e3
+});
+var JEV_KEY_VARIABLES = Object.freeze(["TYPESAFE_API_KEY", "JEV_API_KEY"]);
+function retryAfter(headers) {
+  const value = headers["retry-after"];
+  if (value === void 0) return void 0;
+  const seconds = Number(value);
+  return Number.isFinite(seconds) && seconds >= 0 ? seconds * 1e3 : void 0;
+}
+function statusFailure(backend, status, headers) {
+  if (status === 401 || status === 403) {
+    return {
+      kind: "key-refused",
+      message: `${backend.label} refused the API key. Check the key in Squire's setup and try again.`,
+      retryable: false
+    };
+  }
+  if (status === 429) {
+    const after = retryAfter(headers);
+    return {
+      kind: "rate-limited",
+      message: `${backend.label} asked Squire to slow down. Squire will try again shortly.`,
+      retryable: true,
+      ...after === void 0 ? {} : { retryAfterMs: after }
+    };
+  }
+  if (status >= 500) {
+    return {
+      kind: "server-error",
+      message: `${backend.label} had a problem of its own (HTTP ${String(status)}). Squire will try again shortly.`,
+      retryable: true
+    };
+  }
+  return {
+    kind: "bad-reply",
+    message: `${backend.label} turned the request down (HTTP ${String(status)}). This is likely a bug in Squire; please report it.`,
+    retryable: false
+  };
+}
+async function ask(net, backend, request, now) {
+  const started = now();
+  const body = JSON.stringify(backend.model === void 0 ? request : { model: backend.model, ...request });
+  const headers = { "Content-Type": "application/json" };
+  if (backend.secret !== void 0) headers["Authorization"] = `Bearer {secret:${backend.secret}}`;
+  const reply = await net.request({ url: backend.url, method: "POST", headers, body, timeoutMs: backend.timeoutMs });
+  const latencyMs = now() - started;
+  if (!reply.ok) {
+    if (reply.code === "not-declared") {
+      return {
+        ok: false,
+        latencyMs,
+        failure: {
+          kind: "not-allowed",
+          message: `Squire is not allowed to reach ${backend.url}. Pick a server Squire's permissions name, or report this if you expected it to work.`,
+          retryable: false
+        }
+      };
+    }
+    if (reply.code === "secret-missing") {
+      return {
+        ok: false,
+        latencyMs,
+        failure: {
+          kind: "key-refused",
+          message: `No API key is set for ${backend.label}. Add one in Squire's setup.`,
+          retryable: false
+        }
+      };
+    }
+    return {
+      ok: false,
+      latencyMs,
+      failure: { kind: "unreachable", message: `Could not reach ${backend.label}: ${reply.problem}`, retryable: true }
+    };
+  }
+  if (reply.status !== 200) {
+    return { ok: false, latencyMs, failure: statusFailure(backend, reply.status, reply.headers) };
+  }
+  const parsed = parseReply(request, body, reply.body);
+  if (!parsed.ok) {
+    return {
+      ok: false,
+      latencyMs,
+      failure: {
+        kind: "bad-reply",
+        message: `${backend.label} answered, but ${parsed.problem}. Squire will try again shortly.`,
+        retryable: true
+      }
+    };
+  }
+  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs };
+}
+
+// src/brain/boot.ts
+async function keyReady(secrets, backend, canReadEnv, log) {
+  if (backend.secret === void 0) return true;
+  const held = await secrets.has(backend.secret);
+  if (held.present) return true;
+  if (!canReadEnv) {
+    log(`No API key is set for ${backend.label}, so Squire runs its errands without a model.`);
+    return false;
+  }
+  const host = new URL(backend.url).host;
+  const read = await secrets.fromEnv(backend.secret, JEV_KEY_VARIABLES, { hosts: [host] });
+  if (read.ok) return true;
+  log(`${read.problem} Squire runs its errands without a model.`);
+  return false;
+}
+function bootController(ready, withModel, withoutModel) {
+  let chosen = null;
+  let picked = null;
+  ready.then(
+    (ok) => {
+      picked = ok;
+    },
+    () => {
+      picked = false;
+    }
+  );
+  return (view, act) => {
+    if (chosen === null) {
+      if (picked === null) return null;
+      chosen = picked ? withModel() : withoutModel();
+    }
+    return chosen(view, act);
+  };
+}
+
+// src/brain/brain.ts
+function sameToken(a, b) {
+  return a !== null && b !== null && a.epoch === b.epoch && a.revision === b.revision;
+}
+var BACKOFF_MS = Object.freeze([1e3, 2e3, 4e3, 8e3, 15e3, 3e4]);
+var MAX_RETRY_AFTER_MS = 6e4;
+var MAX_EMPTY_DECISIONS = 4;
+var RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
+function createBrain(deps) {
+  const { backend, planner, tally } = deps;
+  let state = { kind: "idle" };
+  let landed = null;
+  let attempt = 0;
+  let emptyDecisions = 0;
+  function stopWith(message) {
+    state = { kind: "stopped", message };
+    deps.log(message);
+    deps.status("stopped", message);
+    return null;
+  }
+  function failed(failure) {
+    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`);
+    const wait = failure.retryAfterMs ?? BACKOFF_MS[attempt];
+    if (wait === void 0 || wait > MAX_RETRY_AFTER_MS) {
+      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`);
+    }
+    attempt += 1;
+    state = { kind: "waiting", until: deps.now() + wait };
+    deps.log(`${failure.message} Trying again in ${String(Math.ceil(wait / 1e3))} s.`);
+    deps.status("waiting", failure.message);
+    return null;
+  }
+  function startAsking(view) {
+    const capped = tally.overCap(backend, deps.now());
+    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
+    const question = planner.ask(view);
+    if ("handBack" in question) return stopWith(question.handBack);
+    const token = deps.token();
+    state = { kind: "asking", token, question };
+    deps.status("thinking");
+    deps.send(question.request).then(
+      (result) => {
+        landed = { result, question, token };
+      },
+      (error) => {
+        landed = {
+          result: {
+            ok: false,
+            latencyMs: 0,
+            failure: { kind: "unreachable", message: `The request failed: ${String(error)}`, retryable: true }
+          },
+          question,
+          token
+        };
+      }
+    );
+    return null;
+  }
+  function takeLanded(view) {
+    if (landed === null) return null;
+    const { result, question, token } = landed;
+    landed = null;
+    if (!result.ok) {
+      failed(result.failure);
+      return null;
+    }
+    tally.record(backend, result.usage, deps.now());
+    attempt = 0;
+    if (!sameToken(token, deps.token())) {
+      state = { kind: "idle" };
+      return null;
+    }
+    const choice = planner.choose(result.answers, question.context, view);
+    const outcome = "plan" in choice ? choice.plan.label : `hand back: ${choice.handBack}`;
+    deps.onDecision?.({
+      token,
+      backend: backend.label,
+      request: question.request,
+      context: question.context,
+      answers: result.answers,
+      usage: result.usage,
+      model: result.model,
+      latencyMs: result.latencyMs,
+      outcome
+    });
+    if ("handBack" in choice) {
+      stopWith(choice.handBack);
+      return null;
+    }
+    state = { kind: "running", plan: choice.plan };
+    deps.status(choice.plan.label);
+    return "planned";
+  }
+  const controller = (view, act) => {
+    if (state.kind === "stopped") return null;
+    if (state.kind === "asking") {
+      if (takeLanded(view) === null) return null;
+    }
+    if (state.kind === "waiting") {
+      if (deps.now() < state.until) return null;
+      state = { kind: "idle" };
+    }
+    if (state.kind === "running") {
+      const plan = state.plan;
+      const reason = planner.trigger(view, plan);
+      if (reason === null) {
+        const command = plan.step(view, act);
+        if (command !== null) {
+          emptyDecisions = 0;
+          return command;
+        }
+        deps.log(`finished: ${plan.label}`);
+      } else {
+        deps.log(`${plan.label}: ${reason}`);
+      }
+      emptyDecisions += 1;
+      if (emptyDecisions > MAX_EMPTY_DECISIONS) {
+        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);
+      }
+      state = { kind: "idle" };
+    }
+    if (state.kind === "idle") return startAsking(view);
+    return null;
+  };
+  return {
+    controller,
+    state: () => state.kind,
+    stoppedBecause: () => state.kind === "stopped" ? state.message : null
+  };
+}
+
+// src/brain/goals.ts
+var GOAL_CRITERIA = Object.freeze({
+  fight: "Attack the nearest creature Squire can reach, and keep fighting until it is dead or something changes.",
+  explore: "Walk toward the nearest unexplored ground on this level. Not for when an awake creature is a real threat.",
+  descend: "Walk to a known down staircase and take it to the next level. Not for when the character is badly hurt.",
+  retreat: "Step away from the awake creatures in sight, to gain distance before they can attack.",
+  rest: "Rest until hit points and mana recover. Only safe with nothing awake in sight.",
+  pick_up: "Pick up the object on the floor under the character."
+});
+var NONE_OF_THESE = "No offered goal fits. Squire falls back to its fixed errand order for a few steps.";
+var FALLBACK_STEPS = 8;
+var RETREAT_STEPS = 4;
+function healthBand(hp, maxHp) {
+  if (maxHp <= 0) return "unknown";
+  const share = hp / maxHp;
+  if (share >= 0.9) return "full";
+  if (share >= 0.6) return "lightly hurt";
+  if (share >= 0.35) return "badly hurt";
+  return "near death";
+}
+function threatBand(monsterLevel, characterLevel) {
+  if (monsterLevel * 2 <= characterLevel) return "an easy kill";
+  if (monsterLevel <= characterLevel) return "a fair fight";
+  if (monsterLevel <= characterLevel + 5) return "dangerous";
+  return "deadly";
+}
+var HANDBOOK = Object.freeze([
+  "Killing creatures earns experience, and experience makes the character stronger.",
+  "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
+  "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought."
+]);
+function createGoalPlanner(options) {
+  const { cfg, terrain, log } = options;
+  const fightCfg = { ...cfg, wakeSleepers: true };
+  function context(view, act, progress, with_ = cfg) {
+    return { view, act, terrain, cfg: with_, progress, log };
+  }
+  function watch(view) {
+    const player = view.player();
+    const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
+    return createWatcher(view, {
+      stopOnAnyDamage: false,
+      stopOnNewCreature: true,
+      /* Already under the line: crossing it again is not news. */
+      stopOnLowHealth: !hurt,
+      retreatFraction: cfg.retreatFraction
+    });
+  }
+  function missionPlan(label, mission, view, with_ = cfg, limit = Infinity) {
+    const progress = newProgress(view.player().depth);
+    let begun = false;
+    let done = false;
+    return {
+      label,
+      watcher: watch(view),
+      step(v, act) {
+        if (done || progress.steps >= limit) return null;
+        const ctx = context(v, act, progress, with_);
+        if (!begun) {
+          begun = true;
+          const declined = mission.begin(ctx);
+          if (declined !== null) {
+            done = true;
+            log(`${label}: ${declined.detail}`);
+            return null;
+          }
+        }
+        const decision = mission.step(ctx);
+        if (isStop(decision)) {
+          done = true;
+          log(`${label}: ${decision.stop.detail}`);
+          return null;
+        }
+        return decision.command;
+      }
+    };
+  }
+  function stepsPlan(label, view, next) {
+    const progress = newProgress(view.player().depth);
+    let index = 0;
+    let done = false;
+    return {
+      label,
+      watcher: watch(view),
+      step(v, act) {
+        if (done) return null;
+        const command = next(context(v, act, progress), index);
+        index += 1;
+        if (command === null) done = true;
+        return command;
+      }
+    };
+  }
+  function build(goal, view) {
+    switch (goal) {
+      case "fight":
+        return { plan: missionPlan("fight", autofight(), view, fightCfg) };
+      case "explore":
+        return { plan: missionPlan("explore", autoexplore(), view) };
+      case "descend":
+        return {
+          plan: stepsPlan("take the stairs down", view, (ctx) => {
+            const at = ctx.view.player().grid;
+            const stairs = knownDownStairs(ctx.view, terrain);
+            if (stairs.some((s) => s.x === at.x && s.y === at.y)) {
+              return ctx.view.player().depth === view.player().depth ? ctx.act.descend() : null;
+            }
+            const travel = travelTo(ctx, stairs);
+            return travel.kind === "step" ? travel.command : null;
+          })
+        };
+      case "retreat":
+        return {
+          plan: stepsPlan("back away", view, (ctx, i) => {
+            if (i >= RETREAT_STEPS) return null;
+            const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
+            return away.kind === "step" ? away.command : null;
+          })
+        };
+      case "rest":
+        return { plan: stepsPlan("rest", view, (ctx, i) => i === 0 ? ctx.act.rest() : null) };
+      case "pick_up":
+        return { plan: stepsPlan("pick up", view, (ctx, i) => i === 0 ? ctx.act.pickup() : null) };
+    }
+  }
+  return {
+    ask(view) {
+      const player = view.player();
+      if (player.dead) return { handBack: "The character has died." };
+      const at = player.grid;
+      const monsters = view.monsters();
+      const awake = awakeInSight(monsters);
+      const seen = inSight(monsters);
+      const target = pickTarget(monsters, at, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
+      const unexplored = frontiers(view, terrain).length;
+      const stairs = knownDownStairs(view, terrain);
+      const underfoot = hasFloorObject(view, at);
+      const offered = [];
+      if (target !== null) offered.push("fight");
+      if (awake.length > 0) offered.push("retreat");
+      if (awake.length === 0 && (player.hp < player.maxHp || player.sp < player.maxSp)) offered.push("rest");
+      if (underfoot) offered.push("pick_up");
+      if (unexplored > 0) offered.push("explore");
+      if (stairs.length > 0 && cfg.descend) offered.push("descend");
+      if (offered.length === 0) {
+        return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
+      }
+      const criteria = {};
+      for (const goal2 of offered) criteria[goal2] = GOAL_CRITERIA[goal2];
+      criteria["none_of_these"] = NONE_OF_THESE;
+      const goal = {
+        type: "choice",
+        instructions: "You are playing Angband, a dungeon game where death is permanent. Which goal gives this character the best chance to survive and keep making progress?",
+        criteria
+      };
+      const question = {
+        request: {
+          state: {
+            rules: HANDBOOK.join(" "),
+            character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
+            health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
+            ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
+            creatures: seen.length === 0 ? "No creatures in sight." : seen.map(
+              (m) => `${m.race}: ${threatBand(m.level, player.level)}${m.asleep ? ", asleep" : ""}${m.afraid ? ", afraid" : ""}`
+            ).join("; "),
+            ground: standingOnHarm(view, terrain, at) ? "The ground here is hurting the character." : "Safe ground.",
+            level: `${unexplored > 0 ? "Unexplored ground remains." : "The level is explored."} ${stairs.length > 0 ? "A down staircase is known." : "No down staircase is known."}`
+          },
+          questions: { goal }
+        },
+        context: { depth: player.depth, offered }
+      };
+      return question;
+    },
+    choose(answers, digest, view) {
+      const answer = answers["goal"];
+      if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
+      const pick = answer.choice;
+      if (pick === "none_of_these") {
+        log("goal: none fit, following the fixed errand order");
+        return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
+      }
+      if (!digest.offered.includes(pick)) {
+        return { handBack: "The model picked a goal Squire did not offer, so the keyboard is yours." };
+      }
+      log(`goal: ${pick} (${Math.round((answer.probabilities[pick] ?? 0) * 100)}%)`);
+      return build(pick, view);
+    },
+    trigger(view, plan) {
+      const watched = plan;
+      const stopped = watched.watcher?.check(view) ?? null;
+      return stopped === null ? null : stopped.detail;
+    }
+  };
+}
+
+// src/brain/tally.ts
+var ZERO = Object.freeze({ requests: 0, inputTokens: 0, outputTokens: 0, estimated: 0, usd: 0 });
+function add(totals, usage, usd) {
+  return {
+    requests: totals.requests + 1,
+    inputTokens: totals.inputTokens + usage.inputTokens,
+    outputTokens: totals.outputTokens + usage.outputTokens,
+    estimated: totals.estimated + (usage.estimated ? 1 : 0),
+    usd: totals.usd + usd
+  };
+}
+function dayKey(ms) {
+  const d = new Date(ms);
+  return `${String(d.getFullYear())}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function createTally(caps, earlierToday) {
+  let session = ZERO;
+  const perBackend = {};
+  let day = earlierToday?.day ?? "";
+  let dayUsd = earlierToday?.usd ?? 0;
+  function rollDay(now) {
+    const today = dayKey(now);
+    if (today !== day) {
+      day = today;
+      dayUsd = 0;
+    }
+  }
+  return {
+    record(backend, usage, now) {
+      rollDay(now);
+      const usd = backend.metered ? usage.inputTokens / 1e6 * backend.usdPerMillionInput : 0;
+      session = add(session, usage, usd);
+      perBackend[backend.label] = add(perBackend[backend.label] ?? ZERO, usage, usd);
+      dayUsd += usd;
+    },
+    session: () => session,
+    byBackend: () => ({ ...perBackend }),
+    todayUsd(now) {
+      rollDay(now);
+      return dayUsd;
+    },
+    overCap(backend, now) {
+      if (!backend.metered) return null;
+      rollDay(now);
+      if (caps.perSessionUsd > 0 && session.usd >= caps.perSessionUsd) {
+        return {
+          kind: "over-cap",
+          message: `Squire has reached this session's spend limit for ${backend.label} ($${caps.perSessionUsd.toFixed(2)}). Raise the limit in Squire's settings, or reload to start a new session.`,
+          retryable: false
+        };
+      }
+      if (caps.perDayUsd > 0 && dayUsd >= caps.perDayUsd) {
+        return {
+          kind: "over-cap",
+          message: `Squire has reached today's spend limit for ${backend.label} ($${caps.perDayUsd.toFixed(2)}). Raise the limit in Squire's settings, or wait until tomorrow.`,
+          retryable: false
+        };
+      }
+      return null;
+    }
+  };
+}
+
 // src/settings.ts
 function defaultCfg() {
   return {
     errandAutofight: true,
     errandAutoexplore: true,
     errandCampaign: false,
+    useModel: true,
     stopOnLowHealth: true,
     stopOnNewCreature: true,
     wakeSleepers: false,
@@ -660,6 +1261,7 @@ var RULE_CFG = {
   "squire.errandAutofight": "errandAutofight",
   "squire.errandAutoexplore": "errandAutoexplore",
   "squire.errandCampaign": "errandCampaign",
+  "squire.useModel": "useModel",
   "squire.stopOnLowHealth": "stopOnLowHealth",
   "squire.stopOnNewCreature": "stopOnNewCreature",
   "squire.wakeSleepers": "wakeSleepers",
@@ -726,21 +1328,60 @@ function terrainFrom(ctx) {
   if (features === void 0 || tf === void 0) return noTerrain();
   return readTerrain(features.allFeatures(), tf);
 }
+function errandController(ctx, cfg, terrain) {
+  return createSquire({ cfg, terrain, log: ctx.log }).controller;
+}
+function modelController(ctx, net, cfg, terrain) {
+  const now = () => Date.now();
+  const brain = createBrain({
+    backend: JEV,
+    planner: createGoalPlanner({ cfg, terrain, log: ctx.log }),
+    tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+    send: (request) => ask(net, JEV, request, now),
+    token: () => ctx.snapshot?.()?.token ?? null,
+    now,
+    log: ctx.log,
+    status: (label, reason) => ctx.controller?.setStatus(reason === void 0 ? { label } : { label, reason })
+  });
+  ctx.log(`Squire has the keyboard and asks ${JEV.label} what to do`);
+  return brain.controller;
+}
+function pickController(ctx, net, cfg, terrain) {
+  const mark = ctx.controller?.markNondeterministic;
+  if (mark === void 0) {
+    ctx.log("This version of the game cannot mark the save for a model, so Squire runs its errands without one");
+    return errandController(ctx, cfg, terrain);
+  }
+  mark.call(ctx.controller);
+  return modelController(ctx, net, cfg, terrain);
+}
 var plugin_default = {
   api: 1,
   controller(ctx) {
     if (!characterAlreadyAutoplayed(ctx)) return void 0;
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);
-    const squire = createSquire({ cfg, terrain, log: ctx.log });
     ctx.log(
-      terrain.size > 0 ? `Squire has the keyboard, reading ${String(terrain.size)} terrain features` : "Squire has the keyboard, but no terrain registry: it will not take stairs or open doors"
+      terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain registry: it will not take stairs or open doors"
     );
     const changed = changedFrom(cfg);
     ctx.log(
       changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
     );
-    return squire.controller;
+    const net = ctx.net;
+    if (!cfg.useModel || net === void 0) {
+      if (cfg.useModel) ctx.log("This version of the game cannot send Squire's requests, so Squire runs its errands without a model");
+      return errandController(ctx, cfg, terrain);
+    }
+    const ready = keyReady(net.secrets, JEV, net.transport === "relay", ctx.log);
+    return {
+      controller: bootController(
+        ready,
+        () => pickController(ctx, net, cfg, terrain),
+        () => errandController(ctx, cfg, terrain)
+      ),
+      onDeath: "end"
+    };
   }
 };
 export {

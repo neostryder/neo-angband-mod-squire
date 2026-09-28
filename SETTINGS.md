@@ -7,6 +7,7 @@ The Squire reads these settings when its controller is created. Changing any of 
 | `squire.errandAutofight` | on | Offers the fighting errand when a creature is in sight. | Yes, controller side. |
 | `squire.errandAutoexplore` | on | Offers the exploring errand when no creature is in sight. | Yes, controller side. |
 | `squire.errandCampaign` | off | Lets Squire continue playing until the keyboard is taken back. | Yes, controller side. |
+| `squire.useModel` | on | Asks Jev for each next goal when a Jev API key is set; runs the errands otherwise. | Yes, controller side. |
 | `squire.stopOnLowHealth` | on | Ends an errand after hit points fall below half. | Yes, controller side. |
 | `squire.stopOnNewCreature` | on | Ends an errand when a new creature appears. | Yes, controller side. |
 | `squire.wakeSleepers` | off | Lets the fighting errand target sleeping creatures. | Yes, controller side. |

@@ -27,6 +27,8 @@ export interface SquireCfg {
   errandAutoexplore: boolean;
   /** Carry the character instead of running one short errand. */
   errandCampaign: boolean;
+  /** Ask a model what to do when one is reachable, instead of running an errand. */
+  useModel: boolean;
   /** End a short errand when hit points fall past `retreatFraction`. */
   stopOnLowHealth: boolean;
   /** End a short errand when a creature not already in sight comes into view. */
@@ -66,6 +68,7 @@ export function defaultCfg(): SquireCfg {
     errandAutofight: true,
     errandAutoexplore: true,
     errandCampaign: false,
+    useModel: true,
     stopOnLowHealth: true,
     stopOnNewCreature: true,
     wakeSleepers: false,
@@ -82,6 +85,7 @@ export const RULE_CFG: Readonly<Record<string, keyof SquireCfg>> = {
   "squire.errandAutofight": "errandAutofight",
   "squire.errandAutoexplore": "errandAutoexplore",
   "squire.errandCampaign": "errandCampaign",
+  "squire.useModel": "useModel",
   "squire.stopOnLowHealth": "stopOnLowHealth",
   "squire.stopOnNewCreature": "stopOnNewCreature",
   "squire.wakeSleepers": "wakeSleepers",

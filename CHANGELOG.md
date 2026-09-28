@@ -19,6 +19,10 @@ Fixed.
 
 ## [Unreleased]
 
+### Added
+
+- [Visible] **Squire can ask Jev what to do.** With a Jev API key set, Squire asks Jev which goal to pursue next (fight, explore, rest, back away, pick up or take the stairs) and plays on until you take the keyboard back. If Jev cannot be reached, Squire tries again a few times, then stops and tells you how to resume. Without a key, Squire runs its errands as before.
+
 ### Removed
 
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.

@@ -111,6 +111,22 @@ function accessorsUsed(): Set<string> {
   return used;
 }
 
+/**
+ * The hosts the mod sends requests to, from every server URL written in the
+ * source. Each one needs its own `network:<host>` grant, or the host refuses
+ * the request as undeclared.
+ */
+function hostsUsed(): Set<string> {
+  const re = /url:\s*"https?:\/\/([^/":]+)/gu;
+  const hosts = new Set<string>();
+  for (const file of [...sourceFiles(srcRoot), join(repoRoot, "plugin.ts")]) {
+    for (const m of readFileSync(file, "utf8").matchAll(re)) {
+      if (m[1] !== undefined) hosts.add(`network:${m[1]}`);
+    }
+  }
+  return hosts;
+}
+
 describe("manifest capabilities", () => {
   it("names a real engine domain for every accessor in the map", () => {
     /* The map above is a copy of the engine's binding table, so it can drift. A
@@ -140,7 +156,7 @@ describe("manifest capabilities", () => {
     expect(used).toContain("player");
     expect(used).toContain("monsters");
 
-    const wanted = new Set<string>(ACTION_CAPABILITIES);
+    const wanted = new Set<string>([...ACTION_CAPABILITIES, ...hostsUsed()]);
     for (const accessor of used) {
       const domain = ACCESSOR_DOMAIN[accessor];
       if (domain !== undefined) wanted.add(`state:${domain}.read`);

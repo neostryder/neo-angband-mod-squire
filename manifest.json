@@ -16,7 +16,8 @@
     "state:player.read",
     "state:monsters.read",
     "state:map.read",
-    "state:target.read"
+    "state:target.read",
+    "network:api.typesafe.ai"
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",
@@ -41,6 +42,13 @@
       "title": "Errand: play on until I take the keyboard back",
       "description": "Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. This is the closest Squire comes to an ordinary autoplayer. Off by default, since the short errands are what this mod is for.",
       "default": false,
+      "requiresReload": true
+    },
+    {
+      "flag": "squire.useModel",
+      "title": "Let Jev choose what to do",
+      "description": "When a Jev API key is set, Squire asks Jev which goal to pursue next (fight, explore, rest, back away or take the stairs) and plays on until you take the keyboard back. Without a key, Squire runs its errands as before. In the desktop app, Squire can read the key from the TYPESAFE_API_KEY or JEV_API_KEY environment variable after you agree. On by default.",
+      "default": true,
       "requiresReload": true
     },
     {
