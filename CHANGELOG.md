@@ -34,6 +34,11 @@ Fixed.
 
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.
 
+### Fixed
+
+- [Visible] **Exploring goes through closed doors.** A room whose only ways out were closed doors counted as fully explored, so the errand stopped with most of the level unseen.
+- [Visible] **Exploring keeps a step away from creatures in view.** The route no longer walks past a mushroom patch or a sleeping creature when there is another way, and it treats a creature the character cannot see as not there, as the player would.
+
 ## 0.1.1 - 2026-09-26
 
 ### Changed
