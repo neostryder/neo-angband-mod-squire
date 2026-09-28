@@ -42,6 +42,14 @@ describe("goal planner", () => {
     expect(String(q.request.state["creatures"])).toContain("cave orc");
   });
 
+  it("offers no escape from an easy creature at good health", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 20, maxHp: 20, level: 10 }, monsters: [{ grid: { x: 5, y: 1 }, race: "giant white mouse", level: 1 }] });
+    const { p } = planner(w);
+    const goals = asked(p.ask(w.view)).context.offers.map((o) => o.goal);
+    expect(goals).toContain("fight");
+    expect(goals).not.toContain("retreat");
+  });
+
   it("offers rest when hurt with nothing awake in sight", () => {
     const w = world({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
     const { p } = planner(w);

@@ -48,6 +48,9 @@ function count(items: readonly ItemView[], needle: string): number {
   }, 0);
 }
 
+/** The deepest level reached, in levels, before a recall scroll is worth buying. */
+export const RECALL_FROM_DEPTH = 5;
+
 function scale(base: number, slider: number, minimum: number): number {
   return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
 }
@@ -67,10 +70,13 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
     return { kind, want, have: count(items, name), name, ...extra };
   };
   const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  /* Near the surface the stairs are close, and a recall scroll costs most of a
+   * new character's gold, which healing potions need more. */
+  const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
   return [
     make("healing", healing),
     make("phase", scale(5, escapes, 1)),
-    make("recall", scale(1, escapes, 1)),
+    make("recall", recall),
     ...(level < 20 ? [make("oil", scale(10, consumables, 1))] : []),
     make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
     make("light", scale(2, consumables, 1)),

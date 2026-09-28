@@ -117,6 +117,9 @@ export function threatBand(monsterLevel: number, characterLevel: number): Threat
   return THREAT_BANDS[threatIndex({ level: monsterLevel, raceFlags: [] }, characterLevel)] ?? "deadly";
 }
 
+/** Health share under which escapes are offered even against easy creatures. */
+const ESCAPE_BELOW_HP = 0.7;
+
 /** Rough chance a band kills a healthy character that stands and fights it. */
 const BAND_RISK: readonly number[] = [0.03, 0.15, 0.4, 0.75];
 
@@ -284,7 +287,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hurt && healSpell !== undefined) {
     add("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
-  if (s.awake.length > 0) {
+  /* Backing off from an easy creature at good health only costs turns, and
+   * offering it made a timid persona walk away from every mouse. */
+  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP)) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);

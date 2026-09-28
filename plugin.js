@@ -1331,6 +1331,7 @@ function count(items, needle) {
     return sum + (name !== null && matchesSupplyName(name, needle) ? item.number : 0);
   }, 0);
 }
+var RECALL_FROM_DEPTH = 5;
 function scale(base, slider, minimum) {
   return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
 }
@@ -1348,10 +1349,11 @@ function supplyNeeds(view, pack, persona) {
     return { kind, want, have: count(items, name), name, ...extra };
   };
   const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
   return [
     make("healing", healing),
     make("phase", scale(5, escapes, 1)),
-    make("recall", scale(1, escapes, 1)),
+    make("recall", recall),
     ...level < 20 ? [make("oil", scale(10, consumables, 1))] : [],
     make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
     make("light", scale(2, consumables, 1)),
@@ -1572,6 +1574,7 @@ function threatIndex(monster, characterLevel, characterHp = Infinity) {
   else if (characterHp <= round) band = Math.max(band, 2);
   return band;
 }
+var ESCAPE_BELOW_HP = 0.7;
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
@@ -1657,7 +1660,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hurt && healSpell !== void 0) {
     add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
-  if (s.awake.length > 0) {
+  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);

@@ -8,7 +8,7 @@ describe("town trip", () => {
     const stock = [{ ...itemNamed("a Scroll of Word of Recall", 0), index: 0, price: 35, number: 2 }] as StoreItemView[];
     /* The engine names stores by terrain code, as the live game does. */
     const store: StoreView = { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock };
-    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 50 }, stores: [store] });
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, maxDepth: 5, gold: 50 }, stores: [store] });
     let reads = 0;
     const view: AgentView = { ...w.view, stores: () => { reads += 1; return w.view.stores(); } };
     expect(neededEntrances(view, w.terrain, null).map((entry) => entry.name)).toEqual(["Alchemy Shop"]);
