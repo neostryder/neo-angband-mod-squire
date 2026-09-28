@@ -865,7 +865,7 @@ function createBrain(deps) {
   }
   function failed(failure) {
     if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`);
-    const wait = failure.retryAfterMs ?? BACKOFF_MS[attempt];
+    const wait = attempt >= BACKOFF_MS.length ? void 0 : failure.retryAfterMs ?? BACKOFF_MS[attempt];
     if (wait === void 0 || wait > MAX_RETRY_AFTER_MS) {
       return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`);
     }
@@ -1811,13 +1811,22 @@ function situationOf(view) {
 function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
+function crowd(s) {
+  const at = s.view.player().grid;
+  const near = s.awake.filter((m) => steps(at, m.grid) <= 5).length;
+  return Math.min(1.8, 1 + 0.2 * Math.max(0, near - 1));
+}
 function fightRisk(s) {
-  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
-  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4));
+  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
+  const band = Math.max(target, s.worst);
+  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
 }
 function exposure(s) {
   if (s.worst < 0) return 0.01;
-  return clamp01((BAND_RISK[s.worst] ?? 0.75) * (1 - s.hpShare) * 1.2);
+  const at = s.view.player().grid;
+  const nearest = s.awake.reduce((min, m) => Math.min(min, steps(at, m.grid)), Infinity);
+  const proximity = nearest <= 2 ? 1 : nearest <= 5 ? 0.8 : 0.55;
+  return clamp01((BAND_RISK[s.worst] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.2) * proximity * crowd(s));
 }
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
@@ -4281,6 +4290,16 @@ function createRuntime(host, options = {}) {
   const listeners = /* @__PURE__ */ new Set();
   let brain = null;
   let lastTurn = 0;
+  let ownCommandAt = null;
+  const OWN_COMMAND_WINDOW_MS = 2e3;
+  const tracked = (controller) => (view, act) => {
+    lastTurn = view.turn();
+    lastView = view;
+    journal.observe(view);
+    const command = controller(view, act);
+    if (command !== null) ownCommandAt = Date.now();
+    return command;
+  };
   let lastView = null;
   let unsavedSpend = 0;
   let summary = null;
@@ -4376,7 +4395,7 @@ function createRuntime(host, options = {}) {
       const net = host.net;
       if (backend === null || net === void 0 || !cfg.useModel) {
         if (cfg.useModel && net === void 0) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
-        return errands();
+        return tracked(errands());
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen = null;
@@ -4393,10 +4412,17 @@ function createRuntime(host, options = {}) {
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
-        return chosen(view, act);
+        const command = chosen(view, act);
+        if (command !== null) ownCommandAt = Date.now();
+        return command;
       };
     },
     brain: () => brain,
+    takeOwnCommand(now2) {
+      const own = ownCommandAt !== null && now2 - ownCommandAt >= 0 && now2 - ownCommandAt <= OWN_COMMAND_WINDOW_MS;
+      ownCommandAt = null;
+      return own;
+    },
     recordKill(race, unique, view) {
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       self.saveCharacter({ ...character, kills });
@@ -5898,7 +5924,7 @@ function attachSquire(ctx, rt) {
   }
   ctx.events?.on("player-command", (_name, payload) => {
     exam.end();
-    if (rt.brain() !== null) return;
+    if (rt.takeOwnCommand(Date.now())) return;
     const view = viewNow();
     if (view === null) return;
     const serial = ++decisionSerial;

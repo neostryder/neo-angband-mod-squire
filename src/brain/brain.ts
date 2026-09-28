@@ -142,7 +142,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
 
   function failed(failure: Failure): null {
     if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`);
-    const wait = failure.retryAfterMs ?? BACKOFF_MS[attempt];
+    /* A server's Retry-After sets how long to wait, never how many times. */
+    const wait = attempt >= BACKOFF_MS.length ? undefined : failure.retryAfterMs ?? BACKOFF_MS[attempt];
     if (wait === undefined || wait > MAX_RETRY_AFTER_MS) {
       return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`);
     }

@@ -140,6 +140,11 @@ export interface Runtime {
   controllerFor(cfg: SquireCfg, terrain: Terrain, errands: () => AgentController): AgentController;
   /** The brain, while one is running. */
   brain(): Brain | null;
+  /**
+   * Whether the command the game just reported came from Squire, used once.
+   * Knight's Lessons learns only from the player's own commands.
+   */
+  takeOwnCommand(now: number): boolean;
   recordKill(race: string, unique: boolean, view: AgentView | null): void;
   /** Record what changed since the last look at the game. */
   observe(view: AgentView): void;
@@ -196,6 +201,17 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   const listeners = new Set<DecisionListener>();
   let brain: Brain | null = null;
   let lastTurn = 0;
+  /* When Squire last handed the game a command, so the player-command event for it is not taken for the player's. */
+  let ownCommandAt: number | null = null;
+  const OWN_COMMAND_WINDOW_MS = 2_000;
+  const tracked = (controller: AgentController): AgentController => (view, act) => {
+    lastTurn = view.turn();
+    lastView = view;
+    journal.observe(view);
+    const command = controller(view, act);
+    if (command !== null) ownCommandAt = Date.now();
+    return command;
+  };
   let lastView: AgentView | null = null;
   let unsavedSpend = 0;
   let summary: RunSummary | null = null;
@@ -298,7 +314,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const net = host.net;
       if (backend === null || net === undefined || !cfg.useModel) {
         if (cfg.useModel && net === undefined) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
-        return errands();
+        return tracked(errands());
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen: AgentController | null = null;
@@ -315,10 +331,17 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
-        return chosen(view, act);
+        const command = chosen(view, act);
+        if (command !== null) ownCommandAt = Date.now();
+        return command;
       };
     },
     brain: () => brain,
+    takeOwnCommand(now) {
+      const own = ownCommandAt !== null && now - ownCommandAt >= 0 && now - ownCommandAt <= OWN_COMMAND_WINDOW_MS;
+      ownCommandAt = null;
+      return own;
+    },
     recordKill(race, unique, view) {
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       self.saveCharacter({ ...character, kills });

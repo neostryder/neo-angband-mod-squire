@@ -173,7 +173,8 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
 
   ctx.events?.on("player-command", (_name, payload) => {
     exam.end();
-    if (rt.brain() !== null) return;
+    /* Squire's own commands raise this event too; only the player's teach the apprentice. */
+    if (rt.takeOwnCommand(Date.now())) return;
     const view = viewNow();
     if (view === null) return;
     const serial = ++decisionSerial;

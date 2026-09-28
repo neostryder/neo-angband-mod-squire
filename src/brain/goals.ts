@@ -231,15 +231,35 @@ function clamp01(n: number): number {
 }
 
 /** The death risk of standing in a fight at the current health. */
-function fightRisk(s: Situation): number {
-  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
-  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4));
+/**
+ * More awake creatures close by means more attacks for every action the
+ * character takes. Each one within five steps past the first adds a fifth, up
+ * to nearly double.
+ */
+function crowd(s: Situation): number {
+  const at = s.view.player().grid;
+  const near = s.awake.filter((m) => steps(at, m.grid) <= 5).length;
+  return Math.min(1.8, 1 + 0.2 * Math.max(0, near - 1));
 }
 
-/** The death risk of doing something other than fighting while threats stay near. */
+/** The death risk of a fight: the worst awake creature in sight, not only the one being hit. */
+function fightRisk(s: Situation): number {
+  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
+  const band = Math.max(target, s.worst);
+  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s));
+}
+
+/**
+ * The death risk of doing something other than fighting while threats stay
+ * near. A dangerous creature is a risk at full health too: hit points change how
+ * big the risk is, not whether there is one. A distant creature matters less.
+ */
 function exposure(s: Situation): number {
   if (s.worst < 0) return 0.01;
-  return clamp01((BAND_RISK[s.worst] ?? 0.75) * (1 - s.hpShare) * 1.2);
+  const at = s.view.player().grid;
+  const nearest = s.awake.reduce((min, m) => Math.min(min, steps(at, m.grid)), Infinity);
+  const proximity = nearest <= 2 ? 1 : nearest <= 5 ? 0.8 : 0.55;
+  return clamp01((BAND_RISK[s.worst] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.2) * proximity * crowd(s));
 }
 
 function within(s: Situation, range: number): boolean {

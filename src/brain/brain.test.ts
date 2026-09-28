@@ -199,6 +199,24 @@ describe("brain", () => {
     expect(r.sent).toHaveLength(BACKOFF_MS.length + 1);
   });
 
+  it("gives up after the same number of tries when the server sends Retry-After", async () => {
+    const limited: AskResult = {
+      ok: false,
+      latencyMs: 5,
+      failure: { kind: "rate-limited", message: "Jev is busy.", retryable: true, retryAfterMs: 30_000 },
+    };
+    const results = Array.from({ length: BACKOFF_MS.length + 3 }, () => limited);
+    const r = rig({ planner: planner(() => walks(1)), results });
+    for (let i = 0; i <= BACKOFF_MS.length + 2; i += 1) {
+      r.tick();
+      await flush();
+      r.tick();
+      r.advance(60_000);
+    }
+    expect(r.brain.state()).toBe("stopped");
+    expect(r.sent).toHaveLength(BACKOFF_MS.length + 1);
+  });
+
   it("stops when plan after plan does nothing", async () => {
     const results = Array.from({ length: MAX_EMPTY_DECISIONS + 2 }, () => answered());
     const r = rig({ planner: planner(() => walks(0)), results });
