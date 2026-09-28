@@ -165,6 +165,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",
+  wait: "wait a turn",
 };
 
 export function goalLabel(goal: Goal): string {

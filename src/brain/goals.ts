@@ -63,7 +63,8 @@ export type Goal =
   | "detect"
   | "recall_town"
   | "shop"
-  | "recall_dungeon";
+  | "recall_dungeon"
+  | "wait";
 
 const NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 
@@ -376,6 +377,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* With no healing and no escape left at all, even a shallow trip home pays. */
   const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
   const tripPays = starving || (player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless));
+  if (recallActive) {
+    add("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8);
+  }
   /* A second reading cancels a recall already under way, so none is offered while one is pending. */
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
@@ -713,6 +717,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       case "rest":
         return once("rest", view, (ctx) => ctx.act.rest());
+      case "wait":
+        return once("wait a turn", view, (ctx) => ctx.act.hold());
       case "study": {
         const study = studyable(view, triedStudies);
         if (study === null) return once("nothing to study", view, () => null);
@@ -833,7 +839,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
+      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
+      let offers = offered.filter((offer) => !stalled.has(offer.goal));
+      /* Everything tried this turn came to nothing, cornered in a corridor
+       * perhaps. Letting a turn pass changes the situation where asking again
+       * would not. */
+      if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
+        offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
+      }
       if (offers.length === 0) {
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };

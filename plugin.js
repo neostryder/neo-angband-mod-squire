@@ -1943,6 +1943,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
   const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
   const tripPays = starving || player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless);
+  if (recallActive) {
+    add2("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8);
+  }
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
@@ -2216,6 +2219,8 @@ function createGoalPlanner(options) {
         });
       case "rest":
         return once("rest", view, (ctx) => ctx.act.rest());
+      case "wait":
+        return once("wait a turn", view, (ctx) => ctx.act.hold());
       case "study": {
         const study = studyable(view, triedStudies);
         if (study === null) return once("nothing to study", view, () => null);
@@ -2321,7 +2326,11 @@ function createGoalPlanner(options) {
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
+      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
+      let offers = offered.filter((offer) => !stalled.has(offer.goal));
+      if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
+        offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
+      }
       if (offers.length === 0) {
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
@@ -4024,7 +4033,8 @@ var LABEL = {
   descend: "take the stairs",
   recall_town: "recall to town",
   shop: "shop for supplies",
-  recall_dungeon: "recall into the dungeon"
+  recall_dungeon: "recall into the dungeon",
+  wait: "wait a turn"
 };
 function goalLabel(goal) {
   return LABEL[goal];

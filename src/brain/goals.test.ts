@@ -427,6 +427,13 @@ describe("town goals", () => {
     expect(asked(p.ask(w.view)).context.offers.map((offer) => offer.goal)).not.toContain("recall_town");
   });
 
+  it("offers to wait out a recall already read", () => {
+    const w = world({ map: CORRIDOR, player: { depth: 6, maxDepth: 6, gold: 300, recall: 12 } as never, pack: ["a Scroll of Word of Recall"] });
+    const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
+    expect(goals).toContain("wait");
+    expect(goals).not.toContain("recall_town");
+  });
+
   it("trusts the recall timer when the game reports one", () => {
     expect(recallPending({ depth: 6, recall: 12 }, null, 0)).toBe(true);
     expect(recallPending({ depth: 6, recall: 0 }, { turn: 0, depth: 6 }, 10)).toBe(false);
