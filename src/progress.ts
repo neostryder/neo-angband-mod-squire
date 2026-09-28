@@ -33,11 +33,13 @@ export interface Progress {
   depth: number;
   /** Grids this errand has already tried to pick up from, so it tries once. */
   readonly collected: Set<string>;
+  /** Every grid stood on during the errand, to tell walking from pacing. */
+  readonly visited: Set<string>;
 }
 
 /** A fresh errand's progress. */
 export function newProgress(depth: number): Progress {
-  return { steps: 0, idle: 0, at: null, depth, collected: new Set<string>() };
+  return { steps: 0, idle: 0, at: null, depth, collected: new Set<string>(), visited: new Set<string>() };
 }
 
 /**
@@ -52,6 +54,16 @@ export function advance(progress: Progress, at: Loc): void {
   if (progress.at !== null && key(progress.at) === key(at)) progress.idle += 1;
   else progress.idle = 0;
   progress.at = at;
+  progress.visited.add(key(at));
+}
+
+/** Steps after which an errand that has stood on only a few grids is pacing, not walking. */
+export const PACING_STEPS = 30;
+export const PACING_GRIDS = 4;
+
+/** Whether the errand keeps returning to the same few grids. */
+export function pacing(progress: Progress): boolean {
+  return progress.steps >= PACING_STEPS && progress.visited.size <= PACING_GRIDS;
 }
 
 /** Whether this grid has already been picked over by this errand. */

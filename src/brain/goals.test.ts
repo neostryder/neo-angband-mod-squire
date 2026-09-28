@@ -79,6 +79,13 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("learns a new spell before walking on when nothing is awake", () => {
+    const w = world({ map: CORRIDOR, pack: ["a Magic for Beginners"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
+    const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
+    expect(goals).toContain("study");
+    expect(goals).not.toContain("explore");
+  });
+
   it("lights a torch before exploring in the dark", () => {
     const w = world({ map: CORRIDOR, pack: ["2 Wooden Torches (5000 turns)"] });
     const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
@@ -391,10 +398,16 @@ describe("town goals", () => {
   });
 
   it("does not recall home near the surface or with no gold to spend", () => {
+    const pack = ["a Scroll of Word of Recall", "a Potion of Cure Light Wounds", "a Scroll of Phase Door"];
     for (const player of [{ depth: 2, maxDepth: 2, gold: 300 }, { depth: 6, maxDepth: 6, gold: 10 }]) {
-      const w = world({ map: CORRIDOR, player, pack: ["a Scroll of Word of Recall"] });
+      const w = world({ map: CORRIDOR, player, pack });
       expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).not.toContain("recall_town");
     }
+  });
+
+  it("recalls home from near the surface once no healing or escape is left", () => {
+    const w = world({ map: CORRIDOR, player: { depth: 2, maxDepth: 2, gold: 300 }, pack: ["a Scroll of Word of Recall"] });
+    expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("recall_town");
   });
 
   it("offers shopping from mapped entrances without reading store stock", () => {

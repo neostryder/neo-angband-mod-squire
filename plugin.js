@@ -46,13 +46,19 @@ function key(at) {
 
 // src/progress.ts
 function newProgress(depth) {
-  return { steps: 0, idle: 0, at: null, depth, collected: /* @__PURE__ */ new Set() };
+  return { steps: 0, idle: 0, at: null, depth, collected: /* @__PURE__ */ new Set(), visited: /* @__PURE__ */ new Set() };
 }
 function advance(progress, at) {
   progress.steps += 1;
   if (progress.at !== null && key(progress.at) === key(at)) progress.idle += 1;
   else progress.idle = 0;
   progress.at = at;
+  progress.visited.add(key(at));
+}
+var PACING_STEPS = 30;
+var PACING_GRIDS = 4;
+function pacing(progress) {
+  return progress.steps >= PACING_STEPS && progress.visited.size <= PACING_GRIDS;
 }
 function alreadyCollected(progress, at) {
   return progress.collected.has(key(at));
@@ -483,7 +489,10 @@ function autoexplore(options = {}) {
       advance(ctx.progress, at);
       if (watcher === null) return stop("nothing-to-do", "The errand never started.");
       if (ctx.progress.steps > ctx.cfg.errandSteps) {
-        return stop("budget", "The walk ran longer than a short errand should.");
+        return stop("budget", `The walk ran longer than a short errand should (${String(ctx.progress.steps)} steps over ${String(ctx.progress.visited.size)} grids).`);
+      }
+      if (pacing(ctx.progress)) {
+        return stop("blocked", "The character keeps walking between the same few grids.");
       }
       const disturbed = watcher.check(ctx.view);
       if (disturbed !== null) return { stop: disturbed };
@@ -1900,7 +1909,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
-  const tripPays = starving || player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD;
+  const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
+  const tripPays = starving || player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless);
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
@@ -1966,14 +1976,15 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (source !== null) add2("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
   }
   const study = studyable(view, triedStudies);
+  const learnFirst = study !== null && s.awake.length === 0;
   if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && reachableFrontier(view, terrain)) {
+  if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+  if (!unlit && !learnFirst && knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);

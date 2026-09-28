@@ -317,7 +317,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
    * no gold, a recall scroll is spent for nothing and the next trip down finds
    * the same shortage. Starving with no food is the exception, since food is cheap. */
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
-  const tripPays = starving || (player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD);
+  /* With no healing and no escape left at all, even a shallow trip home pays. */
+  const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
+  const tripPays = starving || (player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless));
   /* A second reading cancels a recall already under way, so none is offered while one is pending. */
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
@@ -394,14 +396,17 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   const study = studyable(view, triedStudies);
   /* Only a creature close enough to strike this turn makes a turn of study unsafe. */
+  /* A new spell costs one turn and is always worth having, so with nothing awake
+   * in sight it comes before walking on, the way lighting a torch does. */
+  const learnFirst = study !== null && s.awake.length === 0;
   if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && reachableFrontier(view, terrain)) {
+  if (!unlit && !learnFirst && reachableFrontier(view, terrain)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && knownDownStairs(view, terrain).length > 0 && cfg.descend &&
+  if (!unlit && !learnFirst && knownDownStairs(view, terrain).length > 0 && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {

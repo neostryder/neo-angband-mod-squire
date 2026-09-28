@@ -25,7 +25,7 @@ import type { SquireContext } from "../context.js";
 import type { Decision, Mission, Stop } from "../mission.js";
 import { issue, stop } from "../mission.js";
 import { createWatcher, type Watcher } from "../disturb.js";
-import { advance } from "../progress.js";
+import { advance, pacing } from "../progress.js";
 import { awakeInSight } from "../threat.js";
 import { frontiers, standingOnHarm } from "../map.js";
 import { retreatFrom, stepIntoDark, travelTo } from "../travel.js";
@@ -80,7 +80,10 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
 
       if (watcher === null) return stop("nothing-to-do", "The errand never started.");
       if (ctx.progress.steps > ctx.cfg.errandSteps) {
-        return stop("budget", "The walk ran longer than a short errand should.");
+        return stop("budget", `The walk ran longer than a short errand should (${String(ctx.progress.steps)} steps over ${String(ctx.progress.visited.size)} grids).`);
+      }
+      if (pacing(ctx.progress)) {
+        return stop("blocked", "The character keeps walking between the same few grids.");
       }
 
       const disturbed = watcher.check(ctx.view);
