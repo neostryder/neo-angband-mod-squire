@@ -17,6 +17,8 @@
     "state:monsters.read",
     "state:map.read",
     "state:target.read",
+    "state:inventory.read",
+    "state:spells.read",
     "network:api.typesafe.ai"
   ],
   "author": "neostryder",
