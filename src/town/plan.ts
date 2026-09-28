@@ -49,7 +49,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 }
 
 /** Re-read the entered shop after each command; buying can move its stock slots. */
-export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set()): Plan {
+export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}): Plan {
   const progress = newProgress(0);
   return {
     label: "shop for supplies",
@@ -76,7 +76,10 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       if (next === undefined) return null;
       const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {} }, [next]);
       if (travel.kind === "step") return travel.command;
-      visited.add(next.feat);
+      /* A townsperson in the way is gone in a turn or two, so only a shop that
+       * cannot be reached at all is crossed off for this visit. */
+      if (travel.kind === "unreachable") visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
       return null;
     },
   };

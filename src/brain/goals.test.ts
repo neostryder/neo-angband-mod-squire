@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { createGoalPlanner, healthBand, type GoalDigest } from "./goals.js";
+import { createGoalPlanner, healthBand, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import type { Question } from "./brain.js";
 
@@ -127,6 +127,13 @@ describe("goal planner", () => {
     expect(p.trigger(w.view, choice.plan)).toBeNull();
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "jackal" }]);
     expect(p.trigger(w.view, choice.plan)).not.toBeNull();
+  });
+
+  it("calls a weak creature dangerous when one round could take the character's hit points", () => {
+    const mercenary = { level: 0, raceFlags: [] };
+    expect(threatIndex(mercenary, 1, 10)).toBe(0);
+    expect(threatIndex(mercenary, 1, 5)).toBe(2);
+    expect(threatIndex(mercenary, 1, 3)).toBe(3);
   });
 
   it("names health in words", () => {

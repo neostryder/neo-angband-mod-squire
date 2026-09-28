@@ -1468,7 +1468,8 @@ function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new S
     return rank2(a) - rank2(b);
   });
 }
-function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set()) {
+function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
+}) {
   const progress = newProgress(0);
   return {
     label: "shop for supplies",
@@ -1495,7 +1496,8 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set()) {
       const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
       } }, [next]);
       if (travel.kind === "step") return travel.command;
-      visited.add(next.feat);
+      if (travel.kind === "unreachable") visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
       return null;
     }
   };
@@ -1526,13 +1528,19 @@ function healthBand(hp, maxHp) {
   return "near death";
 }
 var THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"];
-function threatIndex(monster, characterLevel) {
+function roundEstimate(level) {
+  return 8 + 3 * level;
+}
+function threatIndex(monster, characterLevel, characterHp = Infinity) {
   let band;
   if (monster.level * 2 <= characterLevel) band = 0;
   else if (monster.level <= characterLevel) band = 1;
   else if (monster.level <= characterLevel + 5) band = 2;
   else band = 3;
   if (monster.raceFlags.includes("UNIQUE")) band = Math.min(3, band + 1);
+  const round = roundEstimate(monster.level);
+  if (characterHp <= round / 2) band = 3;
+  else if (characterHp <= round) band = Math.max(band, 2);
   return band;
 }
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
@@ -1549,7 +1557,7 @@ function situationOf(view) {
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp)), -1);
   return {
     view,
     pack: readPack(view),
@@ -1563,7 +1571,7 @@ function clamp01(n) {
   return Math.max(0, Math.min(1, n));
 }
 function fightRisk(s) {
-  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level);
+  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4));
 }
 function exposure(s) {
@@ -1751,7 +1759,7 @@ function createGoalPlanner(options) {
         return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -1890,7 +1898,7 @@ function createGoalPlanner(options) {
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
             creatures: seen.length === 0 ? "No creatures in sight." : seen.map((m) => {
-              const real = threatIndex(m, player.level);
+              const real = threatIndex(m, player.level, player.hp);
               const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
               const band = THREAT_BANDS[seenAs] ?? "deadly";
               const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");

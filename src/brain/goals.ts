@@ -88,13 +88,27 @@ export type ThreatBand = (typeof THREAT_BANDS)[number];
  * How a creature compares with the character, from their levels. Uniques count
  * one band worse than their level suggests.
  */
-export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags">, characterLevel: number): number {
+/**
+ * A rough ceiling on one round of a creature's melee, from its level alone.
+ * The view carries no blows, and a player sizing up a creature does the same:
+ * a town mercenary (level 0) can hit for 10, so a 5 hit point mage should not
+ * call it an easy kill.
+ */
+export function roundEstimate(level: number): number {
+  return 8 + 3 * level;
+}
+
+export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags">, characterLevel: number, characterHp = Infinity): number {
   let band: number;
   if (monster.level * 2 <= characterLevel) band = 0;
   else if (monster.level <= characterLevel) band = 1;
   else if (monster.level <= characterLevel + 5) band = 2;
   else band = 3;
   if (monster.raceFlags.includes("UNIQUE")) band = Math.min(3, band + 1);
+  /* Hit points the creature could take in a round or two outrank levels. */
+  const round = roundEstimate(monster.level);
+  if (characterHp <= round / 2) band = 3;
+  else if (characterHp <= round) band = Math.max(band, 2);
   return band;
 }
 
@@ -188,7 +202,7 @@ function situationOf(view: AgentView): Situation {
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp)), -1);
   return {
     view,
     pack: readPack(view),
@@ -205,7 +219,7 @@ function clamp01(n: number): number {
 
 /** The death risk of standing in a fight at the current health. */
 function fightRisk(s: Situation): number {
-  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level);
+  const band = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4));
 }
 
@@ -429,7 +443,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -586,7 +600,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
                 ? "No creatures in sight."
                 : seen
                     .map((m) => {
-                      const real = threatIndex(m, player.level);
+                      const real = threatIndex(m, player.level, player.hp);
                       /* A persona's optimism or delusion changes what the character believes, not the safety floor. */
                       const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
                       const band = THREAT_BANDS[seenAs] ?? "deadly";
