@@ -17,7 +17,7 @@ import { createTally, type Tally } from "./brain/tally.js";
 import type { SystemOneRequest } from "./brain/systemone.js";
 import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
-import { createDecisionLog } from "./memory/log.js";
+import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -140,6 +140,8 @@ export interface Runtime {
   onChronicle(listener: (line: string) => void): () => void;
   store(): KvStore;
   exportDecisions(): string;
+  /** This run's logged decisions, once the saved log has been read back. */
+  decisions(): Promise<readonly LoggedDecision[]>;
   /** The host's HTTP relay, or null on a game too old to have one. */
   net(): NetLike | null;
 }
@@ -170,6 +172,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   };
   const tally = createTally(config.caps, config.spend);
   const log = createDecisionLog(store, character.runId);
+  /* Read the saved log back before appending, or a reload would restart the
+   * numbering and overwrite the first chunk. */
+  const logLoaded = log.load().catch(() => {});
   const listeners = new Set<DecisionListener>();
   let brain: Brain | null = null;
   let lastTurn = 0;
@@ -316,6 +321,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null,
   };
 
@@ -366,7 +372,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
       onDecision: (record) => {
-        logDecision(record);
+        void logLoaded.then(() => logDecision(record));
         for (const listener of listeners) listener(record, lastTurn);
       },
     });

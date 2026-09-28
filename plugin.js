@@ -446,14 +446,14 @@ function autofight() {
 }
 
 // src/missions/autoexplore.ts
-function autoexplore() {
+function autoexplore(options = {}) {
   let watcher = null;
   return {
     id: "autoexplore",
     label: "explore this floor",
     begin(ctx) {
       const cfg = ctx.cfg;
-      const awake = awakeInSight(ctx.view.monsters());
+      const awake = options.allowAwake === true ? [] : awakeInSight(ctx.view.monsters());
       const first = awake[0];
       if (first !== void 0) {
         return {
@@ -1653,6 +1653,17 @@ function createGoalPlanner(options) {
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
   const visitedShops = /* @__PURE__ */ new Set();
+  const stalled = /* @__PURE__ */ new Map();
+  function noteStalls(goal, plan) {
+    let issued = 0;
+    const step = (v, act) => {
+      const command = plan.step(v, act);
+      if (command !== null) issued += 1;
+      else if (issued === 0) stalled.set(goal, v.turn());
+      return command;
+    };
+    return { ...plan, step };
+  }
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
     return { view, act, terrain, cfg: with_, progress, log };
@@ -1661,9 +1672,10 @@ function createGoalPlanner(options) {
     const player = view.player();
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
     return createWatcher(view, {
-      stopOnAnyDamage: false,
+      /* Already under the line: crossing it again is not news, but every
+       * further blow is, so the model is asked again after each one. */
+      stopOnAnyDamage: hurt,
       stopOnNewCreature: true,
-      /* Already under the line: crossing it again is not news. */
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction
     });
@@ -1673,6 +1685,9 @@ function createGoalPlanner(options) {
   }
   function missionPlan(label, mission, view, with_ = cfg, limit = Infinity) {
     const progress = newProgress(view.player().depth);
+    const player = view.player();
+    const hurt = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
+    const missionCfg = hurt ? { ...with_, stopOnLowHealth: false } : with_;
     let begun = false;
     let done = false;
     return {
@@ -1680,7 +1695,7 @@ function createGoalPlanner(options) {
       watcher: watch(view),
       step(v, act) {
         if (done || progress.steps >= limit) return null;
-        const ctx = context(v, act, progress, with_);
+        const ctx = context(v, act, progress, missionCfg);
         if (!begun) {
           begun = true;
           const declined = mission.begin(ctx);
@@ -1794,7 +1809,7 @@ function createGoalPlanner(options) {
       case "pick_up":
         return once("pick up", view, (ctx) => ctx.act.pickup());
       case "explore":
-        return missionPlan("explore", autoexplore(), view);
+        return missionPlan("explore", autoexplore({ allowAwake: true }), view);
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx) => {
           const at = ctx.view.player().grid;
@@ -1847,7 +1862,9 @@ function createGoalPlanner(options) {
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops);
+      const turn = view.turn();
+      for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -1910,7 +1927,7 @@ function createGoalPlanner(options) {
       } else {
         log(`goal: ${pick2} (${String(Math.round((answer.probabilities[pick2] ?? 0) * 100))}%)`);
       }
-      return { plan: build(offer.goal, view) };
+      return { plan: noteStalls(offer.goal, build(offer.goal, view)) };
     },
     trigger(view, plan) {
       const watched2 = plan;
@@ -3409,6 +3426,8 @@ function createRuntime(host, options = {}) {
   };
   const tally = createTally(config.caps, config.spend);
   const log = createDecisionLog(store, character.runId);
+  const logLoaded = log.load().catch(() => {
+  });
   const listeners = /* @__PURE__ */ new Set();
   let brain = null;
   let lastTurn = 0;
@@ -3548,6 +3567,7 @@ function createRuntime(host, options = {}) {
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null
   };
   function personaFor() {
@@ -3594,7 +3614,7 @@ function createRuntime(host, options = {}) {
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
       onDecision: (record2) => {
-        logDecision(record2);
+        void logLoaded.then(() => logDecision(record2));
         for (const listener of listeners) listener(record2, lastTurn);
       }
     });
@@ -4485,6 +4505,12 @@ function mountDashboard(body2, rt) {
     drawRecent();
     drawChronicle();
   }
+  const opened = Date.now();
+  void rt.decisions().then((logged) => {
+    const earlier = logged.filter((d) => d.at < opened).map((d) => ({ turn: d.turn, pick: d.choice, confidence: d.confidence ?? 0, against: d.persona !== void 0 && d.persona.best !== d.persona.blended }));
+    rows.unshift(...earlier.slice(-500));
+    drawAll();
+  });
   const offDecision = rt.onDecision((record2, turn) => {
     const goal = record2.answers["goal"];
     const trace = record2.context.trace;
@@ -4829,11 +4855,11 @@ function attachSquire(ctx, rt) {
     );
   }
   ctx.events?.on("player-command", (_name, payload) => {
-    const config = rt.config();
-    if (!config.knightsLessons.enabled || rt.brain() !== null) return;
+    if (rt.brain() !== null) return;
     const view = viewNow();
     if (view === null) return;
     rt.observe(view);
+    if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload, view);
     const moment = momentOf(view);
     const point = isDecisionPoint(previous, moment, knight);

@@ -63,6 +63,35 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("fights when the model chose it while already under the retreat line", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 5, maxHp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, race: "mean-looking mercenary" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("fight"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+  });
+
+  it("explores when the model chose it with an awake creature in sight", () => {
+    const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 6, y: 1 }, race: "scruffy little dog" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("explore"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+  });
+
+  it("leaves out a goal whose plan did nothing until the turn changes", () => {
+    const w = world({ map: ["#######", "#.@#..#", "#.###.#", "#######"], monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((o) => o.goal)).toContain("fight");
+    const choice = p.choose(pick("fight"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("fight");
+  });
+
   it("falls back to the errand order on none_of_these, and hands back on a goal it did not offer", () => {
     const w = world({ map: CORRIDOR });
     const { p } = planner(w);

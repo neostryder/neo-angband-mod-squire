@@ -30,8 +30,18 @@ import { awakeInSight } from "../threat.js";
 import { frontiers, standingOnHarm } from "../map.js";
 import { retreatFrom, stepIntoDark, travelTo } from "../travel.js";
 
+/** How the exploring errand starts. */
+export interface AutoexploreOptions {
+  /**
+   * Start even with an awake creature in sight. The errand keys refuse, since
+   * nobody weighed that creature; a planner that already did (a town full of
+   * awake shoppers is the usual case) passes true.
+   */
+  readonly allowAwake?: boolean;
+}
+
 /** Build the exploring errand. */
-export function autoexplore(): Mission {
+export function autoexplore(options: AutoexploreOptions = {}): Mission {
   let watcher: Watcher | null = null;
 
   return {
@@ -46,7 +56,7 @@ export function autoexplore(): Mission {
        * walking away from something that is awake and looking at the character
        * is not exploring, it is fleeing badly. A SLEEPING creature is fine to
        * walk past, which is what the game's own stealth is for. */
-      const awake = awakeInSight(ctx.view.monsters());
+      const awake = options.allowAwake === true ? [] : awakeInSight(ctx.view.monsters());
       const first = awake[0];
       if (first !== undefined) {
         return {

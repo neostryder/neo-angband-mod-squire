@@ -143,11 +143,13 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
   }
 
   ctx.events?.on("player-command", (_name, payload) => {
-    const config = rt.config();
-    if (!config.knightsLessons.enabled || rt.brain() !== null) return;
+    if (rt.brain() !== null) return;
     const view = viewNow();
     if (view === null) return;
+    /* The journal follows the whole run, including the turns the player
+     * plays, so the depth chart and report have no gaps. */
     rt.observe(view);
+    if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload as PlayerCommand, view);
     const moment = momentOf(view);
     const point = isDecisionPoint(previous, moment, knight);

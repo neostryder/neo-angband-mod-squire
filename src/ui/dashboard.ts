@@ -97,6 +97,16 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
     drawChronicle();
   }
 
+  /* Decisions made before this tab opened come from the saved log. Anything
+   * logged after it opened also arrives through onDecision, so it is skipped. */
+  const opened = Date.now();
+  void rt.decisions().then((logged) => {
+    const earlier = logged
+      .filter((d) => d.at < opened)
+      .map((d) => ({ turn: d.turn, pick: d.choice, confidence: d.confidence ?? 0, against: d.persona !== undefined && d.persona.best !== d.persona.blended }));
+    rows.unshift(...earlier.slice(-500));
+    drawAll();
+  });
   const offDecision = rt.onDecision((record, turn) => {
     const goal = record.answers["goal"];
     const trace = record.context.trace;

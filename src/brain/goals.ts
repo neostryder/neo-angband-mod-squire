@@ -305,6 +305,21 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
   const visitedShops = new Set<number>();
+  /* Goals whose last plan ended without a command, keyed to the game turn it
+   * ended on. Offering one again before time moves would repeat the same empty
+   * plan, so it is left out until the turn changes. */
+  const stalled = new Map<Goal, number>();
+
+  function noteStalls(goal: Goal, plan: Plan): Plan {
+    let issued = 0;
+    const step: Plan["step"] = (v, act) => {
+      const command = plan.step(v, act);
+      if (command !== null) issued += 1;
+      else if (issued === 0) stalled.set(goal, v.turn());
+      return command;
+    };
+    return { ...plan, step };
+  }
 
   /* A fight the model chose may wake a sleeper: the state says which creatures
    * are asleep, so waking one is part of the choice. */
@@ -318,9 +333,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const player = view.player();
     const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
     return createWatcher(view, {
-      stopOnAnyDamage: false,
+      /* Already under the line: crossing it again is not news, but every
+       * further blow is, so the model is asked again after each one. */
+      stopOnAnyDamage: hurt,
       stopOnNewCreature: true,
-      /* Already under the line: crossing it again is not news. */
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
     });
@@ -334,6 +350,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /** Run a mission as a plan. The mission's own stop ends the plan. */
   function missionPlan(label: string, mission: Mission, view: AgentView, with_: SquireCfg = cfg, limit = Infinity): WatchedPlan {
     const progress = newProgress(view.player().depth);
+    const player = view.player();
+    /* A plan chosen while already under the retreat line would otherwise end
+     * before its first step. The outer watcher stops it on the next blow instead. */
+    const hurt = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
+    const missionCfg = hurt ? { ...with_, stopOnLowHealth: false } : with_;
     let begun = false;
     let done = false;
     return {
@@ -341,7 +362,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       watcher: watch(view),
       step(v, act) {
         if (done || progress.steps >= limit) return null;
-        const ctx = context(v, act, progress, with_);
+        const ctx = context(v, act, progress, missionCfg);
         if (!begun) {
           begun = true;
           const declined = mission.begin(ctx);
@@ -466,7 +487,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "pick_up":
         return once("pick up", view, (ctx) => ctx.act.pickup());
       case "explore":
-        return missionPlan("explore", autoexplore(), view);
+        /* The model saw every awake creature before choosing to explore. */
+        return missionPlan("explore", autoexplore({ allowAwake: true }), view);
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx) => {
           const at = ctx.view.player().grid;
@@ -529,7 +551,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops);
+      const turn = view.turn();
+      for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -607,7 +631,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       } else {
         log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
       }
-      return { plan: build(offer.goal, view) };
+      return { plan: noteStalls(offer.goal, build(offer.goal, view)) };
     },
 
     trigger(view, plan) {
