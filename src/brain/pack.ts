@@ -219,11 +219,19 @@ export function readPack(view: AgentView): Pack {
     }
   }
 
-  const launcher = view.equipment().some((item) => {
-    if (item === null) return false;
-    const name = shownName(item);
-    return name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow|Bow)\b/i.test(name);
-  });
+  /* A launcher fires only its own kind of missile: a sling shots and pebbles,
+   * a bow arrows, a crossbow bolts. */
+  let firesKind: RegExp | null = null;
+  for (const item of view.equipment()) {
+    const name = item === null ? null : shownName(item);
+    if (name === null || firesKind !== null) continue;
+    if (/\bSling\b/i.test(name)) firesKind = /\b(Shots?|Pebbles?)\b/i;
+    else if (/\bCrossbow\b/i.test(name)) firesKind = /\bBolts?\b/i;
+    else if (/\bBow\b/i.test(name)) firesKind = /\bArrows?\b/i;
+  }
+  const launcher = firesKind !== null;
+  const kind = firesKind;
+  const fireable = kind === null ? [] : ammo.filter((item) => kind.test(item.name));
 
   const attackSpell: CastableSpell[] = [];
   const healSpell: CastableSpell[] = [];
@@ -243,7 +251,7 @@ export function readPack(view: AgentView): Pack {
     teleport: byPower(teleport),
     oil,
     attackWand: byPower(attackWand),
-    ammo,
+    ammo: fireable,
     food,
     launcher,
     attackSpell: byPower(attackSpell),

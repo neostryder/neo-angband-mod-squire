@@ -363,7 +363,12 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
       add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
     }
     if (s.pack.teleport[0] !== undefined) {
-      add("teleport", `Use ${s.pack.teleport[0].name} to escape far from every creature in sight.`, exposure(s) * 0.2);
+      const teleport = s.pack.teleport[0];
+      /* Teleport Level leaves the floor, up or down, which is a bigger step than moving across it. */
+      const leaves = /Teleport Level/i.test(teleport.name);
+      add("teleport", leaves
+        ? `Use ${teleport.name} to leave this level entirely, going one level up or down.`
+        : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
     add("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
   }

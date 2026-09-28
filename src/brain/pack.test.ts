@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
-import { studyable } from "./pack.js";
+import { readPack, studyable } from "./pack.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
@@ -16,5 +16,15 @@ describe("studyable", () => {
     const w = world({ map: ROOM, pack: ["a Magic for Beginners"], spells });
     expect(studyable(w.view, new Set(["5:0"]))).toBeNull();
     expect(studyable(w.view, new Set(["4:0"]))?.sidx).toBe(0);
+  });
+});
+
+describe("readPack missiles", () => {
+  it("keeps only the ammunition the equipped launcher fires", () => {
+    const bow = world({ map: ROOM, pack: ["20 Arrows", "12 Iron Shots"], worn: ["a Short Bow (x2) (+0,+0)"] });
+    expect(readPack(bow.view).ammo.map((a) => a.name)).toEqual(["20 Arrows"]);
+    const sling = world({ map: ROOM, pack: ["20 Arrows"], worn: ["a Sling (x2) (+0,+0)"] });
+    expect(readPack(sling.view).ammo).toEqual([]);
+    expect(readPack(sling.view).launcher).toBe(true);
   });
 });

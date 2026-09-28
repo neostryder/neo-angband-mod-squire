@@ -1108,11 +1108,17 @@ function readPack(view) {
       if (w !== null && w > 0 && !empty(name)) attackWand.push(entry(w));
     }
   }
-  const launcher = view.equipment().some((item) => {
-    if (item === null) return false;
-    const name = shownName(item);
-    return name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow|Bow)\b/i.test(name);
-  });
+  let firesKind = null;
+  for (const item of view.equipment()) {
+    const name = item === null ? null : shownName(item);
+    if (name === null || firesKind !== null) continue;
+    if (/\bSling\b/i.test(name)) firesKind = /\b(Shots?|Pebbles?)\b/i;
+    else if (/\bCrossbow\b/i.test(name)) firesKind = /\bBolts?\b/i;
+    else if (/\bBow\b/i.test(name)) firesKind = /\bArrows?\b/i;
+  }
+  const launcher = firesKind !== null;
+  const kind = firesKind;
+  const fireable = kind === null ? [] : ammo.filter((item) => kind.test(item.name));
   const attackSpell = [];
   const healSpell = [];
   const escapeSpell = [];
@@ -1130,7 +1136,7 @@ function readPack(view) {
     teleport: byPower(teleport),
     oil,
     attackWand: byPower(attackWand),
-    ammo,
+    ammo: fireable,
     food,
     launcher,
     attackSpell: byPower(attackSpell),
@@ -1899,7 +1905,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
     }
     if (s.pack.teleport[0] !== void 0) {
-      add2("teleport", `Use ${s.pack.teleport[0].name} to escape far from every creature in sight.`, exposure(s) * 0.2);
+      const teleport = s.pack.teleport[0];
+      const leaves = /Teleport Level/i.test(teleport.name);
+      add2("teleport", leaves ? `Use ${teleport.name} to leave this level entirely, going one level up or down.` : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
     add2("retreat", "Step away from the awake creatures in sight, to gain distance before they can attack.", exposure(s) * 0.8);
   }
