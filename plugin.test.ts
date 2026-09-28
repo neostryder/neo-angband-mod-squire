@@ -69,9 +69,10 @@ describe("the Squire plugin", () => {
     expect(typeof plugin.controller(ctx)).toBe("function");
   });
 
-  it("declares api 1 and nothing else, because it changes no rule", () => {
+  it("declares no hooks, because it changes no rule", () => {
+    /* register adds the panel and listens to events; it overrides nothing. */
     expect(plugin.api).toBe(1);
-    expect(Object.keys(plugin).sort()).toEqual(["api", "controller"]);
+    expect(Object.keys(plugin).sort()).toEqual(["api", "controller", "register"]);
   });
 
   it("says how much terrain it can read, so a diminished run is visible", () => {
