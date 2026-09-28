@@ -986,13 +986,14 @@ var DETECTION_SPELLS = [
 ];
 function detectionSources(view) {
   const out = [];
+  const reading = canRead(view);
   for (const item of view.inventory()) {
     const name = shownName(item);
     if (name === null || empty(name)) continue;
-    if (/\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
+    if (reading && /\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
     if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
   }
-  for (const spell of castable(view)) {
+  for (const spell of reading ? castable(view) : []) {
     if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });
   }
   return out;
@@ -1068,7 +1069,12 @@ function studyable(view, tried = /* @__PURE__ */ new Set()) {
   }
   return null;
 }
+function canRead(view) {
+  const status = view.player().status;
+  return status.blind === 0 && status.confused === 0;
+}
 function readPack(view) {
+  const reading = canRead(view);
   const heal = [];
   const phase = [];
   const teleport = [];
@@ -1082,9 +1088,10 @@ function readPack(view) {
     const entry = (power) => ({ handle: item.handle, name, power });
     const h2 = rank(name, HEAL_POTIONS);
     if (h2 !== null) heal.push(entry(h2));
-    else if (/\bScrolls? of Phase Door\b/i.test(name)) phase.push(entry(1));
-    else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
-      teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    else if (/\bScrolls? of Phase Door\b/i.test(name)) {
+      if (reading) phase.push(entry(1));
+    } else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
+      if (reading || !/\bScrolls?\b/i.test(name)) teleport.push(entry(/Level/i.test(name) ? 1 : 2));
     } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
     else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
       ammo.push(entry(1));
@@ -1103,7 +1110,7 @@ function readPack(view) {
   const attackSpell = [];
   const healSpell = [];
   const escapeSpell = [];
-  for (const spell of castable(view)) {
+  for (const spell of reading ? castable(view) : []) {
     const entry = (power) => ({ sidx: spell.sidx, name: spell.name, fail: spell.fail, mana: spell.mana, power });
     const a = rank(spell.name, ATTACK_SPELLS);
     const hs = rank(spell.name, HEAL_SPELLS);
@@ -1817,7 +1824,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const out = [];
   const add2 = (goal, criteria, risk) => out.push({ goal, criteria, risk: clamp01(risk) });
   const needs = supplyNeeds(view, s.pack, persona);
-  const recall = recallItem(view);
+  const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
   const tripPays = starving || player.depth >= RECALL_FROM_DEPTH && player.gold >= RECALL_MIN_GOLD;
@@ -1908,10 +1915,12 @@ function createGoalPlanner(options) {
   const stalled = /* @__PURE__ */ new Map();
   function noteStalls(goal, plan) {
     let issued = 0;
+    let startTurn = null;
     const step = (v, act) => {
+      startTurn ??= v.turn();
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
-      else if (issued === 0) stalled.set(goal, v.turn());
+      else if (issued === 0 || v.turn() === startTurn) stalled.set(goal, v.turn());
       return command;
     };
     return { ...plan, step };

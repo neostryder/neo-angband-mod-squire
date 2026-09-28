@@ -219,6 +219,38 @@ describe("items and spells", () => {
     expect(goals).toEqual(expect.arrayContaining(["fight", "throw_oil", "cast_attack", "phase", "teleport", "retreat"]));
   });
 
+  it("offers no scroll or spell while confused, but keeps oil and melee", () => {
+    const w = world({
+      map: CORRIDOR,
+      monsters: ORC,
+      player: { sp: 5, maxSp: 5, status: { confused: 5 } },
+      pack: ["5 Scrolls of Phase Door", "a Scroll of Teleportation", "4 Flasks of Oil"],
+      spells: [{ name: "Magic Missile", sidx: 0 }],
+    });
+    const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
+    expect(goals).toEqual(expect.arrayContaining(["fight", "throw_oil"]));
+    expect(goals).not.toContain("cast_attack");
+    expect(goals).not.toContain("phase");
+    expect(goals).not.toContain("teleport");
+  });
+
+  it("leaves out a goal whose plan issued a command but passed no game time", () => {
+    const w = world({
+      map: CORRIDOR,
+      monsters: ORC,
+      player: { sp: 5, maxSp: 5 },
+      spells: [{ name: "Magic Missile", sidx: 0 }],
+    });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("cast_attack"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    while (command !== null && guard++ < 5) command = choice.plan.step(w.view, w.act);
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("cast_attack");
+  });
+
   it("targets the creature before throwing oil", () => {
     const w = world({ map: CORRIDOR, monsters: ORC, pack: ["4 Flasks of Oil"] });
     const { p } = planner(w);

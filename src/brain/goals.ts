@@ -32,7 +32,7 @@ import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question } from "./brain.js";
-import { detectionSource, hungry, readPack, studyable, type Pack } from "./pack.js";
+import { canRead, detectionSource, hungry, readPack, studyable, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
@@ -268,7 +268,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const add = (goal: Goal, criteria: string, risk: number) => out.push({ goal, criteria, risk: clamp01(risk) });
 
   const needs = supplyNeeds(view, s.pack, persona);
-  const recall = recallItem(view);
+  /* A recall scroll cannot be read while blind or confused. */
+  const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
   /* A trip home pays only when the shops can fix it: near the surface, or with
    * no gold, a recall scroll is spent for nothing and the next trip down finds
@@ -374,10 +375,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   function noteStalls(goal: Goal, plan: Plan): Plan {
     let issued = 0;
+    let startTurn: number | null = null;
     const step: Plan["step"] = (v, act) => {
+      startTurn ??= v.turn();
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
-      else if (issued === 0) stalled.set(goal, v.turn());
+      /* A plan that ends with no game time passed changed nothing: either it
+       * issued no command, or the game refused every one it issued (a spell
+       * while confused, a blocked step). Asking again this turn would repeat it. */
+      else if (issued === 0 || v.turn() === startTurn) stalled.set(goal, v.turn());
       return command;
     };
     return { ...plan, step };

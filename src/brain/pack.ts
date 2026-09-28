@@ -58,13 +58,14 @@ const DETECTION_SPELLS: readonly string[] = [
 /** A known source only: an unidentified scroll or rod name never identifies its effect. */
 export function detectionSources(view: AgentView): Detection[] {
   const out: Detection[] = [];
+  const reading = canRead(view);
   for (const item of view.inventory()) {
     const name = shownName(item);
     if (name === null || empty(name)) continue;
-    if (/\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
+    if (reading && /\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
     if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
   }
-  for (const spell of castable(view)) {
+  for (const spell of reading ? castable(view) : []) {
     if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });
   }
   return out;
@@ -170,8 +171,19 @@ export function studyable(view: AgentView, tried: ReadonlySet<string> = new Set(
   return null;
 }
 
+/**
+ * Whether the character can read a scroll or cast a spell right now. The game
+ * refuses both while blind or confused, without using a turn, so offering them
+ * then only loops.
+ */
+export function canRead(view: AgentView): boolean {
+  const status = view.player().status;
+  return status.blind === 0 && status.confused === 0;
+}
+
 /** Read the pack and the spell list. */
 export function readPack(view: AgentView): Pack {
+  const reading = canRead(view);
   const heal: PackItem[] = [];
   const phase: PackItem[] = [];
   const teleport: PackItem[] = [];
@@ -186,9 +198,10 @@ export function readPack(view: AgentView): Pack {
     const entry = (power: number): PackItem => ({ handle: item.handle, name, power });
     const h = rank(name, HEAL_POTIONS);
     if (h !== null) heal.push(entry(h));
-    else if (/\bScrolls? of Phase Door\b/i.test(name)) phase.push(entry(1));
-    else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
-      teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    else if (/\bScrolls? of Phase Door\b/i.test(name)) {
+      if (reading) phase.push(entry(1));
+    } else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
+      if (reading || !/\bScrolls?\b/i.test(name)) teleport.push(entry(/Level/i.test(name) ? 1 : 2));
     } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
     else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
       ammo.push(entry(1));
@@ -209,7 +222,7 @@ export function readPack(view: AgentView): Pack {
   const attackSpell: CastableSpell[] = [];
   const healSpell: CastableSpell[] = [];
   const escapeSpell: CastableSpell[] = [];
-  for (const spell of castable(view)) {
+  for (const spell of reading ? castable(view) : []) {
     const entry = (power: number): CastableSpell => ({ sidx: spell.sidx, name: spell.name, fail: spell.fail, mana: spell.mana, power });
     const a = rank(spell.name, ATTACK_SPELLS);
     const hs = rank(spell.name, HEAL_SPELLS);
