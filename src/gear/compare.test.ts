@@ -14,3 +14,25 @@ describe("sameKind", () => {
     expect(sameKind("a Wooden Torch (5000 turns)", "a Lantern (7500 turns)")).toBe(false);
   });
 });
+
+describe("an empty light slot", () => {
+  it("lights a plain torch at once, whatever the persona's curiosity", async () => {
+    const { world } = await import("../harness.js");
+    const { gearCandidates } = await import("./compare.js");
+    const dark = world({ map: ["#####", "#.@.#", "#####"], pack: ["2 Wooden Torches (5000 turns)"] });
+    expect(gearCandidates(dark.view)[0]).toMatchObject({ handle: 1, unknown: false });
+    const lit = world({ map: ["#####", "#.@.#", "#####"], pack: ["2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (2000 turns)"] });
+    expect(gearCandidates(lit.view)).toEqual([]);
+  });
+});
+
+describe("a light running out", () => {
+  it("swaps a burnt-out or nearly empty torch for a full one", async () => {
+    const { world } = await import("../harness.js");
+    const { gearCandidates } = await import("./compare.js");
+    const out = world({ map: ["#####", "#.@.#", "#####"], pack: ["2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (0 turns)"] });
+    expect(gearCandidates(out.view)[0]).toMatchObject({ handle: 1, unknown: false });
+    const low = world({ map: ["#####", "#.@.#", "#####"], pack: ["2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (90 turns)"] });
+    expect(gearCandidates(low.view)[0]?.criteria).toContain("nearly out of fuel");
+  });
+});

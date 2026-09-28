@@ -1269,6 +1269,7 @@ var GEAR_WEIGHTS = {
 var WEAPONS = [TV.DIGGING, TV.HAFTED, TV.POLEARM, TV.SWORD];
 var BODY = [TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
 var HEAD = [TV.HELM, TV.CROWN];
+var LOW_FUEL_TURNS = 500;
 var WEARABLE = [...WEAPONS, TV.BOW, TV.BOOTS, TV.GLOVES, ...HEAD, TV.SHIELD, TV.CLOAK, ...BODY, TV.LIGHT, TV.AMULET, TV.RING];
 function slot(tval) {
   if (WEAPONS.includes(tval)) return "weapon";
@@ -1300,7 +1301,7 @@ function keepsLauncher(equipment, after, hasAmmo) {
 }
 function visibleBase(name, tval) {
   if (tval === TV.LIGHT && /\(0 turns\)/i.test(name)) return 0;
-  if (tval === TV.LIGHT) return /\bLantern\b/i.test(name) ? 2 : /\bTorch\b/i.test(name) ? 1 : null;
+  if (tval === TV.LIGHT) return /\bLanterns?\b/i.test(name) ? 2 : /\bTorch(?:es)?\b/i.test(name) ? 1 : null;
   if (tval === TV.BOW) {
     const match = /\(x(\d+)\)/.exec(name);
     return match === null ? null : Number(match[1]);
@@ -1365,6 +1366,30 @@ function gearCandidates(view) {
     if (item.tval === TV.LIGHT && /\(0 turns\)/i.test(name)) continue;
     const replaced = wornFor(item, equipment);
     if (replaced !== null && cursed(shownName2(replaced) ?? "")) continue;
+    if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
+      const oldLight = replaced === null ? null : shownName2(replaced) ?? "";
+      const fuel = (shown) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
+      if (oldLight === null || fuel(oldLight) === 0) {
+        out.push({
+          handle: item.handle,
+          name,
+          score: 100,
+          unknown: false,
+          criteria: `Wield ${name}. The character has no light, so it cannot see new ground or creatures.`
+        });
+        continue;
+      }
+      if (sameKind(oldLight, name) && fuel(oldLight) < LOW_FUEL_TURNS && fuel(name) > fuel(oldLight)) {
+        out.push({
+          handle: item.handle,
+          name,
+          score: 50,
+          unknown: false,
+          criteria: `Wield ${name}. The light in use is nearly out of fuel.`
+        });
+        continue;
+      }
+    }
     if (fullyKnown(name) && view.simulateLoadout !== void 0) {
       const result = view.simulateLoadout({ wield: [{ from: "gear", handle: item.handle }] });
       if (result !== null) {

@@ -144,7 +144,7 @@ export function itemNamed(name: string, handle: number): ItemView {
     [/\bBoots\b/i, TV.BOOTS], [/\bGloves\b/i, TV.GLOVES], [/\b(Helm|Helmet)\b/i, TV.HELM],
     [/\bCrown\b/i, TV.CROWN], [/\bShield\b/i, TV.SHIELD], [/\bCloak\b/i, TV.CLOAK],
     [/\b(Soft|Leather) Armour\b/i, TV.SOFT_ARMOR], [/\b(Hard|Metal|Chain|Plate) Armour\b/i, TV.HARD_ARMOR],
-    [/\b(Lantern|Torch)\b/i, TV.LIGHT], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
+    [/\b(Lanterns?|Torch(?:es)?)\b/i, TV.LIGHT], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
     [/\bRod\b/i, TV.ROD], [/\bScroll\b/i, TV.SCROLL],
   ];
   const tval = kinds.find(([pattern]) => pattern.test(name))?.[1] ?? 0;

@@ -41,6 +41,8 @@ export const GEAR_WEIGHTS = {
 const WEAPONS: readonly number[] = [TV.DIGGING, TV.HAFTED, TV.POLEARM, TV.SWORD];
 const BODY: readonly number[] = [TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
 const HEAD: readonly number[] = [TV.HELM, TV.CROWN];
+/** Turns of fuel below which a light is swapped for a fuller one of the same kind. */
+const LOW_FUEL_TURNS = 500;
 const WEARABLE: readonly number[] = [...WEAPONS, TV.BOW, TV.BOOTS, TV.GLOVES, ...HEAD, TV.SHIELD, TV.CLOAK, ...BODY, TV.LIGHT, TV.AMULET, TV.RING];
 
 function slot(tval: number): string | null {
@@ -91,7 +93,7 @@ function keepsLauncher(equipment: readonly (ItemView | null)[], after: readonly 
 
 function visibleBase(name: string, tval: number): number | null {
   if (tval === TV.LIGHT && /\(0 turns\)/i.test(name)) return 0;
-  if (tval === TV.LIGHT) return /\bLantern\b/i.test(name) ? 2 : /\bTorch\b/i.test(name) ? 1 : null;
+  if (tval === TV.LIGHT) return /\bLanterns?\b/i.test(name) ? 2 : /\bTorch(?:es)?\b/i.test(name) ? 1 : null;
   if (tval === TV.BOW) {
     const match = /\(x(\d+)\)/.exec(name);
     return match === null ? null : Number(match[1]);
@@ -160,6 +162,23 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
     if (item.tval === TV.LIGHT && /\(0 turns\)/i.test(name)) continue;
     const replaced = wornFor(item, equipment);
     if (replaced !== null && cursed(shownName(replaced) ?? "")) continue;
+    /* With no light the character cannot see new ground at all, so any plain
+     * light beats none. A light's name shows no combat numbers, which is why it
+     * is judged here rather than as unknown gear. */
+    if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
+      const oldLight = replaced === null ? null : shownName(replaced) ?? "";
+      const fuel = (shown: string) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
+      if (oldLight === null || fuel(oldLight) === 0) {
+        out.push({ handle: item.handle, name, score: 100, unknown: false,
+          criteria: `Wield ${name}. The character has no light, so it cannot see new ground or creatures.` });
+        continue;
+      }
+      if (sameKind(oldLight, name) && fuel(oldLight) < LOW_FUEL_TURNS && fuel(name) > fuel(oldLight)) {
+        out.push({ handle: item.handle, name, score: 50, unknown: false,
+          criteria: `Wield ${name}. The light in use is nearly out of fuel.` });
+        continue;
+      }
+    }
     if (fullyKnown(name) && view.simulateLoadout !== undefined) {
       const result = view.simulateLoadout({ wield: [{ from: "gear", handle: item.handle }] });
       if (result !== null) {
