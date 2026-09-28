@@ -24,3 +24,16 @@ it("renders a readable run file and the versioned JSON envelope", () => {
   expect(JSON.parse(reportJson(model))).toMatchObject({ format: "neo-angband/squire/report",
     schemaVersion: 1, data: { headline: { name: "Mira" } } });
 });
+
+it("renders apprenticeship in Markdown and JSON", () => {
+  const withApprentice: RunSummary = { ...model, apprenticeship: {
+    rank: "Squire", agreementShare: 0.68, surprises: ["Chose to retreat."],
+    latestExam: { matched: 14, scored: 18 },
+    squireRadar: [{ id: "boldness", value: 60 }],
+    knightRadar: [{ id: "boldness", value: 80, confidence: 0.7 }],
+  } };
+  expect(reportMarkdown(withApprentice)).toContain("## Apprenticeship");
+  expect(reportMarkdown(withApprentice)).toContain("Latest exam: 14 of 18");
+  expect(reportMarkdown(withApprentice)).toContain("Knight radar: boldness 80");
+  expect(JSON.parse(reportJson(withApprentice)).data.apprenticeship.rank).toBe("Squire");
+});

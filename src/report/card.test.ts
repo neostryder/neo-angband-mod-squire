@@ -45,3 +45,15 @@ it("encodes share text and supplies Facebook only when there is a URL", () => {
     .toBe("https://www.facebook.com/sharer/sharer.php?u=https%3A%2F%2Fexample.test%2Fa%20b");
   expect(shareLinks("Mira & the troll").reddit).toContain("title=Mira%20%26%20the%20troll");
 });
+
+it("prints the apprenticeship share line on a card", () => {
+  const fake = recordingContext();
+  const model = { headline: { name: "Mira", race: "Elf", class: "Mage", level: 12,
+    deepestFeet: 750, turns: 100, outcome: "death", cause: "troll" },
+    topKills: [], chronicleHighlights: [], personaRadar: [],
+    apprenticeship: { rank: "Squire", agreementShare: 0.68, surprises: [], latestExam: null,
+      squireRadar: [], knightRadar: [] },
+  } as unknown as RunSummary;
+  drawCard(fake.ctx, model);
+  expect(fake.text).toContain("Apprentice: Squire rank, agreed 68%");
+});

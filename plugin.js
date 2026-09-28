@@ -3432,6 +3432,247 @@ function withAncestor(lineage, name, race, cls, died, lessons) {
   return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60) };
 }
 
+// src/learning/ranks.ts
+function rankFor(agreementShare, examples) {
+  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
+  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
+  return "Page";
+}
+function clamp012(value) {
+  return Math.max(0, Math.min(1, value));
+}
+function mean(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function inferPersona(examples, commands) {
+  const persona = defaultPersona("Player");
+  const confidence = {};
+  for (const key2 of Object.keys(persona.sliders)) {
+    persona.sliders[key2] = 50;
+    confidence[key2] = 0;
+  }
+  function set(key2, count2, value) {
+    if (count2 === 0) return;
+    persona.sliders[key2] = Math.round(clamp012(value) * 100);
+    confidence[key2] = clamp012(count2 / 20);
+  }
+  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
+  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
+  const dangerValues = [
+    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
+    ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
+  ];
+  set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);
+  const rests = commands.filter((command) => command.kind === "rest" && command.restedToFull !== void 0);
+  set("patience", rests.length, rests.length ? rests.filter((command) => command.restedToFull).length / rests.length : 0.5);
+  const heals = commands.filter((command) => command.kind === "heal" && command.hpShare !== void 0);
+  set("healat", heals.length, heals.length ? mean(heals.map((command) => command.hpShare)) : 0.5);
+  const retreats = commands.filter((command) => command.kind === "retreat" && command.hpShare !== void 0);
+  set("retreatat", retreats.length, retreats.length ? mean(retreats.map((command) => command.hpShare)) : 0.5);
+  const duration = commands.length < 2 ? 0 : Math.max(...commands.map((command) => command.turn)) - Math.min(...commands.map((command) => command.turn));
+  const consumed = commands.filter((command) => command.kind === "consumable");
+  if (duration > 0) set("consumables", commands.length, consumed.length * 1e3 / duration / 10);
+  const descents = commands.filter((command) => command.kind === "descend" && command.exploredShare !== void 0);
+  set("levelfeel", descents.length, descents.length ? mean(descents.map((command) => command.exploredShare)) : 0.5);
+  const attacks = commands.filter((command) => command.kind === "ranged" || command.kind === "melee");
+  set("range", attacks.length, attacks.length ? attacks.filter((command) => command.kind === "ranged").length / attacks.length : 0.5);
+  return { persona, confidence };
+}
+
+// src/knight.ts
+var DIR_DELTA = {
+  1: [-1, 1],
+  2: [0, 1],
+  3: [1, 1],
+  4: [-1, 0],
+  6: [1, 0],
+  7: [-1, -1],
+  8: [0, -1],
+  9: [1, -1]
+};
+function goalOfCommand(command, view) {
+  const player = view.player();
+  const at = player.grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
+  const pack = readPack(view);
+  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
+  switch (command.code) {
+    case "walk":
+    case "run":
+    case "pathfind": {
+      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
+      if (delta !== void 0) {
+        const to = { x: at.x + delta[0], y: at.y + delta[1] };
+        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
+        if (awake.length > 0) {
+          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
+          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
+          if (nearestAfter > nearestNow) return "retreat";
+          if (nearestAfter < nearestNow) return "fight";
+        }
+      }
+      return "explore";
+    }
+    case "descend":
+      return "descend";
+    case "rest":
+      return "rest";
+    case "pickup":
+      return "pick_up";
+    case "eat":
+      return "eat";
+    case "study":
+      return "study";
+    case "fire":
+      return "shoot";
+    case "throw":
+      return has(pack.oil) ? "throw_oil" : null;
+    case "aim-wand":
+      return "aim_wand";
+    case "quaff":
+      return has(pack.heal) ? "heal" : null;
+    case "read":
+      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
+      if (has(pack.phase)) return "phase";
+      if (has(pack.teleport)) return "teleport";
+      return null;
+    case "use-staff":
+      return has(pack.teleport) ? "teleport" : null;
+    case "shop-buy":
+    case "shop-sell":
+      return "shop";
+    case "cast": {
+      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
+      if (spell === null) return null;
+      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
+      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+function proceduralPick(offers, hpShare) {
+  const has = (g) => offers.find((o) => o.goal === g);
+  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
+  const fight = has("fight");
+  if (fight !== void 0 && fight.risk > 0.45) {
+    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+  }
+  if (hpShare < 0.35) {
+    const safe = first("heal", "cast_heal");
+    if (safe !== null) return safe;
+  }
+  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
+  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+}
+var LABEL = {
+  fight: "fight in melee",
+  shoot: "shoot",
+  throw_oil: "throw oil",
+  aim_wand: "aim a wand",
+  cast_attack: "cast an attack spell",
+  heal: "drink a healing potion",
+  cast_heal: "cast a healing spell",
+  phase: "phase away",
+  teleport: "teleport away",
+  retreat: "back away",
+  rest: "rest",
+  eat: "eat",
+  study: "learn a spell",
+  pick_up: "pick it up",
+  explore: "explore",
+  descend: "take the stairs",
+  recall_town: "recall to town",
+  shop: "shop for supplies",
+  recall_dungeon: "recall into the dungeon"
+};
+function goalLabel(goal) {
+  return LABEL[goal];
+}
+function noteLine(squire, knight, hpShare) {
+  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
+  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
+  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
+}
+var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
+function emptyApprentice() {
+  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
+}
+function note(apprentice, entry) {
+  const weight = entry.demonstration ? 2 : 1;
+  return {
+    entries: [...apprentice.entries, entry].slice(-200),
+    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
+    total: apprentice.total + weight,
+    commands: apprentice.commands,
+    exams: apprentice.exams,
+    examArmed: apprentice.examArmed,
+    ghostHint: apprentice.ghostHint,
+    ghostGoal: apprentice.ghostGoal
+  };
+}
+function rankOf(apprentice) {
+  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
+}
+function momentOf(view) {
+  const p = view.player();
+  const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
+  return { awake, hpBand: share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3, depth: p.depth };
+}
+function isDecisionPoint(previous, now, goal) {
+  if (goal === null) return false;
+  if (previous === null) return true;
+  if (goal !== "explore") return true;
+  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
+}
+
+// src/lessons/radar.ts
+var LESSON_SLIDERS = ["boldness", "patience", "healat", "retreatat", "consumables", "levelfeel", "range"];
+function drawRadar(ctx, persona, x, y, radius, color, confidence) {
+  ctx.save();
+  try {
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineWidth = 2;
+    ctx.textAlign = "center";
+    ctx.font = "11px sans-serif";
+    for (let i = 0; i < LESSON_SLIDERS.length; i += 1) {
+      const key2 = LESSON_SLIDERS[i];
+      const angle = -Math.PI / 2 + i * 2 * Math.PI / LESSON_SLIDERS.length;
+      const edgeX = x + Math.cos(angle) * radius;
+      const edgeY = y + Math.sin(angle) * radius;
+      ctx.globalAlpha = 0.25;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(edgeX, edgeY);
+      ctx.stroke();
+      ctx.globalAlpha = confidence === void 0 ? 1 : Math.max(0.2, Math.min(1, confidence[key2] ?? 0));
+      ctx.fillText(key2, x + Math.cos(angle) * (radius + 25), y + Math.sin(angle) * (radius + 18));
+    }
+    ctx.beginPath();
+    for (let i = 0; i < LESSON_SLIDERS.length; i += 1) {
+      const key2 = LESSON_SLIDERS[i];
+      const angle = -Math.PI / 2 + i * 2 * Math.PI / LESSON_SLIDERS.length;
+      const distance = radius * Math.max(0, Math.min(100, persona.sliders[key2])) / 100;
+      const px = x + Math.cos(angle) * distance;
+      const py = y + Math.sin(angle) * distance;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
+    ctx.globalAlpha = confidence === void 0 ? 0.3 : 0.18;
+    ctx.fill();
+    ctx.globalAlpha = confidence === void 0 ? 1 : 0.6;
+    ctx.stroke();
+  } finally {
+    ctx.restore();
+  }
+}
+
 // src/report/summary.ts
 function countUse(decisions, key2) {
   const counts = /* @__PURE__ */ new Map();
@@ -3450,6 +3691,16 @@ function buildRunSummary(input) {
   const deathDecisions = blamed === void 0 || last.some((decision2) => decision2.id === blamed.id) ? last : [blamed, ...last];
   const events = runLog.events();
   const highlightEvent = events.find((event) => event.kind === "unique-kill") ?? events.find((event) => event.kind === "near-death") ?? events.find((event) => event.kind === "escape") ?? events.find((event) => event.kind === "item-found") ?? events[0];
+  const apprentice = input.apprentice;
+  const inferred = apprentice === void 0 ? null : inferPersona([], apprentice.commands ?? []);
+  const apprenticeship = apprentice === void 0 || apprentice.total === 0 || inferred === null ? void 0 : {
+    agreementShare: apprentice.agreed / apprentice.total,
+    rank: rankOf(apprentice),
+    surprises: apprentice.entries.filter((entry) => entry.signature !== void 0 && !entry.agreed).map((entry, index) => ({ entry, index })).sort((a, b) => (b.entry.confidence ?? -1) - (a.entry.confidence ?? -1) || b.index - a.index).slice(0, 3).map(({ entry }) => entry.line),
+    latestExam: (apprentice.exams ?? []).at(-1) ?? null,
+    squireRadar: LESSON_SLIDERS.map((id) => ({ id, value: persona.sliders[id] })),
+    knightRadar: LESSON_SLIDERS.map((id) => ({ id, value: inferred.persona.sliders[id], confidence: inferred.confidence[id] }))
+  };
   return {
     headline: {
       name: report.name,
@@ -3480,7 +3731,8 @@ function buildRunSummary(input) {
     lessonsLearned: input.lessonsLearned.slice(),
     lessonsInherited: input.lessonsInherited.slice(),
     lineageNames: input.lineageNames.slice(),
-    chronicleHighlights: input.chronicleHighlights?.slice() ?? (highlightEvent === void 0 ? [] : [chronicleLine(highlightEvent, persona, () => 0)])
+    chronicleHighlights: input.chronicleHighlights?.slice() ?? (highlightEvent === void 0 ? [] : [chronicleLine(highlightEvent, persona, () => 0)]),
+    ...apprenticeship === void 0 ? {} : { apprenticeship }
   };
 }
 function telemetryCalibration(value) {
@@ -3827,6 +4079,7 @@ function createRuntime(host, options = {}) {
       listeners.add(listener);
       return () => listeners.delete(listener);
     },
+    decisionView: () => lastView,
     controllerFor(cfg, terrain, errands) {
       const backend = backendFor(config);
       const net = host.net;
@@ -3994,6 +4247,7 @@ function createRuntime(host, options = {}) {
     const lineageName = character.lineage ?? report.name;
     const lineage = config.lineages[lineageName];
     try {
+      const storedApprentice = await store.get("squire/apprentice");
       summary = buildRunSummary({
         report,
         runLog: journal.runLog(),
@@ -4005,7 +4259,8 @@ function createRuntime(host, options = {}) {
         lineageNames: (lineage?.ancestors ?? []).map((a) => a.name),
         calibration: {},
         ...blamed === null ? {} : { blamedDecisionId: blamed },
-        chronicleHighlights: journal.chronicle().slice(-5)
+        chronicleHighlights: journal.chronicle().slice(-5),
+        ...storedApprentice === void 0 ? {} : { apprentice: storedApprentice }
       });
       await store.set(`squire/reports/${character.runId}`, summary);
     } catch (error) {
@@ -4105,156 +4360,6 @@ function noTerrain() {
     isHarmful: () => false,
     size: 0
   };
-}
-
-// src/learning/ranks.ts
-function rankFor(agreementShare, examples) {
-  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
-  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
-  return "Page";
-}
-
-// src/knight.ts
-var DIR_DELTA = {
-  1: [-1, 1],
-  2: [0, 1],
-  3: [1, 1],
-  4: [-1, 0],
-  6: [1, 0],
-  7: [-1, -1],
-  8: [0, -1],
-  9: [1, -1]
-};
-function goalOfCommand(command, view) {
-  const player = view.player();
-  const at = player.grid;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
-  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
-  const pack = readPack(view);
-  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
-  switch (command.code) {
-    case "walk":
-    case "run":
-    case "pathfind": {
-      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
-      if (delta !== void 0) {
-        const to = { x: at.x + delta[0], y: at.y + delta[1] };
-        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
-        if (awake.length > 0) {
-          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
-          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
-          if (nearestAfter > nearestNow) return "retreat";
-          if (nearestAfter < nearestNow) return "fight";
-        }
-      }
-      return "explore";
-    }
-    case "descend":
-      return "descend";
-    case "rest":
-      return "rest";
-    case "pickup":
-      return "pick_up";
-    case "eat":
-      return "eat";
-    case "study":
-      return "study";
-    case "fire":
-      return "shoot";
-    case "throw":
-      return has(pack.oil) ? "throw_oil" : null;
-    case "aim-wand":
-      return "aim_wand";
-    case "quaff":
-      return has(pack.heal) ? "heal" : null;
-    case "read":
-      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
-      if (has(pack.phase)) return "phase";
-      if (has(pack.teleport)) return "teleport";
-      return null;
-    case "use-staff":
-      return has(pack.teleport) ? "teleport" : null;
-    case "shop-buy":
-    case "shop-sell":
-      return "shop";
-    case "cast": {
-      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
-      if (spell === null) return null;
-      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
-      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
-      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
-      return null;
-    }
-    default:
-      return null;
-  }
-}
-function proceduralPick(offers, hpShare) {
-  const has = (g) => offers.find((o) => o.goal === g);
-  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
-  const fight = has("fight");
-  if (fight !== void 0 && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
-  }
-  if (hpShare < 0.35) {
-    const safe = first("heal", "cast_heal");
-    if (safe !== null) return safe;
-  }
-  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
-}
-var LABEL = {
-  fight: "fight in melee",
-  shoot: "shoot",
-  throw_oil: "throw oil",
-  aim_wand: "aim a wand",
-  cast_attack: "cast an attack spell",
-  heal: "drink a healing potion",
-  cast_heal: "cast a healing spell",
-  phase: "phase away",
-  teleport: "teleport away",
-  retreat: "back away",
-  rest: "rest",
-  eat: "eat",
-  study: "learn a spell",
-  pick_up: "pick it up",
-  explore: "explore",
-  descend: "take the stairs",
-  recall_town: "recall to town",
-  shop: "shop for supplies",
-  recall_dungeon: "recall into the dungeon"
-};
-function noteLine(squire, knight, hpShare) {
-  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
-  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
-  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
-}
-var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
-function emptyApprentice() {
-  return { entries: [], agreed: 0, total: 0 };
-}
-function note(apprentice, entry) {
-  const weight = entry.demonstration ? 2 : 1;
-  return {
-    entries: [...apprentice.entries, entry].slice(-200),
-    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
-    total: apprentice.total + weight
-  };
-}
-function rankOf(apprentice) {
-  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
-}
-function momentOf(view) {
-  const p = view.player();
-  const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
-  return { awake, hpBand: share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3, depth: p.depth };
-}
-function isDecisionPoint(previous, now, goal) {
-  if (goal === null) return false;
-  if (previous === null) return true;
-  if (goal !== "explore") return true;
-  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
 }
 
 // src/telemetry/consent.ts
@@ -4734,12 +4839,51 @@ function row(param, get, save) {
 function mountLessons(body2, lessons) {
   const head = h("div");
   const list = h("div");
+  const style = h("div");
+  const ghost = h("p", { class: "muted" });
+  const examButton = h("button", { class: "act", onclick: () => lessons.takeExam() }, "Take an exam");
+  const examNote = h("span", { class: "muted" });
+  const ghostCheck = h("input", { type: "checkbox", checked: lessons.ghostEnabled() });
+  ghostCheck.addEventListener("change", () => lessons.setGhost(ghostCheck.checked));
   function draw(a) {
     const share = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
     fill(
       head,
       h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
     );
+    ghost.textContent = lessons.ghostEnabled() ? a.ghostHint ?? "" : "";
+    const inferred = lessons.inferred();
+    const own = lessons.squirePersona();
+    const canvas = h("canvas", { width: "600", height: "260" });
+    const ctx = canvas.getContext("2d");
+    if (ctx !== null) {
+      if (own !== null) drawRadar(ctx, own, 150, 130, 70, "#d9ac64");
+      drawRadar(ctx, inferred.persona, 450, 130, 70, "#8fd18f", inferred.confidence);
+    }
+    const rows = LESSON_SLIDERS.map((key2) => {
+      const parameter = PARAMETERS.find((item) => item.id === key2);
+      const confidence = inferred.confidence[key2];
+      return h(
+        "div",
+        { class: "slider", style: confidence < 0.5 ? "opacity: 0.5" : "" },
+        h("span", {}, parameter?.name ?? key2),
+        h("input", { type: "range", min: "0", max: "100", value: String(inferred.persona.sliders[key2]), disabled: true }),
+        h("span", {}, String(inferred.persona.sliders[key2]))
+      );
+    });
+    fill(
+      style,
+      h("h3", {}, "Play like me"),
+      h("div", { class: "row" }, h("span", {}, own?.name ?? "Squire"), h("span", {}, "Your style")),
+      canvas,
+      ...rows,
+      h("button", { class: "act", onclick: () => lessons.savePersona(false) }, "Save as a persona"),
+      h("button", { class: "act", onclick: () => lessons.savePersona(true) }, "Use it")
+    );
+    examButton.hidden = a.entries.filter((entry) => entry.signature !== void 0).length < 40;
+    examButton.disabled = a.examArmed;
+    examNote.hidden = examButton.hidden;
+    examNote.textContent = a.examArmed ? " Exam ready. Press Ctrl-Z, and Squire's first 20 choices are scored against yours." : " After your next Ctrl-Z, Squire's first 20 choices are scored against yours.";
     const recent = a.entries.slice(-40).reverse();
     fill(
       list,
@@ -4750,6 +4894,11 @@ function mountLessons(body2, lessons) {
   body2.append(
     h("p", { class: "muted" }, "While you play, Squire watches as your apprentice. It forms its own choice at each moment that matters and notes where yours differed. It never acts, so your character stays yours."),
     head,
+    ghost,
+    h("label", {}, ghostCheck, " Show Squire's choice when it differs"),
+    style,
+    examButton,
+    examNote,
     h("button", { class: "act", onclick: () => lessons.watchThis() }, "Watch this"),
     h("span", { class: "muted" }, " Your next five choices count double."),
     list
@@ -4913,6 +5062,10 @@ function drawCard(ctx, model, theme = DEFAULT_CARD_THEME) {
     ctx.font = "22px sans-serif";
     fitted(ctx, model.headline.outcome === "death" ? `Cause: ${model.headline.cause}` : model.headline.cause, 56, 274, 650);
     ctx.fillText(`Deepest: ${String(model.headline.deepestFeet)} ft`, 56, 318);
+    if (model.apprenticeship !== void 0) {
+      ctx.font = "18px sans-serif";
+      fitted(ctx, `Apprentice: ${model.apprenticeship.rank} rank, agreed ${String(Math.round(model.apprenticeship.agreementShare * 100))}%`, 56, 341, 650);
+    }
     ctx.fillStyle = theme.muted;
     ctx.font = "18px sans-serif";
     ctx.fillText("Top kills", 56, 370);
@@ -5014,6 +5167,22 @@ function reportMarkdown(model) {
     "",
     lines(model.lessonsInherited),
     "",
+    ...model.apprenticeship === void 0 ? [] : [
+      "## Apprenticeship",
+      "",
+      `Rank: ${model.apprenticeship.rank}`,
+      `Agreement: ${String(Math.round(model.apprenticeship.agreementShare * 100))}%`,
+      "",
+      "### Surprises",
+      "",
+      lines(model.apprenticeship.surprises),
+      "",
+      `Latest exam: ${model.apprenticeship.latestExam === null ? "None" : `${String(model.apprenticeship.latestExam.matched)} of ${String(model.apprenticeship.latestExam.scored)}`}`,
+      "",
+      `Squire radar: ${model.apprenticeship.squireRadar.map((trait) => `${trait.id} ${String(trait.value)}`).join(", ")}`,
+      `Knight radar: ${model.apprenticeship.knightRadar.map((trait) => `${trait.id} ${String(trait.value)}`).join(", ")}`,
+      ""
+    ],
     "## Token tally",
     "",
     "| Measure | Total |",
@@ -5050,6 +5219,25 @@ function mountReport(body2, rt) {
     if (g !== null) drawCard(g, model);
     const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "victory" ? "Won the game." : "Retired."}`;
     const links = shareLinks(text);
+    const apprenticeship = model.apprenticeship;
+    const radar = apprenticeship === void 0 ? null : h("canvas", { width: "600", height: "260" });
+    const radarCtx = radar?.getContext("2d");
+    if (radarCtx !== null && radarCtx !== void 0 && apprenticeship !== void 0) {
+      const squire = defaultPersona();
+      const knight = defaultPersona();
+      for (const trait of apprenticeship.squireRadar) squire.sliders[trait.id] = trait.value;
+      for (const trait of apprenticeship.knightRadar) knight.sliders[trait.id] = trait.value;
+      drawRadar(radarCtx, squire, 150, 130, 70, "#d9ac64");
+      drawRadar(
+        radarCtx,
+        knight,
+        450,
+        130,
+        70,
+        "#8fd18f",
+        Object.fromEntries(apprenticeship.knightRadar.map((trait) => [trait.id, trait.confidence]))
+      );
+    }
     const base = hl.name.replace(/[^A-Za-z0-9_-]+/g, "_") || "squire";
     fill(
       view,
@@ -5060,6 +5248,16 @@ function mountReport(body2, rt) {
       h("p", {}, `Went against advice ${String(model.divergence.count)} times. Used ${model.tokens.inputTokens.toLocaleString()} input tokens${model.tokens.usd > 0 ? `, about $${model.tokens.usd.toFixed(3)}` : ""}.`),
       model.chronicleHighlights.length === 0 ? null : h("div", {}, h("h3", {}, "Chronicle"), ...model.chronicleHighlights.map((l) => h("div", { class: "entry" }, l))),
       model.lessonsLearned.length === 0 ? null : h("div", {}, h("h3", {}, "Lessons"), ...model.lessonsLearned.slice(-8).map((l) => h("div", { class: "entry" }, l))),
+      apprenticeship === void 0 ? null : h(
+        "div",
+        {},
+        h("h3", {}, "Apprenticeship"),
+        h("p", {}, `${apprenticeship.rank} rank, agreed ${String(Math.round(apprenticeship.agreementShare * 100))}%.`),
+        h("p", {}, apprenticeship.latestExam === null ? "No exam yet." : `Exam: matched your choice ${String(apprenticeship.latestExam.matched)} of ${String(apprenticeship.latestExam.scored)} times`),
+        ...apprenticeship.surprises.map((line) => h("div", { class: "entry" }, line)),
+        h("div", { class: "row" }, h("span", {}, "Squire"), h("span", {}, "Your style")),
+        radar
+      ),
       h("h3", {}, "Share"),
       card,
       h(
@@ -5141,6 +5339,144 @@ function mountPanel(host, rt, lessons) {
   return () => cleanup?.();
 }
 
+// src/lessons/evidence.ts
+function commandEvidence(command, goal, view) {
+  const p = view.player();
+  const near = view.monsters().some((monster) => monster.visible && !monster.asleep && steps(p.grid, monster.grid) <= 3 && monster.level >= p.level);
+  let kind;
+  switch (goal) {
+    case "fight":
+      kind = command.code === "walk" ? "melee" : "fight";
+      break;
+    case "retreat":
+    case "phase":
+    case "teleport":
+      kind = "retreat";
+      break;
+    case "rest":
+      kind = "rest";
+      break;
+    case "heal":
+    case "cast_heal":
+      kind = "heal";
+      break;
+    case "descend":
+      kind = "descend";
+      break;
+    case "shoot":
+    case "throw_oil":
+    case "aim_wand":
+    case "cast_attack":
+      kind = "ranged";
+      break;
+    case "explore":
+      kind = "move";
+      break;
+    default:
+      if (["eat", "quaff", "read", "use-staff", "throw"].includes(command.code)) kind = "consumable";
+      else return null;
+  }
+  let exploredShare;
+  if (kind === "descend") {
+    const bounds = view.mapBounds();
+    let known = 0;
+    for (let y = 0; y < bounds.height; y += 1) {
+      for (let x = 0; x < bounds.width; x += 1) if (view.cell(x, y)?.known) known += 1;
+    }
+    exploredShare = bounds.width * bounds.height > 0 ? known / (bounds.width * bounds.height) : 0;
+  }
+  return {
+    kind,
+    turn: view.turn(),
+    dangerousNear: near,
+    hpShare: p.maxHp > 0 ? p.hp / p.maxHp : 1,
+    ...exploredShare === void 0 ? {} : { exploredShare }
+  };
+}
+function signatureForView(view) {
+  const p = view.player();
+  return signatureOf({
+    depth: p.depth,
+    classId: p.cls,
+    level: p.level,
+    races: view.monsters().filter((monster) => monster.visible).map((monster) => monster.race),
+    hp: p.hp,
+    maxHp: p.maxHp,
+    resources: view.inventory().map((item) => item.label.toLowerCase()).filter((name) => /heal|teleport|phase|oil|wand/.test(name)).slice(0, 10)
+  });
+}
+
+// src/lessons/exam.ts
+function styleGoal(entries, current2) {
+  const close = entries.filter((entry) => entry.signature !== void 0).map((entry) => ({ entry, score: similarity(entry.signature, current2) })).filter(({ score }) => score >= 0.7);
+  if (close.length === 0) return null;
+  const nearest = Math.max(...close.map(({ score }) => score));
+  const votes = /* @__PURE__ */ new Map();
+  for (const { entry, score } of close) {
+    if (score < nearest - 0.1) continue;
+    votes.set(entry.knight, (votes.get(entry.knight) ?? 0) + (entry.demonstration ? 2 : 1));
+  }
+  const ranked = [...votes].sort((a, b) => b[1] - a[1]);
+  return ranked[0] !== void 0 && ranked[0][1] > (ranked[1]?.[1] ?? 0) ? ranked[0][0] : null;
+}
+function scoreExam(state, pick2, expected) {
+  if (state.decisions >= 20) return state;
+  return {
+    decisions: state.decisions + 1,
+    scored: state.scored + (expected === null ? 0 : 1),
+    matched: state.matched + (expected !== null && pick2 === expected ? 1 : 0)
+  };
+}
+function subscribeExam(rt, entries, result, onStart = () => {
+}) {
+  let armed = false;
+  let state = null;
+  const off = rt.onDecision((record2) => {
+    if (state === null) {
+      if (!armed) return;
+      armed = false;
+      state = { decisions: 0, scored: 0, matched: 0 };
+      onStart();
+    }
+    const view = rt.decisionView();
+    const expected = view === null ? null : styleGoal(entries(), signatureForView(view));
+    const answer = record2.context.trace?.pick ?? (record2.answers["goal"]?.type === "choice" ? record2.answers["goal"].choice : null);
+    const pick2 = record2.context.offers.find((offer) => offer.goal === answer)?.goal ?? null;
+    state = scoreExam(state, pick2, expected);
+    if (state.decisions >= 20) finish();
+  });
+  function finish() {
+    if (state === null) return;
+    result({ matched: state.matched, scored: state.scored });
+    state = null;
+  }
+  return { arm: () => {
+    armed = true;
+  }, end: finish, dispose: off };
+}
+
+// src/lessons/persona.ts
+function saveInferredPersona(rt, inferred, characterName, use) {
+  const config = rt.config();
+  const added = [...config.personas, normalize({ ...inferred, name: `${characterName}'s style` })];
+  const removed = Math.max(0, added.length - 50);
+  const personas = added.slice(removed);
+  const index = personas.length - 1;
+  rt.saveConfig({ ...config, personas, activePersona: use ? index : Math.max(-1, config.activePersona - removed) });
+  return index;
+}
+
+// src/lessons/ghost.ts
+function ghostHint(squire, knight, view) {
+  if (squire === knight) return null;
+  const attack = ["fight", "shoot", "throw_oil", "aim_wand", "cast_attack"].includes(squire);
+  const target = attack ? view.monsters().filter((monster) => monster.visible).sort((a, b) => steps(view.player().grid, a.grid) - steps(view.player().grid, b.grid))[0] : void 0;
+  return `Squire would: ${goalLabel(squire)}${target === void 0 ? "" : ` at the ${target.race}`}`;
+}
+function ghostAfterCommand(hint, previousGoal, knight) {
+  return previousGoal !== null && previousGoal === knight ? null : hint;
+}
+
 // src/attach.ts
 var APPRENTICE_KEY = "squire/apprentice";
 var DEMONSTRATION_DECISIONS = 5;
@@ -5166,10 +5502,36 @@ function attachSquire(ctx, rt) {
   let demonstrations = 0;
   let previous = null;
   let asking = false;
+  let decisionSerial = 0;
+  let pendingRest = null;
+  const exam = subscribeExam(rt, () => apprentice.entries, (result) => {
+    save({
+      ...apprentice,
+      examArmed: false,
+      exams: [...apprentice.exams, result].slice(-10),
+      entries: [...apprentice.entries, {
+        turn: rt.decisionView()?.turn() ?? 0,
+        squire: "rest",
+        knight: "rest",
+        agreed: true,
+        line: `Exam: matched your choice ${String(result.matched)} of ${String(result.scored)} times`,
+        demonstration: false
+      }].slice(-200)
+    });
+  }, () => save({ ...apprentice, examArmed: false }));
   void rt.store().get(APPRENTICE_KEY).then((stored) => {
     const s = stored;
     if (s !== void 0 && Array.isArray(s.entries) && typeof s.agreed === "number" && typeof s.total === "number") {
-      apprentice = { entries: s.entries, agreed: s.agreed, total: s.total };
+      apprentice = {
+        ...emptyApprentice(),
+        ...s,
+        entries: s.entries,
+        agreed: s.agreed,
+        total: s.total,
+        commands: Array.isArray(s.commands) ? s.commands : [],
+        exams: Array.isArray(s.exams) ? s.exams : []
+      };
+      if (apprentice.examArmed) exam.arm();
       for (const l of listeners) l(apprentice);
     }
   });
@@ -5181,7 +5543,7 @@ function attachSquire(ctx, rt) {
   const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {
   } });
-  function record2(squire, knight, view) {
+  function record2(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
     const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
@@ -5193,17 +5555,38 @@ function attachSquire(ctx, rt) {
         knight,
         agreed: squire === knight,
         line: noteLine(squire, knight, share),
-        demonstration
+        demonstration,
+        signature: signatureForView(view),
+        dangerousNear,
+        ...confidence === void 0 ? {} : { confidence }
       })
     );
+    if (rt.config().knightsLessons.ghost && serial === decisionSerial) {
+      save({ ...apprentice, ghostHint: ghostHint(squire, knight, view), ghostGoal: squire === knight ? null : squire });
+    }
   }
   ctx.events?.on("player-command", (_name, payload) => {
+    exam.end();
     if (rt.brain() !== null) return;
     const view = viewNow();
     if (view === null) return;
+    const serial = ++decisionSerial;
     rt.observe(view);
     if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload, view);
+    const evidence = commandEvidence(payload, knight, view);
+    const dangerousNear = evidence?.dangerousNear ?? false;
+    if (pendingRest !== null) {
+      save({ ...apprentice, commands: apprentice.commands.map((item, index) => index === pendingRest ? { ...item, restedToFull: view.player().hp >= view.player().maxHp } : item) });
+      pendingRest = null;
+    }
+    if (evidence !== null) {
+      const commands = [...apprentice.commands, evidence].slice(-1e3);
+      pendingRest = evidence.kind === "rest" ? commands.length - 1 : null;
+      save({ ...apprentice, commands });
+    }
+    if (apprentice.ghostHint !== null && ghostAfterCommand(apprentice.ghostHint, apprentice.ghostGoal, knight) === null)
+      save({ ...apprentice, ghostHint: null, ghostGoal: null });
     const moment = momentOf(view);
     const point = isDecisionPoint(previous, moment, knight);
     previous = moment;
@@ -5216,7 +5599,7 @@ function attachSquire(ctx, rt) {
     const offline = proceduralPick(question.context.offers, share);
     const backend = rt.backend();
     if (backend === null || asking) {
-      if (offline !== null) record2(offline, knight, view);
+      if (offline !== null) record2(offline, knight, view, dangerousNear, serial);
       return;
     }
     asking = true;
@@ -5227,9 +5610,16 @@ function attachSquire(ctx, rt) {
         const answer = result.answers["goal"];
         const pick2 = answer?.type === "choice" ? answer.choice : "none_of_these";
         const squire = question.context.offers.find((o) => o.goal === pick2)?.goal ?? offline;
-        if (squire !== null && squire !== void 0) record2(squire, knight, view);
+        if (squire !== null && squire !== void 0) record2(
+          squire,
+          knight,
+          view,
+          dangerousNear,
+          serial,
+          answer?.type === "choice" ? answer.confidence : void 0
+        );
       } else if (offline !== null) {
-        record2(offline, knight, view);
+        record2(offline, knight, view, dangerousNear, serial);
       }
     });
   });
@@ -5247,6 +5637,33 @@ function attachSquire(ctx, rt) {
         ...apprentice,
         entries: apprentice.entries.map((e) => e === entry ? { ...e, reason } : e)
       });
+    },
+    inferred() {
+      const examples = apprentice.entries.filter((entry) => entry.signature !== void 0).map((entry) => ({
+        situation: { dangerousNear: entry.dangerousNear === true },
+        offered: [],
+        squirePick: entry.squire,
+        playerPick: entry.knight,
+        question: "goal",
+        source: entry.demonstration ? "watch" : "takeover",
+        weight: entry.demonstration ? 2 : 1
+      }));
+      return inferPersona(examples, apprentice.commands);
+    },
+    squirePersona: () => rt.character().persona ?? activePersona(rt.config()),
+    savePersona(use) {
+      saveInferredPersona(rt, lessons.inferred().persona, ctx.character?.key?.() ?? "Player", use);
+    },
+    ghostEnabled: () => rt.config().knightsLessons.ghost,
+    setGhost(enabled) {
+      const config = rt.config();
+      rt.saveConfig({ ...config, knightsLessons: { ...config.knightsLessons, ghost: enabled } });
+      if (!enabled) save({ ...apprentice, ghostHint: null, ghostGoal: null });
+    },
+    takeExam() {
+      if (apprentice.entries.filter((entry) => entry.signature !== void 0).length < 40) return;
+      exam.arm();
+      save({ ...apprentice, examArmed: true });
     }
   };
   const register = ctx.ui?.registerPanelKind;

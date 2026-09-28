@@ -14,6 +14,8 @@ import { steps } from "./grid.js";
 import type { Goal, Offer } from "./brain/goals.js";
 import { readPack } from "./brain/pack.js";
 import { rankFor, type Rank } from "./learning/ranks.js";
+import type { PlayerCommand as CommandEvidence } from "./learning/ranks.js";
+import type { SituationSignature } from "./learning/signature.js";
 import { recallItem } from "./town/needs.js";
 
 /** One command the player gave, as the host's `player-command` event reports it. */
@@ -127,6 +129,9 @@ export interface NotebookEntry {
   readonly reason?: string;
   /** A "Watch this" demonstration, which counts double. */
   readonly demonstration: boolean;
+  readonly signature?: SituationSignature;
+  readonly confidence?: number;
+  readonly dangerousNear?: boolean;
 }
 
 const LABEL: Readonly<Record<Goal, string>> = {
@@ -169,10 +174,15 @@ export interface Apprentice {
   readonly entries: readonly NotebookEntry[];
   readonly agreed: number;
   readonly total: number;
+  readonly commands: readonly CommandEvidence[];
+  readonly exams: readonly { readonly matched: number; readonly scored: number }[];
+  readonly examArmed: boolean;
+  readonly ghostHint: string | null;
+  readonly ghostGoal: Goal | null;
 }
 
 export function emptyApprentice(): Apprentice {
-  return { entries: [], agreed: 0, total: 0 };
+  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
 }
 
 /** Add an entry, keeping the most recent 200 in the notebook. */
@@ -182,6 +192,11 @@ export function note(apprentice: Apprentice, entry: NotebookEntry): Apprentice {
     entries: [...apprentice.entries, entry].slice(-200),
     agreed: apprentice.agreed + (entry.agreed ? weight : 0),
     total: apprentice.total + weight,
+    commands: apprentice.commands,
+    exams: apprentice.exams,
+    examArmed: apprentice.examArmed,
+    ghostHint: apprentice.ghostHint,
+    ghostGoal: apprentice.ghostGoal,
   };
 }
 

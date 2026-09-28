@@ -42,11 +42,11 @@ export function inferPersona(examples: readonly CoachingExample[], commands: rea
     confidence[key] = clamp01(count / 20);
   }
 
-  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "retreat"));
+  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
   const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true
     && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
   const dangerValues = [
-    ...danger.map((command) => command.kind === "fight" ? 1 : 0),
+    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
     ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0),
   ];
   set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);

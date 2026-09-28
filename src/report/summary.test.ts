@@ -74,4 +74,19 @@ describe("run summary", () => {
     expect(telemetry.tokens).toEqual({ input: 100, output: 20, calls: 1 });
     expect(JSON.stringify(telemetry)).not.toMatch(/backstory|trait|private life story|boldness/i);
   });
+
+  it("includes apprenticeship facts only when the notebook has decisions", () => {
+    const source = input("victory");
+    const model = buildRunSummary({ ...source, apprentice: {
+      agreed: 30, total: 40, commands: [{ kind: "heal", turn: 10, hpShare: 0.4 }],
+      exams: [{ matched: 14, scored: 18 }], examArmed: false, ghostHint: null, ghostGoal: null,
+      entries: [{ turn: 10, squire: "fight", knight: "heal", agreed: false,
+        line: "Noted: you chose to heal.", demonstration: false, confidence: 0.9,
+        signature: { depthBand: 1, classId: "Mage", levelBand: 1, families: ["orc"], hpBand: 2, resources: [] } }],
+    } });
+    expect(model.apprenticeship).toMatchObject({ rank: "Squire", agreementShare: 0.75,
+      surprises: ["Noted: you chose to heal."], latestExam: { matched: 14, scored: 18 } });
+    expect(model.apprenticeship?.knightRadar.find((trait) => trait.id === "healat")?.value).toBe(40);
+    expect(buildRunSummary(source).apprenticeship).toBeUndefined();
+  });
 });

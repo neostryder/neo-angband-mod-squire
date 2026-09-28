@@ -5,6 +5,19 @@ import type { Persona } from "../persona/persona.js";
 import type { Summary as TelemetrySummary } from "../telemetry/batch.js";
 import { chronicleLine } from "./chronicle.js";
 import type { RunEvent, RunLog } from "./events.js";
+import { rankOf, type Apprentice } from "../knight.js";
+import { inferPersona } from "../learning/ranks.js";
+import { LESSON_SLIDERS } from "../lessons/radar.js";
+import type { SliderId } from "../persona/catalog.js";
+
+export interface ApprenticeshipSummary {
+  readonly agreementShare: number;
+  readonly rank: string;
+  readonly surprises: readonly string[];
+  readonly latestExam: { readonly matched: number; readonly scored: number } | null;
+  readonly squireRadar: readonly { readonly id: SliderId; readonly value: number }[];
+  readonly knightRadar: readonly { readonly id: SliderId; readonly value: number; readonly confidence: number }[];
+}
 
 /** The host's end-of-run value, declared here so this mod can build by itself. */
 export interface RunReport {
@@ -40,6 +53,7 @@ export interface RunSummary {
   readonly lessonsInherited: readonly string[];
   readonly lineageNames: readonly string[];
   readonly chronicleHighlights: readonly string[];
+  readonly apprenticeship?: ApprenticeshipSummary;
 }
 
 export interface RunSummaryInput {
@@ -54,6 +68,7 @@ export interface RunSummaryInput {
   readonly calibration: Readonly<Record<string, unknown>>;
   readonly blamedDecisionId?: string;
   readonly chronicleHighlights?: readonly string[];
+  readonly apprentice?: Apprentice;
 }
 
 function countUse(decisions: readonly LoggedDecision[], key: "spell" | "weapon"): readonly { readonly name: string; readonly count: number }[] {
@@ -80,6 +95,19 @@ export function buildRunSummary(input: RunSummaryInput): RunSummary {
   const highlightEvent = events.find((event) => event.kind === "unique-kill")
     ?? events.find((event) => event.kind === "near-death") ?? events.find((event) => event.kind === "escape")
     ?? events.find((event) => event.kind === "item-found") ?? events[0];
+  const apprentice = input.apprentice;
+  const inferred = apprentice === undefined ? null : inferPersona([], apprentice.commands ?? []);
+  const apprenticeship = apprentice === undefined || apprentice.total === 0 || inferred === null ? undefined : {
+    agreementShare: apprentice.agreed / apprentice.total,
+    rank: rankOf(apprentice),
+    surprises: apprentice.entries.filter((entry) => entry.signature !== undefined && !entry.agreed)
+      .map((entry, index) => ({ entry, index }))
+      .sort((a, b) => (b.entry.confidence ?? -1) - (a.entry.confidence ?? -1) || b.index - a.index)
+      .slice(0, 3).map(({ entry }) => entry.line),
+    latestExam: (apprentice.exams ?? []).at(-1) ?? null,
+    squireRadar: LESSON_SLIDERS.map((id) => ({ id, value: persona.sliders[id] })),
+    knightRadar: LESSON_SLIDERS.map((id) => ({ id, value: inferred.persona.sliders[id], confidence: inferred.confidence[id] })),
+  } satisfies ApprenticeshipSummary;
   return {
     headline: {
       name: report.name, race: report.race, class: report.cls, level: report.level,
@@ -101,6 +129,7 @@ export function buildRunSummary(input: RunSummaryInput): RunSummary {
     lineageNames: input.lineageNames.slice(),
     chronicleHighlights: input.chronicleHighlights?.slice()
       ?? (highlightEvent === undefined ? [] : [chronicleLine(highlightEvent, persona, () => 0)]),
+    ...(apprenticeship === undefined ? {} : { apprenticeship }),
   };
 }
 
