@@ -1994,6 +1994,8 @@ function createGoalPlanner(options) {
       seenDepth = depth;
       seenOnLevel.clear();
     }
+    const live = new Set(view.monsters().map((m) => m.id));
+    for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
     for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
   }
   function watch(view) {
@@ -4258,7 +4260,7 @@ function createShadow(options) {
 
 // src/runtime.ts
 var CHARACTER_FORMAT = "neo-angband/squire/character";
-var MOD_VERSION = "1.0.0-dev";
+var MOD_VERSION = "0.1.1";
 var LESSON_SEQ_BASE = 5e5;
 function runIdFor(key2, now) {
   const base = (key2 ?? "char").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "char";

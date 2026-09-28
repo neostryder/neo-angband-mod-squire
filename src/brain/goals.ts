@@ -466,6 +466,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       seenDepth = depth;
       seenOnLevel.clear();
     }
+    /* The game reuses a dead creature's id for the next one it makes, so an id
+     * no longer on the level is forgotten; a summoned creature that takes it is
+     * then news. Forgetting only makes Squire stop for more, never less. */
+    const live = new Set(view.monsters().map((m) => m.id));
+    for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
     for (const m of view.monsters()) if (m.visible) seenOnLevel.add(m.id);
   }
 
