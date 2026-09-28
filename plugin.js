@@ -1871,6 +1871,16 @@ function crowd(s) {
   const near = s.awake.filter((m) => steps(at, m.grid) <= 5).length;
   return Math.min(1.8, 1 + 0.2 * Math.max(0, near - 1));
 }
+function ailments(status) {
+  const names = [status.poisoned > 0 ? "poisoned" : "", status.cut > 0 ? "bleeding" : ""].filter((n) => n !== "");
+  return names.length === 0 ? {} : { condition: `The character is ${names.join(" and ")} and loses a little health each turn until it wears off.` };
+}
+function swarmNote(seen) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const m of seen) counts.set(m.race, (counts.get(m.race) ?? 0) + 1);
+  const many = [...counts].filter(([, n]) => n >= 3).map(([race, n]) => `${String(n)} ${race}`);
+  return many.length === 0 ? {} : { swarm: `${many.join(" and ")} in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.` };
+}
 function fightRisk(s) {
   const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
   const band = Math.max(target, s.worst);
@@ -2052,8 +2062,10 @@ function createGoalPlanner(options) {
     noteSeen(view);
     const watcher = createWatcher(view, {
       /* Already under the line: crossing it again is not news, but every
-       * further blow is, so the model is asked again after each one. */
-      stopOnAnyDamage: hurt,
+       * further blow is, so the model is asked again after each one. Poison
+       * and bleeding cost a point every turn, which would end every plan at
+       * once, so then only the damage-share rule below applies. */
+      stopOnAnyDamage: hurt && player.status.poisoned === 0 && player.status.cut === 0,
       stopOnNewCreature: true,
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
@@ -2307,6 +2319,8 @@ function createGoalPlanner(options) {
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
+            ...ailments(player.status),
+            ...swarmNote(seen),
             ...lessonsFor(view),
             ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }
           },

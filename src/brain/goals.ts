@@ -244,6 +244,27 @@ function crowd(s: Situation): number {
   return Math.min(1.8, 1 + 0.2 * Math.max(0, near - 1));
 }
 
+/**
+ * Poison and bleeding cost hit points every turn with no creature near, so the
+ * model is told the damage is not a new attack.
+ */
+function ailments(status: { readonly poisoned: number; readonly cut: number }): { condition?: string } {
+  const names = [status.poisoned > 0 ? "poisoned" : "", status.cut > 0 ? "bleeding" : ""].filter((n) => n !== "");
+  return names.length === 0 ? {} : { condition: `The character is ${names.join(" and ")} and loses a little health each turn until it wears off.` };
+}
+
+/**
+ * Three or more of one kind in sight is how breeders look: worm masses, lice,
+ * giant white mice. Killing them one by one can go on forever while more
+ * arrive, and leaving the level ends it.
+ */
+function swarmNote(seen: readonly { readonly race: string }[]): { swarm?: string } {
+  const counts = new Map<string, number>();
+  for (const m of seen) counts.set(m.race, (counts.get(m.race) ?? 0) + 1);
+  const many = [...counts].filter(([, n]) => n >= 3).map(([race, n]) => `${String(n)} ${race}`);
+  return many.length === 0 ? {} : { swarm: `${many.join(" and ")} in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.` };
+}
+
 /** The death risk of a fight: the worst awake creature in sight, not only the one being hit. */
 function fightRisk(s: Situation): number {
   const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp);
@@ -501,8 +522,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     noteSeen(view);
     const watcher = createWatcher(view, {
       /* Already under the line: crossing it again is not news, but every
-       * further blow is, so the model is asked again after each one. */
-      stopOnAnyDamage: hurt,
+       * further blow is, so the model is asked again after each one. Poison
+       * and bleeding cost a point every turn, which would end every plan at
+       * once, so then only the damage-share rule below applies. */
+      stopOnAnyDamage: hurt && player.status.poisoned === 0 && player.status.cut === 0,
       stopOnNewCreature: true,
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
@@ -797,6 +820,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
+            ...ailments(player.status),
+            ...swarmNote(seen),
             ...lessonsFor(view),
             ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }),
           },

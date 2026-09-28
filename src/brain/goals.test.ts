@@ -79,6 +79,14 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("tells the model about a swarm and about poison", () => {
+    const worms = [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, race: "yellow worm mass" }));
+    const w = world({ map: CORRIDOR, monsters: worms, player: { status: { poisoned: 5 } } as never });
+    const state = asked(planner(w).p.ask(w.view)).request.state as Record<string, unknown>;
+    expect(String(state["swarm"])).toContain("3 yellow worm mass");
+    expect(String(state["condition"])).toContain("poisoned");
+  });
+
   it("does not offer stairs it cannot walk to", () => {
     const walled = world({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
     expect(planner(walled).p.ask(walled.view)).toHaveProperty("handBack");
