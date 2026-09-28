@@ -59,6 +59,11 @@ describe("goal planner", () => {
     expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).toContain("rest");
   });
 
+  it("does not offer to explore ground it cannot reach", () => {
+    const w = world({ map: ["######", "#@#. #", "######"] });
+    expect(planner(w).p.ask(w.view)).toHaveProperty("handBack");
+  });
+
   it("hands back when there is nothing to do", () => {
     const w = world({ map: ["###", "#@#", "###"] });
     const { p } = planner(w);

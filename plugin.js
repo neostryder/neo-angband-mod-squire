@@ -1803,6 +1803,12 @@ function exposure(s) {
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
+function reachableFrontier(view, terrain) {
+  const goals = frontiers(view, terrain);
+  if (goals.length === 0) return false;
+  const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(view.player().grid));
+}
 function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false) {
   const view = s.view;
   const player = view.player();
@@ -1881,7 +1887,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (frontiers(view, terrain).length > 0) {
+  if (reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if (knownDownStairs(view, terrain).length > 0 && cfg.descend && (player.depth > 0 || recall === null && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
@@ -2160,7 +2166,7 @@ function createGoalPlanner(options) {
       const awakeNow = new Set(s.awake.map((m) => m.id));
       const newCreatures = [...awakeNow].filter((id) => !lastAwake.has(id)).length;
       lastAwake = awakeNow;
-      const unexplored = frontiers(view, terrain).length > 0;
+      const unexplored = reachableFrontier(view, terrain);
       const stairs = knownDownStairs(view, terrain).length > 0;
       const question = {
         request: {

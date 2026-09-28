@@ -22,7 +22,8 @@ import type { SquireCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createWatcher, type Watcher } from "../disturb.js";
 import { steps } from "../grid.js";
-import { frontiers, hasFloorObject, knownDownStairs, standingOnHarm } from "../map.js";
+import { frontiers, hasFloorObject, isRoutable, knownDownStairs, standingOnHarm } from "../map.js";
+import { flowFrom } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
 import { awakeInSight, inSight, pickTarget } from "../threat.js";
 import { retreatFrom, travelTo } from "../travel.js";
@@ -245,6 +246,18 @@ function within(s: Situation, range: number): boolean {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
 
+/**
+ * Whether any unexplored ground can be walked to over remembered ground, as the
+ * exploring errand would. Frontiers behind lava or walls are not worth offering:
+ * in town that made Squire pick explore again and again for nothing.
+ */
+function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
+  const goals = frontiers(view, terrain);
+  if (goals.length === 0) return false;
+  const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  return Number.isFinite(field.distance(view.player().grid));
+}
+
 /** The options that apply right now, each with its description and risk. */
 export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false): Offer[] {
   const view = s.view;
@@ -332,7 +345,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (frontiers(view, terrain).length > 0) {
+  if (reachableFrontier(view, terrain)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if (knownDownStairs(view, terrain).length > 0 && cfg.descend &&
@@ -660,7 +673,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const awakeNow = new Set(s.awake.map((m) => m.id));
       const newCreatures = [...awakeNow].filter((id) => !lastAwake.has(id)).length;
       lastAwake = awakeNow;
-      const unexplored = frontiers(view, terrain).length > 0;
+      const unexplored = reachableFrontier(view, terrain);
       const stairs = knownDownStairs(view, terrain).length > 0;
 
       const question: Question<GoalDigest> = {
