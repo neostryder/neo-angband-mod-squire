@@ -44,6 +44,37 @@ export interface Pack {
   readonly escapeSpell: readonly CastableSpell[];
 }
 
+/** A visible mapping or detection action available on this turn. */
+export type Detection =
+  | { readonly kind: "read" | "zap"; readonly handle: number; readonly name: string }
+  | { readonly kind: "cast"; readonly sidx: number; readonly name: string };
+
+/** Exact spell names in Angband 4.2 class.txt. */
+const DETECTION_SPELLS: readonly string[] = [
+  "Find Traps, Doors & Stairs", "Detect Monsters", "Treasure Detection", "Reveal Monsters",
+  "Detection", "Detect Evil", "Object Detection",
+];
+
+/** A known source only: an unidentified scroll or rod name never identifies its effect. */
+export function detectionSources(view: AgentView): Detection[] {
+  const out: Detection[] = [];
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null || empty(name)) continue;
+    if (/\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
+    if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
+  }
+  for (const spell of castable(view)) {
+    if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });
+  }
+  return out;
+}
+
+/** Choose the first available source for the current plan. */
+export function detectionSource(view: AgentView): Detection | null {
+  return detectionSources(view)[0] ?? null;
+}
+
 const HEAL_POTIONS: readonly [RegExp, number][] = [
   [/\bPotions? of Life\b/i, 6],
   [/\bPotions? of \*Healing\*/i, 5],

@@ -12,7 +12,7 @@
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { steps } from "./grid.js";
 import type { Goal, Offer } from "./brain/goals.js";
-import { readPack } from "./brain/pack.js";
+import { detectionSources, readPack } from "./brain/pack.js";
 import { rankFor, type Rank } from "./learning/ranks.js";
 import type { PlayerCommand as CommandEvidence } from "./learning/ranks.js";
 import type { SituationSignature } from "./learning/signature.js";
@@ -39,6 +39,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
   const awake = view.monsters().filter((m) => m.visible && !m.asleep);
   const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
   const pack = readPack(view);
+  const detection = detectionSources(view);
   const has = (list: readonly { readonly handle: number }[]) => handle !== null && list.some((i) => i.handle === handle);
 
   switch (command.code) {
@@ -68,6 +69,12 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       return "eat";
     case "study":
       return "study";
+    case "wield":
+    case "wear":
+      return "wear";
+    case "zap-rod":
+    case "zap":
+      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
     case "fire":
       return "shoot";
     case "throw":
@@ -77,6 +84,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
       if (has(pack.teleport)) return "teleport";
@@ -92,6 +100,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
       if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
       return null;
     }
     default:
@@ -115,7 +124,7 @@ export function proceduralPick(offers: readonly Offer[], hpShare: number): Goal 
     if (safe !== null) return safe;
   }
   if (fight !== undefined) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 
 /** What the apprentice noticed at one decision point. */
@@ -148,6 +157,8 @@ const LABEL: Readonly<Record<Goal, string>> = {
   rest: "rest",
   eat: "eat",
   study: "learn a spell",
+  wear: "wear gear",
+  detect: "survey the level",
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",

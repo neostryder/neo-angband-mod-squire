@@ -5,6 +5,9 @@ import type { Answer, ChoiceQuestion } from "./systemone.js";
 import { createGoalPlanner, healthBand, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import type { Question } from "./brain.js";
+import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
+import { gearCandidates } from "../gear/compare.js";
+import { goalLabel, goalOfCommand } from "../knight.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
@@ -329,5 +332,119 @@ describe("town goals", () => {
   it("offers town stairs when there is no scroll or gold", () => {
     const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, gold: 0 } });
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
+  });
+});
+
+describe("gear and detection", () => {
+  /** The fake derives only a visible, fully known change; no hidden item fields are used. */
+  function simulatedView(w: ReturnType<typeof world>, acChange: number, afterEquipment = w.view.equipment(), manaChange = 0): AgentView {
+    const before = w.view.player();
+    const after = { ...before, ac: before.ac + acChange, maxSp: before.maxSp + manaChange };
+    const simulation = {
+      before: { player: before, equipment: w.view.equipment(), stats: { resists: [], resistElements: [] } },
+      after: { player: after, equipment: afterEquipment, stats: { resists: [], resistElements: [] } },
+      delta: { ac: acChange, toH: 0, toD: 0, blows: 0, shots: 0, speed: 0, maxHp: 0, maxSp: manaChange, light: 0, resists: [] },
+      placements: [{ slot: 0, worn: w.view.inventory()[0], displaced: w.view.equipment()[0] ?? null }],
+      unresolved: [],
+    } as unknown as LoadoutSimulation;
+    return { ...w.view, simulateLoadout: () => simulation };
+  }
+
+  it("offers a clear upgrade and wears it once", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Armour [8,+2]"], worn: ["Leather Armour [2,+0]"] });
+    const view = simulatedView(w, 6);
+    const { p } = planner(w);
+    const q = asked(p.ask(view));
+    expect(q.context.offers.find((o) => o.goal === "wear")?.criteria).toContain("armour class 16 instead of 10");
+    const choice = p.choose(pick("wear"), q.context, view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(view, w.act)).toEqual({ code: "wield", args: { handle: 1 } });
+    expect(choice.plan.step(view, w.act)).toBeNull();
+  });
+
+  it("does not offer a worse known item", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Armour [2,+0]"], worn: ["Leather Armour [8,+2]"] });
+    expect(asked(planner(w).p.ask(simulatedView(w, -6))).context.offers.map((o) => o.goal)).not.toContain("wear");
+    const curious = defaultPersona();
+    curious.sliders.curiosity = 90;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona: curious });
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("wear");
+  });
+
+  it("counts a caster's mana loss against an armour gain", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Armour [8,+2]"], worn: ["Leather Armour [2,+0]"], player: { sp: 10, maxSp: 10 } });
+    expect(gearCandidates(simulatedView(w, 6, w.view.equipment(), -10))).toEqual([]);
+  });
+
+  it("uses the shown name when a loadout simulation is unavailable", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Armour [8,+2]"], worn: ["Leather Armour [2,+0]"] });
+    const view: AgentView = { ...w.view, simulateLoadout: () => null };
+    expect(gearCandidates(view)[0]).toMatchObject({ unknown: true, handle: 1 });
+  });
+
+  it("tries an unknown item only when curious and never simulates its runes", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Shield [8] {??}"], worn: ["Leather Shield [4,+0]"] });
+    const view: AgentView = { ...w.view, simulateLoadout: () => { throw new Error("unknown runes were simulated"); } };
+    expect(asked(planner(w).p.ask(view)).context.offers.map((o) => o.goal)).not.toContain("wear");
+    const curious = defaultPersona();
+    curious.sliders.curiosity = 50;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona: curious });
+    expect(asked(p.ask(view)).context.offers.find((o) => o.goal === "wear")?.criteria).toContain("unknown Leather Shield");
+    const magical = world({ map: CORRIDOR, pack: ["Leather Shield [8,+2] {magical}"] });
+    const magicalView: AgentView = { ...magical.view, simulateLoadout: () => { throw new Error("magical mark was simulated"); } };
+    expect(gearCandidates(magicalView)[0]?.unknown).toBe(true);
+  });
+
+  it("does not replace a visibly cursed shield", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Shield [8,+3]"], worn: ["Leather Shield [4,+0] {cursed}"] });
+    expect(gearCandidates(simulatedView(w, 8))).toEqual([]);
+  });
+
+  it("keeps the only launcher while carrying ammunition", () => {
+    const w = world({ map: CORRIDOR, pack: ["Long Bow (x3) (+4,+4)", "20 Arrows"], worn: ["Short Bow (x2) (+0,+0)"] });
+    const view = simulatedView(w, 8, []);
+    expect(gearCandidates(view)).toEqual([]);
+  });
+
+  it("offers detection on arrival once and reads the scroll", () => {
+    const w = world({ map: CORRIDOR, pack: ["a Scroll of Magic Mapping"] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((o) => o.goal)).toContain("detect");
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("detect");
+    const choice = p.choose(pick("detect"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "read", args: { handle: 1 } });
+    w.setPlayer({ depth: 2 });
+    expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).toContain("detect");
+  });
+
+  it("waits to survey when an awake creature is in sight", () => {
+    const w = world({ map: CORRIDOR, pack: ["a Rod of Detection"], monsters: [{ grid: { x: 5, y: 1 } }] });
+    expect(asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("detect");
+  });
+
+  it("zaps a known detection rod or casts a learned detection spell", () => {
+    const rod = world({ map: CORRIDOR, pack: ["a Rod of Treasure Location"] });
+    const rodPlanner = planner(rod).p;
+    const rodChoice = rodPlanner.choose(pick("detect"), asked(rodPlanner.ask(rod.view)).context, rod.view);
+    if (!("plan" in rodChoice)) throw new Error("expected a plan");
+    expect(rodChoice.plan.step(rod.view, rod.act)).toEqual({ code: "zap-rod", args: { handle: 1 } });
+
+    const mage = world({ map: CORRIDOR, player: { sp: 5, maxSp: 5 }, spells: [{ name: "Find Traps, Doors & Stairs", sidx: 7 }] });
+    const magePlanner = planner(mage).p;
+    const mageChoice = magePlanner.choose(pick("detect"), asked(magePlanner.ask(mage.view)).context, mage.view);
+    if (!("plan" in mageChoice)) throw new Error("expected a plan");
+    expect(mageChoice.plan.step(mage.view, mage.act)).toEqual({ code: "cast", args: { spell: 7 } });
+    expect(goalOfCommand({ code: "cast", args: { spell: 7 } }, mage.view)).toBe("detect");
+  });
+
+  it("maps wear and detection commands from the player", () => {
+    const w = world({ map: CORRIDOR, pack: ["Leather Shield [8]", "a Rod of Detection"] });
+    expect(goalOfCommand({ code: "wield", args: { handle: 1 } }, w.view)).toBe("wear");
+    expect(goalOfCommand({ code: "zap-rod", args: { handle: 2 } }, w.view)).toBe("detect");
+    const scroll = world({ map: CORRIDOR, pack: ["a Scroll of Magic Mapping"] });
+    expect(goalOfCommand({ code: "read", args: { handle: 1 } }, scroll.view)).toBe("detect");
+    expect(goalLabel("wear")).toBe("wear gear");
   });
 });

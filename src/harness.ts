@@ -43,6 +43,7 @@ import type {
   SpellbookView,
   TargetView,
 } from "@rpgm-tools/neo-angband-core";
+import { TV } from "@rpgm-tools/neo-angband-core";
 import type { Loc } from "./grid.js";
 import type { Terrain } from "./terrain.js";
 import type { SquireContext } from "./context.js";
@@ -135,7 +136,19 @@ export interface WorldSpec {
 
 /** An item as the inventory would show it, with only the fields the tests read. */
 export function itemNamed(name: string, handle: number): ItemView {
-  return { handle, name, label: name, tval: 0, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
+  const kinds: readonly [RegExp, number][] = [
+    [/\b(Arrows?|Seeker Arrows?)\b/i, TV.ARROW], [/\b(Bolts?|Seeker Bolts?)\b/i, TV.BOLT],
+    [/\b(Shots?|Pebbles?)\b/i, TV.SHOT],
+    [/\b(Sling|Bow|Crossbow)\b/i, TV.BOW], [/\b(Sword|Dagger|Blade)\b/i, TV.SWORD],
+    [/\b(Axe|Spear|Pike|Halberd)\b/i, TV.POLEARM], [/\b(Mace|Whip|Hammer)\b/i, TV.HAFTED],
+    [/\bBoots\b/i, TV.BOOTS], [/\bGloves\b/i, TV.GLOVES], [/\b(Helm|Helmet)\b/i, TV.HELM],
+    [/\bCrown\b/i, TV.CROWN], [/\bShield\b/i, TV.SHIELD], [/\bCloak\b/i, TV.CLOAK],
+    [/\b(Soft|Leather) Armour\b/i, TV.SOFT_ARMOR], [/\b(Hard|Metal|Chain|Plate) Armour\b/i, TV.HARD_ARMOR],
+    [/\b(Lantern|Torch)\b/i, TV.LIGHT], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
+    [/\bRod\b/i, TV.ROD], [/\bScroll\b/i, TV.SCROLL],
+  ];
+  const tval = kinds.find(([pattern]) => pattern.test(name))?.[1] ?? 0;
+  return { handle, name, label: name, tval, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
 }
 
 /** A built world, plus what the errands did to it. */
@@ -350,13 +363,13 @@ export function world(spec: WorldSpec): World {
     quaff: handled("quaff"),
     read: handled("read"),
     eat: handled("eat"),
-    wear: handled("wear"),
+    wear: handled("wield"),
     takeoff: handled("takeoff"),
     drop: (handle: number): AgentCommand => record({ code: "drop", args: { handle } }),
     pickup: simple("pickup"),
     destroy: handled("destroy"),
     aimWand: handled("aim"),
-    zapRod: handled("zap"),
+    zapRod: handled("zap-rod"),
     useStaff: handled("use"),
     activate: handled("activate"),
     fire: handled("fire"),

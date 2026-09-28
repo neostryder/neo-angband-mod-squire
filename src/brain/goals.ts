@@ -31,7 +31,8 @@ import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question } from "./brain.js";
-import { hungry, readPack, studyable, type Pack } from "./pack.js";
+import { detectionSource, hungry, readPack, studyable, type Pack } from "./pack.js";
+import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
@@ -57,6 +58,8 @@ export type Goal =
   | "explore"
   | "descend"
   | "study"
+  | "wear"
+  | "detect"
   | "recall_town"
   | "shop"
   | "recall_dungeon";
@@ -131,6 +134,8 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
+  "Wear better gear when it is safe to change equipment.",
+  "Map or detect a new dungeon level before exploring it when a source is available.",
 ]);
 
 /** One option offered to the model. */
@@ -238,7 +243,7 @@ function within(s: Situation, range: number): boolean {
 }
 
 /** The options that apply right now, each with its description and risk. */
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set()): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -305,6 +310,14 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
+  if (!s.awake.some((m) => steps(at, m.grid) <= 3)) {
+    const candidate = gearCandidates(view).find((gear) => !gear.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+    if (candidate !== undefined) add("wear", candidate.criteria, candidate.unknown ? 0.05 : 0.02);
+  }
+  if (newLevel && player.depth > 0 && s.awake.length === 0) {
+    const source = detectionSource(view);
+    if (source !== null) add("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
+  }
   const study = studyable(view, triedStudies);
   /* Only a creature close enough to strike this turn makes a turn of study unsafe. */
   if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
@@ -332,6 +345,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const visitedShops = new Set<number>();
   /* Studies already tried, as "level:spell", so a study the game refused is not repeated. */
   const triedStudies = new Set<string>();
+  let decisionDepth: number | null = null;
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
    * plan, so it is left out until the turn changes. */
@@ -532,6 +546,18 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         triedStudies.add(`${String(view.player().level)}:${String(study.sidx)}`);
         return once("study", view, (ctx) => ctx.act.raw("study", { handle: study.handle, spell: study.sidx }));
       }
+      case "wear": {
+        const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined ? null : ctx.act.wear(candidate.handle));
+      }
+      case "detect": {
+        const source = detectionSource(view);
+        return once(`detect with ${source?.name ?? "a known source"}`, view, (ctx) => {
+          if (source === null) return null;
+          if (source.kind === "cast") return ctx.act.cast(source.sidx);
+          return source.kind === "zap" ? ctx.act.zapRod(source.handle) : ctx.act.read(source.handle);
+        });
+      }
       case "eat": {
         const food = pack.food[0];
         return once("eat", view, (ctx) => (food === undefined ? null : ctx.act.eat(food.handle)));
@@ -606,7 +632,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const s = situationOf(view);
       const turn = view.turn();
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies).filter((offer) => !stalled.has(offer.goal));
+      const newLevel = decisionDepth !== player.depth;
+      decisionDepth = player.depth;
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
