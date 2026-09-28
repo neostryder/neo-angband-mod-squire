@@ -2350,6 +2350,7 @@ function defaultConfig() {
     backend: "jev",
     serverUrl: LAYA_DEFAULT_URL,
     serverModel: "",
+    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL },
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
@@ -2405,11 +2406,13 @@ function readConfig(stored) {
   const telemetry = rec(data["telemetry"]) ?? {};
   const knights = rec(data["knightsLessons"]) ?? {};
   const spend = rec(data["spend"]) ?? {};
+  const layaShadow = rec(data["layaShadow"]) ?? {};
   const personas = Array.isArray(data["personas"]) ? data["personas"].slice(0, 50).map((p) => normalize(p)) : base.personas;
   return {
     backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
     serverUrl: str(data["serverUrl"], base.serverUrl),
     serverModel: str(data["serverModel"], base.serverModel, 100),
+    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL) },
     contextTokens: numberIn(data["contextTokens"], 512, 2e5, base.contextTokens),
     caps: {
       perSessionUsd: numberIn(caps["perSessionUsd"], 0, 1e3, 0),
@@ -3508,6 +3511,176 @@ function summaryForTelemetry(model) {
   };
 }
 
+// src/laya/rows.ts
+var PREFIX2 = "squire/laya/";
+var CHUNK2 = 100;
+var MAX_CHUNKS = 50;
+var activeHuman = null;
+function chunkKey2(runId, seq) {
+  return `${PREFIX2}${runId}/${String(Math.floor(seq / CHUNK2)).padStart(8, "0")}`;
+}
+function rowId(install, runId, seq, pilot) {
+  return `squire-${install}-${runId}-${String(seq * 2 + (pilot === "squire_goal" ? 0 : 1))}`;
+}
+async function allRows(store) {
+  const rows = [];
+  for (const key2 of await store.keys(PREFIX2)) {
+    const chunk = await store.get(key2);
+    if (Array.isArray(chunk)) rows.push(...chunk);
+  }
+  return rows;
+}
+async function exportRows(store) {
+  const rows = await allRows(store);
+  return rows.map((row2) => JSON.stringify(row2)).join("\n") + (rows.length > 0 ? "\n" : "");
+}
+async function countRows(store) {
+  return (await allRows(store)).length;
+}
+function createRows(store, runId) {
+  let pending = Promise.resolve();
+  function write(operation) {
+    const next = pending.then(operation, operation);
+    pending = next.catch(() => {
+    });
+    return next;
+  }
+  async function change(rowId2, patch, allRuns = false) {
+    for (const key2 of await store.keys(allRuns ? PREFIX2 : `${PREFIX2}${runId}/`)) {
+      const value = await store.get(key2);
+      if (!Array.isArray(value)) continue;
+      const rows = value;
+      const index = rows.findIndex((row2) => row2.id === rowId2);
+      if (index < 0) continue;
+      const next = rows.slice();
+      next[index] = { ...rows[index], ...patch };
+      await store.set(key2, next);
+      return;
+    }
+  }
+  activeHuman = (rowId2, answers) => write(() => change(rowId2, { human: answers }, true));
+  return {
+    append(row2, seq) {
+      return write(async () => {
+        const slot = seq * 2 + (row2.pilot === "squire_goal" ? 0 : 1);
+        const key2 = chunkKey2(runId, slot);
+        const old = await store.get(key2);
+        const rows = Array.isArray(old) ? old : [];
+        await store.set(key2, [...rows.filter((entry) => entry.id !== row2.id), row2]);
+        const keys = await store.keys(`${PREFIX2}${runId}/`);
+        for (const stale of keys.slice(0, -MAX_CHUNKS)) await store.delete(stale);
+      });
+    },
+    attachLaya(rowId2, adapter, answers) {
+      return write(() => change(rowId2, { laya: { adapter, answers } }));
+    },
+    /** Knight's Lessons can add a correction without changing the stable row id. */
+    attachHuman(rowId2, answers) {
+      return write(() => change(rowId2, { human: answers }));
+    },
+    async idle() {
+      await pending;
+    }
+  };
+}
+
+// src/laya/shadow.ts
+var PILOTS = [["goal", "squire_goal"], ["in_character", "squire_in_character"]];
+function capturingNet(net, adapter) {
+  return {
+    transport: net.transport,
+    async request(request2) {
+      const reply = await net.request(request2);
+      if (reply.ok) {
+        try {
+          const raw = JSON.parse(reply.body);
+          if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+            const routing = raw["routing"];
+            if (routing !== null && typeof routing === "object" && !Array.isArray(routing)) {
+              const named = routing["adapter"];
+              if (typeof named === "string") adapter(named);
+            }
+          }
+        } catch {
+        }
+      }
+      return reply;
+    }
+  };
+}
+function createShadow(options) {
+  const busy = /* @__PURE__ */ new Set();
+  const pendingRows = /* @__PURE__ */ new Set();
+  let reportedFailure = false;
+  function failed() {
+    if (reportedFailure) return;
+    reportedFailure = true;
+    options.log("Squire could not reach Laya for training. Check the Laya address in Setup.");
+  }
+  return {
+    /** One teacher row is saved per known pilot, including when shadowing is off. */
+    record(record2, seq, enabled, url) {
+      if (record2.backend !== "Jev") return Promise.resolve();
+      const ts = new Date(options.now()).toISOString();
+      const tasks = [];
+      for (const [questionId, pilot] of PILOTS) {
+        const question = record2.request.questions[questionId];
+        const answer = record2.answers[questionId];
+        if (question === void 0 || answer === void 0) continue;
+        const shouldSend = enabled && record2.backend === "Jev" && options.net !== null && !busy.has(pilot);
+        if (shouldSend) busy.add(pilot);
+        let rowWritten = () => {
+        };
+        const written = new Promise((resolve) => {
+          rowWritten = resolve;
+        });
+        pendingRows.add(written);
+        tasks.push((async () => {
+          try {
+            const install = await options.install;
+            const id = rowId(install, options.runId, seq, pilot);
+            const questions = { [questionId]: question };
+            const row2 = {
+              id,
+              pilot,
+              ts,
+              state: record2.request.state,
+              questions,
+              jev: { model: record2.model ?? "jev-latest", answers: { [questionId]: answer } },
+              outcome: { plan: record2.outcome }
+            };
+            await options.rows.append(row2, seq);
+            rowWritten();
+            if (!shouldSend || options.net === null) return;
+            let adapter = "base";
+            const request2 = { state: record2.request.state, questions };
+            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`);
+            const result = await ask(capturingNet(options.net, (value) => {
+              adapter = value;
+            }), backend, request2, options.now);
+            if (!result.ok) {
+              failed();
+              return;
+            }
+            await options.rows.attachLaya(id, adapter, result.answers);
+          } catch {
+            failed();
+          } finally {
+            rowWritten();
+            pendingRows.delete(written);
+            if (shouldSend) busy.delete(pilot);
+          }
+        })());
+      }
+      return Promise.all(tasks).then(() => {
+      });
+    },
+    async rowsReady() {
+      await Promise.all([...pendingRows]);
+    }
+  };
+}
+
 // src/runtime.ts
 var CHARACTER_FORMAT = "neo-angband/squire/character";
 var MOD_VERSION = "1.0.0-dev";
@@ -3560,6 +3733,8 @@ function createRuntime(host, options = {}) {
   const log = createDecisionLog(store, character.runId);
   const logLoaded = log.load().catch(() => {
   });
+  const layaRows = createRows(store, character.runId);
+  const shadow = createShadow({ net: host.net ?? null, rows: layaRows, install: logLoaded.then(() => installId(store)), runId: character.runId, now, log: host.log });
   const listeners = /* @__PURE__ */ new Set();
   let brain = null;
   let lastTurn = 0;
@@ -3699,6 +3874,18 @@ function createRuntime(host, options = {}) {
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    async exportLayaRows() {
+      await logLoaded;
+      await shadow.rowsReady();
+      await layaRows.idle();
+      return exportRows(store);
+    },
+    async layaRowCount() {
+      await logLoaded;
+      await shadow.rowsReady();
+      await layaRows.idle();
+      return countRows(store);
+    },
     decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null
   };
@@ -3782,6 +3969,7 @@ function createRuntime(host, options = {}) {
         }
       }
     });
+    void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
     unsavedSpend += 1;
@@ -4246,6 +4434,24 @@ function mountSetup(body2, rt, done) {
       say(status, result.message, result.ok);
     }
   }, "Test connection");
+  const shadowEnabled = h("input", { type: "checkbox", checked: config.layaShadow.enabled });
+  shadowEnabled.addEventListener("change", () => update2({ layaShadow: { ...config.layaShadow, enabled: shadowEnabled.checked } }));
+  const shadowUrl = h("input", { type: "text", value: config.layaShadow.url, placeholder: LAYA_DEFAULT_URL });
+  shadowUrl.addEventListener("change", () => update2({ layaShadow: { ...config.layaShadow, url: shadowUrl.value.trim() || LAYA_DEFAULT_URL } }));
+  const rowCount = h("p", { class: "muted" }, "Counting saved rows...");
+  void rt.layaRowCount().then((count2) => {
+    rowCount.textContent = `${String(count2)} training rows saved.`;
+  });
+  const shadowBox = h(
+    "div",
+    {},
+    h("h3", {}, "Train Laya while Jev plays"),
+    h("label", {}, shadowEnabled, " Send decisions to Laya (off by default)"),
+    h("p", { class: "muted" }, "Squire sends each decision to Laya too. It never acts on Laya's answer."),
+    h("label", {}, "Laya address (default: localhost:8010)", shadowUrl),
+    h("button", { class: "act", onclick: async () => download("squire-laya-rows.jsonl", await rt.exportLayaRows(), "application/x-ndjson") }, "Save Laya training rows"),
+    rowCount
+  );
   const telemetry = telemetryBox(rt, () => config, update2);
   const rollOn = h("select");
   for (const [value, label] of ROLL_ON) rollOn.append(h("option", { value, selected: config.rollOn === value }, label));
@@ -4256,6 +4462,7 @@ function mountSetup(body2, rt, done) {
     h("h3", {}, "Pick a brain"),
     brainBox,
     serverBox,
+    shadowBox,
     h("div", {}, test),
     status,
     h("h3", {}, "When a character dies"),
