@@ -398,7 +398,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * plan, so it is left out until the turn changes. */
   const stalled = new Map<Goal, number>();
 
-  function noteStalls(goal: Goal, plan: Plan): Plan {
+  /* The game turn on which the errand-order fallback last ended having done nothing. */
+  let fallbackStalled: number | null = null;
+
+  function noteStalls(goal: Goal | null, plan: Plan): Plan {
     let issued = 0;
     let startTurn: number | null = null;
     const step: Plan["step"] = (v, act) => {
@@ -408,7 +411,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       /* A plan that ends with no game time passed changed nothing: either it
        * issued no command, or the game refused every one it issued (a spell
        * while confused, a blocked step). Asking again this turn would repeat it. */
-      else if (issued === 0 || v.turn() === startTurn) stalled.set(goal, v.turn());
+      else if (issued === 0 || v.turn() === startTurn) {
+        if (goal === null) fallbackStalled = v.turn();
+        else stalled.set(goal, v.turn());
+      }
       return command;
     };
     return { ...plan, step };
@@ -762,8 +768,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           log(`goal: none fit, taking the safest option (${safest.goal})`);
           return { plan: noteStalls(safest.goal, build(safest.goal, view)) };
         }
+        /* On a cleared floor the errand order has nothing to do either, and
+         * repeating it only stops Squire. The model's likeliest offer stands in. */
+        const likeliest = [...digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
+        if (likeliest !== undefined && fallbackStalled === view.turn()) {
+          log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
+          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
+        }
         log("goal: none fit, following the fixed errand order");
-        return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
+        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS)) };
       }
       const offer = digest.offers.find((o) => o.goal === pick);
       if (offer === undefined) {

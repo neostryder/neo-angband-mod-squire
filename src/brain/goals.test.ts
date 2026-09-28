@@ -79,6 +79,20 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("takes the likeliest offer once the errand order has nothing to do", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 15, maxHp: 20 } });
+    const { p, logged } = planner(w);
+    const none = (): Readonly<Record<string, Answer>> => ({ goal: { type: "choice", choice: "none_of_these", confidence: 0.9, probabilities: { rest: 0.3, none_of_these: 0.7 } } });
+    const first = p.choose(none(), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in first)) throw new Error("expected a plan");
+    expect(first.plan.step(w.view, w.act)).toBeNull();
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((o) => o.goal)).toContain("rest");
+    const second = p.choose(none(), q.context, w.view);
+    if (!("plan" in second)) throw new Error("expected a plan");
+    expect(logged.at(-1)).toContain("taking rest");
+  });
+
   it("fights when the model chose it while already under the retreat line", () => {
     const w = world({ map: CORRIDOR, player: { hp: 5, maxHp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, race: "mean-looking mercenary" }] });
     const { p } = planner(w);

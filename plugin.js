@@ -1930,6 +1930,7 @@ function createGoalPlanner(options) {
   let decisionDepth = null;
   let recallRead = null;
   const stalled = /* @__PURE__ */ new Map();
+  let fallbackStalled = null;
   function noteStalls(goal, plan) {
     let issued = 0;
     let startTurn = null;
@@ -1937,7 +1938,10 @@ function createGoalPlanner(options) {
       startTurn ??= v.turn();
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
-      else if (issued === 0 || v.turn() === startTurn) stalled.set(goal, v.turn());
+      else if (issued === 0 || v.turn() === startTurn) {
+        if (goal === null) fallbackStalled = v.turn();
+        else stalled.set(goal, v.turn());
+      }
       return command;
     };
     return { ...plan, step };
@@ -2235,8 +2239,13 @@ function createGoalPlanner(options) {
           log(`goal: none fit, taking the safest option (${safest.goal})`);
           return { plan: noteStalls(safest.goal, build(safest.goal, view)) };
         }
+        const likeliest = [...digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
+        if (likeliest !== void 0 && fallbackStalled === view.turn()) {
+          log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
+          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
+        }
         log("goal: none fit, following the fixed errand order");
-        return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
+        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS)) };
       }
       const offer = digest.offers.find((o) => o.goal === pick2);
       if (offer === void 0) {
