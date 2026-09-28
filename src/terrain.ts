@@ -39,12 +39,22 @@ export interface TerrainFlagIndex {
   readonly FIERY: number;
 }
 
+/** Names in Angband 4.2 terrain.txt for the shops that stock travel supplies. */
+const SHOP_NAMES: Readonly<Record<string, string>> = {
+  STORE_GENERAL: "General Store",
+  STORE_ALCHEMY: "Alchemy Shop",
+  STORE_WEAPON: "Weapon Smiths",
+  STORE_ARMOR: "Armoury",
+};
+
 /** Terrain indices grouped by what an errand does about them. */
 export interface Terrain {
   isDownStair(feat: number): boolean;
   isUpStair(feat: number): boolean;
   isClosedDoor(feat: number): boolean;
   isShopEntrance(feat: number): boolean;
+  /** The mapped town shop, without reading any store stock. */
+  shopName(feat: number): string | null;
   /** Passable and it hurts to stand there. Lava, and whatever a mod adds. */
   isHarmful(feat: number): boolean;
   /** How many features were classified. Zero means the registry was empty. */
@@ -69,6 +79,7 @@ export function readTerrain(
   const up = new Set<number>();
   const closed = new Set<number>();
   const shops = new Set<number>();
+  const shopNames = new Map<number, string>();
   const harmful = new Set<number>();
 
   for (const feature of features) {
@@ -76,7 +87,11 @@ export function readTerrain(
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
     if (has(tf.UPSTAIR)) up.add(feature.fidx);
     if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
-    if (has(tf.SHOP)) shops.add(feature.fidx);
+    if (has(tf.SHOP)) {
+      shops.add(feature.fidx);
+      const name = SHOP_NAMES[feature.code];
+      if (name !== undefined) shopNames.set(feature.fidx, name);
+    }
     /* Harmful is PASSABLE AND FIERY together, deliberately. FIERY alone would
      * take in a wall of fire a mod might add, which is not somewhere an errand
      * could step anyway, and PASSABLE alone is most of the map. What this set
@@ -90,6 +105,7 @@ export function readTerrain(
     isUpStair: (feat) => up.has(feat),
     isClosedDoor: (feat) => closed.has(feat),
     isShopEntrance: (feat) => shops.has(feat),
+    shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),
     size: features.length,
   };
@@ -102,6 +118,7 @@ export function noTerrain(): Terrain {
     isUpStair: () => false,
     isClosedDoor: () => false,
     isShopEntrance: () => false,
+    shopName: () => null,
     isHarmful: () => false,
     size: 0,
   };

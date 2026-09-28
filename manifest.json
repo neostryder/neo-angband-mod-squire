@@ -19,6 +19,7 @@
     "state:target.read",
     "state:inventory.read",
     "state:spells.read",
+    "state:stores.read",
     "network:api.typesafe.ai",
     "state:turn.read",
     "event:combat-outcome",

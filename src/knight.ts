@@ -14,6 +14,7 @@ import { steps } from "./grid.js";
 import type { Goal, Offer } from "./brain/goals.js";
 import { readPack } from "./brain/pack.js";
 import { rankFor, type Rank } from "./learning/ranks.js";
+import { recallItem } from "./town/needs.js";
 
 /** One command the player gave, as the host's `player-command` event reports it. */
 export interface PlayerCommand {
@@ -72,11 +73,15 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
       if (has(pack.teleport)) return "teleport";
       return null;
     case "use-staff":
       return has(pack.teleport) ? "teleport" : null;
+    case "shop-buy":
+    case "shop-sell":
+      return "shop";
     case "cast": {
       const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
       if (spell === null) return null;
@@ -106,7 +111,7 @@ export function proceduralPick(offers: readonly Offer[], hpShare: number): Goal 
     if (safe !== null) return safe;
   }
   if (fight !== undefined) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("rest", "eat", "pick_up", "explore", "descend");
+  return first("recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 
 /** What the apprentice noticed at one decision point. */
@@ -138,6 +143,9 @@ const LABEL: Readonly<Record<Goal, string>> = {
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",
+  recall_town: "recall to town",
+  shop: "shop for supplies",
+  recall_dungeon: "recall into the dungeon",
 };
 
 export function goalLabel(goal: Goal): string {

@@ -26,6 +26,8 @@
  *   `>`  a down staircase the character remembers
  *   `~`  ground that burns, which the character remembers
  *   `*`  floor with something lying on it
+ *   `G`  General Store entrance
+ *   `A`  Alchemy Shop entrance
  */
 
 import type {
@@ -55,6 +57,10 @@ export const FEAT = {
   DOOR_CLOSED: 3,
   DOWN_STAIR: 4,
   LAVA: 5,
+  GENERAL: 6,
+  ALCHEMY: 7,
+  WEAPON: 8,
+  ARMOUR: 9,
 } as const;
 
 /** The terrain classification matching FEAT. */
@@ -63,7 +69,8 @@ export function harnessTerrain(): Terrain {
     isDownStair: (feat) => feat === FEAT.DOWN_STAIR,
     isUpStair: () => false,
     isClosedDoor: (feat) => feat === FEAT.DOOR_CLOSED,
-    isShopEntrance: () => false,
+    isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.ARMOUR,
+    shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury" })[feat] ?? null,
     isHarmful: (feat) => feat === FEAT.LAVA,
     size: Object.keys(FEAT).length,
   };
@@ -90,6 +97,14 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.LAVA, passable: true, known: true, objectCount: 0 };
     case "*":
       return { feat: FEAT.FLOOR, passable: true, known: true, objectCount: 1 };
+    case "G":
+      return { feat: FEAT.GENERAL, passable: true, known: true, objectCount: 0 };
+    case "A":
+      return { feat: FEAT.ALCHEMY, passable: true, known: true, objectCount: 0 };
+    case "W":
+      return { feat: FEAT.WEAPON, passable: true, known: true, objectCount: 0 };
+    case "U":
+      return { feat: FEAT.ARMOUR, passable: true, known: true, objectCount: 0 };
     default:
       return { feat: FEAT.FLOOR, passable: true, known: true, objectCount: 0 };
   }
@@ -115,11 +130,12 @@ export interface WorldSpec {
   readonly worn?: readonly string[];
   /** Castable spells: name, index, mana and failure chance. */
   readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number }[];
+  readonly stores?: readonly StoreView[];
 }
 
 /** An item as the inventory would show it, with only the fields the tests read. */
 export function itemNamed(name: string, handle: number): ItemView {
-  return { handle, name, label: name, tval: 0, sval: 0, pval: 0, number: 1, weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
+  return { handle, name, label: name, tval: 0, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
 }
 
 /** A built world, plus what the errands did to it. */
@@ -135,6 +151,8 @@ export interface World {
   setPlayer(patch: PlayerSpec): void;
   /** Replace the creatures. */
   setMonsters(monsters: readonly MonsterSpec[]): void;
+  setPack(items: readonly string[]): void;
+  setStores(stores: readonly StoreView[]): void;
   /** Reveal a grid the character had not seen. */
   reveal(at: Loc): void;
   /** The character's grid. */
@@ -239,6 +257,8 @@ export function world(spec: WorldSpec): World {
 
   let playerSpec: PlayerSpec = spec.player ?? {};
   let monsterSpecs: readonly MonsterSpec[] = spec.monsters ?? [];
+  let packSpec: readonly string[] = spec.pack ?? [];
+  let storeSpec: readonly StoreView[] = spec.stores ?? [];
   const issued: AgentCommand[] = [];
 
   const monsters = (): MonsterView[] => monsterSpecs.map(fullMonster);
@@ -268,12 +288,12 @@ export function world(spec: WorldSpec): World {
       };
     },
     mapBounds: () => ({ width, height }),
-    inventory: (): ItemView[] => (spec.pack ?? []).map((name, i) => itemNamed(name, i + 1)),
+    inventory: (): ItemView[] => packSpec.map((name, i) => itemNamed(name, i + 1)),
     equipment: (): Array<ItemView | null> => (spec.worn ?? []).map((name, i) => itemNamed(name, 100 + i)),
     floorItems: (): ItemView[] => [],
     target: (): TargetView | null => spec.target ?? null,
     messages: (): string[] => [],
-    stores: (): StoreView[] => [],
+    stores: (): StoreView[] => [...storeSpec],
     spellbooks: (): SpellbookView[] =>
       spec.spells === undefined
         ? []
@@ -344,8 +364,8 @@ export function world(spec: WorldSpec): World {
     cast: (spell: number): AgentCommand => record({ code: "cast", args: { spell } }),
     setTargetMonster: () => true,
     setTargetLocation: () => undefined,
-    shopBuy: (index: number): AgentCommand => record({ code: "shop-buy", args: { index } }),
-    shopSell: (handle: number): AgentCommand => record({ code: "shop-sell", args: { handle } }),
+    shopBuy: (index: number, quantity?: number): AgentCommand => record({ code: "shop-buy", args: quantity === undefined ? { index } : { index, quantity } }),
+    shopSell: (handle: number, quantity?: number): AgentCommand => record({ code: "shop-sell", args: quantity === undefined ? { handle } : { handle, quantity } }),
     shopExit: simple("shop-exit"),
     raw: (code: string, args?: Record<string, unknown>): AgentCommand =>
       record(args === undefined ? { code } : { code, args }),
@@ -365,6 +385,12 @@ export function world(spec: WorldSpec): World {
     },
     setMonsters(next: readonly MonsterSpec[]): void {
       monsterSpecs = next;
+    },
+    setPack(next: readonly string[]): void {
+      packSpec = next;
+    },
+    setStores(next: readonly StoreView[]): void {
+      storeSpec = next;
     },
     reveal(at: Loc): void {
       const square = squares[at.y]?.[at.x];

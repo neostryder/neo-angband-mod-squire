@@ -36,6 +36,8 @@ import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
+import { lowOnSupplies, recallItem, supplyNeeds } from "../town/needs.js";
+import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -53,7 +55,10 @@ export type Goal =
   | "eat"
   | "pick_up"
   | "explore"
-  | "descend";
+  | "descend"
+  | "recall_town"
+  | "shop"
+  | "recall_dungeon";
 
 const NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 
@@ -107,6 +112,7 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
   "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
+  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
 ]);
 
 /** One option offered to the model. */
@@ -214,13 +220,30 @@ function within(s: Situation, range: number): boolean {
 }
 
 /** The options that apply right now, each with its description and risk. */
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set()): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
   const out: Offer[] = [];
   const add = (goal: Goal, criteria: string, risk: number) => out.push({ goal, criteria, risk: clamp01(risk) });
+
+  const needs = supplyNeeds(view, s.pack, persona);
+  const recall = recallItem(view);
+  const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
+  if (player.depth > 0 && recall !== null && lowOnSupplies(needs)) {
+    const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
+    add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
+  }
+  if (player.depth === 0) {
+    const shops = neededEntrances(view, terrain, persona, visited);
+    if (shops.length > 0) {
+      const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
+      add("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
+    } else if (recall !== null && player.maxDepth > 1) {
+      add("recall_dungeon", `Read Word of Recall to return to the deepest level reached, ${String(player.maxDepth * 50)} ft.`, townRisk);
+    }
+  }
 
   if (s.target !== null) {
     add("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
@@ -266,7 +289,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain): Offer
   if (frontiers(view, terrain).length > 0) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (knownDownStairs(view, terrain).length > 0 && cfg.descend) {
+  if (knownDownStairs(view, terrain).length > 0 && cfg.descend &&
+    (player.depth > 0 || (recall === null && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {
     add("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   return out;
@@ -280,6 +304,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const backstoryTokens = options.backstoryTokens ?? 600;
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
+  const visitedShops = new Set<number>();
 
   /* A fight the model chose may wake a sleeper: the state says which creatures
    * are asleep, so waking one is part of the choice. */
@@ -299,6 +324,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
     });
+  }
+
+  /** Town errands obey the same interruption rules as dungeon errands. */
+  function watched(plan: Plan, view: AgentView): WatchedPlan {
+    return { label: plan.label, watcher: watch(view), step: (v, act) => plan.step(v, act) };
   }
 
   /** Run a mission as a plan. The mission's own stop ends the plan. */
@@ -372,6 +402,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   function build(goal: Goal, view: AgentView): Plan {
     const pack = readPack(view);
     switch (goal) {
+      case "recall_town":
+      case "recall_dungeon": {
+        const item = recallItem(view);
+        return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
+      }
+      case "shop":
+        return watched(townTripPlan(terrain, personaOf(), visitedShops), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -489,9 +526,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     ask(view) {
       const persona = personaOf();
       const player = view.player();
+      if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
-      const offers = offersFor(s, cfg, terrain);
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops);
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }

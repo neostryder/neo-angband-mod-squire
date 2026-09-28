@@ -1240,8 +1240,8 @@ var PARAMETERS = [
 ];
 
 // src/persona/state.ts
-function traitWord(id, scale, value) {
-  const [low, high] = scale.split(" to ");
+function traitWord(id, scale2, value) {
+  const [low, high] = scale2.split(" to ");
   const word = id === "boldness" && value > 50 ? "bold" : value < 50 ? low : high;
   return `${Math.abs(value - 50) >= 30 ? "very" : "somewhat"} ${word}`;
 }
@@ -1279,6 +1279,239 @@ function inCharacterInstructions(persona) {
   return `Which option would ${persona.name} choose, given this character's nature and history? Answer as the character would act, even when another option seems wiser.`;
 }
 
+// src/town/needs.ts
+function shownName2(item) {
+  const name = item.name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+function matchesSupplyName(shown, wanted) {
+  if (wanted === "Flask of Oil") return /\bFlasks? of Oil\b/i.test(shown);
+  if (wanted === "Ration of Food") return /\bRations? of Food\b/i.test(shown);
+  if (wanted === "Wooden Torch") return /\bWooden (Torch|Torches)\b/i.test(shown);
+  return shown.toLowerCase().includes(wanted.toLowerCase());
+}
+function supplyName(kind, level, lantern, launcher) {
+  switch (kind) {
+    case "healing":
+      return level >= 15 ? "Cure Serious Wounds" : "Cure Light Wounds";
+    case "phase":
+      return "Phase Door";
+    case "recall":
+      return "Word of Recall";
+    case "oil":
+      return "Flask of Oil";
+    case "food":
+      return "Ration of Food";
+    case "light":
+      return lantern ? "Flask of Oil" : "Wooden Torch";
+    case "ammo":
+      return launcher === "Sling" ? "Iron Shot" : launcher?.includes("Crossbow") ? "Bolt" : "Arrow";
+  }
+}
+function count(items, needle) {
+  return items.reduce((sum, item) => {
+    const name = shownName2(item);
+    return sum + (name !== null && matchesSupplyName(name, needle) ? item.number : 0);
+  }, 0);
+}
+function scale(base, slider, minimum) {
+  return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
+}
+function supplyNeeds(view, pack, persona) {
+  const items = view.inventory();
+  const worn = view.equipment().map((item) => item === null ? null : shownName2(item));
+  const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
+  const launcher = worn.find((name) => name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow)\b/i.test(name)) ?? null;
+  const level = view.player().level;
+  const consumables = persona?.sliders.consumables ?? 50;
+  const escapes = persona?.sliders.escapes ?? 50;
+  const healAt = persona?.sliders.healat ?? 50;
+  const make = (kind, want, extra = {}) => {
+    const name = supplyName(kind, level, lantern, launcher);
+    return { kind, want, have: count(items, name), name, ...extra };
+  };
+  const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  return [
+    make("healing", healing),
+    make("phase", scale(5, escapes, 1)),
+    make("recall", scale(1, escapes, 1)),
+    ...level < 20 ? [make("oil", scale(10, consumables, 1))] : [],
+    make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
+    make("light", scale(2, consumables, 1)),
+    ...pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []
+  ];
+}
+function lowOnSupplies(needs) {
+  if ((needs.find((n) => n.kind === "recall")?.have ?? 0) < 1) return false;
+  return (needs.find((n) => n.kind === "healing")?.have ?? 0) < 2 || (needs.find((n) => n.kind === "phase")?.have ?? 0) < 1 || needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
+}
+function recallItem(view) {
+  return view.inventory().find((item) => /\bScrolls? of Word of Recall\b/i.test(shownName2(item) ?? "")) ?? null;
+}
+
+// src/settings.ts
+function defaultCfg() {
+  return {
+    errandAutofight: true,
+    errandAutoexplore: true,
+    errandCampaign: false,
+    useModel: true,
+    stopOnLowHealth: true,
+    stopOnNewCreature: true,
+    wakeSleepers: false,
+    collect: true,
+    descend: true,
+    retreatFraction: 0.5,
+    errandSteps: 200,
+    idleSteps: 3
+  };
+}
+var RULE_CFG = {
+  "squire.errandAutofight": "errandAutofight",
+  "squire.errandAutoexplore": "errandAutoexplore",
+  "squire.errandCampaign": "errandCampaign",
+  "squire.useModel": "useModel",
+  "squire.stopOnLowHealth": "stopOnLowHealth",
+  "squire.stopOnNewCreature": "stopOnNewCreature",
+  "squire.wakeSleepers": "wakeSleepers",
+  "squire.collect": "collect",
+  "squire.descend": "descend"
+};
+function cfgFromFlags(flags) {
+  const cfg = defaultCfg();
+  for (const [flag, field] of Object.entries(RULE_CFG)) {
+    const value = flags[flag];
+    if (typeof value === "boolean") cfg[field] = value;
+  }
+  return cfg;
+}
+function changedFrom(cfg) {
+  const stock = defaultCfg();
+  return Object.values(RULE_CFG).filter((field) => stock[field] !== cfg[field]).map((field) => `${field}=${String(cfg[field])}`).sort();
+}
+
+// src/town/shop.ts
+var PRIORITY = ["recall", "healing", "phase", "food", "light", "oil", "ammo"];
+function storesFor(kind) {
+  return kind === "healing" || kind === "phase" || kind === "recall" ? ["Alchemy Shop"] : ["General Store"];
+}
+function shoppingList(needs, store, gold, persona) {
+  if (store.isHome) return [];
+  const reserve = Math.floor(gold * Math.max(0, (persona?.sliders.savings ?? 50) - 50) / 200);
+  let left = Math.max(0, gold);
+  const out = [];
+  const bought = /* @__PURE__ */ new Set();
+  for (const kind of PRIORITY) {
+    const need = needs.find((entry) => entry.kind === kind);
+    if (need === void 0 || need.have >= need.want || !storesFor(kind).includes(store.featName)) continue;
+    const ware = store.stock.find((item) => {
+      const name = shownName2(item);
+      return !bought.has(item.index) && name !== null && matchesSupplyName(name, need.name) && item.price !== void 0 && item.price > 0;
+    });
+    if (ware === void 0 || ware.price === void 0) continue;
+    const budget = kind === "recall" ? left : Math.max(0, left - reserve);
+    const sameFuel = kind === "light" && need.name === "Flask of Oil" ? needs.find((entry) => entry.kind === "oil") : void 0;
+    const deficit = Math.max(need.want - need.have, sameFuel === void 0 ? 0 : sameFuel.want - sameFuel.have);
+    const quantity = Math.min(deficit, ware.number, Math.floor(budget / ware.price));
+    if (quantity <= 0) continue;
+    out.push({ index: ware.index, quantity, kind, name: shownName2(ware) ?? need.name });
+    left -= quantity * ware.price;
+    bought.add(ware.index);
+  }
+  return out;
+}
+function sellList(_pack, view, persona) {
+  if (persona === null || persona.sliders.selling < 60) return [];
+  const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const item of view.inventory()) {
+    const name = shownName2(item);
+    if (name === null || worn.has(item.handle) || item.artifact || item.ego) continue;
+    const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
+    if (type === void 0) continue;
+    if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
+    if (seen.has(type.toLowerCase())) out.push({ handle: item.handle, quantity: item.number, name });
+    seen.add(type.toLowerCase());
+  }
+  return out;
+}
+function saleFits(name, storeName) {
+  return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.test(name) : storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)\b/i.test(name);
+}
+
+// src/town/plan.ts
+function shopEntrances(view, terrain) {
+  const bounds = view.mapBounds();
+  const found = [];
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
+      const name = terrain.shopName(cell2.feat);
+      if (name !== null) found.push({ x, y, feat: cell2.feat, name });
+    }
+  }
+  return found;
+}
+function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new Set()) {
+  if (view.player().depth !== 0) return [];
+  const pack = readPack(view);
+  const needs = supplyNeeds(view, pack, persona);
+  const sales = sellList(pack, view, persona);
+  return shopEntrances(view, terrain).filter((entrance) => {
+    if (visited.has(entrance.feat)) return false;
+    const buying = view.player().gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    return buying || sales.some((sale) => saleFits(sale.name, entrance.name));
+  }).sort((a, b) => {
+    const rank2 = (shop) => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
+    return rank2(a) - rank2(b);
+  });
+}
+function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set()) {
+  const progress = newProgress(0);
+  return {
+    label: "shop for supplies",
+    step(view, act) {
+      if (view.player().depth !== 0) return null;
+      const at = view.player().grid;
+      const cell2 = view.cell(at.x, at.y);
+      if (cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
+        const store = view.stores().find((entry) => entry.feat === cell2.feat);
+        if (store === void 0) {
+          visited.add(cell2.feat);
+          return act.shopExit();
+        }
+        const pack = readPack(view);
+        const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
+        if (sale !== void 0) return act.shopSell(sale.handle, sale.quantity);
+        const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
+        if (purchase !== void 0) return act.shopBuy(purchase.index, purchase.quantity);
+        visited.add(cell2.feat);
+        return act.shopExit();
+      }
+      const next = neededEntrances(view, terrain, persona, visited)[0];
+      if (next === void 0) return null;
+      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
+      } }, [next]);
+      if (travel.kind === "step") return travel.command;
+      visited.add(next.feat);
+      return null;
+    }
+  };
+}
+function recallPlan(item) {
+  let read = false;
+  return {
+    label: "read Word of Recall",
+    step(_view, act) {
+      if (read) return null;
+      read = true;
+      return act.read(item.handle);
+    }
+  };
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 var FALLBACK_STEPS = 8;
@@ -1308,7 +1541,8 @@ var HANDBOOK = Object.freeze([
   "Going deeper before the character is strong enough is a common way to die; a character should usually clear easy creatures before descending.",
   "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
   "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
-  "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character."
+  "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
+  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level."
 ]);
 function situationOf(view) {
   const player = view.player();
@@ -1339,13 +1573,29 @@ function exposure(s) {
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
-function offersFor(s, cfg, terrain) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set()) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
   const out = [];
   const add2 = (goal, criteria, risk) => out.push({ goal, criteria, risk: clamp01(risk) });
+  const needs = supplyNeeds(view, s.pack, persona);
+  const recall = recallItem(view);
+  const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
+  if (player.depth > 0 && recall !== null && lowOnSupplies(needs)) {
+    const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
+    add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
+  }
+  if (player.depth === 0) {
+    const shops = neededEntrances(view, terrain, persona, visited);
+    if (shops.length > 0) {
+      const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
+      add2("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
+    } else if (recall !== null && player.maxDepth > 1) {
+      add2("recall_dungeon", `Read Word of Recall to return to the deepest level reached, ${String(player.maxDepth * 50)} ft.`, townRisk);
+    }
+  }
   if (s.target !== null) {
     add2("fight", `Close with the ${s.target.race} and fight it in melee until it dies or something changes.`, fightRisk(s));
     const ranged = within(s, MISSILE_RANGE);
@@ -1390,7 +1640,7 @@ function offersFor(s, cfg, terrain) {
   if (frontiers(view, terrain).length > 0) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (knownDownStairs(view, terrain).length > 0 && cfg.descend) {
+  if (knownDownStairs(view, terrain).length > 0 && cfg.descend && (player.depth > 0 || recall === null && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   return out;
@@ -1402,6 +1652,7 @@ function createGoalPlanner(options) {
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
+  const visitedShops = /* @__PURE__ */ new Set();
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
     return { view, act, terrain, cfg: with_, progress, log };
@@ -1416,6 +1667,9 @@ function createGoalPlanner(options) {
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction
     });
+  }
+  function watched(plan, view) {
+    return { label: plan.label, watcher: watch(view), step: (v, act) => plan.step(v, act) };
   }
   function missionPlan(label, mission, view, with_ = cfg, limit = Infinity) {
     const progress = newProgress(view.player().depth);
@@ -1476,6 +1730,13 @@ function createGoalPlanner(options) {
   function build(goal, view) {
     const pack = readPack(view);
     switch (goal) {
+      case "recall_town":
+      case "recall_dungeon": {
+        const item = recallItem(view);
+        return item === null ? once("no recall scroll", view, () => null) : watched(recallPlan(item), view);
+      }
+      case "shop":
+        return watched(townTripPlan(terrain, personaOf(), visitedShops), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -1583,9 +1844,10 @@ function createGoalPlanner(options) {
     ask(view) {
       const persona = personaOf();
       const player = view.player();
+      if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
-      const offers = offersFor(s, cfg, terrain);
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops);
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -1651,8 +1913,8 @@ function createGoalPlanner(options) {
       return { plan: build(offer.goal, view) };
     },
     trigger(view, plan) {
-      const watched = plan;
-      const stopped = watched.watcher?.check(view) ?? null;
+      const watched2 = plan;
+      const stopped = watched2.watcher?.check(view) ?? null;
       return stopped === null ? null : stopped.detail;
     }
   };
@@ -1963,8 +2225,8 @@ function randomPersona(rng, name = "Squire") {
     if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
   }
   const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
-  const count = 1 + Math.floor(unit(rng) * 2);
-  for (let i = 0; i < count; i += 1) {
+  const count2 = 1 + Math.floor(unit(rng) * 2);
+  for (let i = 0; i < count2; i += 1) {
     const index = Math.floor(unit(rng) * pool.length);
     const id = pool.splice(index, 1)[0];
     if (id !== void 0) result.quirks[id].on = true;
@@ -2344,9 +2606,9 @@ function buildBatches(input, level) {
   if (level !== "summary") {
     for (const record2 of input.decisions) {
       const mapped = decision(record2);
-      const count = current2.decisions?.length ?? 0;
-      const addedBytes = Buffer.byteLength(JSON.stringify(mapped), "utf8") + (count ? 1 : 0);
-      if (count >= MAX_RECORDS || currentBytes + addedBytes > LIMITS[level]) {
+      const count2 = current2.decisions?.length ?? 0;
+      const addedBytes = Buffer.byteLength(JSON.stringify(mapped), "utf8") + (count2 ? 1 : 0);
+      if (count2 >= MAX_RECORDS || currentBytes + addedBytes > LIMITS[level]) {
         batches.push(current2);
         current2 = make([mapped], input.seq + batches.length);
         currentBytes = bytes(current2);
@@ -2667,8 +2929,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       if (!target.includes(family) && target.length < 12) target.push(family);
     }
   }
-  const count = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
-  const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit2(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
+  const count2 = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
+  const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit2(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count2).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
   const parent = {
     name: parentLineage.name,
     race: parentLineage.race ?? "unknown",
@@ -2779,7 +3041,7 @@ function createRunLog() {
           counts.set(event.race, (counts.get(event.race) ?? 0) + 1);
         }
       }
-      return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, Math.max(0, Math.floor(n)));
+      return [...counts].map(([name, count2]) => ({ name, count: count2 })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, Math.max(0, Math.floor(n)));
     },
     depthCurve() {
       const curve = [];
@@ -3025,7 +3287,7 @@ function countUse(decisions, key2) {
     const value = decision2.state[key2];
     if (typeof value === "string" && value.trim()) counts.set(value, (counts.get(value) ?? 0) + 1);
   }
-  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+  return [...counts].map(([name, count2]) => ({ name, count: count2 })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
 }
 function buildRunSummary(input) {
   const { report, decisions, persona, runLog, tally } = input;
@@ -3456,60 +3718,30 @@ function createRuntime(host, options = {}) {
   return self;
 }
 
-// src/settings.ts
-function defaultCfg() {
-  return {
-    errandAutofight: true,
-    errandAutoexplore: true,
-    errandCampaign: false,
-    useModel: true,
-    stopOnLowHealth: true,
-    stopOnNewCreature: true,
-    wakeSleepers: false,
-    collect: true,
-    descend: true,
-    retreatFraction: 0.5,
-    errandSteps: 200,
-    idleSteps: 3
-  };
-}
-var RULE_CFG = {
-  "squire.errandAutofight": "errandAutofight",
-  "squire.errandAutoexplore": "errandAutoexplore",
-  "squire.errandCampaign": "errandCampaign",
-  "squire.useModel": "useModel",
-  "squire.stopOnLowHealth": "stopOnLowHealth",
-  "squire.stopOnNewCreature": "stopOnNewCreature",
-  "squire.wakeSleepers": "wakeSleepers",
-  "squire.collect": "collect",
-  "squire.descend": "descend"
-};
-function cfgFromFlags(flags) {
-  const cfg = defaultCfg();
-  for (const [flag, field] of Object.entries(RULE_CFG)) {
-    const value = flags[flag];
-    if (typeof value === "boolean") cfg[field] = value;
-  }
-  return cfg;
-}
-function changedFrom(cfg) {
-  const stock = defaultCfg();
-  return Object.values(RULE_CFG).filter((field) => stock[field] !== cfg[field]).map((field) => `${field}=${String(cfg[field])}`).sort();
-}
-
 // src/terrain.ts
+var SHOP_NAMES = {
+  STORE_GENERAL: "General Store",
+  STORE_ALCHEMY: "Alchemy Shop",
+  STORE_WEAPON: "Weapon Smiths",
+  STORE_ARMOR: "Armoury"
+};
 function readTerrain(features, tf) {
   const down = /* @__PURE__ */ new Set();
   const up = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
   const shops = /* @__PURE__ */ new Set();
+  const shopNames = /* @__PURE__ */ new Map();
   const harmful = /* @__PURE__ */ new Set();
   for (const feature of features) {
     const has = (flag) => flag > 0 && feature.flags.has(flag);
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
     if (has(tf.UPSTAIR)) up.add(feature.fidx);
     if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
-    if (has(tf.SHOP)) shops.add(feature.fidx);
+    if (has(tf.SHOP)) {
+      shops.add(feature.fidx);
+      const name = SHOP_NAMES[feature.code];
+      if (name !== void 0) shopNames.set(feature.fidx, name);
+    }
     if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
   }
   return {
@@ -3517,6 +3749,7 @@ function readTerrain(features, tf) {
     isUpStair: (feat) => up.has(feat),
     isClosedDoor: (feat) => closed.has(feat),
     isShopEntrance: (feat) => shops.has(feat),
+    shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),
     size: features.length
   };
@@ -3527,6 +3760,7 @@ function noTerrain() {
     isUpStair: () => false,
     isClosedDoor: () => false,
     isShopEntrance: () => false,
+    shopName: () => null,
     isHarmful: () => false,
     size: 0
   };
@@ -3591,11 +3825,15 @@ function goalOfCommand(command, view) {
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
       if (has(pack.teleport)) return "teleport";
       return null;
     case "use-staff":
       return has(pack.teleport) ? "teleport" : null;
+    case "shop-buy":
+    case "shop-sell":
+      return "shop";
     case "cast": {
       const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
       if (spell === null) return null;
@@ -3620,7 +3858,7 @@ function proceduralPick(offers, hpShare) {
     if (safe !== null) return safe;
   }
   if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("rest", "eat", "pick_up", "explore", "descend");
+  return first("recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 var LABEL = {
   fight: "fight in melee",
@@ -3637,7 +3875,10 @@ var LABEL = {
   eat: "eat",
   pick_up: "pick it up",
   explore: "explore",
-  descend: "take the stairs"
+  descend: "take the stairs",
+  recall_town: "recall to town",
+  shop: "shop for supplies",
+  recall_dungeon: "recall into the dungeon"
 };
 function noteLine(squire, knight, hpShare) {
   const hp = `at ${String(Math.round(hpShare * 100))}% health`;

@@ -227,3 +227,30 @@ describe("persona", () => {
     expect("plan" in choice && choice.plan.label).toBe("pick up");
   });
 });
+
+describe("town goals", () => {
+  it("offers recall to town when dungeon supplies run low", () => {
+    const w = world({ map: CORRIDOR, pack: ["a Scroll of Word of Recall"] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((offer) => offer.goal === "recall_town")?.criteria).toContain("low on Cure Light Wounds");
+  });
+
+  it("offers shopping from mapped entrances without reading store stock", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, maxDepth: 5 } });
+    const view = { ...w.view, stores: () => { throw new Error("stock read outside store"); } };
+    const q = asked(planner(w).p.ask(view));
+    expect(q.context.offers.map((offer) => offer.goal)).toContain("shop");
+    expect(q.context.offers.map((offer) => offer.goal)).not.toContain("recall_dungeon");
+  });
+
+  it("offers recall back down when shopping is finished", () => {
+    const w = world({ map: ["###", "#@#", "###"], player: { depth: 0, maxDepth: 5 }, pack: ["a Scroll of Word of Recall"] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((offer) => offer.goal === "recall_dungeon")?.criteria).toContain("250 ft");
+  });
+
+  it("offers town stairs when there is no scroll or gold", () => {
+    const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, gold: 0 } });
+    expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
+  });
+});

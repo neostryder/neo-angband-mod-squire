@@ -33,6 +33,7 @@ describe("readTerrain", () => {
     expect(terrain.isUpStair(5)).toBe(true);
     expect(terrain.isClosedDoor(3)).toBe(true);
     expect(terrain.isShopEntrance(7)).toBe(true);
+    expect(terrain.shopName(7)).toBe("General Store");
   });
 
   it("calls ground harmful only when it is both walkable and burning", () => {
