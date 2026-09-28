@@ -59,8 +59,12 @@ export function isWalkable(view: AgentView, terrain: Terrain, at: Loc): boolean 
   const cell = cellAt(view, at);
   /* A positive id is a creature standing there; a negative one is the character
    * itself (the view reports the engine's own -1 for the player's grid), which
-   * is not an obstruction. */
-  return cell !== null && cell.monster <= 0;
+   * is not an obstruction. The cell reports the creature there whether or not
+   * the player can see it, so only a creature in view blocks the way: an unseen
+   * one is found by walking into it, as it is for the player. */
+  if (cell === null) return false;
+  if (cell.monster <= 0) return true;
+  return !view.monsters().some((m) => m.id === cell.monster && m.visible);
 }
 
 /** Whether the character is standing somewhere that is hurting it. */

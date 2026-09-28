@@ -5,7 +5,7 @@ import { defaultPersona } from "../persona/persona.js";
 import { readPack } from "../brain/pack.js";
 import { world } from "../harness.js";
 import type { SupplyNeed } from "./needs.js";
-import { sellList, shoppingList, storesFor } from "./shop.js";
+import { mightBeSpecial, sellList, shoppingList, storesFor } from "./shop.js";
 
 function ware(name: string, index: number, price: number, number: number): StoreItemView {
   return { ...itemNamed(name, 0), index, price, number } as StoreItemView;
@@ -55,5 +55,15 @@ describe("shop choices", () => {
     expect(sellList(readPack(w.view), w.view, persona)).toMatchObject([{ handle: 2, quantity: 1 }]);
     persona.lists.weapons = ["Dagger"];
     expect(sellList(readPack(w.view), w.view, persona)).toEqual([]);
+  });
+});
+
+describe("mightBeSpecial", () => {
+  it("reads only what the shown name tells the player", () => {
+    expect(mightBeSpecial("a Dagger (1d4) (+0,+0)")).toBe(false);
+    expect(mightBeSpecial("a Set of Leather Gloves [1,+0]")).toBe(false);
+    expect(mightBeSpecial("a Dagger (1d4) (+2,+3) {??}")).toBe(true);
+    expect(mightBeSpecial("a Dagger of Slay Orc (1d4) (+2,+3)")).toBe(true);
+    expect(mightBeSpecial("the Dagger 'Narthanc' (1d4) (+4,+6)")).toBe(true);
   });
 });

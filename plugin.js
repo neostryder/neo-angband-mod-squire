@@ -277,7 +277,9 @@ function isRoutable(view, terrain, at) {
 function isWalkable(view, terrain, at) {
   if (!isRoutable(view, terrain, at)) return false;
   const cell2 = cellAt(view, at);
-  return cell2 !== null && cell2.monster <= 0;
+  if (cell2 === null) return false;
+  if (cell2.monster <= 0) return true;
+  return !view.monsters().some((m) => m.id === cell2.monster && m.visible);
 }
 function standingOnHarm(view, terrain, at) {
   const cell2 = cellAt(view, at);
@@ -1658,6 +1660,9 @@ function shoppingList(needs, store, gold, persona) {
   }
   return out;
 }
+function mightBeSpecial(name) {
+  return /\{\?\?\}/.test(name) || /'[^']+'/.test(name) || /(?<!\b(?:Pair|Set))\s+of\s+/i.test(name);
+}
 function sellList(_pack, view, persona) {
   if (persona === null || persona.sliders.selling < 60) return [];
   const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
@@ -1665,7 +1670,7 @@ function sellList(_pack, view, persona) {
   const out = [];
   for (const item of view.inventory()) {
     const name = shownName2(item);
-    if (name === null || worn.has(item.handle) || item.artifact || item.ego) continue;
+    if (name === null || worn.has(item.handle) || mightBeSpecial(name)) continue;
     const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
     if (type === void 0) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;

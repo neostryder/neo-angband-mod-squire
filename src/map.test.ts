@@ -49,6 +49,11 @@ describe("reading the map", () => {
     expect(isWalkable(occupied.view, occupied.terrain, { x: 1, y: 2 })).toBe(true);
   });
 
+  it("does not route around a creature the player cannot see", () => {
+    const unseen = world({ map: ["#####", "#...#", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 2 }, visible: false }] });
+    expect(isWalkable(unseen.view, unseen.terrain, { x: 3, y: 2 })).toBe(true);
+  });
+
   it("does not read the character's own grid as occupied", () => {
     /* The view reports the engine's own -1 on the player's square, which is not
      * a creature standing in the way. */

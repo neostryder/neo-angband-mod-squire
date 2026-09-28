@@ -54,6 +54,16 @@ export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gol
   return out;
 }
 
+/**
+ * Whether the shown name marks an item as more than plain: runes still unknown
+ * ({??}), an ego's "of ..." suffix, or an artifact's quoted name. The view's own
+ * ego and artifact fields are the item's truth, which the player may not know
+ * yet, so the decision uses only what the name shows.
+ */
+export function mightBeSpecial(name: string): boolean {
+  return /\{\?\?\}/.test(name) || /'[^']+'/.test(name) || /(?<!\b(?:Pair|Set))\s+of\s+/i.test(name);
+}
+
 /** Sell only an extra, named piece of gear after keeping the first spare. */
 export function sellList(_pack: Pack, view: AgentView, persona: Persona | null): Sale[] {
   if (persona === null || persona.sliders.selling < 60) return [];
@@ -62,7 +72,7 @@ export function sellList(_pack: Pack, view: AgentView, persona: Persona | null):
   const out: Sale[] = [];
   for (const item of view.inventory()) {
     const name = shownName(item);
-    if (name === null || worn.has(item.handle) || item.artifact || item.ego) continue;
+    if (name === null || worn.has(item.handle) || mightBeSpecial(name)) continue;
     const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
     if (type === undefined) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
