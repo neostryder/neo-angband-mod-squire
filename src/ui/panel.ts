@@ -23,11 +23,45 @@ const TABS: readonly [Tab, string][] = [
   ["report", "Report"],
 ];
 
+/** The text scale, kept per browser: it suits one screen, not every one. */
+const SCALE_KEY = "squire/panelScale";
+const SCALES: readonly number[] = [0.8, 0.9, 1, 1.15, 1.3, 1.5];
+
+function readScale(): number {
+  try {
+    const stored = Number(localStorage.getItem(SCALE_KEY));
+    return SCALES.includes(stored) ? stored : 1;
+  } catch {
+    return 1;
+  }
+}
+
+function writeScale(scale: number): void {
+  try {
+    localStorage.setItem(SCALE_KEY, String(scale));
+  } catch {
+    /* Without storage the scale lasts until the page reloads. */
+  }
+}
+
 export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): () => void {
   const root = host.root;
   const body = h("div", { class: "body" });
   const bar = h("div", { class: "tabs", role: "tablist" });
-  root.append(h("style", {}, STYLE), h("div", { class: "squire" }, bar, body));
+  const panel = h("div", { class: "squire" }, bar, body);
+  root.append(h("style", {}, STYLE), panel);
+
+  let scale = readScale();
+  function applyScale(next: number): void {
+    scale = next;
+    panel.style.setProperty("--squire-scale", String(scale));
+    writeScale(scale);
+  }
+  applyScale(scale);
+  const step = (by: number): void => {
+    const at = SCALES.indexOf(scale);
+    applyScale(SCALES[Math.max(0, Math.min(SCALES.length - 1, at + by))] ?? 1);
+  };
 
   let cleanup: (() => void) | null = null;
   /* First run opens on setup; after that, on the dashboard. */
@@ -64,6 +98,10 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
     button.dataset["tab"] = tab;
     bar.append(button);
   }
+  bar.append(
+    h("button", { class: "size", title: "Smaller text", "aria-label": "Smaller text", onclick: () => step(-1) }, "A-"),
+    h("button", { title: "Larger text", "aria-label": "Larger text", onclick: () => step(1) }, "A+"),
+  );
   show(current);
   return () => cleanup?.();
 }

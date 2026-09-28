@@ -4432,12 +4432,14 @@ function pickFile(accept) {
 }
 var STYLE = `
 :host { all: initial; }
-.squire { font: 13px/1.45 system-ui, sans-serif; color: #e8e2d0; background: #14120f; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+/* Text grows with the window, from 13px at 1080p to 22px at 4K, times the panel's own A-/A+ scale. */
+.squire { font: calc(clamp(13px, 0.68vw, 22px) * var(--squire-scale, 1))/1.45 system-ui, sans-serif; color: #e8e2d0; background: #14120f; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.tabs .size { margin-left: auto; }
 .tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid #3a342a; padding: 4px 4px 0; }
 .tabs button { background: none; border: 1px solid transparent; border-bottom: none; color: #b9ae93; padding: 4px 8px; cursor: pointer; font: inherit; border-radius: 4px 4px 0 0; }
 .tabs button[aria-selected="true"] { background: #221e18; color: #f2e6c4; border-color: #3a342a; }
 .body { flex: 1; overflow: auto; padding: 10px; }
-h3 { font-size: 13px; margin: 14px 0 6px; color: #f2c66d; }
+h3 { font-size: 1em; margin: 14px 0 6px; color: #f2c66d; }
 h3:first-child { margin-top: 0; }
 p { margin: 4px 0; }
 .muted { color: #9b917a; }
@@ -4452,8 +4454,8 @@ button.act:hover { background: #4a3c24; }
 .row { display: flex; gap: 6px; align-items: center; }
 .row > * { flex: 1; }
 .slider { display: grid; grid-template-columns: 9em 1fr 2.5em; gap: 6px; align-items: center; margin: 3px 0; }
-.slider .ends { grid-column: 2; font-size: 11px; color: #9b917a; display: flex; justify-content: space-between; margin-top: -4px; }
-pre { background: #0c0b09; border: 1px solid #3a342a; padding: 6px; overflow: auto; max-height: 240px; font-size: 11px; }
+.slider .ends { grid-column: 2; font-size: 0.85em; color: #9b917a; display: flex; justify-content: space-between; margin-top: -4px; }
+pre { background: #0c0b09; border: 1px solid #3a342a; padding: 6px; overflow: auto; max-height: 240px; font-size: 0.85em; }
 .entry { border-top: 1px solid #2c271f; padding: 6px 0; }
 .entry.disagree { color: #f2e6c4; }
 .stat { display: inline-block; margin-right: 14px; }
@@ -5305,11 +5307,39 @@ var TABS = [
   ["dashboard", "Dashboard"],
   ["report", "Report"]
 ];
+var SCALE_KEY = "squire/panelScale";
+var SCALES = [0.8, 0.9, 1, 1.15, 1.3, 1.5];
+function readScale() {
+  try {
+    const stored = Number(localStorage.getItem(SCALE_KEY));
+    return SCALES.includes(stored) ? stored : 1;
+  } catch {
+    return 1;
+  }
+}
+function writeScale(scale2) {
+  try {
+    localStorage.setItem(SCALE_KEY, String(scale2));
+  } catch {
+  }
+}
 function mountPanel(host, rt, lessons) {
   const root = host.root;
   const body2 = h("div", { class: "body" });
   const bar = h("div", { class: "tabs", role: "tablist" });
-  root.append(h("style", {}, STYLE), h("div", { class: "squire" }, bar, body2));
+  const panel = h("div", { class: "squire" }, bar, body2);
+  root.append(h("style", {}, STYLE), panel);
+  let scale2 = readScale();
+  function applyScale(next) {
+    scale2 = next;
+    panel.style.setProperty("--squire-scale", String(scale2));
+    writeScale(scale2);
+  }
+  applyScale(scale2);
+  const step = (by) => {
+    const at = SCALES.indexOf(scale2);
+    applyScale(SCALES[Math.max(0, Math.min(SCALES.length - 1, at + by))] ?? 1);
+  };
   let cleanup = null;
   let current2 = rt.config().setupDone ? "dashboard" : "setup";
   function show(tab) {
@@ -5342,6 +5372,10 @@ function mountPanel(host, rt, lessons) {
     button.dataset["tab"] = tab;
     bar.append(button);
   }
+  bar.append(
+    h("button", { class: "size", title: "Smaller text", "aria-label": "Smaller text", onclick: () => step(-1) }, "A-"),
+    h("button", { title: "Larger text", "aria-label": "Larger text", onclick: () => step(1) }, "A+")
+  );
   show(current2);
   return () => cleanup?.();
 }
