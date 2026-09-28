@@ -150,11 +150,17 @@ export interface Studyable {
 /**
  * The first spell worth studying: in a carried book (matched by the name the
  * inventory shows), not yet learned, and at or below the character's level.
- * The view does not say how many spells are left to learn, so a spell whose
- * study already failed at this level is passed in as `tried` and skipped.
+ * The view does not say how many spells are left to learn. A spell studied
+ * at this level that is still unlearned means the game refused ("You cannot
+ * learn any new spells"), so nothing more is offered until the level changes.
  */
 export function studyable(view: AgentView, tried: ReadonlySet<string> = new Set()): Studyable | null {
   const level = view.player().level;
+  if (!canRead(view)) return null;
+  const prefix = `${String(level)}:`;
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) if (!spell.learned && tried.has(prefix + String(spell.sidx))) return null;
+  }
   const carried = view.inventory().flatMap((item) => {
     const name = shownName(item);
     return name === null ? [] : [{ handle: item.handle, name }];

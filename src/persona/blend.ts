@@ -34,12 +34,20 @@ export function riskCeiling(persona: Persona): number {
   return 0.6 - persona.sliders.selfpreservation * 0.005;
 }
 
+/** The choice key that means no offered option fits. */
+const NONE_OF_THESE = "none_of_these";
+
 export function applySafetyFloor(dist: Distribution, risk: Distribution, ceiling: number, deathWish: boolean): { dist: Record<string, number>; removed: string[] } {
   const keys = Object.keys(dist);
   const removed = deathWish ? [] : keys.filter((key) => (risk[key] ?? 0) > ceiling);
-  if (removed.length === keys.length && keys.length > 0) {
-    let safest = keys[0]!;
-    for (const key of keys.slice(1)) if ((risk[key] ?? 0) < (risk[safest] ?? 0)) safest = key;
+  /* When every real option is over the line, the safest of them stays. The
+   * no-risk "none of these" does not count as one: keeping only it would turn a
+   * clear "retreat" into the errand fallback exactly when the character is in
+   * the most danger. */
+  const real = keys.filter((key) => key !== NONE_OF_THESE);
+  if (real.length > 0 && real.every((key) => removed.includes(key))) {
+    let safest = real[0]!;
+    for (const key of real.slice(1)) if ((risk[key] ?? 0) < (risk[safest] ?? 0)) safest = key;
     removed.splice(removed.indexOf(safest), 1);
   }
   const kept: Record<string, number> = {};

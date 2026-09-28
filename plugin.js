@@ -1054,6 +1054,11 @@ function castable(view) {
 }
 function studyable(view, tried = /* @__PURE__ */ new Set()) {
   const level = view.player().level;
+  if (!canRead(view)) return null;
+  const prefix2 = `${String(level)}:`;
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) if (!spell.learned && tried.has(prefix2 + String(spell.sidx))) return null;
+  }
   const carried = view.inventory().flatMap((item) => {
     const name = shownName(item);
     return name === null ? [] : [{ handle: item.handle, name }];
@@ -1397,12 +1402,14 @@ function jitteredStrength(persona, rng) {
 function riskCeiling(persona) {
   return 0.6 - persona.sliders.selfpreservation * 5e-3;
 }
+var NONE_OF_THESE = "none_of_these";
 function applySafetyFloor(dist, risk, ceiling, deathWish) {
   const keys = Object.keys(dist);
   const removed = deathWish ? [] : keys.filter((key2) => (risk[key2] ?? 0) > ceiling);
-  if (removed.length === keys.length && keys.length > 0) {
-    let safest = keys[0];
-    for (const key2 of keys.slice(1)) if ((risk[key2] ?? 0) < (risk[safest] ?? 0)) safest = key2;
+  const real = keys.filter((key2) => key2 !== NONE_OF_THESE);
+  if (real.length > 0 && real.every((key2) => removed.includes(key2))) {
+    let safest = real[0];
+    for (const key2 of real.slice(1)) if ((risk[key2] ?? 0) < (risk[safest] ?? 0)) safest = key2;
     removed.splice(removed.indexOf(safest), 1);
   }
   const kept = {};
@@ -1740,7 +1747,7 @@ function recallPlan(item) {
 }
 
 // src/brain/goals.ts
-var NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
+var NONE_OF_THESE2 = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 var FALLBACK_STEPS = 8;
 var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
@@ -2167,7 +2174,7 @@ function createGoalPlanner(options) {
       }
       const criteria = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
-      criteria["none_of_these"] = NONE_OF_THESE;
+      criteria["none_of_these"] = NONE_OF_THESE2;
       const goal = {
         type: "choice",
         instructions: "You are playing Angband, a dungeon game where death is permanent. Which option gives this character the best chance to survive and keep making progress?",

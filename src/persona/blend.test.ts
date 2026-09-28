@@ -22,4 +22,15 @@ describe("decision blending", () => {
     expect(applySafetyFloor({ a: 1 }, { a: 1 }, 0.2, true).removed).toEqual([]);
     expect(pick({ a: 0.5, b: 0.5 })).toBe("a");
   });
+
+  it("keeps the safest real option rather than only none_of_these", () => {
+    const floored = applySafetyFloor(
+      { fight: 0.02, retreat: 0.92, explore: 0.01, none_of_these: 0.05 },
+      { fight: 0.95, retreat: 0.5, explore: 0.8 },
+      0.35,
+      false,
+    );
+    expect(floored.removed).toEqual(["fight", "explore"]);
+    expect(pick(floored.dist)).toBe("retreat");
+  });
 });
