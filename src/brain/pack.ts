@@ -183,8 +183,14 @@ export function studyable(view: AgentView, tried: ReadonlySet<string> = new Set(
  * then only loops.
  */
 export function canRead(view: AgentView): boolean {
-  const status = view.player().status;
-  return status.blind === 0 && status.confused === 0;
+  const player = view.player();
+  const status = player.status;
+  if (status.blind > 0 || status.confused > 0) return false;
+  /* The game also refuses reading and casting when the character's own grid is
+   * dark. A carried light or a lit room lights it; a necromancer's unlight
+   * lets it see there without either. */
+  const here = view.cell(player.grid.x, player.grid.y);
+  return player.light > 0 || here?.glow === true || player.classFlags.includes("UNLIGHT");
 }
 
 /** Read the pack and the spell list. */

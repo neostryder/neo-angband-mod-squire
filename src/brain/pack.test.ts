@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
-import { readPack, studyable } from "./pack.js";
+import { canRead, readPack, studyable } from "./pack.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
@@ -26,5 +26,14 @@ describe("readPack missiles", () => {
     const sling = world({ map: ROOM, pack: ["20 Arrows"], worn: ["a Sling (x2) (+0,+0)"] });
     expect(readPack(sling.view).ammo).toEqual([]);
     expect(readPack(sling.view).launcher).toBe(true);
+  });
+});
+
+describe("reading in the dark", () => {
+  it("cannot read or cast on a dark grid, as the game refuses both there", () => {
+    const map = ["#####", "#.@.#", "#####"];
+    expect(canRead(world({ map, player: { light: 2 } }).view)).toBe(true);
+    expect(canRead(world({ map, player: { light: 0 } }).view)).toBe(false);
+    expect(canRead(world({ map, player: { light: 0, classFlags: ["UNLIGHT"] } as never }).view)).toBe(true);
   });
 });

@@ -1112,8 +1112,11 @@ function studyable(view, tried = /* @__PURE__ */ new Set()) {
   return null;
 }
 function canRead(view) {
-  const status = view.player().status;
-  return status.blind === 0 && status.confused === 0;
+  const player = view.player();
+  const status = player.status;
+  if (status.blind > 0 || status.confused > 0) return false;
+  const here = view.cell(player.grid.x, player.grid.y);
+  return player.light > 0 || here?.glow === true || player.classFlags.includes("UNLIGHT");
 }
 function readPack(view) {
   const reading = canRead(view);
