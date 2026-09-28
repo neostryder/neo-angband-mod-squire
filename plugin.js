@@ -1495,7 +1495,8 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
       const at = view.player().grid;
       const cell2 = view.cell(at.x, at.y);
       if (cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
-        const store = view.stores().find((entry) => entry.feat === cell2.feat);
+        const found = view.stores().find((entry) => entry.feat === cell2.feat);
+        const store = found === void 0 ? void 0 : { ...found, featName: terrain.shopName(cell2.feat) ?? found.featName };
         if (store === void 0) {
           visited.add(cell2.feat);
           log("shop: this store has no stock to read");
@@ -1673,7 +1674,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
   const study = studyable(view, triedStudies);
-  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 5)) {
+  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));

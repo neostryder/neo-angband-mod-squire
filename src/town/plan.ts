@@ -59,7 +59,10 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       const cell = view.cell(at.x, at.y);
       if (cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
         /* stores() exposes the whole town; touch only the matching store's stock. */
-        const store = view.stores().find((entry) => entry.feat === cell.feat);
+        const found = view.stores().find((entry) => entry.feat === cell.feat);
+        /* The engine names a store by its terrain code (STORE_ALCHEMY); the
+         * shopping rules use the name terrain.txt shows the player. */
+        const store = found === undefined ? undefined : { ...found, featName: terrain.shopName(cell.feat) ?? found.featName };
         if (store === undefined) {
           visited.add(cell.feat);
           log("shop: this store has no stock to read");

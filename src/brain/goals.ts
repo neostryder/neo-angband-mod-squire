@@ -301,7 +301,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
   const study = studyable(view, triedStudies);
-  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 5)) {
+  /* Only a creature close enough to strike this turn makes a turn of study unsafe. */
+  if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
