@@ -2,7 +2,7 @@
 
 **A Learning Angband Autoplayer.**
 
-Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, shops in town and takes the stairs down. At each moment that matters, a new creature, a hit, an empty floor, it asks a model what to do. Press any key and the keyboard is yours again.
+Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. At each moment that matters, a new creature, a hit, an empty floor, it asks a model what to do. Press any key and the keyboard is yours again.
 
 While you play, Squire rides along as your apprentice. It makes its own choice at each of those moments, notes where yours differed, and learns your style. Give it a persona and it plays in character: a coward who flees too early, a berserker who never backs down, a miser who won't spend a coin.
 
@@ -26,13 +26,14 @@ A character handed to any autoplayer is marked for good, and the game keeps it o
 
 ## How Squire decides
 
-Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door or Teleportation, back away, rest, eat, pick something up, study a new spell, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, a hit lands, or hit points cross a line.
+Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door or Teleportation, back away, rest, eat, pick something up, study a new spell, wear better gear, map a new level, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, a hit lands, or hit points cross a line.
 
 Squire only knows what the character knows:
 
 - Items are used by the names your inventory shows, so an unidentified potion stays a mystery to Squire too.
 - It reads a shop's stock only while standing in that shop.
 - It plans routes only over ground the character remembers, and picks up only what lies underfoot.
+- It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
 In town, Squire buys what the next trip needs: healing potions, Phase Door, food, light, flasks of oil and, once the character has been to 250 ft, a Word of Recall scroll. When supplies run low in the dungeon, it reads Word of Recall to go home and restock, then reads another to go back down.
 
