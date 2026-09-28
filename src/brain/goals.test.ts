@@ -80,7 +80,7 @@ describe("goal planner", () => {
   });
 
   it("lights a torch before exploring in the dark", () => {
-    const w = world({ map: CORRIDOR, player: { light: 0 }, pack: ["2 Wooden Torches (5000 turns)"] });
+    const w = world({ map: CORRIDOR, pack: ["2 Wooden Torches (5000 turns)"] });
     const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
     expect(goals).toContain("wear");
     expect(goals).not.toContain("explore");

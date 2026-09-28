@@ -383,9 +383,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   /* Walking in the dark shows nothing, so while a light sits unused in the pack
    * lighting it comes before exploring or the stairs. */
-  const unlit = player.light <= 0 && gear !== undefined && gear.criteria.includes("has no light");
+  const unlit = gear !== undefined && gear.criteria.includes("has no light");
   if (gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
-    add("wear", gear.criteria, gear.unknown ? 0.05 : 0.02);
+    /* Changing gear spends a turn, which is as risky as any other turn not spent fighting. */
+    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
   }
   if (newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -733,6 +734,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       decisionDepth = player.depth;
       const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
 

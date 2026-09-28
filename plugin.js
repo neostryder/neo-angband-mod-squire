@@ -1369,7 +1369,7 @@ function gearCandidates(view) {
     if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
       const oldLight = replaced === null ? null : shownName2(replaced) ?? "";
       const fuel = (shown) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
-      if (oldLight === null || fuel(oldLight) === 0 || view.player().light <= 0) {
+      if (oldLight === null || fuel(oldLight) === 0) {
         out.push({
           handle: item.handle,
           name,
@@ -1957,9 +1957,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
   const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
-  const unlit = player.light <= 0 && gear !== void 0 && gear.criteria.includes("has no light");
+  const unlit = gear !== void 0 && gear.criteria.includes("has no light");
   if (gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
-    add2("wear", gear.criteria, gear.unknown ? 0.05 : 0.02);
+    add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
   }
   if (newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -2250,6 +2250,7 @@ function createGoalPlanner(options) {
       decisionDepth = player.depth;
       const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn)).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
       const criteria = {};

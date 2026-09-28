@@ -168,7 +168,7 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
     if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
       const oldLight = replaced === null ? null : shownName(replaced) ?? "";
       const fuel = (shown: string) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
-      if (oldLight === null || fuel(oldLight) === 0 || view.player().light <= 0) {
+      if (oldLight === null || fuel(oldLight) === 0) {
         out.push({ handle: item.handle, name, score: 100, unknown: false,
           criteria: `Wield ${name}. The character has no light, so it cannot see new ground or creatures.` });
         continue;
