@@ -3,6 +3,7 @@ import { world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import { createGoalPlanner, healthBand, type GoalDigest } from "./goals.js";
+import { archetype, defaultPersona } from "../persona/persona.js";
 import type { Question } from "./brain.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
@@ -163,5 +164,66 @@ describe("items and spells", () => {
   it("offers food only when hungry", () => {
     const w = world({ map: CORRIDOR, pack: ["2 Rations of Food"], player: { status: { food: 900 } } });
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal)).toContain("eat");
+  });
+});
+
+describe("persona", () => {
+  const ORC = [{ grid: { x: 5, y: 1 }, race: "cave orc", level: 3 }];
+
+  function withPersona(w: ReturnType<typeof world>, persona: ReturnType<typeof defaultPersona>) {
+    return createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, rng: () => 0.5 });
+  }
+
+  it("asks the in-character question and sends the persona", () => {
+    const w = world({ map: CORRIDOR, monsters: ORC });
+    const persona = archetype("berserker");
+    const q = asked(withPersona(w, persona).ask(w.view));
+    expect(Object.keys(q.request.questions)).toEqual(["goal", "in_character"]);
+    expect(q.request.state["persona"]).toMatchObject({ name: persona.name });
+  });
+
+  it("follows its nature at full strength", () => {
+    const w = world({ map: CORRIDOR, monsters: ORC });
+    const persona = defaultPersona("Bold");
+    persona.sliders.strength = 100;
+    persona.sliders.volatility = 0;
+    persona.sliders.selfpreservation = 0;
+    const p = withPersona(w, persona);
+    const q = asked(p.ask(w.view));
+    const answers: Readonly<Record<string, Answer>> = {
+      goal: { type: "choice", choice: "retreat", confidence: 0.8, probabilities: { retreat: 0.8, fight: 0.2 } },
+      in_character: { type: "choice", choice: "fight", confidence: 0.9, probabilities: { fight: 0.9, retreat: 0.1 } },
+    };
+    const choice = p.choose(answers, q.context, w.view);
+    expect("plan" in choice && choice.plan.label).toBe("fight");
+    expect(q.context.trace).toMatchObject({ advice: "retreat", pick: "fight" });
+  });
+
+  it("lets the safety floor overrule a reckless nature", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 40 }, monsters: [{ grid: { x: 4, y: 1 }, race: "Grip, Farmer Maggot's Dog", level: 30 }] });
+    const persona = defaultPersona("Careful");
+    persona.sliders.strength = 100;
+    persona.sliders.volatility = 0;
+    persona.sliders.selfpreservation = 100;
+    const p = withPersona(w, persona);
+    const q = asked(p.ask(w.view));
+    const answers: Readonly<Record<string, Answer>> = {
+      goal: { type: "choice", choice: "retreat", confidence: 0.6, probabilities: { retreat: 0.6, fight: 0.4 } },
+      in_character: { type: "choice", choice: "fight", confidence: 1, probabilities: { fight: 1 } },
+    };
+    const choice = p.choose(answers, q.context, w.view);
+    expect("plan" in choice && choice.plan.label).toBe("back away");
+    expect(q.context.trace?.removed).toContain("fight");
+  });
+
+  it("picks up everything when compulsive", () => {
+    const w = world({ map: ["#####", "#@*.#", "#####"] });
+    w.moveTo({ x: 2, y: 1 });
+    const persona = defaultPersona("Magpie");
+    persona.quirks.compulsive.on = true;
+    const p = withPersona(w, persona);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("explore"), q.context, w.view);
+    expect("plan" in choice && choice.plan.label).toBe("pick up");
   });
 });

@@ -1095,6 +1095,182 @@ function hungry(view) {
   return view.player().status.food < HUNGRY_BELOW;
 }
 
+// src/persona/blend.ts
+function valid(value) {
+  return value !== void 0 && Number.isFinite(value) && value > 0 ? value : 0;
+}
+function normalized(dist) {
+  const total = Object.values(dist).reduce((sum, value) => sum + valid(value), 0);
+  const result = {};
+  for (const [key2, value] of Object.entries(dist)) result[key2] = total > 0 ? valid(value) / total : 0;
+  return result;
+}
+function blend(best, inCharacter, strength01) {
+  const strength = Number.isFinite(strength01) ? Math.max(0, Math.min(1, strength01)) : 0;
+  const a = normalized(best);
+  const b = normalized(inCharacter);
+  const combined = {};
+  for (const key2 of /* @__PURE__ */ new Set([...Object.keys(best), ...Object.keys(inCharacter)])) {
+    combined[key2] = (1 - strength) * (a[key2] ?? 0) + strength * (b[key2] ?? 0);
+  }
+  return normalized(combined);
+}
+function jitteredStrength(persona, rng) {
+  const draw = rng();
+  const unit = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
+  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit * 2 - 1) * persona.sliders.volatility / 400));
+}
+function riskCeiling(persona) {
+  return 0.6 - persona.sliders.selfpreservation * 5e-3;
+}
+function applySafetyFloor(dist, risk, ceiling, deathWish) {
+  const keys = Object.keys(dist);
+  const removed = deathWish ? [] : keys.filter((key2) => (risk[key2] ?? 0) > ceiling);
+  if (removed.length === keys.length && keys.length > 0) {
+    let safest = keys[0];
+    for (const key2 of keys.slice(1)) if ((risk[key2] ?? 0) < (risk[safest] ?? 0)) safest = key2;
+    removed.splice(removed.indexOf(safest), 1);
+  }
+  const kept = {};
+  for (const key2 of keys) if (!removed.includes(key2)) kept[key2] = valid(dist[key2]);
+  const result = normalized(kept);
+  if (Object.keys(result).length > 0 && Object.values(result).every((value) => value === 0)) {
+    const first = Object.keys(result)[0];
+    result[first] = 1;
+  }
+  return { dist: result, removed };
+}
+function pick(dist) {
+  let choice;
+  let highest = -Infinity;
+  for (const [key2, probability] of Object.entries(dist)) {
+    if (probability > highest) {
+      choice = key2;
+      highest = probability;
+    }
+  }
+  return choice;
+}
+
+// src/persona/quirks.ts
+function shiftThreat(bandIndex, bands, persona, rng) {
+  if (bands <= 0) return 0;
+  let shifted = Math.round(bandIndex);
+  if (persona.sliders.optimism >= 70) shifted -= 1;
+  else if (persona.sliders.optimism <= 30) shifted += 1;
+  const delusion = persona.quirks.delusional;
+  if (delusion.on && rng() < delusion.strength / 200) shifted += rng() < 0.5 ? -1 : 1;
+  return Math.max(0, Math.min(bands - 1, shifted));
+}
+function mustPickUp(persona) {
+  return persona.quirks.compulsive.on;
+}
+function fleesFromNew(persona) {
+  return persona.quirks.cowardice.on;
+}
+
+// src/persona/catalog.ts
+var PARAMETERS = [
+  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off." },
+  { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
+  { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
+  { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
+  { id: "stubbornness", group: "temperament", name: "Stubbornness", kind: "slider", scale: "flexible to never backs down", description: "How hard it is to abandon a chosen fight or goal." },
+  { id: "curiosity", group: "temperament", name: "Curiosity", kind: "slider", scale: "incurious to must know", description: "Trying unknown items and exploring every corner." },
+  { id: "paranoia", group: "temperament", name: "Paranoia", kind: "slider", scale: "trusting to sees danger everywhere", description: "Detecting, avoiding unknown monsters, and keeping escapes." },
+  { id: "optimism", group: "temperament", name: "Optimism", kind: "slider", scale: "expects the worst to expects the best", description: "Shifts perceived threat bands by one step." },
+  { id: "volatility", group: "temperament", name: "Volatility", kind: "slider", scale: "steady to mood swings", description: "How much persona strength wanders between decisions." },
+  { id: "pride", group: "temperament", name: "Pride", kind: "slider", scale: "humble to glory-seeking", description: "Hunting uniques and chasing depth records." },
+  { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 70 },
+  { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to driven to win", description: "Controls the dive rate." },
+  { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
+  { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
+  { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
+  { id: "hated", group: "affinities", name: "Hated monster families", kind: "list", scale: "orcs, dragons, undead", description: "Fights these on sight and takes more risk against them." },
+  { id: "feared", group: "affinities", name: "Feared monster families", kind: "list", scale: "spiders, ghosts", description: "Avoids these and leaves levels early when they appear." },
+  { id: "weapons", group: "affinities", name: "Favoured weapons", kind: "list", scale: "blades, hafted, polearms, bows", description: "Keeps a favoured type when another is slightly better." },
+  { id: "distrusted", group: "affinities", name: "Distrusted things", kind: "list", scale: "magic devices, unknown scrolls", description: "Uses these only when necessary." },
+  { id: "elements", group: "affinities", name: "Favoured spells or elements", kind: "list", scale: "fire, lightning, healing", description: "Prefers these spells when several work." },
+  { id: "superstitions", group: "affinities", name: "Superstitions", kind: "list", scale: "never reads scrolls at 1300 ft", description: "Harmless rules the character keeps." },
+  { id: "hoarding", group: "habits", name: "Pack weight", kind: "slider", scale: "travels light to carries everything", description: "How much the character carries." },
+  { id: "tidiness", group: "habits", name: "Tidiness", kind: "slider", scale: "ignores junk rules to ignores aggressively", description: "How eagerly it sets ignore rules." },
+  { id: "home", group: "habits", name: "Home use", kind: "slider", scale: "never uses the home to stashes treasures", description: "Whether spare gear goes home." },
+  { id: "towntrips", group: "habits", name: "Town trips", kind: "slider", scale: "rarely returns to returns often", description: "When low supplies prompt a return to town." },
+  { id: "detection", group: "habits", name: "Detection habit", kind: "slider", scale: "never detects to detects on arrival", description: "Use of detection and mapping on a new level." },
+  { id: "levelfeel", group: "habits", name: "Level thoroughness", kind: "slider", scale: "takes the first stairs to clears every level", description: "How much ground is explored before descending." },
+  { id: "range", group: "tactics", name: "Engagement range", kind: "slider", scale: "melee to ranged and kiting", description: "Closing to melee versus firing from afar." },
+  { id: "escapes", group: "tactics", name: "Escape readiness", kind: "slider", scale: "keeps none to keeps many", description: "How many escapes to keep before descending." },
+  { id: "healat", group: "tactics", name: "Heal threshold", kind: "slider", scale: "heals late to heals early", description: "Hit-point level at which healing becomes an option." },
+  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds to the end to leaves early", description: "Hit-point level at which fleeing becomes an option." },
+  { id: "targets", group: "tactics", name: "Target priority", kind: "slider", scale: "weakest first to most dangerous first", description: "Which monster in a group is attacked first." },
+  { id: "consumables", group: "tactics", name: "Consumable use", kind: "slider", scale: "saves for emergencies to uses freely", description: "How readily potions, scrolls, and charges are spent." },
+  { id: "corridors", group: "tactics", name: "Corridor discipline", kind: "slider", scale: "fights in the open to always backs into a corridor", description: "Pulling groups into corridors before fighting." },
+  { id: "pricesense", group: "economy", name: "Price sense", kind: "slider", scale: "pays anything to buys only bargains", description: "How prices weigh against want in stores." },
+  { id: "savings", group: "economy", name: "Savings goal", kind: "slider", scale: "spends it all to saves for the big item", description: "Whether gold is held for an expensive purchase." },
+  { id: "selling", group: "economy", name: "Selling", kind: "slider", scale: "keeps everything to sells everything", description: "Selling where birth options permit it." },
+  { id: "forgetful", group: "quirks", name: "Forgetful", kind: "quirk", scale: "on or off, with strength", description: "Randomly drops a lesson from the state." },
+  { id: "delusional", group: "quirks", name: "Delusional", kind: "quirk", scale: "on or off, with strength", description: "Randomly reads some threat bands wrong." },
+  { id: "compulsive", group: "quirks", name: "Compulsive collector", kind: "quirk", scale: "on or off", description: "Must pick up everything it walks over." },
+  { id: "pyromaniac", group: "quirks", name: "Pyromaniac", kind: "quirk", scale: "on or off", description: "Reaches for fire in every form." },
+  { id: "deathwish", group: "quirks", name: "Death wish", kind: "quirk", scale: "on or off", description: "Allows options above the safety ceiling." },
+  { id: "cowardice", group: "quirks", name: "Craven", kind: "quirk", scale: "on or off", description: "Flees from anything new, then circles back." },
+  { id: "inheritance", group: "lineage", name: "Inheritance", kind: "slider", scale: "nothing passes to everything passes", description: "How much ancestral lore an heir starts with." },
+  { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An ancestor's killer joins the heir's hated or feared list.", default: true },
+  { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
+  { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
+  { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
+  { id: "resentment", group: "patron", name: "Resentment", kind: "slider", scale: "forgives trials to holds a grudge", description: "How much a trial lowers Devotion." },
+  { id: "strength", group: "meta", name: "Persona strength", kind: "slider", scale: "plays by advice to plays in character", description: "Blends the best move and in-character answers.", default: 35 },
+  { id: "backstory", group: "meta", name: "Backstory weight", kind: "slider", scale: "ignored to rules everything", description: "How much backstory the state carries." },
+  { id: "backstorycap", group: "meta", name: "Backstory cap", kind: "number", scale: "tokens", description: "Maximum backstory tokens per decision.", default: 600 },
+  { id: "learning", group: "meta", name: "Learning rate", kind: "slider", scale: "slow to quick", description: "How fast lessons form and fade." },
+  { id: "drift", group: "meta", name: "Trait drift", kind: "slider", scale: "fixed to shaped by experience", description: "How far experience moves traits.", default: 30 },
+  { id: "confidence", group: "meta", name: "Confidence gate", kind: "slider", scale: "acts on anything to asks again when unsure", description: "When the brain asks a second question." },
+  { id: "depth", group: "meta", name: "Thinking depth", kind: "slider", scale: "fast to thorough", description: "How many questions a decision asks." },
+  { id: "chronicle", group: "meta", name: "Chronicle voice", kind: "slider", scale: "terse to chatty", description: "How many events reach the Chronicle." }
+];
+
+// src/persona/state.ts
+function traitWord(id, scale, value) {
+  const [low, high] = scale.split(" to ");
+  const word = id === "boldness" && value > 50 ? "bold" : value < 50 ? low : high;
+  return `${Math.abs(value - 50) >= 30 ? "very" : "somewhat"} ${word}`;
+}
+var NATURE_GROUPS = /* @__PURE__ */ new Set(["temperament", "values", "habits", "tactics", "economy"]);
+function personaState(persona, budgetTokens) {
+  const state = {};
+  const traits = [];
+  const activeQuirks = [];
+  for (const parameter of PARAMETERS) {
+    if (parameter.kind === "slider") {
+      if (!NATURE_GROUPS.has(parameter.group)) continue;
+      const value = persona.sliders[parameter.id];
+      if (Math.abs(value - 50) >= 15) traits.push(`${parameter.name}: ${traitWord(parameter.id, parameter.scale, value)}`);
+    } else if (parameter.kind === "list") {
+      if (persona.lists[parameter.id].length > 0) state[parameter.id] = persona.lists[parameter.id].join(", ");
+    } else if (parameter.kind === "quirk" && persona.quirks[parameter.id].on) {
+      activeQuirks.push(parameter.name.toLowerCase());
+    }
+  }
+  if (traits.length > 0) state["traits"] = traits.join("; ");
+  if (activeQuirks.length > 0) state["quirks"] = activeQuirks.join(", ");
+  const tokens = Math.max(0, Math.min(persona.backstoryCap, Number.isFinite(budgetTokens) ? budgetTokens : 0));
+  const limit = Math.floor(tokens * 4 * persona.sliders.backstory / 100);
+  if (limit > 0 && persona.backstory.trim()) {
+    let excerpt = persona.backstory.trim().slice(0, limit);
+    if (excerpt.length < persona.backstory.trim().length) {
+      const boundary = Math.max(excerpt.lastIndexOf(". "), excerpt.lastIndexOf("! "), excerpt.lastIndexOf("? "));
+      if (boundary >= Math.floor(excerpt.length / 2)) excerpt = excerpt.slice(0, boundary + 1);
+    }
+    if (excerpt) state["backstory"] = excerpt;
+  }
+  return state;
+}
+function inCharacterInstructions(persona) {
+  return `Which option would ${persona.name} choose, given this character's nature and history? Answer as the character would act, even when another option seems wiser.`;
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE = "No offered option fits. Squire falls back to its fixed errand order for a few steps.";
 var FALLBACK_STEPS = 8;
@@ -1213,6 +1389,10 @@ function offersFor(s, cfg, terrain) {
 }
 function createGoalPlanner(options) {
   const { cfg, terrain, log } = options;
+  const persona = options.persona ?? null;
+  const rng = options.rng ?? Math.random;
+  const backstoryTokens = options.backstoryTokens ?? 600;
+  let lastAwake = /* @__PURE__ */ new Set();
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
     return { view, act, terrain, cfg: with_, progress, log };
@@ -1357,6 +1537,29 @@ function createGoalPlanner(options) {
         });
     }
   }
+  function decide(best, inCharacter, digest) {
+    if (persona === null) return best.choice;
+    const offered = new Set(digest.offers.map((o) => o.goal));
+    const advice = best.choice;
+    const record = (pick3, extra) => {
+      digest.trace = { advice, pick: pick3, ...extra };
+      return pick3;
+    };
+    const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
+    if (mustPickUp(persona) && offered.has("pick_up")) return record("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (fleesFromNew(persona) && digest.newCreatures > 0) {
+      const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
+      if (away !== void 0) return record(away, { ...blank, quirk: "craven" });
+    }
+    const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
+    const strength = jitteredStrength(persona, rng);
+    const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
+    const risk = { none_of_these: 0 };
+    for (const offer of digest.offers) risk[offer.goal] = offer.risk;
+    const floor = applySafetyFloor(blended, risk, riskCeiling(persona), persona.quirks.deathwish.on);
+    const pick2 = pick(floor.dist) ?? advice;
+    return record(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+  }
   return {
     ask(view) {
       const player = view.player();
@@ -1375,6 +1578,9 @@ function createGoalPlanner(options) {
         criteria
       };
       const seen = inSight(view.monsters());
+      const awakeNow = new Set(s.awake.map((m) => m.id));
+      const newCreatures = [...awakeNow].filter((id) => !lastAwake.has(id)).length;
+      lastAwake = awakeNow;
       const unexplored = frontiers(view, terrain).length > 0;
       const stairs = knownDownStairs(view, terrain).length > 0;
       const question = {
@@ -1385,34 +1591,42 @@ function createGoalPlanner(options) {
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
             creatures: seen.length === 0 ? "No creatures in sight." : seen.map((m) => {
-              const band = THREAT_BANDS[threatIndex(m, player.level)] ?? "deadly";
+              const real = threatIndex(m, player.level);
+              const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
+              const band = THREAT_BANDS[seenAs] ?? "deadly";
               const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
               const away = steps(player.grid, m.grid);
               return `${m.race}: ${band}, ${String(away)} steps away${tags === "" ? "" : `, ${tags}`}`;
             }).join("; "),
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
-            ...hungry(view) ? { hunger: "The character is hungry." } : {}
+            ...hungry(view) ? { hunger: "The character is hungry." } : {},
+            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }
           },
-          questions: { goal }
+          questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
         },
-        context: { depth: player.depth, offers }
+        context: { depth: player.depth, offers, newCreatures }
       };
       return question;
     },
     choose(answers, digest, view) {
       const answer = answers["goal"];
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
-      const pick = answer.choice;
-      if (pick === "none_of_these") {
+      const pick2 = decide(answer, answers["in_character"], digest);
+      if (pick2 === "none_of_these") {
         log("goal: none fit, following the fixed errand order");
         return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
       }
-      const offer = digest.offers.find((o) => o.goal === pick);
+      const offer = digest.offers.find((o) => o.goal === pick2);
       if (offer === void 0) {
         return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
-      log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
+      const trace = digest.trace;
+      if (trace !== void 0 && trace.pick !== trace.advice) {
+        log(`goal: ${pick2}, against advice (${trace.advice})${trace.quirk === void 0 ? "" : `: ${trace.quirk}`}`);
+      } else {
+        log(`goal: ${pick2} (${String(Math.round((answer.probabilities[pick2] ?? 0) * 100))}%)`);
+      }
       return { plan: build(offer.goal, view) };
     },
     trigger(view, plan) {

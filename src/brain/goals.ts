@@ -32,6 +32,10 @@ import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question } from "./brain.js";
 import { hungry, readPack, type Pack } from "./pack.js";
+import type { Persona } from "../persona/persona.js";
+import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
+import { fleesFromNew, mustPickUp, shiftThreat } from "../persona/quirks.js";
+import { inCharacterInstructions, personaState } from "../persona/state.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -114,16 +118,41 @@ export interface Offer {
   readonly risk: number;
 }
 
+/** How the persona bent one decision, kept for the decision log. */
+export interface PersonaTrace {
+  readonly best: Readonly<Record<string, number>>;
+  readonly inCharacter: Readonly<Record<string, number>> | null;
+  readonly blended: Readonly<Record<string, number>>;
+  readonly strength: number;
+  /** Options the safety floor took away. */
+  readonly removed: readonly string[];
+  /** What the best-move answer alone would have picked. */
+  readonly advice: string;
+  readonly pick: string;
+  /** Set when a quirk decided instead of the model. */
+  readonly quirk?: string;
+}
+
 /** The facts one decision is made from. */
 export interface GoalDigest {
   readonly depth: number;
   readonly offers: readonly Offer[];
+  /** Awake creatures that were not in sight at the previous decision. */
+  readonly newCreatures: number;
+  /** Filled in by `choose`. */
+  trace?: PersonaTrace;
 }
 
 export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
   readonly terrain: Terrain;
   readonly log: (message: string) => void;
+  /** The character's persona. Without one, Squire asks only for the best move. */
+  readonly persona?: Persona | null;
+  /** Random draws for persona volatility and quirks. */
+  readonly rng?: () => number;
+  /** Most tokens of persona backstory one decision may carry, from the backend's budget. */
+  readonly backstoryTokens?: number;
 }
 
 /** A plan that owns a watcher, so `trigger` can ask it. */
@@ -238,6 +267,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain): Offer
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
   const { cfg, terrain, log } = options;
+  const persona = options.persona ?? null;
+  const rng = options.rng ?? Math.random;
+  const backstoryTokens = options.backstoryTokens ?? 600;
+  /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
+  let lastAwake = new Set<number>();
 
   /* A fight the model chose may wake a sleeper: the state says which creatures
    * are asleep, so waking one is part of the choice. */
@@ -402,6 +436,36 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
   }
 
+  /**
+   * Pick from the answers. With no persona this is the best-move answer. With
+   * one, the best and in-character answers are blended by persona strength, the
+   * safety floor removes options riskier than the persona accepts, and a few
+   * quirks decide outright.
+   */
+  function decide(best: Answer & { type: "choice" }, inCharacter: Answer | undefined, digest: GoalDigest): string {
+    if (persona === null) return best.choice;
+    const offered = new Set(digest.offers.map((o) => o.goal as string));
+    const advice = best.choice;
+    const record = (pick: string, extra: Omit<PersonaTrace, "advice" | "pick">): string => {
+      digest.trace = { advice, pick, ...extra };
+      return pick;
+    };
+    const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
+    if (mustPickUp(persona) && offered.has("pick_up")) return record("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (fleesFromNew(persona) && digest.newCreatures > 0) {
+      const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
+      if (away !== undefined) return record(away, { ...blank, quirk: "craven" });
+    }
+    const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
+    const strength = jitteredStrength(persona, rng);
+    const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
+    const risk: Record<string, number> = { none_of_these: 0 };
+    for (const offer of digest.offers) risk[offer.goal] = offer.risk;
+    const floor = applySafetyFloor(blended, risk, riskCeiling(persona), persona.quirks.deathwish.on);
+    const pick = pickTop(floor.dist) ?? advice;
+    return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+  }
+
   return {
     ask(view) {
       const player = view.player();
@@ -422,6 +486,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         criteria,
       };
       const seen = inSight(view.monsters());
+      const awakeNow = new Set(s.awake.map((m) => m.id));
+      const newCreatures = [...awakeNow].filter((id) => !lastAwake.has(id)).length;
+      lastAwake = awakeNow;
       const unexplored = frontiers(view, terrain).length > 0;
       const stairs = knownDownStairs(view, terrain).length > 0;
 
@@ -437,7 +504,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
                 ? "No creatures in sight."
                 : seen
                     .map((m) => {
-                      const band = THREAT_BANDS[threatIndex(m, player.level)] ?? "deadly";
+                      const real = threatIndex(m, player.level);
+                      /* A persona's optimism or delusion changes what the character believes, not the safety floor. */
+                      const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
+                      const band = THREAT_BANDS[seenAs] ?? "deadly";
                       const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""]
                         .filter((t) => t !== "")
                         .join(", ");
@@ -448,10 +518,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
+            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }),
           },
-          questions: { goal },
+          questions:
+            persona === null
+              ? { goal }
+              : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } },
         },
-        context: { depth: player.depth, offers },
+        context: { depth: player.depth, offers, newCreatures },
       };
       return question;
     },
@@ -459,7 +533,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     choose(answers: Readonly<Record<string, Answer>>, digest: GoalDigest, view: AgentView): Choice {
       const answer = answers["goal"];
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
-      const pick = answer.choice;
+      const pick = decide(answer, answers["in_character"], digest);
       if (pick === "none_of_these") {
         log("goal: none fit, following the fixed errand order");
         return { plan: missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS) };
@@ -468,7 +542,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (offer === undefined) {
         return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
-      log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
+      const trace = digest.trace;
+      if (trace !== undefined && trace.pick !== trace.advice) {
+        log(`goal: ${pick}, against advice (${trace.advice})${trace.quirk === undefined ? "" : `: ${trace.quirk}`}`);
+      } else {
+        log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
+      }
       return { plan: build(offer.goal, view) };
     },
 
