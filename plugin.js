@@ -2859,6 +2859,7 @@ function createDecisionLog(store, runId) {
 
 // src/birth.ts
 var ROLL_ON_KEY = "squire/rollOnAt";
+var HEIR_KEY = "squire/heirAt";
 var ROLL_ON_WINDOW_MS = 12e4;
 function sessionMarks() {
   try {
@@ -2867,17 +2868,17 @@ function sessionMarks() {
     return null;
   }
 }
-function markRollOn(store, now) {
+function markRollOn(store, now, key2 = ROLL_ON_KEY) {
   try {
-    store?.setItem(ROLL_ON_KEY, String(now));
+    store?.setItem(key2, String(now));
   } catch {
   }
 }
-function takeRollOn(store, now) {
+function takeRollOn(store, now, key2 = ROLL_ON_KEY) {
   try {
-    const raw = store?.getItem(ROLL_ON_KEY) ?? null;
+    const raw = store?.getItem(key2) ?? null;
     if (raw === null) return false;
-    store?.removeItem(ROLL_ON_KEY);
+    store?.removeItem(key2);
     const at = Number(raw);
     return Number.isFinite(at) && now - at >= 0 && now - at <= ROLL_ON_WINDOW_MS;
   } catch {
@@ -2925,7 +2926,9 @@ function rollOnPresenter(host, store = sessionMarks(), now = Date.now, random = 
       if (!takeRollOn(store, now())) return void 0;
       const mode = readConfig(host.prefs?.get()).rollOn;
       if (mode === "wait") return void 0;
-      return rollOnBirth(session, mode, random, host.log) ? true : void 0;
+      if (!rollOnBirth(session, mode, random, host.log)) return void 0;
+      markRollOn(store, now(), HEIR_KEY);
+      return true;
     }
   };
 }
@@ -6003,7 +6006,7 @@ var plugin_default = {
     return rollOnPresenter(ctx);
   },
   controller(ctx) {
-    if (!characterAlreadyAutoplayed(ctx)) return void 0;
+    if (!characterAlreadyAutoplayed(ctx) && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return void 0;
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);
     ctx.log(

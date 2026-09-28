@@ -47,7 +47,7 @@ import type { AgentController } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
-import { rollOnPresenter, type BirthHost } from "./src/birth.js";
+import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
 
@@ -157,7 +157,9 @@ export default {
     /* Returning undefined is a decline, and the host leaves the human at the
      * keyboard. This is the normal case: the mod is installed and enabled, and
      * this character has never been handed to an autoplayer. */
-    if (!characterAlreadyAutoplayed(ctx)) return undefined;
+    /* A roll-on heir is not marked yet: the birth presenter left a one-time
+     * mark saying Squire asked for this character. */
+    if (!characterAlreadyAutoplayed(ctx) && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return undefined;
 
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);

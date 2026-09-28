@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { writeConfig, readConfig } from "./config.js";
-import { markRollOn, rollOnPresenter, ROLL_ON_WINDOW_MS, takeRollOn, type BirthSessionLike, type MarkStore } from "./birth.js";
+import { HEIR_KEY, markRollOn, rollOnPresenter, ROLL_ON_WINDOW_MS, takeRollOn, type BirthSessionLike, type MarkStore } from "./birth.js";
 
 function marks(): MarkStore {
   const data = new Map<string, string>();
@@ -62,6 +62,7 @@ describe("roll-on birth", () => {
     const { s, calls } = session(true);
     expect(rollOnPresenter(host("like").host, store, () => 5).show(s)).toBe(true);
     expect(calls).toEqual(["usePrevious", "name Amram", "accept"]);
+    expect(takeRollOn(store, 5, HEIR_KEY)).toBe(true);
   });
 
   it("rolls a name when the last character had none", () => {

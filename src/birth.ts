@@ -43,6 +43,13 @@ export interface MarkStore {
 }
 
 export const ROLL_ON_KEY = "squire/rollOnAt";
+/**
+ * Set when the presenter accepts a roll-on creation. The new character is not
+ * marked as autoplayed yet, so `controller()` would decline it; this mark tells
+ * it that this character is the heir Squire asked for. The host still decides
+ * whether the controller installs without asking.
+ */
+export const HEIR_KEY = "squire/heirAt";
 /** Long enough for the reload into creation, short enough that a later new character is the player's. */
 export const ROLL_ON_WINDOW_MS = 120_000;
 
@@ -56,20 +63,20 @@ export function sessionMarks(): MarkStore | null {
 }
 
 /** Note that Squire is about to ask for the next character. */
-export function markRollOn(store: MarkStore | null, now: number): void {
+export function markRollOn(store: MarkStore | null, now: number, key: string = ROLL_ON_KEY): void {
   try {
-    store?.setItem(ROLL_ON_KEY, String(now));
+    store?.setItem(key, String(now));
   } catch {
     /* Without the mark the game shows its own birth screens, which is safe. */
   }
 }
 
 /** Whether a roll-on mark is fresh, clearing it either way so it is used once. */
-export function takeRollOn(store: MarkStore | null, now: number): boolean {
+export function takeRollOn(store: MarkStore | null, now: number, key: string = ROLL_ON_KEY): boolean {
   try {
-    const raw = store?.getItem(ROLL_ON_KEY) ?? null;
+    const raw = store?.getItem(key) ?? null;
     if (raw === null) return false;
-    store?.removeItem(ROLL_ON_KEY);
+    store?.removeItem(key);
     const at = Number(raw);
     return Number.isFinite(at) && now - at >= 0 && now - at <= ROLL_ON_WINDOW_MS;
   } catch {
@@ -138,7 +145,9 @@ export function rollOnPresenter(
       if (!takeRollOn(store, now())) return undefined;
       const mode = readConfig(host.prefs?.get()).rollOn;
       if (mode === "wait") return undefined;
-      return rollOnBirth(session, mode, random, host.log) ? true : undefined;
+      if (!rollOnBirth(session, mode, random, host.log)) return undefined;
+      markRollOn(store, now(), HEIR_KEY);
+      return true;
     },
   };
 }
