@@ -117,7 +117,7 @@ function accessorsUsed(): Set<string> {
  * the request as undeclared.
  */
 function hostsUsed(): Set<string> {
-  const re = /url:\s*"https?:\/\/([^/":]+)/gu;
+  const re = /(?:url:\s*|ENDPOINT = )"https?:\/\/([^/":]+)/gu;
   const hosts = new Set<string>();
   for (const file of [...sourceFiles(srcRoot), join(repoRoot, "plugin.ts")]) {
     for (const m of readFileSync(file, "utf8").matchAll(re)) {
@@ -125,6 +125,23 @@ function hostsUsed(): Set<string> {
     }
   }
   return hosts;
+}
+
+/**
+ * The grants that are not state reads or hosts, each tied to the source that
+ * needs it: the panel, each event subscribed to, the roster call that starts
+ * an heir, and the player-typed server address on the local network.
+ */
+function otherGrantsUsed(): Set<string> {
+  const grants = new Set<string>();
+  for (const file of [...sourceFiles(srcRoot), join(repoRoot, "plugin.ts")]) {
+    const text = readFileSync(file, "utf8");
+    if (/\.registerPanelKind\b/u.test(text)) grants.add("ui:panel.mount");
+    for (const m of text.matchAll(/events\?\.on\("([a-z-]+)"/gu)) if (m[1] !== undefined) grants.add(`event:${m[1]}`);
+    if (/saves\?\.create\b/u.test(text)) grants.add("saves:manage");
+    if (/\bserverUrl\b/u.test(text)) grants.add("network:local");
+  }
+  return grants;
 }
 
 describe("manifest capabilities", () => {
@@ -156,7 +173,7 @@ describe("manifest capabilities", () => {
     expect(used).toContain("player");
     expect(used).toContain("monsters");
 
-    const wanted = new Set<string>([...ACTION_CAPABILITIES, ...hostsUsed()]);
+    const wanted = new Set<string>([...ACTION_CAPABILITIES, ...hostsUsed(), ...otherGrantsUsed()]);
     for (const accessor of used) {
       const domain = ACCESSOR_DOMAIN[accessor];
       if (domain !== undefined) wanted.add(`state:${domain}.read`);

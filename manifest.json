@@ -19,7 +19,14 @@
     "state:target.read",
     "state:inventory.read",
     "state:spells.read",
-    "network:api.typesafe.ai"
+    "network:api.typesafe.ai",
+    "state:turn.read",
+    "event:combat-outcome",
+    "event:player-command",
+    "ui:panel.mount",
+    "saves:manage",
+    "network:local",
+    "network:squire.rpgm.tools"
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",

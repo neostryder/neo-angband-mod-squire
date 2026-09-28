@@ -34,7 +34,7 @@ import type { Choice, Plan, Planner, Question } from "./brain.js";
 import { hungry, readPack, type Pack } from "./pack.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
-import { fleesFromNew, mustPickUp, shiftThreat } from "../persona/quirks.js";
+import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 
 /** Every option this planner can offer. */
@@ -147,8 +147,15 @@ export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
   readonly terrain: Terrain;
   readonly log: (message: string) => void;
-  /** The character's persona. Without one, Squire asks only for the best move. */
-  readonly persona?: Persona | null;
+  /**
+   * The character's persona, or a getter for it so drift during a run reaches
+   * the next decision. Without one, Squire asks only for the best move.
+   */
+  readonly persona?: Persona | null | (() => Persona | null);
+  /** Lesson lines relevant to this moment, from the character and its ancestors. */
+  readonly lessons?: (view: AgentView) => readonly string[];
+  /** Rescale the best-move answer from past outcomes. Never applied to the in-character answer. */
+  readonly calibrate?: (probs: Readonly<Record<string, number>>) => Record<string, number>;
   /** Random draws for persona volatility and quirks. */
   readonly rng?: () => number;
   /** Most tokens of persona backstory one decision may carry, from the backend's budget. */
@@ -267,7 +274,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain): Offer
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
   const { cfg, terrain, log } = options;
-  const persona = options.persona ?? null;
+  const personaOption = options.persona;
+  const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
@@ -436,13 +444,24 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
   }
 
+  function lessonsFor(view: AgentView): { lessons?: string } {
+    const persona = personaOf();
+    let lines = options.lessons?.(view) ?? [];
+    if (persona !== null) lines = forget(lines, persona, rng);
+    return lines.length === 0 ? {} : { lessons: lines.join(" ") };
+  }
+
   /**
    * Pick from the answers. With no persona this is the best-move answer. With
    * one, the best and in-character answers are blended by persona strength, the
    * safety floor removes options riskier than the persona accepts, and a few
    * quirks decide outright.
    */
-  function decide(best: Answer & { type: "choice" }, inCharacter: Answer | undefined, digest: GoalDigest): string {
+  function decide(raw: Answer & { type: "choice" }, inCharacter: Answer | undefined, digest: GoalDigest): string {
+    const persona = personaOf();
+    const probs = options.calibrate === undefined ? raw.probabilities : options.calibrate(raw.probabilities);
+    const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
+    const best = { ...raw, probabilities: probs, choice: top };
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal as string));
     const advice = best.choice;
@@ -468,6 +487,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   return {
     ask(view) {
+      const persona = personaOf();
       const player = view.player();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
@@ -518,6 +538,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
+            ...lessonsFor(view),
             ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }),
           },
           questions:

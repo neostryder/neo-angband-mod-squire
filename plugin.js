@@ -2,8 +2,8 @@
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
-function isStop(decision) {
-  return "stop" in decision;
+function isStop(decision2) {
+  return "stop" in decision2;
 }
 function stop(reason, detail) {
   return { stop: { reason, detail } };
@@ -145,9 +145,9 @@ function createWatcher(view, options) {
           detail: `The depth changed from ${String(startingDepth)} to ${String(p.depth)}.`
         };
       }
-      const current = afflictionsOf(p.status);
-      const landed = current.filter((name) => !afflictions.has(name));
-      afflictions = new Set(current);
+      const current2 = afflictionsOf(p.status);
+      const landed = current2.filter((name) => !afflictions.has(name));
+      afflictions = new Set(current2);
       if (landed.length > 0) {
         return {
           reason: "afflicted",
@@ -253,27 +253,27 @@ function cellAt(view, at) {
   return view.cell(at.x, at.y);
 }
 function isKnownGround(view, terrain, at) {
-  const cell = cellAt(view, at);
-  if (cell === null) return false;
-  if (!cell.known || !cell.passable) return false;
-  return !terrain.isHarmful(cell.feat);
+  const cell2 = cellAt(view, at);
+  if (cell2 === null) return false;
+  if (!cell2.known || !cell2.passable) return false;
+  return !terrain.isHarmful(cell2.feat);
 }
 function isClosedDoor(view, terrain, at) {
-  const cell = cellAt(view, at);
-  if (cell === null || !cell.known) return false;
-  return terrain.isClosedDoor(cell.feat);
+  const cell2 = cellAt(view, at);
+  if (cell2 === null || !cell2.known) return false;
+  return terrain.isClosedDoor(cell2.feat);
 }
 function isRoutable(view, terrain, at) {
   return isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at);
 }
 function isWalkable(view, terrain, at) {
   if (!isRoutable(view, terrain, at)) return false;
-  const cell = cellAt(view, at);
-  return cell !== null && cell.monster <= 0;
+  const cell2 = cellAt(view, at);
+  return cell2 !== null && cell2.monster <= 0;
 }
 function standingOnHarm(view, terrain, at) {
-  const cell = cellAt(view, at);
-  return cell !== null && terrain.isHarmful(cell.feat);
+  const cell2 = cellAt(view, at);
+  return cell2 !== null && terrain.isHarmful(cell2.feat);
 }
 function frontiers(view, terrain) {
   const bounds = view.mapBounds();
@@ -283,8 +283,8 @@ function frontiers(view, terrain) {
       const at = { x, y };
       if (!isKnownGround(view, terrain, at)) continue;
       for (const there of neighbours(at)) {
-        const cell = cellAt(view, there);
-        if (cell !== null && !cell.known) {
+        const cell2 = cellAt(view, there);
+        if (cell2 !== null && !cell2.known) {
           found.push(at);
           break;
         }
@@ -298,16 +298,16 @@ function knownDownStairs(view, terrain) {
   const found = [];
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
-      const cell = view.cell(x, y);
-      if (cell === null || !cell.known) continue;
-      if (terrain.isDownStair(cell.feat)) found.push({ x, y });
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known) continue;
+      if (terrain.isDownStair(cell2.feat)) found.push({ x, y });
     }
   }
   return found;
 }
 function hasFloorObject(view, at) {
-  const cell = cellAt(view, at);
-  return cell !== null && cell.objectCount > 0;
+  const cell2 = cellAt(view, at);
+  return cell2 !== null && cell2.objectCount > 0;
 }
 
 // src/travel.ts
@@ -360,8 +360,8 @@ function strike(ctx, target) {
 function stepIntoDark(ctx, from) {
   for (const direction of DIRECTIONS) {
     const there = { x: from.x + direction.dx, y: from.y + direction.dy };
-    const cell = cellAt(ctx.view, there);
-    if (cell === null || cell.known) continue;
+    const cell2 = cellAt(ctx.view, there);
+    if (cell2 === null || cell2.known) continue;
     return ctx.act.move(direction.key);
   }
   return null;
@@ -632,9 +632,9 @@ function createSquire(options) {
       });
     }
     const ctx = { view, act, terrain, cfg, progress, log };
-    const decision = mission.step(ctx);
-    if (isStop(decision)) return finish(decision.stop);
-    return decision.command;
+    const decision2 = mission.step(ctx);
+    if (isStop(decision2)) return finish(decision2.stop);
+    return decision2.command;
   };
   return {
     controller,
@@ -688,7 +688,7 @@ function parseOne(name, question, raw) {
     }
   }
 }
-function parseReply(request, requestBody, replyBody) {
+function parseReply(request2, requestBody, replyBody) {
   let raw;
   try {
     raw = JSON.parse(replyBody);
@@ -700,7 +700,7 @@ function parseReply(request, requestBody, replyBody) {
   }
   const answersRaw = raw["answers"];
   const answers = {};
-  for (const [name, question] of Object.entries(request.questions)) {
+  for (const [name, question] of Object.entries(request2.questions)) {
     const parsed = parseOne(name, question, answersRaw[name]);
     if (typeof parsed === "string") return { ok: false, problem: parsed };
     answers[name] = parsed;
@@ -725,6 +725,17 @@ var JEV = Object.freeze({
   timeoutMs: 15e3
 });
 var JEV_KEY_VARIABLES = Object.freeze(["TYPESAFE_API_KEY", "JEV_API_KEY"]);
+function selfHosted(kind, label, url, model) {
+  return Object.freeze({
+    kind,
+    label,
+    url,
+    ...model === void 0 ? {} : { model },
+    metered: false,
+    usdPerMillionInput: 0,
+    timeoutMs: 3e4
+  });
+}
 function retryAfter(headers) {
   const value = headers["retry-after"];
   if (value === void 0) return void 0;
@@ -761,12 +772,12 @@ function statusFailure(backend, status, headers) {
     retryable: false
   };
 }
-async function ask(net, backend, request, now) {
+async function ask(net, backend, request2, now) {
   const started = now();
-  const body = JSON.stringify(backend.model === void 0 ? request : { model: backend.model, ...request });
+  const body2 = JSON.stringify(backend.model === void 0 ? request2 : { model: backend.model, ...request2 });
   const headers = { "Content-Type": "application/json" };
   if (backend.secret !== void 0) headers["Authorization"] = `Bearer {secret:${backend.secret}}`;
-  const reply = await net.request({ url: backend.url, method: "POST", headers, body, timeoutMs: backend.timeoutMs });
+  const reply = await net.request({ url: backend.url, method: "POST", headers, body: body2, timeoutMs: backend.timeoutMs });
   const latencyMs = now() - started;
   if (!reply.ok) {
     if (reply.code === "not-declared") {
@@ -800,7 +811,7 @@ async function ask(net, backend, request, now) {
   if (reply.status !== 200) {
     return { ok: false, latencyMs, failure: statusFailure(backend, reply.status, reply.headers) };
   }
-  const parsed = parseReply(request, body, reply.body);
+  const parsed = parseReply(request2, body2, reply.body);
   if (!parsed.ok) {
     return {
       ok: false,
@@ -829,25 +840,6 @@ async function keyReady(secrets, backend, canReadEnv, log) {
   if (read.ok) return true;
   log(`${read.problem} Squire runs its errands without a model.`);
   return false;
-}
-function bootController(ready, withModel, withoutModel) {
-  let chosen = null;
-  let picked = null;
-  ready.then(
-    (ok) => {
-      picked = ok;
-    },
-    () => {
-      picked = false;
-    }
-  );
-  return (view, act) => {
-    if (chosen === null) {
-      if (picked === null) return null;
-      chosen = picked ? withModel() : withoutModel();
-    }
-    return chosen(view, act);
-  };
 }
 
 // src/brain/brain.ts
@@ -1046,8 +1038,8 @@ function readPack(view) {
     const name = shownName(item);
     if (name === null) continue;
     const entry = (power) => ({ handle: item.handle, name, power });
-    const h = rank(name, HEAL_POTIONS);
-    if (h !== null) heal.push(entry(h));
+    const h2 = rank(name, HEAL_POTIONS);
+    if (h2 !== null) heal.push(entry(h2));
     else if (/\bScrolls? of Phase Door\b/i.test(name)) phase.push(entry(1));
     else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
       teleport.push(entry(/Level/i.test(name) ? 1 : 2));
@@ -1117,8 +1109,8 @@ function blend(best, inCharacter, strength01) {
 }
 function jitteredStrength(persona, rng) {
   const draw = rng();
-  const unit = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
-  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit * 2 - 1) * persona.sliders.volatility / 400));
+  const unit3 = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
+  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit3 * 2 - 1) * persona.sliders.volatility / 400));
 }
 function riskCeiling(persona) {
   return 0.6 - persona.sliders.selfpreservation * 5e-3;
@@ -1162,6 +1154,10 @@ function shiftThreat(bandIndex, bands, persona, rng) {
   if (delusion.on && rng() < delusion.strength / 200) shifted += rng() < 0.5 ? -1 : 1;
   return Math.max(0, Math.min(bands - 1, shifted));
 }
+function forget(lessons, persona, rng) {
+  const quirk = persona.quirks.forgetful;
+  return quirk.on ? lessons.filter(() => rng() >= quirk.strength / 200) : [...lessons];
+}
 function mustPickUp(persona) {
   return persona.quirks.compulsive.on;
 }
@@ -1170,6 +1166,18 @@ function fleesFromNew(persona) {
 }
 
 // src/persona/catalog.ts
+var GROUPS = [
+  "temperament",
+  "values",
+  "affinities",
+  "habits",
+  "tactics",
+  "economy",
+  "quirks",
+  "lineage",
+  "patron",
+  "meta"
+];
 var PARAMETERS = [
   { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off." },
   { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
@@ -1389,7 +1397,8 @@ function offersFor(s, cfg, terrain) {
 }
 function createGoalPlanner(options) {
   const { cfg, terrain, log } = options;
-  const persona = options.persona ?? null;
+  const personaOption = options.persona;
+  const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
@@ -1427,13 +1436,13 @@ function createGoalPlanner(options) {
             return null;
           }
         }
-        const decision = mission.step(ctx);
-        if (isStop(decision)) {
+        const decision2 = mission.step(ctx);
+        if (isStop(decision2)) {
           done = true;
-          log(`${label}: ${decision.stop.detail}`);
+          log(`${label}: ${decision2.stop.detail}`);
           return null;
         }
-        return decision.command;
+        return decision2.command;
       }
     };
   }
@@ -1537,19 +1546,29 @@ function createGoalPlanner(options) {
         });
     }
   }
-  function decide(best, inCharacter, digest) {
+  function lessonsFor(view) {
+    const persona = personaOf();
+    let lines2 = options.lessons?.(view) ?? [];
+    if (persona !== null) lines2 = forget(lines2, persona, rng);
+    return lines2.length === 0 ? {} : { lessons: lines2.join(" ") };
+  }
+  function decide(raw, inCharacter, digest) {
+    const persona = personaOf();
+    const probs = options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities);
+    const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
+    const best = { ...raw, probabilities: probs, choice: top };
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal));
     const advice = best.choice;
-    const record = (pick3, extra) => {
+    const record2 = (pick3, extra) => {
       digest.trace = { advice, pick: pick3, ...extra };
       return pick3;
     };
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
-    if (mustPickUp(persona) && offered.has("pick_up")) return record("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (mustPickUp(persona) && offered.has("pick_up")) return record2("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
-      if (away !== void 0) return record(away, { ...blank, quirk: "craven" });
+      if (away !== void 0) return record2(away, { ...blank, quirk: "craven" });
     }
     const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
     const strength = jitteredStrength(persona, rng);
@@ -1558,10 +1577,11 @@ function createGoalPlanner(options) {
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
     const floor = applySafetyFloor(blended, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
-    return record(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+    return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
   return {
     ask(view) {
+      const persona = personaOf();
       const player = view.player();
       if (player.dead) return { handBack: "The character has died." };
       const s = situationOf(view);
@@ -1601,6 +1621,7 @@ function createGoalPlanner(options) {
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
+            ...lessonsFor(view),
             ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens) } }
           },
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
@@ -1700,6 +1721,1741 @@ function createTally(caps, earlierToday) {
   };
 }
 
+// src/telemetry/sender.ts
+var DEFAULT_ENDPOINT = "https://squire.rpgm.tools";
+var QUEUE = "squire/telemetry/queue/";
+var BACKOFF = [1e3, 4e3, 15e3, 6e4];
+function object(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function body(text) {
+  try {
+    return object(JSON.parse(text));
+  } catch {
+    return null;
+  }
+}
+function header(headers, name) {
+  return Object.entries(headers).find(([key2]) => key2.toLowerCase() === name)?.[1];
+}
+function retryAfter2(headers, now) {
+  const value = header(headers, "retry-after");
+  if (value === void 0) return void 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1e3;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - now) : void 0;
+}
+function createSender(options) {
+  const { net, store, endpoint, now, log } = options;
+  const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  let draining = null;
+  let lastStamp = 0;
+  let stampOrder = 0;
+  async function request2(method, path, payload) {
+    return net.request({
+      url: `${endpoint.replace(/\/$/, "")}${path}`,
+      method,
+      headers: { "Content-Type": "application/json" },
+      ...payload === void 0 ? {} : { body: payload },
+      timeoutMs: 15e3
+    });
+  }
+  async function post(batch) {
+    for (let attempt = 0; attempt <= BACKOFF.length; attempt++) {
+      try {
+        const reply = await request2("POST", "/v1/batches", JSON.stringify(batch));
+        if (reply.ok) {
+          const parsed = body(reply.body);
+          if ((reply.status === 202 || reply.status === 200) && parsed?.["ok"] === true) {
+            const chronicle = object(parsed["chronicle"]);
+            return {
+              ok: true,
+              ...reply.status === 200 && parsed["duplicate"] === true ? { duplicate: true } : {},
+              ...chronicle === null ? {} : { chronicle }
+            };
+          }
+          if (reply.status === 400 || reply.status === 413) {
+            const field = typeof parsed?.["field"] === "string" ? parsed["field"] : "batch";
+            const reason = typeof parsed?.["error"] === "string" ? parsed["error"] : `HTTP ${String(reply.status)}`;
+            log(`Telemetry batch was refused at ${field}: ${reason} Check the telemetry data before sending again.`);
+            return { ok: false, queued: false, reason, field };
+          }
+          if (reply.status !== 429 && reply.status < 500) {
+            return { ok: false, queued: true, reason: `Telemetry returned HTTP ${String(reply.status)}. Check the endpoint and try again.` };
+          }
+          if (attempt < BACKOFF.length) {
+            await sleep(reply.status === 429 ? retryAfter2(reply.headers, now()) ?? BACKOFF[attempt] : BACKOFF[attempt]);
+            continue;
+          }
+        } else if (attempt < BACKOFF.length) {
+          await sleep(BACKOFF[attempt]);
+          continue;
+        }
+      } catch {
+        if (attempt < BACKOFF.length) {
+          try {
+            await sleep(BACKOFF[attempt]);
+          } catch {
+            break;
+          }
+          continue;
+        }
+      }
+      break;
+    }
+    return { ok: false, queued: true, reason: "Telemetry could not be sent. It remains queued for another try." };
+  }
+  async function drainOnce() {
+    const results = /* @__PURE__ */ new Map();
+    if (!endpoint) return results;
+    try {
+      for (const key2 of (await store.keys(QUEUE)).sort()) {
+        const batch = await store.get(key2);
+        if (object(batch) === null) {
+          await store.delete(key2);
+          continue;
+        }
+        const result = await post(batch);
+        results.set(key2, result);
+        if (result.ok || !result.queued) await store.delete(key2);
+        else break;
+      }
+    } catch {
+      log("Telemetry queue could not be read. Try sending again later.");
+    }
+    return results;
+  }
+  function drain() {
+    if (draining !== null) return draining;
+    draining = drainOnce().finally(() => {
+      draining = null;
+    });
+    return draining;
+  }
+  return {
+    async send(batch) {
+      if (!endpoint) return { ok: false, queued: false, reason: "Telemetry is disabled. Set an endpoint to send batches." };
+      try {
+        const stamp = Math.max(now(), lastStamp);
+        stampOrder = stamp === lastStamp ? stampOrder + 1 : 0;
+        lastStamp = stamp;
+        const key2 = `${QUEUE}${String(stamp).padStart(16, "0")}-${String(stampOrder).padStart(8, "0")}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+        await store.set(key2, batch);
+        let results = await drain();
+        if (!results.has(key2) && ![...results.values()].some((result) => !result.ok && result.queued)) {
+          results = await drain();
+        }
+        return results.get(key2) ?? { ok: false, queued: true, reason: "Telemetry is queued behind an earlier batch. Try again later." };
+      } catch {
+        return { ok: false, queued: false, reason: "Telemetry could not be saved. Check local storage and try again." };
+      }
+    },
+    async drain() {
+      await drain();
+    },
+    async status(installId2) {
+      if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to check status." };
+      try {
+        const reply = await request2("GET", `/v1/installs/${encodeURIComponent(installId2)}`);
+        if (!reply.ok) return { ok: false, reason: reply.problem };
+        const parsed = body(reply.body);
+        return reply.status === 200 && parsed?.["ok"] === true ? { ok: true, data: parsed } : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {} };
+      } catch {
+        return { ok: false, reason: "Telemetry status could not be loaded. Try again later." };
+      }
+    },
+    async deleteInstall(installId2) {
+      if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to delete an install." };
+      try {
+        const reply = await request2("DELETE", `/v1/installs/${encodeURIComponent(installId2)}`);
+        if (!reply.ok) return { ok: false, reason: reply.problem };
+        const parsed = body(reply.body);
+        return reply.status === 200 && parsed?.["ok"] === true ? { ok: true, data: parsed } : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {} };
+      } catch {
+        return { ok: false, reason: "Telemetry could not be deleted. Try again later." };
+      }
+    }
+  };
+}
+
+// src/persona/persona.ts
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function bounded(value, fallback, high = 100) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(high, Math.round(value))) : fallback;
+}
+function defaultPersona(name = "Squire") {
+  const sliders = {};
+  const lists = {};
+  const quirks = {};
+  const toggles = {};
+  for (const parameter of PARAMETERS) {
+    switch (parameter.kind) {
+      case "slider":
+        sliders[parameter.id] = "default" in parameter ? parameter.default : 50;
+        break;
+      case "list":
+        lists[parameter.id] = [];
+        break;
+      case "quirk":
+        quirks[parameter.id] = { on: false, strength: 50 };
+        break;
+      case "toggle":
+        toggles[parameter.id] = parameter.default;
+        break;
+      case "number":
+        break;
+    }
+  }
+  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
+}
+function normalize(input) {
+  try {
+    const raw = record(input);
+    const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
+    const sliders = record(raw["sliders"]);
+    const lists = record(raw["lists"]);
+    const quirks = record(raw["quirks"]);
+    const toggles = record(raw["toggles"]);
+    for (const parameter of PARAMETERS) {
+      switch (parameter.kind) {
+        case "slider":
+          result.sliders[parameter.id] = bounded(sliders[parameter.id], result.sliders[parameter.id]);
+          break;
+        case "list": {
+          const value = lists[parameter.id];
+          result.lists[parameter.id] = Array.isArray(value) ? value.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
+          break;
+        }
+        case "quirk": {
+          const value = record(quirks[parameter.id]);
+          result.quirks[parameter.id] = {
+            on: typeof value["on"] === "boolean" ? value["on"] : false,
+            strength: bounded(value["strength"], 50)
+          };
+          break;
+        }
+        case "toggle": {
+          const value = toggles[parameter.id];
+          result.toggles[parameter.id] = typeof value === "boolean" ? value : result.toggles[parameter.id];
+          break;
+        }
+        case "number":
+          break;
+      }
+    }
+    result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
+    result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
+    return result;
+  } catch {
+    return defaultPersona();
+  }
+}
+function unit(rng) {
+  const value = rng();
+  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0;
+}
+function randomPersona(rng, name = "Squire") {
+  const result = defaultPersona(name);
+  for (const parameter of PARAMETERS) {
+    if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
+  }
+  const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
+  const count = 1 + Math.floor(unit(rng) * 2);
+  for (let i = 0; i < count; i += 1) {
+    const index = Math.floor(unit(rng) * pool.length);
+    const id = pool.splice(index, 1)[0];
+    if (id !== void 0) result.quirks[id].on = true;
+  }
+  return result;
+}
+var ARCHETYPES = {
+  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
+  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
+  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
+  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
+  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
+};
+function archetype(id) {
+  const override = ARCHETYPES[id];
+  return normalize({
+    ...defaultPersona(),
+    name: id[0].toUpperCase() + id.slice(1),
+    sliders: { ...defaultPersona().sliders, ...override.sliders },
+    lists: { ...defaultPersona().lists, ...override.lists },
+    quirks: { ...defaultPersona().quirks, ...override.quirks }
+  });
+}
+
+// src/config.ts
+var CONFIG_FORMAT = "neo-angband/squire/prefs";
+var CONFIG_SCHEMA = 1;
+var LAYA_DEFAULT_URL = "http://localhost:8010/v1/systemone";
+function defaultConfig() {
+  return {
+    backend: "jev",
+    serverUrl: LAYA_DEFAULT_URL,
+    serverModel: "",
+    contextTokens: 4096,
+    caps: { perSessionUsd: 0, perDayUsd: 0 },
+    telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
+    personas: [defaultPersona("Squire")],
+    activePersona: 0,
+    rollOn: "wait",
+    knightsLessons: { enabled: true, ghost: false },
+    setupDone: false,
+    spend: { day: "", usd: 0 },
+    lineages: {},
+    pendingHeir: null
+  };
+}
+function lineagesOf(value) {
+  const out = {};
+  const r = rec(value);
+  if (r === null) return out;
+  for (const [name, raw] of Object.entries(r).slice(0, 30)) {
+    const l = rec(raw);
+    if (l === null || typeof l["name"] !== "string" || typeof l["generation"] !== "number") continue;
+    out[name] = {
+      name: l["name"],
+      generation: l["generation"],
+      ancestors: Array.isArray(l["ancestors"]) ? l["ancestors"].slice(-50) : [],
+      lore: Array.isArray(l["lore"]) ? l["lore"].slice(-60) : [],
+      grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : []
+    };
+  }
+  return out;
+}
+function rec(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function pickOf(value, allowed, fallback) {
+  return typeof value === "string" && allowed.includes(value) ? value : fallback;
+}
+function numberIn(value, min, max, fallback) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+function str(value, fallback, max = 500) {
+  return typeof value === "string" ? value.slice(0, max) : fallback;
+}
+function bool(value, fallback) {
+  return typeof value === "boolean" ? value : fallback;
+}
+function readConfig(stored) {
+  const base = defaultConfig();
+  const envelope = rec(stored);
+  if (envelope === null || envelope["format"] !== CONFIG_FORMAT) return base;
+  const data = rec(envelope["data"]);
+  if (data === null) return base;
+  const caps = rec(data["caps"]) ?? {};
+  const telemetry = rec(data["telemetry"]) ?? {};
+  const knights = rec(data["knightsLessons"]) ?? {};
+  const spend = rec(data["spend"]) ?? {};
+  const personas = Array.isArray(data["personas"]) ? data["personas"].slice(0, 50).map((p) => normalize(p)) : base.personas;
+  return {
+    backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
+    serverUrl: str(data["serverUrl"], base.serverUrl),
+    serverModel: str(data["serverModel"], base.serverModel, 100),
+    contextTokens: numberIn(data["contextTokens"], 512, 2e5, base.contextTokens),
+    caps: {
+      perSessionUsd: numberIn(caps["perSessionUsd"], 0, 1e3, 0),
+      perDayUsd: numberIn(caps["perDayUsd"], 0, 1e3, 0)
+    },
+    telemetry: {
+      level: pickOf(telemetry["level"], ["off", "summary", "decisions", "full"], "off"),
+      backstoryConsent: bool(telemetry["backstoryConsent"], false),
+      endpoint: str(telemetry["endpoint"], base.telemetry.endpoint),
+      asked: bool(telemetry["asked"], false)
+    },
+    personas: personas.length > 0 ? personas : base.personas,
+    activePersona: Math.round(numberIn(data["activePersona"], -1, Math.max(0, personas.length - 1), 0)),
+    rollOn: pickOf(data["rollOn"], ["wait", "random", "like"], "wait"),
+    knightsLessons: { enabled: bool(knights["enabled"], true), ghost: bool(knights["ghost"], false) },
+    setupDone: bool(data["setupDone"], false),
+    spend: { day: str(spend["day"], "", 10), usd: numberIn(spend["usd"], 0, 1e6, 0) },
+    lineages: lineagesOf(data["lineages"]),
+    pendingHeir: (() => {
+      const heir = rec(data["pendingHeir"]);
+      return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]) } : null;
+    })()
+  };
+}
+function writeConfig(config) {
+  return { format: CONFIG_FORMAT, schemaVersion: CONFIG_SCHEMA, data: config };
+}
+function backendFor(config) {
+  switch (config.backend) {
+    case "jev":
+      return JEV;
+    case "laya":
+      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel);
+    case "custom":
+      return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel);
+    case "none":
+      return null;
+  }
+}
+function backstoryBudget(config) {
+  if (config.backend === "jev") return 2e3;
+  return Math.max(0, Math.floor(config.contextTokens * 0.15));
+}
+function activePersona(config) {
+  return config.activePersona < 0 ? null : config.personas[config.activePersona] ?? null;
+}
+
+// src/memory/kv.ts
+function memoryStore() {
+  const values = /* @__PURE__ */ new Map();
+  return {
+    async get(key2) {
+      return values.get(key2);
+    },
+    async set(key2, value) {
+      values.set(key2, value);
+    },
+    async delete(key2) {
+      values.delete(key2);
+    },
+    async keys(prefix2) {
+      return [...values.keys()].filter((key2) => key2.startsWith(prefix2)).sort();
+    }
+  };
+}
+function request(operation) {
+  return new Promise((resolve, reject) => {
+    operation.onsuccess = () => resolve(operation.result);
+    operation.onerror = () => reject(operation.error);
+  });
+}
+function completed(transaction) {
+  return new Promise((resolve, reject) => {
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+    transaction.onabort = () => reject(transaction.error);
+  });
+}
+function indexedDbStore(dbName) {
+  const fallback = memoryStore();
+  let disabled = false;
+  let opening;
+  function database() {
+    if (opening !== void 0) return opening;
+    const factory = globalThis.indexedDB;
+    if (factory === void 0) return Promise.reject(new Error("IndexedDB is unavailable"));
+    opening = new Promise((resolve, reject) => {
+      const open = factory.open(dbName, 1);
+      open.onupgradeneeded = () => {
+        if (!open.result.objectStoreNames.contains("values")) open.result.createObjectStore("values");
+      };
+      open.onsuccess = () => resolve(open.result);
+      open.onerror = () => reject(open.error);
+    });
+    return opening;
+  }
+  async function run(operation, otherwise) {
+    if (disabled) return otherwise();
+    try {
+      return await operation(await database());
+    } catch {
+      disabled = true;
+      return otherwise();
+    }
+  }
+  return {
+    async get(key2) {
+      return run(async (db) => {
+        const value = await request(db.transaction("values", "readonly").objectStore("values").get(key2));
+        if (value !== void 0) await fallback.set(key2, value);
+        return value;
+      }, () => fallback.get(key2));
+    },
+    async set(key2, value) {
+      await fallback.set(key2, value);
+      await run(async (db) => {
+        const transaction = db.transaction("values", "readwrite");
+        const done = completed(transaction);
+        transaction.objectStore("values").put(value, key2);
+        await done;
+      }, async () => {
+      });
+    },
+    async delete(key2) {
+      await fallback.delete(key2);
+      await run(async (db) => {
+        const transaction = db.transaction("values", "readwrite");
+        const done = completed(transaction);
+        transaction.objectStore("values").delete(key2);
+        await done;
+      }, async () => {
+      });
+    },
+    async keys(prefix2) {
+      return run(async (db) => {
+        const keys = await request(db.transaction("values", "readonly").objectStore("values").getAllKeys());
+        return keys.filter((key2) => typeof key2 === "string" && key2.startsWith(prefix2)).sort();
+      }, () => fallback.keys(prefix2));
+    }
+  };
+}
+
+// src/memory/log.ts
+var CHUNK = 200;
+var LIMIT = 2e4;
+var PREFIX = "squire/log/";
+function prefix(runId) {
+  return `${PREFIX}${runId}/`;
+}
+function chunkKey(runId, index) {
+  return `${prefix(runId)}${String(index).padStart(8, "0")}`;
+}
+function createDecisionLog(store, runId) {
+  let entries = [];
+  let nextSeq = 0;
+  const dirty = /* @__PURE__ */ new Set();
+  const removed = /* @__PURE__ */ new Set();
+  return {
+    append(input) {
+      const seq = nextSeq++;
+      const id = `${runId}/${String(seq)}`;
+      entries.push({ ...input, id, runId, seq, outcome: input.outcome ?? null });
+      dirty.add(Math.floor(seq / CHUNK));
+      while (entries.length > LIMIT) {
+        const index = Math.floor(entries[0].seq / CHUNK);
+        entries = entries.filter((entry) => Math.floor(entry.seq / CHUNK) !== index);
+        removed.add(index);
+        dirty.delete(index);
+      }
+      return id;
+    },
+    attachOutcome(id, outcome) {
+      const index = entries.findIndex((entry) => entry.id === id);
+      if (index < 0) return;
+      const old = entries[index];
+      entries[index] = { ...old, outcome };
+      dirty.add(Math.floor(old.seq / CHUNK));
+    },
+    records() {
+      return entries.slice();
+    },
+    async flush() {
+      for (const index of [...removed].sort((a, b) => a - b)) {
+        await store.delete(chunkKey(runId, index));
+        removed.delete(index);
+      }
+      for (const index of [...dirty].sort((a, b) => a - b)) {
+        const chunk = entries.filter((entry) => Math.floor(entry.seq / CHUNK) === index);
+        if (chunk.length) await store.set(chunkKey(runId, index), chunk);
+        dirty.delete(index);
+      }
+    },
+    exportJsonl() {
+      return entries.map((entry) => JSON.stringify(entry)).join("\n") + (entries.length ? "\n" : "");
+    },
+    async load() {
+      const keys = await store.keys(prefix(runId));
+      const loaded = [];
+      for (const key2 of keys.sort()) {
+        const chunk = await store.get(key2);
+        if (Array.isArray(chunk)) loaded.push(...chunk);
+      }
+      entries = loaded.sort((a, b) => a.seq - b.seq).slice(-LIMIT);
+      nextSeq = (entries.at(-1)?.seq ?? -1) + 1;
+      dirty.clear();
+      removed.clear();
+      for (const key2 of keys) {
+        const index = Number(key2.slice(prefix(runId).length));
+        if (Number.isInteger(index) && !entries.some((entry) => Math.floor(entry.seq / CHUNK) === index)) removed.add(index);
+      }
+    }
+  };
+}
+
+// src/memory/install.ts
+var KEY = "squire/install-id";
+var UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+async function installId(store, rng = Math.random) {
+  const saved = await store.get(KEY);
+  if (typeof saved === "string" && UUID_V4.test(saved)) return saved;
+  const random = globalThis.crypto?.randomUUID?.();
+  let id = random !== void 0 && UUID_V4.test(random) ? random : "";
+  if (!id) {
+    const bytes2 = Array.from({ length: 16 }, () => Math.floor(rng() * 256) & 255);
+    bytes2[6] = bytes2[6] & 15 | 64;
+    bytes2[8] = bytes2[8] & 63 | 128;
+    const hex = bytes2.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    id = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  await store.set(KEY, id);
+  return id;
+}
+
+// src/telemetry/batch.ts
+var REFUSED = /backstory|persona|quirk|biography|lore/i;
+var LIMITS = { summary: 32 * 1024, decisions: 1024 * 1024, full: 1536 * 1024 };
+var MAX_RECORDS = 5e3;
+function strip(value) {
+  if (Array.isArray(value)) return value.map(strip);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).filter(([key2]) => !REFUSED.test(key2)).map(([key2, item]) => [key2, strip(item)]));
+  }
+  return value;
+}
+function bytes(batch) {
+  return Buffer.byteLength(JSON.stringify(batch), "utf8");
+}
+function decision(record2) {
+  return strip({
+    t: record2.turn,
+    kind: record2.plan.trim().split(/\s+/)[0] || "unknown",
+    question: record2.question,
+    choice: record2.choice,
+    confidence: record2.confidence,
+    probs: record2.probs,
+    outcome: record2.outcome
+  });
+}
+function buildBatches(input, level) {
+  if (level === "off") return [];
+  const summary = { ...input.summary, calibration: strip(input.summary.calibration) };
+  if (JSON.stringify(summary.calibration).length > 16 * 1024) throw new RangeError("Calibration exceeds the contract limit.");
+  const base = {
+    schema: 1,
+    level,
+    install_id: input.installId,
+    run_id: input.runId,
+    sent_at: input.sentAt ?? (/* @__PURE__ */ new Date()).toISOString(),
+    mod_version: input.modVersion,
+    game_version: input.gameVersion
+  };
+  const running = { ...summary, outcome: { ...summary.outcome, ended: false } };
+  const batches = [];
+  const make = (records, seq) => ({
+    ...base,
+    seq,
+    summary: running,
+    ...level === "summary" ? {} : { decisions: records }
+  });
+  let current2 = make([], input.seq);
+  let currentBytes = bytes(current2);
+  if (currentBytes > LIMITS[level]) throw new RangeError("The summary exceeds the batch byte limit.");
+  if (level !== "summary") {
+    for (const record2 of input.decisions) {
+      const mapped = decision(record2);
+      const count = current2.decisions?.length ?? 0;
+      const addedBytes = Buffer.byteLength(JSON.stringify(mapped), "utf8") + (count ? 1 : 0);
+      if (count >= MAX_RECORDS || currentBytes + addedBytes > LIMITS[level]) {
+        batches.push(current2);
+        current2 = make([mapped], input.seq + batches.length);
+        currentBytes = bytes(current2);
+        if (currentBytes > LIMITS[level]) throw new RangeError("A decision exceeds the batch byte limit.");
+      } else {
+        current2 = make([...current2.decisions ?? [], mapped], current2.seq);
+        currentBytes += addedBytes;
+      }
+    }
+  }
+  batches.push(current2);
+  if (level === "full" && (input.extra !== void 0 || input.backstoryConsent && input.backstory)) {
+    const extras = {
+      ...input.extra === void 0 ? {} : { extra: strip(input.extra) },
+      ...input.backstoryConsent && input.backstory ? { backstory_consent: true, backstory: input.backstory } : {}
+    };
+    const withExtras = { ...current2, ...extras };
+    if (bytes(withExtras) <= LIMITS.full) batches[batches.length - 1] = withExtras;
+    else {
+      const separate = { ...make([], input.seq + batches.length), ...extras };
+      if (bytes(separate) > LIMITS.full) throw new RangeError("The full run log exceeds the batch byte limit.");
+      batches.push(separate);
+    }
+  }
+  if (summary.outcome.ended) {
+    const last = batches.length - 1;
+    batches[last] = { ...batches[last], summary };
+    if (bytes(batches[last]) > LIMITS[level]) {
+      const final = { ...make([], input.seq + batches.length), summary };
+      if (bytes(final) > LIMITS[level]) throw new RangeError("The final summary exceeds the batch byte limit.");
+      batches[last] = { ...batches[last], summary: running };
+      batches.push(final);
+    }
+  }
+  return batches;
+}
+
+// src/persona/drift.ts
+function applyDrift(persona, event, _rng) {
+  const next = normalize(persona);
+  const changes = [];
+  const step = Math.round(next.sliders.drift / 20);
+  function move(id, amount) {
+    const from = next.sliders[id];
+    const to = Math.max(0, Math.min(100, from + amount));
+    if (to !== from) {
+      next.sliders[id] = to;
+      changes.push({ id, from, to });
+    }
+  }
+  switch (event) {
+    case "near-death":
+      move("boldness", -step);
+      move("paranoia", step);
+      break;
+    case "unique-kill":
+      move("pride", step);
+      move("boldness", step);
+      break;
+    case "level-up":
+      move("composure", step);
+      break;
+    case "patron-blessing":
+      move("devotion", Math.round(step * next.sliders.gratitude / 50));
+      break;
+    case "patron-trial":
+      move("devotion", -Math.round(step * next.sliders.resentment / 50));
+      break;
+    case "fled":
+      move("pride", -step);
+      break;
+  }
+  return { persona: next, changes };
+}
+
+// src/learning/calibration.ts
+var EPS = 1e-6;
+function clamp(p) {
+  return Math.max(EPS, Math.min(1 - EPS, Number.isFinite(p) ? p : 0.5));
+}
+function logit(p) {
+  const value = clamp(p);
+  return Math.log(value / (1 - value));
+}
+function sigmoid(value) {
+  return value >= 0 ? 1 / (1 + Math.exp(-value)) : Math.exp(value) / (1 + Math.exp(value));
+}
+function fitPlatt(samples) {
+  if (samples.length < 20) return { a: 1, b: 0 };
+  let a = 1;
+  let b = 0;
+  for (let step = 0; step < 400; step += 1) {
+    let da = 0;
+    let db = 0;
+    for (const sample of samples) {
+      const x = logit(sample.p);
+      const error = sigmoid(a * x + b) - sample.y;
+      da += error * x;
+      db += error;
+    }
+    a -= 0.05 * (da / samples.length + 0.01 * (a - 1));
+    b -= 0.05 * (db / samples.length + 0.01 * b);
+  }
+  return { a, b };
+}
+function applyTemperature(probs, t) {
+  const keys = Object.keys(probs);
+  if (keys.length === 0) return {};
+  const temperature = Number.isFinite(t) && t > 0 ? t : 1;
+  const scaled = keys.map((key2) => Math.pow(Math.max(0, probs[key2] ?? 0), 1 / temperature));
+  const total = scaled.reduce((sum, value) => sum + value, 0);
+  return Object.fromEntries(keys.map((key2, index) => [key2, total > 0 ? scaled[index] / total : 1 / keys.length]));
+}
+function fitTemperature(samples) {
+  if (samples.length < 20) return 1;
+  let best = 1;
+  let bestLoss = Infinity;
+  for (let index = 0; index <= 100; index += 1) {
+    const temperature = 0.5 + index * 0.025;
+    let loss = 0;
+    for (const sample of samples) {
+      const p = clamp(applyTemperature(sample.probs, temperature)[sample.chosen] ?? 0);
+      loss -= Math.log(sample.good ? p : 1 - p);
+    }
+    if (loss < bestLoss - 1e-10 || Math.abs(loss - bestLoss) <= 1e-10 && Math.abs(temperature - 1) < Math.abs(best - 1)) {
+      bestLoss = loss;
+      best = temperature;
+    }
+  }
+  return best;
+}
+function bestMoveKey(backend, question) {
+  return `${backend}:${question}`;
+}
+function update(book, key2, sample) {
+  const old = book[key2];
+  if ("p" in sample) {
+    const previous2 = old?.kind === "noul" ? old.samples : [];
+    return { ...book, [key2]: { kind: "noul", samples: [...previous2, sample].slice(-2e3), fit: old?.kind === "noul" ? old.fit : { a: 1, b: 0 } } };
+  }
+  const previous = old?.kind === "choice" ? old.samples : [];
+  return { ...book, [key2]: { kind: "choice", samples: [...previous, sample].slice(-2e3), temperature: old?.kind === "choice" ? old.temperature : 1 } };
+}
+function refit(book) {
+  return Object.fromEntries(Object.entries(book).map(([key2, entry]) => [key2, entry.kind === "noul" ? { ...entry, fit: fitPlatt(entry.samples) } : { ...entry, temperature: fitTemperature(entry.samples) }]));
+}
+
+// src/learning/signature.ts
+var FAMILIES = [
+  [/\bzephyr hound|\bhounds?\b/i, "hound"],
+  [/\bdragons?|\bdrakes?\b/i, "dragon"],
+  [/\bghosts?|\bwraiths?|\bspectres?|\bspirits?\b/i, "ghost"],
+  [/\bzombies?|\bskeletons?|\bundead|\bliches?\b/i, "undead"],
+  [/\b(?:jell(?:y|ies)|molds?)\b/i, "jelly"],
+  [/\b(?:jackals?|dogs?|wolves?|canines?)\b/i, "dog"],
+  [/\bspiders?\b/i, "spider"],
+  [/\bsnakes?\b/i, "snake"],
+  [/\brats?\b/i, "rat"],
+  [/\bworms?\b/i, "worm"],
+  [/\bbats?\b/i, "bat"],
+  [/\bbirds?\b/i, "bird"],
+  [/\binsects?\b/i, "insect"],
+  [/\beyes?\b/i, "eye"],
+  [/\b(?:orcs?|kobolds?|spiders?|snakes?|rats?|worms?|giants?|trolls?|ogres?|bats?|birds?|insects?|humans?|men|elf|elves|dwarf|dwarves|hobbits?|yeeks?|golems?|demons?|vortices|vortexes|vortex|eyes?)\b/i, ""]
+];
+var WORD_FAMILIES = {
+  orc: "orc",
+  kobold: "kobold",
+  spider: "spider",
+  snake: "snake",
+  rat: "rat",
+  worm: "worm",
+  giant: "giant",
+  troll: "troll",
+  ogre: "ogre",
+  bat: "bat",
+  bird: "bird",
+  insect: "insect",
+  human: "human",
+  man: "human",
+  men: "human",
+  elf: "elf",
+  elves: "elf",
+  dwarf: "dwarf",
+  dwarves: "dwarf",
+  hobbit: "hobbit",
+  yeek: "yeek",
+  golem: "golem",
+  demon: "demon",
+  vortex: "vortex",
+  vortices: "vortex",
+  vortexes: "vortex",
+  eye: "eye",
+  eyes: "eye"
+};
+function familyOf(race) {
+  for (const [pattern, family] of FAMILIES) {
+    const match = pattern.exec(race);
+    if (match !== null) {
+      if (family) return family;
+      const word = match[0].toLowerCase();
+      return WORD_FAMILIES[word] ?? WORD_FAMILIES[word.replace(/s$/, "")] ?? "other";
+    }
+  }
+  return "other";
+}
+function signatureOf(input) {
+  const share = input.maxHp > 0 ? input.hp / input.maxHp : 1;
+  const hpBand = share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3;
+  return {
+    depthBand: Math.floor(Math.max(0, input.depth) / 5),
+    classId: input.classId,
+    levelBand: Math.floor(Math.max(0, input.level) / 5),
+    families: [...new Set(input.races.map(familyOf))].sort(),
+    hpBand,
+    resources: [...new Set(input.resources)].sort()
+  };
+}
+function overlap(a, b) {
+  const left = new Set(a);
+  const right = new Set(b);
+  const union = /* @__PURE__ */ new Set([...left, ...right]);
+  if (union.size === 0) return 1;
+  let shared = 0;
+  for (const item of left) if (right.has(item)) shared += 1;
+  return shared / union.size;
+}
+function similarity(a, b) {
+  const depth = 1 / (1 + Math.abs(a.depthBand - b.depthBand));
+  const level = 1 / (1 + Math.abs(a.levelBand - b.levelBand));
+  return 0.4 * overlap(a.families, b.families) + 0.3 * depth + 0.1 * (a.classId === b.classId ? 1 : 0) + 0.1 * level + 0.05 * (1 - Math.abs(a.hpBand - b.hpBand) / 3) + 0.05 * overlap(a.resources, b.resources);
+}
+
+// src/learning/lessons.ts
+function sentence(event, decision2, vars) {
+  const foe = vars.race ?? "a creature";
+  const action = vars.action ?? decision2.replace(/_/g, " ");
+  const place = vars.depth === void 0 ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
+  switch (event) {
+    case "died":
+      return `Died ${place} to ${foe} after choosing to ${action}.`;
+    case "near-death":
+      return `Nearly died ${place} to ${foe} after choosing to ${action}.`;
+    case "escaped":
+      return `Escaped ${foe} by choosing to ${action}.`;
+    case "unique-kill":
+      return `Defeated ${foe} by choosing to ${action}.`;
+    case "loss":
+      return `Lost ground to ${foe} after choosing to ${action}.`;
+  }
+}
+function lessonFrom(event, signature, decision2, turn, templateVars = {}) {
+  return {
+    id: `${String(turn)}:${event}:${decision2}:${templateVars.race ?? ""}`,
+    signature,
+    decision: decision2,
+    outcome: event,
+    line: sentence(event, decision2, templateVars),
+    weight: 1,
+    created: turn,
+    lastUsed: turn,
+    pinned: false
+  };
+}
+function retrieve(lessons, signature, limit) {
+  return lessons.map((lesson, index) => ({ lesson, index, score: similarity(lesson.signature, signature) * lesson.weight })).sort((a, b) => Number(b.lesson.pinned) - Number(a.lesson.pinned) || b.score - a.score || a.index - b.index).slice(0, Math.max(0, Math.floor(limit))).map(({ lesson }) => lesson);
+}
+function rate(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+function fade(lessons, turnNow, learningRate01) {
+  const decay = rate(learningRate01);
+  return lessons.map((lesson) => {
+    if (lesson.pinned) return lesson;
+    const intervals = Math.max(0, (turnNow - lesson.lastUsed) / 1e3);
+    return { ...lesson, weight: lesson.weight * Math.pow(1 - decay, intervals) };
+  }).filter((lesson) => lesson.pinned || lesson.weight >= 0.1);
+}
+function blameQuestion(records) {
+  const criteria = {};
+  for (const record2 of records) criteria[record2.id] = `${record2.plan}: ${record2.summary}`;
+  criteria["none_of_these"] = "No listed decision contributed most to the death.";
+  return { type: "choice", instructions: "Which earlier decision contributed most to this death? Choose one listed decision or none_of_these.", criteria };
+}
+function applyBlame(answer, records) {
+  return records.some((record2) => record2.id === answer.choice) ? answer.choice : null;
+}
+
+// src/learning/lineage.ts
+function unit2(rng) {
+  const value = rng();
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+function fraction(value) {
+  return Math.max(0, Math.min(1, value / 100));
+}
+function killerRace(cause) {
+  return cause.replace(/^killed by\s+/i, "").replace(/^(?:an?|the)\s+/i, "").trim();
+}
+function inherit(parentLineage, parentPersona, heirPersona, rng) {
+  const resemblance = fraction(parentPersona.sliders.resemblance);
+  const sliders = { ...heirPersona.sliders };
+  for (const parameter of PARAMETERS) {
+    if (parameter.kind === "slider" && parameter.group !== "meta" && parameter.group !== "lineage") {
+      const id = parameter.id;
+      sliders[id] = Math.round(sliders[id] + (parentPersona.sliders[id] - sliders[id]) * resemblance);
+    }
+  }
+  const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key2, values]) => [key2, [...values]]));
+  const grudges = [...parentLineage.grudges];
+  const death = parentLineage.died ?? null;
+  if (parentPersona.toggles.grudges && death !== null) {
+    const race = killerRace(death.cause);
+    const family = familyOf(race);
+    if (family !== "other") {
+      grudges.push({ race, family, generation: parentLineage.generation });
+      const target = sliders.boldness >= 50 ? lists.hated : lists.feared;
+      if (!target.includes(family) && target.length < 12) target.push(family);
+    }
+  }
+  const count = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
+  const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit2(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
+  const parent = {
+    name: parentLineage.name,
+    race: parentLineage.race ?? "unknown",
+    cls: parentLineage.cls ?? "unknown",
+    generation: parentLineage.generation,
+    died: death
+  };
+  return {
+    lineage: {
+      name: heirPersona.name,
+      generation: parentLineage.generation + 1,
+      ancestors: [...parentLineage.ancestors, parent],
+      lore,
+      grudges
+    },
+    persona: { ...heirPersona, sliders, lists }
+  };
+}
+
+// src/report/chronicle.ts
+function notorietyQuestion(_event) {
+  return {
+    type: "score",
+    instructions: "Rate how much this single run event deserves a place in the character's Chronicle. Judge its impact, danger and rarity from the facts in the state. Do not invent events.",
+    criteria: ["routine", "worth a mention", "notable", "memorable", "legendary"]
+  };
+}
+function notorietyState(event, personaName, depth, level) {
+  return {
+    persona: personaName,
+    kind: event.kind,
+    fact: event.text,
+    turn: event.turn,
+    eventDepth: event.depth,
+    depth,
+    level,
+    ...event.race === void 0 ? {} : { race: event.race },
+    ...event.value === void 0 ? {} : { value: event.value }
+  };
+}
+function isNotable(answer, chronicleSlider) {
+  const voice = Number.isFinite(chronicleSlider) ? Math.max(0, Math.min(100, chronicleSlider)) : 0;
+  return Number.isFinite(answer.score) && answer.score >= 3 - Math.floor(voice / 50);
+}
+var TEMPLATES = {
+  "kill": [(f, d) => `Killed ${f} at ${d} ft.`, (f, d) => `At ${d} ft, ${f} fell.`, (f, d) => `${f} died at ${d} ft.`],
+  "unique-kill": [(f, d) => `Cut down ${f} at ${d} ft.`, (f, d) => `At ${d} ft, I killed ${f}.`, (f, d) => `${f} fell to me at ${d} ft.`],
+  "near-death": [(f, d) => `Nearly died at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}. I lived.`, (f, d) => `I survived ${f} at ${d} ft.`],
+  "escape": [(f, d) => `Escaped at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I got away: ${f}.`, (f, d) => `I left danger behind at ${d} ft: ${f}.`],
+  "level-up": [(f, d) => `Grew stronger at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} at ${d} ft.`],
+  "descend": [(f, d) => `Descended to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `Went deeper, to ${d} ft: ${f}.`],
+  "item-found": [(f, d) => `Found ${f} at ${d} ft.`, (f, d) => `At ${d} ft, I found ${f}.`, (f, d) => `${f} turned up at ${d} ft.`],
+  "death": [(f, d) => `Died at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}. That was the end.`, (f, d) => `My run ended at ${d} ft: ${f}.`],
+  "divergence": [(f, d) => `Chose my own way at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I went against advice: ${f}.`, (f, d) => `${f} at ${d} ft. I made the call.`],
+  "lesson": [(f, d) => `Learned at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I learned: ${f}.`, (f, d) => `${f} That lesson came at ${d} ft.`],
+  "lineage": [(f, d) => `Carried the family story to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} The line reached ${d} ft.`]
+};
+function chronicleLine(event, persona, rng) {
+  const templates = TEMPLATES[event.kind];
+  const draw = rng();
+  const index = Number.isFinite(draw) ? Math.max(0, Math.min(2, Math.floor(draw * 3))) : 0;
+  const fact = event.text.trim().replace(/[.!?]+$/, "");
+  const line = templates[index](fact, event.depth * 50);
+  if (persona.sliders.chronicle < 50) return line;
+  if (persona.sliders.boldness >= 65) return `${line} I earned that story.`;
+  if (persona.sliders.boldness <= 35) return `${line} I am glad I got this far.`;
+  return `${line} I will remember it.`;
+}
+
+// src/report/events.ts
+var KINDS = /* @__PURE__ */ new Set([
+  "kill",
+  "unique-kill",
+  "near-death",
+  "escape",
+  "level-up",
+  "descend",
+  "item-found",
+  "death",
+  "divergence",
+  "lesson",
+  "lineage"
+]);
+function eventFrom(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const raw = value;
+  if (!KINDS.has(raw["kind"]) || typeof raw["text"] !== "string" || typeof raw["turn"] !== "number" || !Number.isFinite(raw["turn"]) || typeof raw["depth"] !== "number" || !Number.isFinite(raw["depth"])) return null;
+  return {
+    kind: raw["kind"],
+    turn: raw["turn"],
+    depth: raw["depth"],
+    text: raw["text"],
+    ...typeof raw["race"] === "string" ? { race: raw["race"] } : {},
+    ...typeof raw["value"] === "number" && Number.isFinite(raw["value"]) ? { value: raw["value"] } : {}
+  };
+}
+function createRunLog() {
+  const entries = [];
+  return {
+    record(event) {
+      entries.push(event);
+    },
+    events: () => entries.slice(),
+    topKills(n) {
+      const counts = /* @__PURE__ */ new Map();
+      for (const event of entries) {
+        if ((event.kind === "kill" || event.kind === "unique-kill") && event.race) {
+          counts.set(event.race, (counts.get(event.race) ?? 0) + 1);
+        }
+      }
+      return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name)).slice(0, Math.max(0, Math.floor(n)));
+    },
+    depthCurve() {
+      const curve = [];
+      for (const event of entries) {
+        if (curve.at(-1)?.depth !== event.depth) curve.push({ turn: event.turn, depth: event.depth });
+      }
+      return curve;
+    },
+    hpLowPoints() {
+      const lows = [];
+      let lowest = Infinity;
+      for (const event of entries) {
+        if (event.kind === "near-death" && event.value !== void 0 && event.value < lowest) {
+          lowest = event.value;
+          lows.push({ turn: event.turn, depth: event.depth, hp: event.value });
+        }
+      }
+      return lows;
+    },
+    closeCalls: () => entries.filter((event) => event.kind === "near-death"),
+    runClock() {
+      if (entries.length === 0) return { startTurn: 0, endTurn: 0, turns: 0 };
+      let startTurn = entries[0].turn;
+      let endTurn = startTurn;
+      for (const event of entries) {
+        startTurn = Math.min(startTurn, event.turn);
+        endTurn = Math.max(endTurn, event.turn);
+      }
+      return { startTurn, endTurn, turns: endTurn - startTurn + 1 };
+    },
+    toJson: () => JSON.stringify({ format: "neo-angband/squire/run-log", schemaVersion: 1, events: entries })
+  };
+}
+function fromJson(json) {
+  const log = createRunLog();
+  try {
+    const raw = JSON.parse(json);
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return log;
+    const data = raw;
+    if (data["format"] !== "neo-angband/squire/run-log" || data["schemaVersion"] !== 1 || !Array.isArray(data["events"])) return log;
+    for (const item of data["events"]) {
+      const event = eventFrom(item);
+      if (event !== null) log.record(event);
+    }
+  } catch {
+  }
+  return log;
+}
+
+// src/journal.ts
+var LESSONS_PER_DECISION = 3;
+var MAX_LESSONS = 80;
+var MAX_CHRONICLE = 100;
+var BLAME_WINDOW = 8;
+var REFIT_EVERY = 50;
+function emptyJournal() {
+  return { runLog: "", chronicle: [], lessons: [], calibration: {} };
+}
+function signatureFor(view) {
+  const p = view.player();
+  const pack = readPack(view);
+  const resources = [];
+  if (pack.heal.length > 0 || pack.healSpell.length > 0) resources.push("heal");
+  if (pack.phase.length > 0 || pack.escapeSpell.length > 0) resources.push("phase");
+  if (pack.teleport.length > 0) resources.push("teleport");
+  return signatureOf({
+    depth: p.depth,
+    classId: p.cls,
+    level: p.level,
+    races: view.monsters().filter((m) => m.visible).map((m) => m.race),
+    hp: p.hp,
+    maxHp: p.maxHp,
+    resources
+  });
+}
+function createJournal(initial, deps) {
+  const rng = deps.rng ?? Math.random;
+  const runLog = initial.runLog === "" ? createRunLog() : fromJson(initial.runLog);
+  let chronicle = initial.chronicle.slice(-MAX_CHRONICLE);
+  let lessons = initial.lessons.slice(-MAX_LESSONS);
+  let calibration = initial.calibration;
+  let samplesSinceFit = 0;
+  let last = null;
+  let pending = null;
+  let lastDecision = null;
+  function persist() {
+    deps.save({ runLog: runLog.toJson(), chronicle, lessons, calibration });
+  }
+  function drift(event) {
+    const persona = deps.persona();
+    if (persona === null) return;
+    const result = applyDrift(persona, event, rng);
+    if (result.changes.length > 0) deps.setPersona(result.persona);
+  }
+  function learn(outcome, view, race) {
+    const decision2 = lastDecision?.choice ?? "unknown";
+    const lesson = lessonFrom(outcome, signatureFor(view), decision2, view.turn(), {
+      ...race === void 0 ? {} : { race },
+      depth: view.player().depth
+    });
+    lessons = [...lessons.filter((l) => l.id !== lesson.id), lesson].slice(-MAX_LESSONS);
+  }
+  function record2(event, notableByDefault) {
+    runLog.record(event);
+    const persona = deps.persona();
+    const voice = persona?.sliders.chronicle ?? 50;
+    const write = () => {
+      if (persona === null) return;
+      const line = chronicleLine(event, persona, rng);
+      chronicle = [...chronicle, line].slice(-MAX_CHRONICLE);
+      deps.onChronicle?.(line);
+      persist();
+    };
+    if (deps.send === null || persona === null) {
+      if (notableByDefault) write();
+      persist();
+      return;
+    }
+    void deps.send({ state: notorietyState(event, persona.name, event.depth, 0), questions: { notoriety: notorietyQuestion(event) } }).then((result) => {
+      const answer = result.ok ? result.answers["notoriety"] : void 0;
+      if (answer?.type === "score" ? isNotable(answer, voice) : notableByDefault) write();
+      else persist();
+    });
+  }
+  function worstRace(view) {
+    const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+    return awake.sort((a, b) => b.level - a.level)[0]?.race;
+  }
+  return {
+    observe(view) {
+      const p = view.player();
+      const now = {
+        depth: p.depth,
+        maxDepth: p.maxDepth,
+        level: p.level,
+        hpShare: p.maxHp > 0 ? p.hp / p.maxHp : 1,
+        dead: p.dead
+      };
+      const turn = view.turn();
+      if (last !== null) {
+        if (now.depth > last.depth) {
+          const record_ = now.maxDepth > last.maxDepth;
+          record2(
+            { kind: "descend", turn, depth: now.depth, text: record_ ? `a new record of ${String(now.depth * 50)} ft` : `down to ${String(now.depth * 50)} ft` },
+            record_ && now.maxDepth % 5 === 0
+          );
+        }
+        if (now.level > last.level) {
+          record2({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
+          drift("level-up");
+        }
+        if (now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead) {
+          const race = worstRace(view);
+          record2(
+            { kind: "near-death", turn, depth: now.depth, text: race === void 0 ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...race === void 0 ? {} : { race } },
+            true
+          );
+          learn("near-death", view, race);
+          drift("near-death");
+          if (pending !== null) pending.bad = true;
+        }
+      }
+      last = now;
+    },
+    kill(race, unique, view) {
+      const depth = view?.player().depth ?? 0;
+      const turn = view?.turn() ?? 0;
+      record2({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
+      if (unique && view !== null) {
+        learn("unique-kill", view, race);
+        drift("unique-kill");
+      }
+    },
+    decided(record_, view) {
+      if (pending !== null) {
+        calibration = update(calibration, bestMoveKey(deps.backend, "goal"), { probs: pending.probs, chosen: pending.chosen, good: !pending.bad });
+        samplesSinceFit += 1;
+        if (samplesSinceFit >= REFIT_EVERY) {
+          calibration = refit(calibration);
+          samplesSinceFit = 0;
+        }
+      }
+      pending = record_.probs === null ? null : { probs: record_.probs, chosen: record_.choice, bad: false };
+      lastDecision = record_;
+      if (record_.persona !== void 0 && record_.persona.best !== record_.persona.blended) {
+        runLog.record({ kind: "divergence", turn: record_.turn, depth: view.player().depth, text: `${record_.persona.blended} instead of ${record_.persona.best}` });
+      }
+      if (["phase", "teleport", "retreat"].includes(record_.choice)) drift("fled");
+    },
+    lessonLines(view) {
+      const persona = deps.persona();
+      const learningRate = (persona?.sliders.learning ?? 50) / 100;
+      lessons = fade(lessons, view.turn(), learningRate);
+      return retrieve(lessons, signatureFor(view), LESSONS_PER_DECISION).map((l) => l.line);
+    },
+    calibrate(probs) {
+      const entry = calibration[bestMoveKey(deps.backend, "goal")];
+      return entry?.kind === "choice" && entry.temperature !== 1 ? applyTemperature(probs, entry.temperature) : { ...probs };
+    },
+    runLog: () => runLog,
+    chronicle: () => chronicle,
+    lessons: () => lessons,
+    async died(records, cause, view) {
+      const turn = view?.turn() ?? 0;
+      const depth = view?.player().depth ?? 0;
+      if (pending !== null) pending.bad = true;
+      record2({ kind: "death", turn, depth, text: cause }, true);
+      const recent = records.slice(-BLAME_WINDOW);
+      let blamed = null;
+      if (deps.send !== null && recent.length > 0) {
+        const blameRecords = recent.map((r) => ({ id: r.id, plan: r.plan, summary: String(r.state["health"] ?? "") }));
+        const result = await deps.send({
+          state: { death: cause, depth: `${String(depth * 50)} ft` },
+          questions: { blame: blameQuestion(blameRecords) }
+        });
+        const answer = result.ok ? result.answers["blame"] : void 0;
+        if (answer?.type === "choice") blamed = applyBlame(answer, blameRecords);
+      }
+      if (view !== null) {
+        const blamedRecord = recent.find((r) => r.id === blamed) ?? recent[recent.length - 1];
+        if (blamedRecord !== void 0) lastDecision = blamedRecord;
+        learn("died", view, cause.replace(/^killed by\s+/i, ""));
+      }
+      persist();
+      return blamed;
+    },
+    state: () => ({ runLog: runLog.toJson(), chronicle, lessons, calibration })
+  };
+}
+function heirFrom(lineage, parent, heir, rng) {
+  if (lineage === void 0) return null;
+  return inherit(lineage, parent, heir, rng);
+}
+function withAncestor(lineage, name, race, cls, died, lessons) {
+  const base = lineage ?? { name, generation: 1, ancestors: [], lore: [], grudges: [] };
+  return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60) };
+}
+
+// src/report/summary.ts
+function countUse(decisions, key2) {
+  const counts = /* @__PURE__ */ new Map();
+  for (const decision2 of decisions) {
+    const value = decision2.state[key2];
+    if (typeof value === "string" && value.trim()) counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+  return [...counts].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+function buildRunSummary(input) {
+  const { report, decisions, persona, runLog, tally } = input;
+  const divergences = decisions.filter((decision2) => decision2.persona !== void 0 && decision2.persona.best !== decision2.persona.blended).length;
+  const beforeDeath = report.outcome === "death" ? decisions.filter((decision2) => decision2.turn <= report.turn).sort((a, b) => a.turn - b.turn || a.seq - b.seq) : [];
+  const last = beforeDeath.slice(-5);
+  const blamed = input.blamedDecisionId === void 0 ? void 0 : beforeDeath.find((decision2) => decision2.id === input.blamedDecisionId);
+  const deathDecisions = blamed === void 0 || last.some((decision2) => decision2.id === blamed.id) ? last : [blamed, ...last];
+  const events = runLog.events();
+  const highlightEvent = events.find((event) => event.kind === "unique-kill") ?? events.find((event) => event.kind === "near-death") ?? events.find((event) => event.kind === "escape") ?? events.find((event) => event.kind === "item-found") ?? events[0];
+  return {
+    headline: {
+      name: report.name,
+      race: report.race,
+      class: report.cls,
+      level: report.level,
+      deepestFeet: report.maxDepth * 50,
+      turns: report.turn,
+      outcome: report.outcome,
+      cause: report.cause
+    },
+    personaRadar: PARAMETERS.filter((parameter) => parameter.kind === "slider" && (parameter.group === "temperament" || parameter.group === "values")).map((parameter) => ({
+      id: parameter.id,
+      name: parameter.name,
+      value: Math.max(0, Math.min(100, persona.sliders[parameter.id]))
+    })),
+    topKills: runLog.topKills(10),
+    uniquesKilled: report.history.filter((event) => event.kind === "unique").map((event) => event.text),
+    depthCurve: runLog.depthCurve(),
+    closeCalls: runLog.closeCalls(),
+    deathDecisions,
+    divergence: { count: divergences, rate: decisions.length === 0 ? 0 : divergences / decisions.length },
+    spellsByUse: countUse(decisions, "spell"),
+    weaponsByUse: countUse(decisions, "weapon"),
+    tokens: tally.session(),
+    tokensByBackend: tally.byBackend(),
+    calibration: input.calibration,
+    lessonsLearned: input.lessonsLearned.slice(),
+    lessonsInherited: input.lessonsInherited.slice(),
+    lineageNames: input.lineageNames.slice(),
+    chronicleHighlights: input.chronicleHighlights?.slice() ?? (highlightEvent === void 0 ? [] : [chronicleLine(highlightEvent, persona, () => 0)])
+  };
+}
+function telemetryCalibration(value) {
+  const result = {};
+  for (const [backend, metrics] of Object.entries(value)) {
+    if (/trait|backstory|persona|biography|lore|quirk/i.test(backend) || metrics === null || typeof metrics !== "object" || Array.isArray(metrics)) continue;
+    const numbers = {};
+    for (const [name, item] of Object.entries(metrics)) {
+      if (!/trait|backstory|persona|biography|lore|quirk/i.test(name) && typeof item === "number" && Number.isFinite(item)) numbers[name] = item;
+    }
+    result[backend] = numbers;
+  }
+  return result;
+}
+function summaryForTelemetry(model) {
+  return {
+    persona: { name: model.headline.name, race: model.headline.race, class: model.headline.class },
+    outcome: {
+      ended: true,
+      won: model.headline.outcome === "victory",
+      depth_max: model.headline.deepestFeet / 50,
+      turns: model.headline.turns,
+      cause_of_death: model.headline.outcome === "death" ? model.headline.cause : null
+    },
+    top_kills: model.topKills.slice(0, 10),
+    tokens: { input: model.tokens.inputTokens, output: model.tokens.outputTokens, calls: model.tokens.requests },
+    calibration: telemetryCalibration(model.calibration)
+  };
+}
+
+// src/runtime.ts
+var CHARACTER_FORMAT = "neo-angband/squire/character";
+var MOD_VERSION = "1.0.0-dev";
+function runIdFor(key2, now) {
+  const base = (key2 ?? "char").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "char";
+  return `${base}-${now.toString(36)}`;
+}
+function readCharacter(stored) {
+  const env = stored !== null && typeof stored === "object" ? stored : null;
+  if (env === null || env["format"] !== CHARACTER_FORMAT) return null;
+  const data = env["data"];
+  if (data === void 0 || typeof data["runId"] !== "string") return null;
+  const kills = {};
+  const raw = data["kills"];
+  if (raw !== null && typeof raw === "object") {
+    for (const [race, n] of Object.entries(raw)) if (typeof n === "number") kills[race] = n;
+  }
+  const j = data["journal"] ?? {};
+  const journal = {
+    runLog: typeof j["runLog"] === "string" ? j["runLog"] : "",
+    chronicle: Array.isArray(j["chronicle"]) ? j["chronicle"].filter((l) => typeof l === "string") : [],
+    lessons: Array.isArray(j["lessons"]) ? j["lessons"] : [],
+    calibration: j["calibration"] !== null && typeof j["calibration"] === "object" ? j["calibration"] : {}
+  };
+  return {
+    persona: data["persona"] == null ? null : normalize(data["persona"]),
+    runId: data["runId"],
+    kills,
+    journal,
+    lineage: typeof data["lineage"] === "string" ? data["lineage"] : null
+  };
+}
+var current = null;
+function runtime(host) {
+  current ??= createRuntime(host);
+  return current;
+}
+function createRuntime(host, options = {}) {
+  const now = options.now ?? (() => Date.now());
+  const store = options.store ?? indexedDbStore("neo-angband-squire");
+  let config = readConfig(host.prefs?.get());
+  let character = readCharacter(host.characterStore?.get()) ?? {
+    persona: null,
+    runId: runIdFor(host.character?.key?.(), now()),
+    kills: {},
+    journal: emptyJournal(),
+    lineage: null
+  };
+  const tally = createTally(config.caps, config.spend);
+  const log = createDecisionLog(store, character.runId);
+  const listeners = /* @__PURE__ */ new Set();
+  let brain = null;
+  let lastTurn = 0;
+  let lastView = null;
+  let unsavedSpend = 0;
+  let summary = null;
+  const chronicleListeners = /* @__PURE__ */ new Set();
+  const journal = createJournal(character.journal, {
+    persona: () => character.persona,
+    setPersona: (persona) => self.saveCharacter({ ...character, persona }),
+    send: backendFor(config) === null || host.net === void 0 ? null : (request2) => self.send(request2),
+    backend: backendFor(config)?.label ?? "none",
+    save: (state) => self.saveCharacter({ ...character, journal: state }),
+    onChronicle: (line) => {
+      for (const l of chronicleListeners) l(line);
+    }
+  });
+  const self = {
+    config: () => config,
+    saveConfig(next) {
+      config = next;
+      host.prefs?.set(writeConfig(next));
+    },
+    character: () => character,
+    saveCharacter(next) {
+      character = next;
+      host.characterStore?.set({ format: CHARACTER_FORMAT, schemaVersion: 1, data: next });
+    },
+    backend: () => backendFor(config),
+    async setJevKey(value) {
+      const net = host.net;
+      if (net === void 0) return "This version of the game cannot store keys for mods.";
+      const trimmed = value.trim();
+      if (trimmed === "") {
+        await net.secrets.delete("jev");
+        return "The Jev key is removed.";
+      }
+      const result = await net.secrets.set("jev", trimmed, { hosts: [new URL(JEV.url).host] });
+      if (!result.ok) return result.problem ?? "The key could not be stored.";
+      return net.secrets.storage === "page" ? "The key is saved in this browser's storage, where other mods in the page could read it. The desktop app keeps it encrypted instead." : "The key is saved, encrypted by your operating system.";
+    },
+    async jevKeyFromEnv() {
+      const net = host.net;
+      if (net === void 0) return "This version of the game cannot read keys for mods.";
+      if (net.transport !== "relay") return "Reading a key from the environment works only in the desktop app.";
+      const read = await net.secrets.fromEnv("jev", JEV_KEY_VARIABLES, { hosts: [new URL(JEV.url).host] });
+      return read.ok ? "Squire will use the key from your environment." : read.problem;
+    },
+    async hasJevKey() {
+      const net = host.net;
+      if (net === void 0) return false;
+      return (await net.secrets.has("jev")).present;
+    },
+    async testConnection() {
+      const backend = backendFor(config);
+      if (backend === null) return { ok: false, message: "No model server is chosen. Squire will run its errands." };
+      const net = host.net;
+      if (net === void 0) return { ok: false, message: "This version of the game cannot send requests for mods. Update the game to use a model." };
+      if (backend.secret !== void 0 && !(await net.secrets.has(backend.secret)).present) {
+        return { ok: false, message: `No API key is set for ${backend.label}. Paste one above, or read it from the environment.` };
+      }
+      const request2 = {
+        state: { check: "Squire is testing its connection." },
+        questions: { ready: { type: "noul", instructions: "Is this a connection test?", criteria: { true: "It is a test.", false: "It is not." } } }
+      };
+      const result = await ask(net, backend, request2, now);
+      if (!result.ok) return { ok: false, message: result.failure.message, latencyMs: result.latencyMs };
+      tally.record(backend, result.usage, now());
+      return {
+        ok: true,
+        message: `Connected to ${backend.label}${result.model === null ? "" : ` (${result.model})`} in ${String(result.latencyMs)} ms.`,
+        latencyMs: result.latencyMs,
+        model: result.model
+      };
+    },
+    send(request2) {
+      const backend = backendFor(config);
+      const net = host.net;
+      if (backend === null || net === void 0) {
+        return Promise.resolve({
+          ok: false,
+          latencyMs: 0,
+          failure: { kind: "not-allowed", message: "No model server is set up.", retryable: false }
+        });
+      }
+      return ask(net, backend, request2, now);
+    },
+    tally: () => tally,
+    onDecision(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    controllerFor(cfg, terrain, errands) {
+      const backend = backendFor(config);
+      const net = host.net;
+      if (backend === null || net === void 0 || !cfg.useModel) {
+        if (cfg.useModel && net === void 0) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
+        return errands();
+      }
+      const ready = keyReady(net.secrets, backend, false, host.log);
+      let chosen = null;
+      let picked = null;
+      ready.then(
+        (ok) => picked = ok,
+        () => picked = false
+      );
+      return (view, act) => {
+        if (chosen === null) {
+          if (picked === null) return null;
+          chosen = picked ? startBrain(backend, cfg, terrain) ?? errands() : errands();
+        }
+        lastTurn = view.turn();
+        lastView = view;
+        journal.observe(view);
+        return chosen(view, act);
+      };
+    },
+    brain: () => brain,
+    recordKill(race, unique, view) {
+      const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
+      self.saveCharacter({ ...character, kills });
+      journal.kill(race, unique, view);
+    },
+    observe(view) {
+      lastView = view;
+      journal.observe(view);
+    },
+    journal: () => journal,
+    async lastSummary() {
+      if (summary !== null) return summary;
+      const stored = await store.get(`squire/reports/${character.runId}`);
+      return stored === void 0 ? null : stored;
+    },
+    onChronicle(listener) {
+      chronicleListeners.add(listener);
+      return () => chronicleListeners.delete(listener);
+    },
+    store: () => store,
+    exportDecisions: () => log.exportJsonl(),
+    net: () => host.net ?? null
+  };
+  function personaFor() {
+    if (character.persona !== null) return character.persona;
+    const heir = config.pendingHeir;
+    if (heir !== null) {
+      const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize(activePersona(config) ?? defaultPersona()), Math.random);
+      self.saveConfig({ ...config, pendingHeir: null, ...born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } } });
+      if (born !== null) {
+        self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
+        host.log(`Squire's new character carries on the ${heir.lineage} line`);
+        return born.persona;
+      }
+    }
+    const chosen = activePersona(config);
+    if (chosen === null) return null;
+    const adopted = normalize(chosen);
+    self.saveCharacter({ ...character, persona: adopted });
+    return adopted;
+  }
+  function startBrain(backend, cfg, terrain) {
+    const mark = host.controller?.markNondeterministic;
+    if (mark === void 0) {
+      host.log("This version of the game cannot mark the save for a model, so Squire runs its errands");
+      return null;
+    }
+    mark.call(host.controller);
+    const persona = personaFor();
+    brain = createBrain({
+      backend,
+      planner: createGoalPlanner({
+        cfg,
+        terrain,
+        log: host.log,
+        persona: () => persona === null ? null : character.persona,
+        backstoryTokens: backstoryBudget(config),
+        lessons: (view) => journal.lessonLines(view),
+        calibrate: (probs) => journal.calibrate(probs)
+      }),
+      tally,
+      send: (request2) => self.send(request2),
+      token: () => host.snapshot?.()?.token ?? null,
+      now,
+      log: host.log,
+      status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
+      onDecision: (record2) => {
+        logDecision(record2);
+        for (const listener of listeners) listener(record2, lastTurn);
+      }
+    });
+    host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
+    return brain.controller;
+  }
+  function logDecision(record2) {
+    const goal = record2.answers["goal"];
+    const trace = record2.context.trace;
+    const id = log.append({
+      at: now(),
+      turn: lastTurn,
+      trigger: "decision",
+      backend: record2.backend,
+      question: "goal",
+      choice: trace?.pick ?? (goal?.type === "choice" ? goal.choice : ""),
+      confidence: goal?.type === "choice" ? goal.confidence : null,
+      probs: goal?.type === "choice" ? goal.probabilities : null,
+      state: record2.request.state,
+      options: record2.context.offers.map((o) => o.goal),
+      plan: record2.outcome,
+      latencyMs: record2.latencyMs,
+      inputTokens: record2.usage.inputTokens,
+      outputTokens: record2.usage.outputTokens,
+      estimatedTokens: record2.usage.estimated,
+      ...trace === void 0 ? {} : {
+        persona: {
+          best: trace.advice,
+          inCharacter: trace.inCharacter === null ? "" : Object.entries(trace.inCharacter).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "",
+          blended: trace.pick,
+          strength: trace.strength,
+          removed: trace.removed.length > 0
+        }
+      }
+    });
+    const logged = log.records().find((r) => r.id === id);
+    if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
+    unsavedSpend += 1;
+    if (unsavedSpend >= 20) persistSpend();
+    void log.flush();
+  }
+  function persistSpend() {
+    unsavedSpend = 0;
+    const t = now();
+    const d = new Date(t);
+    const day = `${String(d.getFullYear())}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    self.saveConfig({ ...config, spend: { day, usd: tally.todayUsd(t) } });
+  }
+  host.character?.onRunEnd?.((report) => {
+    void finishRun(report);
+  });
+  async function finishRun(report) {
+    persistSpend();
+    const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
+    await log.flush();
+    const persona = character.persona ?? activePersona(config) ?? defaultPersona();
+    const lineageName = character.lineage ?? report.name;
+    const lineage = config.lineages[lineageName];
+    try {
+      summary = buildRunSummary({
+        report,
+        runLog: journal.runLog(),
+        decisions: log.records(),
+        tally,
+        persona,
+        lessonsLearned: journal.lessons().map((l) => l.line),
+        lessonsInherited: (lineage?.lore ?? []).map((l) => l.line),
+        lineageNames: (lineage?.ancestors ?? []).map((a) => a.name),
+        calibration: {},
+        ...blamed === null ? {} : { blamedDecisionId: blamed },
+        chronicleHighlights: journal.chronicle().slice(-5)
+      });
+      await store.set(`squire/reports/${character.runId}`, summary);
+    } catch (error) {
+      host.log(`Squire could not build this run's report: ${String(error)}`);
+    }
+    if (report.outcome === "death" && character.persona !== null) {
+      const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
+      const next = withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons());
+      self.saveConfig({
+        ...config,
+        lineages: { ...config.lineages, [lineageName]: next },
+        pendingHeir: brain !== null && config.rollOn !== "wait" ? { lineage: lineageName, parent: character.persona } : config.pendingHeir
+      });
+    }
+    await sendTelemetry();
+    await rollOn(report);
+  }
+  async function sendTelemetry() {
+    const level = config.telemetry.level;
+    if (level === "off" || config.telemetry.endpoint === "" || host.net === void 0 || summary === null) return;
+    try {
+      const batches = buildBatches(
+        {
+          installId: await installId(store),
+          runId: character.runId,
+          seq: 0,
+          modVersion: MOD_VERSION,
+          gameVersion: "unknown",
+          summary: summaryForTelemetry(summary),
+          decisions: log.records(),
+          ...level === "full" ? { extra: { chronicle: journal.chronicle() } } : {},
+          ...level === "full" && config.telemetry.backstoryConsent && character.persona !== null ? { backstory: character.persona.backstory, backstoryConsent: true } : {}
+        },
+        level
+      );
+      const sender = createSender({ net: host.net, store, endpoint: config.telemetry.endpoint, now, log: host.log });
+      for (const batch of batches) await sender.send(batch);
+    } catch (error) {
+      host.log(`Squire could not build this run's telemetry, so none was sent: ${String(error)}`);
+    }
+  }
+  async function rollOn(report) {
+    if (report.outcome !== "death" || config.rollOn === "wait" || brain === null) return;
+    const create = host.saves?.create;
+    if (create === void 0) return;
+    const like = config.rollOn === "like" ? report.birth : void 0;
+    const result = await create.call(host.saves, like === void 0 ? { resumeAutoplayer: true } : { like, resumeAutoplayer: true });
+    if (!result.ok) host.log(`Squire could not start the next character: ${result.reason ?? "the game refused"}`);
+  }
+  return self;
+}
+
 // src/settings.ts
 function defaultCfg() {
   return {
@@ -1776,6 +3532,1128 @@ function noTerrain() {
   };
 }
 
+// src/learning/ranks.ts
+function rankFor(agreementShare, examples) {
+  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
+  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
+  return "Page";
+}
+
+// src/knight.ts
+var DIR_DELTA = {
+  1: [-1, 1],
+  2: [0, 1],
+  3: [1, 1],
+  4: [-1, 0],
+  6: [1, 0],
+  7: [-1, -1],
+  8: [0, -1],
+  9: [1, -1]
+};
+function goalOfCommand(command, view) {
+  const player = view.player();
+  const at = player.grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
+  const pack = readPack(view);
+  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
+  switch (command.code) {
+    case "walk":
+    case "run":
+    case "pathfind": {
+      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
+      if (delta !== void 0) {
+        const to = { x: at.x + delta[0], y: at.y + delta[1] };
+        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
+        if (awake.length > 0) {
+          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
+          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
+          if (nearestAfter > nearestNow) return "retreat";
+          if (nearestAfter < nearestNow) return "fight";
+        }
+      }
+      return "explore";
+    }
+    case "descend":
+      return "descend";
+    case "rest":
+      return "rest";
+    case "pickup":
+      return "pick_up";
+    case "eat":
+      return "eat";
+    case "fire":
+      return "shoot";
+    case "throw":
+      return has(pack.oil) ? "throw_oil" : null;
+    case "aim-wand":
+      return "aim_wand";
+    case "quaff":
+      return has(pack.heal) ? "heal" : null;
+    case "read":
+      if (has(pack.phase)) return "phase";
+      if (has(pack.teleport)) return "teleport";
+      return null;
+    case "use-staff":
+      return has(pack.teleport) ? "teleport" : null;
+    case "cast": {
+      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
+      if (spell === null) return null;
+      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
+      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+function proceduralPick(offers, hpShare) {
+  const has = (g) => offers.find((o) => o.goal === g);
+  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
+  const fight = has("fight");
+  if (fight !== void 0 && fight.risk > 0.45) {
+    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+  }
+  if (hpShare < 0.35) {
+    const safe = first("heal", "cast_heal");
+    if (safe !== null) return safe;
+  }
+  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
+  return first("rest", "eat", "pick_up", "explore", "descend");
+}
+var LABEL = {
+  fight: "fight in melee",
+  shoot: "shoot",
+  throw_oil: "throw oil",
+  aim_wand: "aim a wand",
+  cast_attack: "cast an attack spell",
+  heal: "drink a healing potion",
+  cast_heal: "cast a healing spell",
+  phase: "phase away",
+  teleport: "teleport away",
+  retreat: "back away",
+  rest: "rest",
+  eat: "eat",
+  pick_up: "pick it up",
+  explore: "explore",
+  descend: "take the stairs"
+};
+function noteLine(squire, knight, hpShare) {
+  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
+  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
+  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
+}
+var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
+function emptyApprentice() {
+  return { entries: [], agreed: 0, total: 0 };
+}
+function note(apprentice, entry) {
+  const weight = entry.demonstration ? 2 : 1;
+  return {
+    entries: [...apprentice.entries, entry].slice(-200),
+    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
+    total: apprentice.total + weight
+  };
+}
+function rankOf(apprentice) {
+  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
+}
+function momentOf(view) {
+  const p = view.player();
+  const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
+  return { awake, hpBand: share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3, depth: p.depth };
+}
+function isDecisionPoint(previous, now, goal) {
+  if (goal === null) return false;
+  if (previous === null) return true;
+  if (goal !== "explore") return true;
+  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
+}
+
+// src/telemetry/consent.ts
+function describeLevel(level) {
+  switch (level) {
+    case "off":
+      return "Sends nothing from this install.";
+    case "summary":
+      return "Sends how each run ended, its deepest level, top kills and token counts, with your character's name, race and class.";
+    case "decisions":
+      return "Sends the run summary and each decision's turn, kind, question, choice, confidence, probabilities and outcome.";
+    case "full":
+      return "Sends the run summary, decisions and extra run log; backstory is sent only with separate backstory consent.";
+  }
+}
+
+// src/ui/dom.ts
+function h(tag, props = {}, ...children) {
+  const el = document.createElement(tag);
+  for (const [key2, value] of Object.entries(props)) {
+    if (value === void 0 || value === null || value === false) continue;
+    if (key2.startsWith("on") && typeof value === "function") {
+      el.addEventListener(key2.slice(2).toLowerCase(), value);
+    } else if (key2 === "class") {
+      el.className = String(value);
+    } else if (key2 in el && typeof value !== "string") {
+      el[key2] = value;
+    } else {
+      el.setAttribute(key2, value === true ? "" : String(value));
+    }
+  }
+  for (const child of children) {
+    if (child === null || child === void 0 || child === false) continue;
+    el.append(typeof child === "string" ? document.createTextNode(child) : child);
+  }
+  return el;
+}
+function fill(el, ...children) {
+  el.replaceChildren();
+  for (const child of children) {
+    if (child === null || child === void 0 || child === false) continue;
+    el.append(typeof child === "string" ? document.createTextNode(child) : child);
+  }
+}
+function download(filename, text, type = "application/json") {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = h("a", { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5e3);
+}
+function pickFile(accept) {
+  return new Promise((resolve) => {
+    const input = h("input", { type: "file", accept });
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (file === void 0) return resolve(null);
+      file.text().then(resolve, () => resolve(null));
+    });
+    input.click();
+  });
+}
+var STYLE = `
+:host { all: initial; }
+.squire { font: 13px/1.45 system-ui, sans-serif; color: #e8e2d0; background: #14120f; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.tabs { display: flex; flex-wrap: wrap; gap: 2px; border-bottom: 1px solid #3a342a; padding: 4px 4px 0; }
+.tabs button { background: none; border: 1px solid transparent; border-bottom: none; color: #b9ae93; padding: 4px 8px; cursor: pointer; font: inherit; border-radius: 4px 4px 0 0; }
+.tabs button[aria-selected="true"] { background: #221e18; color: #f2e6c4; border-color: #3a342a; }
+.body { flex: 1; overflow: auto; padding: 10px; }
+h3 { font-size: 13px; margin: 14px 0 6px; color: #f2c66d; }
+h3:first-child { margin-top: 0; }
+p { margin: 4px 0; }
+.muted { color: #9b917a; }
+.ok { color: #8fd18f; }
+.bad { color: #ef8f7f; }
+label { display: block; margin: 6px 0; }
+input[type=text], input[type=password], input[type=number], select, textarea { width: 100%; box-sizing: border-box; background: #0c0b09; color: #e8e2d0; border: 1px solid #4a4336; border-radius: 3px; padding: 4px 6px; font: inherit; }
+textarea { min-height: 70px; resize: vertical; }
+input[type=range] { width: 100%; }
+button.act { background: #3a2f1c; color: #f2e6c4; border: 1px solid #6b5a38; border-radius: 3px; padding: 4px 10px; cursor: pointer; font: inherit; margin: 4px 4px 4px 0; }
+button.act:hover { background: #4a3c24; }
+.row { display: flex; gap: 6px; align-items: center; }
+.row > * { flex: 1; }
+.slider { display: grid; grid-template-columns: 9em 1fr 2.5em; gap: 6px; align-items: center; margin: 3px 0; }
+.slider .ends { grid-column: 2; font-size: 11px; color: #9b917a; display: flex; justify-content: space-between; margin-top: -4px; }
+pre { background: #0c0b09; border: 1px solid #3a342a; padding: 6px; overflow: auto; max-height: 240px; font-size: 11px; }
+.entry { border-top: 1px solid #2c271f; padding: 6px 0; }
+.entry.disagree { color: #f2e6c4; }
+.stat { display: inline-block; margin-right: 14px; }
+.stat b { color: #f2c66d; }
+canvas { width: 100%; background: #0c0b09; border: 1px solid #3a342a; }
+`;
+
+// src/ui/setup.ts
+var BRAINS = [
+  ["jev", "Jev", "TypeSafe's hosted model. Fast and strong; it needs an API key and charges a small amount per decision."],
+  ["laya", "Laya", "An open model you run on your own computer or home network. Free to use, but it plays worse until it has been trained on Squire's decisions."],
+  ["custom", "Another server", "Any server that answers the same System One requests."],
+  ["none", "No model", "Squire runs its fixed errands and asks nothing."]
+];
+var LEVELS = ["off", "summary", "decisions", "full"];
+var ROLL_ON = [
+  ["wait", "Stop and wait for you to make the next character"],
+  ["like", "Start a new character like the last one"],
+  ["random", "Start a new character of a random race and class"]
+];
+function mountSetup(body2, rt, done) {
+  const status = h("p", { class: "muted" });
+  const keyLine = h("p", { class: "muted" });
+  let config = rt.config();
+  function update2(patch) {
+    config = { ...config, ...patch };
+    rt.saveConfig(config);
+  }
+  function say(el, text, good) {
+    el.textContent = text;
+    el.className = good === void 0 ? "muted" : good ? "ok" : "bad";
+  }
+  const serverBox = h("div");
+  function drawServer() {
+    if (config.backend === "jev") {
+      const key2 = h("input", { type: "password", placeholder: "Paste your Jev API key", autocomplete: "off" });
+      fill(
+        serverBox,
+        h("label", {}, "Jev API key", key2),
+        h(
+          "div",
+          { class: "row" },
+          h("button", { class: "act", onclick: async () => say(keyLine, await rt.setJevKey(key2.value), true) }, "Save key"),
+          h("button", { class: "act", onclick: async () => say(keyLine, await rt.jevKeyFromEnv()) }, "Use key from environment")
+        ),
+        keyLine,
+        h("p", { class: "muted" }, "To get a key, sign up at typesafe.ai and create an API key there. In the desktop app, Squire can instead read TYPESAFE_API_KEY or JEV_API_KEY from your environment after you agree."),
+        h("h3", {}, "Spend limits"),
+        h("p", { class: "muted" }, "Squire pauses when a limit is reached. Zero means no limit. A decision costs a few thousandths of a cent."),
+        h(
+          "div",
+          { class: "row" },
+          h("label", {}, "Per session ($)", numberInput(config.caps.perSessionUsd, (v) => update2({ caps: { ...config.caps, perSessionUsd: v } }))),
+          h("label", {}, "Per day ($)", numberInput(config.caps.perDayUsd, (v) => update2({ caps: { ...config.caps, perDayUsd: v } })))
+        )
+      );
+      void rt.hasJevKey().then((has) => {
+        if (keyLine.textContent === "") say(keyLine, has ? "A key is set." : "No key is set yet.", has);
+      });
+    } else if (config.backend === "laya" || config.backend === "custom") {
+      const url = h("input", { type: "text", value: config.serverUrl, placeholder: LAYA_DEFAULT_URL });
+      url.addEventListener("change", () => update2({ serverUrl: url.value.trim() }));
+      const model = h("input", { type: "text", value: config.serverModel, placeholder: "Leave empty for the server's default" });
+      model.addEventListener("change", () => update2({ serverModel: model.value.trim() }));
+      fill(
+        serverBox,
+        h("label", {}, "Server address", url),
+        h("p", { class: "muted" }, "Use localhost or an IP address on your home network, such as http://192.168.1.20:8010/v1/systemone. A name like laya.lan is not allowed."),
+        h("label", {}, "Model name", model),
+        h("label", {}, "Context size (tokens)", numberInput(config.contextTokens, (v) => update2({ contextTokens: Math.max(512, Math.round(v)) })))
+      );
+    } else {
+      fill(serverBox, h("p", { class: "muted" }, "With no model, a handover runs one errand: fight what is in front of you, explore the floor, or the long errand if it is switched on."));
+    }
+  }
+  const brainBox = h("div");
+  for (const [choice, label, help] of BRAINS) {
+    const radio = h("input", { type: "radio", name: "squire-brain", checked: config.backend === choice });
+    radio.addEventListener("change", () => {
+      update2({ backend: choice });
+      drawServer();
+    });
+    brainBox.append(h("label", {}, radio, ` ${label}: `, h("span", { class: "muted" }, help)));
+  }
+  const test = h("button", {
+    class: "act",
+    onclick: async () => {
+      say(status, "Testing...");
+      const result = await rt.testConnection();
+      say(status, result.message, result.ok);
+    }
+  }, "Test connection");
+  const telemetry = telemetryBox(rt, () => config, update2);
+  const rollOn = h("select");
+  for (const [value, label] of ROLL_ON) rollOn.append(h("option", { value, selected: config.rollOn === value }, label));
+  rollOn.addEventListener("change", () => update2({ rollOn: rollOn.value }));
+  const knights = h("input", { type: "checkbox", checked: config.knightsLessons.enabled });
+  knights.addEventListener("change", () => update2({ knightsLessons: { ...config.knightsLessons, enabled: knights.checked } }));
+  body2.append(
+    h("h3", {}, "Pick a brain"),
+    brainBox,
+    serverBox,
+    h("div", {}, test),
+    status,
+    h("h3", {}, "When a character dies"),
+    rollOn,
+    h("p", { class: "muted" }, "Only for characters Squire is playing. Your own characters are never replaced."),
+    h("h3", {}, "Knight's Lessons"),
+    h("label", {}, knights, " Learn from how I play while I have the keyboard"),
+    telemetry,
+    h("div", {}, h("button", { class: "act", onclick: () => {
+      update2({ setupDone: true });
+      done();
+    } }, "Next: choose a persona"))
+  );
+  drawServer();
+  return () => {
+  };
+}
+function numberInput(value, change) {
+  const input = h("input", { type: "number", min: "0", step: "any", value: String(value) });
+  input.addEventListener("change", () => {
+    const v = Number(input.value);
+    if (Number.isFinite(v) && v >= 0) change(v);
+  });
+  return input;
+}
+function telemetryBox(rt, config, update2) {
+  const describe = h("p", { class: "muted" }, describeLevel(config().telemetry.level));
+  const level = h("select");
+  for (const l of LEVELS) level.append(h("option", { value: l, selected: config().telemetry.level === l }, l === "off" ? "Off" : l[0].toUpperCase() + l.slice(1)));
+  level.addEventListener("change", () => {
+    const next = level.value;
+    update2({ telemetry: { ...config().telemetry, level: next, asked: true } });
+    describe.textContent = describeLevel(next);
+  });
+  const backstory = h("input", { type: "checkbox", checked: config().telemetry.backstoryConsent });
+  backstory.addEventListener("change", () => update2({ telemetry: { ...config().telemetry, backstoryConsent: backstory.checked } }));
+  const endpoint = h("input", { type: "text", value: config().telemetry.endpoint });
+  endpoint.addEventListener("change", () => update2({ telemetry: { ...config().telemetry, endpoint: endpoint.value.trim() } }));
+  const result = h("p", { class: "muted" });
+  return h(
+    "div",
+    {},
+    h("h3", {}, "Share runs with the Squire project"),
+    h("p", { class: "muted" }, "Finished runs can be sent to squire.rpgm.tools, which keeps them for 180 days and posts a short summary of each run to the Neo Angband Discord. The privacy note is at squire.rpgm.tools."),
+    h("label", {}, "What to send", level),
+    describe,
+    h("label", {}, backstory, " Also send my persona's backstory, at the Full level"),
+    h("label", {}, "Endpoint (empty sends nothing)", endpoint),
+    h(
+      "div",
+      { class: "row" },
+      h("button", {
+        class: "act",
+        onclick: async () => {
+          const net = rt.net();
+          if (net === null) {
+            result.textContent = "This version of the game cannot send requests for mods.";
+            return;
+          }
+          result.textContent = "Asking the server to delete everything from this install...";
+          const id = await installId(rt.store());
+          const sender = createSender({ net, store: rt.store(), endpoint: config().telemetry.endpoint || DEFAULT_ENDPOINT, now: Date.now, log: () => {
+          } });
+          const reply = await sender.deleteInstall(id);
+          result.textContent = reply.ok ? "Everything sent from this install has been deleted." : `Could not delete: ${reply.reason}`;
+        }
+      }, "Delete what I have sent")
+    ),
+    result
+  );
+}
+
+// src/persona/file.ts
+function exportPersona(persona) {
+  return JSON.stringify({ format: "neo-angband/squire/persona", schemaVersion: 1, data: normalize(persona) }, null, 2) + "\n";
+}
+function importPersona(text) {
+  let raw;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { ok: false, problem: "This file is not valid JSON." };
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    return { ok: false, problem: "This file is not a Squire persona." };
+  }
+  const file = raw;
+  if (file["format"] !== "neo-angband/squire/persona") {
+    return { ok: false, problem: "This file is not a Squire persona." };
+  }
+  if (typeof file["schemaVersion"] === "number" && file["schemaVersion"] > 1) {
+    return { ok: false, problem: "This file is from a newer Squire." };
+  }
+  if (file["schemaVersion"] !== 1 || file["data"] === null || typeof file["data"] !== "object" || Array.isArray(file["data"])) {
+    return { ok: false, problem: "This file is not a supported Squire persona." };
+  }
+  return { ok: true, persona: normalize(file["data"]) };
+}
+
+// src/ui/persona-sheet.ts
+var GROUP_NAMES = {
+  temperament: "Temperament",
+  values: "Values",
+  affinities: "Likes and dislikes",
+  habits: "Habits",
+  tactics: "Tactics",
+  economy: "Money",
+  quirks: "Quirks",
+  lineage: "Lineage",
+  patron: "Patron",
+  meta: "How Squire plays it"
+};
+function mountPersona(body2, rt) {
+  const sheet = h("div");
+  const message = h("p", { class: "muted" });
+  let config = rt.config();
+  let index = Math.max(0, config.activePersona);
+  function current2() {
+    return config.personas[index] ?? defaultPersona();
+  }
+  function store(p) {
+    const personas = config.personas.slice();
+    personas[index] = normalize(p);
+    config = { ...config, personas };
+    rt.saveConfig(config);
+  }
+  function add2(p) {
+    const personas = [...config.personas, normalize(p)].slice(-50);
+    index = personas.length - 1;
+    config = { ...config, personas, activePersona: index };
+    rt.saveConfig(config);
+    draw();
+  }
+  const library = h("select");
+  const active = h("input", { type: "checkbox" });
+  active.addEventListener("change", () => {
+    config = { ...config, activePersona: active.checked ? index : -1 };
+    rt.saveConfig(config);
+  });
+  library.addEventListener("change", () => {
+    index = Number(library.value);
+    draw();
+  });
+  const presets = h("select");
+  presets.append(h("option", { value: "" }, "Start a new persona from..."), h("option", { value: "default" }, "Default"), h("option", { value: "random" }, "Random"));
+  for (const id of Object.keys(ARCHETYPES)) presets.append(h("option", { value: id }, id[0].toUpperCase() + id.slice(1)));
+  presets.addEventListener("change", () => {
+    const v = presets.value;
+    presets.value = "";
+    if (v === "default") add2(defaultPersona("New persona"));
+    else if (v === "random") add2(randomPersona(Math.random, "Wanderer"));
+    else if (v !== "") add2(archetype(v));
+  });
+  function draw() {
+    config = rt.config();
+    fill(library, ...config.personas.map((p2, i) => h("option", { value: String(i), selected: i === index }, p2.name)));
+    active.checked = config.activePersona === index;
+    const p = current2();
+    const playing = rt.character().persona;
+    const name = h("input", { type: "text", value: p.name, maxlength: "40" });
+    name.addEventListener("change", () => {
+      store({ ...current2(), name: name.value.trim() || "Squire" });
+      draw();
+    });
+    const backstory = h("textarea", { placeholder: "Who is this character? Where are they from, what do they want, what do they fear?" }, p.backstory);
+    backstory.addEventListener("change", () => store({ ...current2(), backstory: backstory.value }));
+    const groups = GROUPS.map((group) => {
+      const rows = PARAMETERS.filter((param) => param.group === group).map((param) => row(param, () => current2(), store));
+      return h("div", {}, h("h3", {}, GROUP_NAMES[group]), ...rows);
+    });
+    fill(
+      sheet,
+      playing === null ? null : h("p", { class: "muted" }, `This character plays as ${playing.name}. Changes here apply to new characters.`),
+      h("label", {}, "Name", name),
+      h("label", {}, "Backstory", backstory),
+      ...groups
+    );
+  }
+  body2.append(
+    h("h3", {}, "Personas"),
+    h("div", { class: "row" }, library, presets),
+    h("label", {}, active, " New characters play as this persona"),
+    h(
+      "div",
+      {},
+      h("button", { class: "act", onclick: () => download(`${current2().name.replace(/[^A-Za-z0-9_-]+/g, "_")}.persona.json`, exportPersona(current2())) }, "Export"),
+      h("button", {
+        class: "act",
+        onclick: async () => {
+          const text = await pickFile(".json,application/json");
+          if (text === null) return;
+          const result = importPersona(text);
+          if (result.ok) {
+            add2(result.persona);
+            message.textContent = `Imported ${result.persona.name}.`;
+          } else {
+            message.textContent = result.problem;
+          }
+        }
+      }, "Import"),
+      h("button", {
+        class: "act",
+        onclick: () => {
+          if (config.personas.length <= 1) return;
+          const personas = config.personas.filter((_, i) => i !== index);
+          index = 0;
+          config = { ...config, personas, activePersona: Math.min(config.activePersona, personas.length - 1) };
+          rt.saveConfig(config);
+          draw();
+        }
+      }, "Delete")
+    ),
+    message,
+    sheet
+  );
+  draw();
+  return () => {
+  };
+}
+function row(param, get, save) {
+  const [low, high] = param.scale.split(" to ");
+  switch (param.kind) {
+    case "slider": {
+      const id = param.id;
+      const value = h("span", {}, String(get().sliders[id]));
+      const input = h("input", { type: "range", min: "0", max: "100", value: String(get().sliders[id]), title: param.description });
+      input.addEventListener("input", () => value.textContent = input.value);
+      input.addEventListener("change", () => save({ ...get(), sliders: { ...get().sliders, [id]: Number(input.value) } }));
+      return h(
+        "div",
+        { title: param.description },
+        h("div", { class: "slider" }, h("span", {}, param.name), input, value),
+        h("div", { class: "slider" }, h("span", {}), h("div", { class: "ends" }, h("span", {}, low ?? ""), h("span", {}, high ?? "")))
+      );
+    }
+    case "list": {
+      const id = param.id;
+      const input = h("input", { type: "text", value: get().lists[id].join(", "), placeholder: param.scale });
+      input.addEventListener(
+        "change",
+        () => save({ ...get(), lists: { ...get().lists, [id]: input.value.split(",").map((s) => s.trim()).filter((s) => s !== "") } })
+      );
+      return h("label", { title: param.description }, param.name, input);
+    }
+    case "quirk": {
+      const id = param.id;
+      const on = h("input", { type: "checkbox", checked: get().quirks[id].on });
+      const strength = h("input", { type: "range", min: "0", max: "100", value: String(get().quirks[id].strength) });
+      const update2 = () => save({ ...get(), quirks: { ...get().quirks, [id]: { on: on.checked, strength: Number(strength.value) } } });
+      on.addEventListener("change", update2);
+      strength.addEventListener("change", update2);
+      return h("div", { class: "slider", title: param.description }, h("label", {}, on, ` ${param.name}`), strength, h("span", {}));
+    }
+    case "toggle": {
+      const id = param.id;
+      const on = h("input", { type: "checkbox", checked: get().toggles[id] });
+      on.addEventListener("change", () => save({ ...get(), toggles: { ...get().toggles, [id]: on.checked } }));
+      return h("label", { title: param.description }, on, ` ${param.name}: `, h("span", { class: "muted" }, param.description));
+    }
+    case "number": {
+      const input = h("input", { type: "number", min: "0", max: "4000", value: String(get().backstoryCap) });
+      input.addEventListener("change", () => save({ ...get(), backstoryCap: Number(input.value) }));
+      return h("label", { title: param.description }, `${param.name} (tokens)`, input);
+    }
+  }
+}
+
+// src/ui/lessons.ts
+function mountLessons(body2, lessons) {
+  const head = h("div");
+  const list = h("div");
+  function draw(a) {
+    const share = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
+    fill(
+      head,
+      h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
+    );
+    const recent = a.entries.slice(-40).reverse();
+    fill(
+      list,
+      recent.length === 0 ? h("p", { class: "muted" }, "Nothing noted yet. Play on, and the squire notes what you do each time something happens: a creature appears, you get hurt, or you reach a new level.") : null,
+      ...recent.map((entry) => entryRow(entry, lessons))
+    );
+  }
+  body2.append(
+    h("p", { class: "muted" }, "While you play, Squire watches as your apprentice. It forms its own choice at each moment that matters and notes where yours differed. It never acts, so your character stays yours."),
+    head,
+    h("button", { class: "act", onclick: () => lessons.watchThis() }, "Watch this"),
+    h("span", { class: "muted" }, " Your next five choices count double."),
+    list
+  );
+  draw(lessons.apprentice());
+  return lessons.onChange(draw);
+}
+function entryRow(entry, lessons) {
+  const reasons = entry.agreed || entry.reason !== void 0 ? null : h(
+    "div",
+    {},
+    h("span", { class: "muted" }, "Why, sir? "),
+    ...WHY_REASONS.map((reason) => h("button", { class: "act", onclick: () => lessons.why(entry, reason) }, reason))
+  );
+  return h(
+    "div",
+    { class: entry.agreed ? "entry" : "entry disagree" },
+    entry.line,
+    entry.demonstration ? h("span", { class: "muted" }, " (demonstration)") : null,
+    entry.reason === void 0 ? null : h("span", { class: "muted" }, ` Because: ${entry.reason}.`),
+    reasons
+  );
+}
+
+// src/ui/dashboard.ts
+function mountDashboard(body2, rt) {
+  const stats = h("div");
+  const chart = h("canvas", { width: "600", height: "140" });
+  const recent = h("div");
+  const chronicle = h("div");
+  const rows = [];
+  function drawStats() {
+    const t = rt.tally().session();
+    const brain = rt.brain();
+    const state = brain === null ? "not playing" : brain.state();
+    const divergent = rows.filter((r) => r.against).length;
+    fill(
+      stats,
+      h(
+        "p",
+        {},
+        h("span", { class: "stat" }, "Squire is ", h("b", {}, state)),
+        h("span", { class: "stat" }, "Decisions ", h("b", {}, String(t.requests))),
+        h("span", { class: "stat" }, "Tokens ", h("b", {}, t.inputTokens.toLocaleString())),
+        t.usd > 0 ? h("span", { class: "stat" }, "Cost ", h("b", {}, `$${t.usd.toFixed(3)}`)) : null,
+        rows.length > 0 ? h("span", { class: "stat" }, "Against advice ", h("b", {}, `${String(Math.round(divergent / rows.length * 100))}%`)) : null
+      ),
+      brain?.stoppedBecause() ? h("p", { class: "bad" }, brain.stoppedBecause() ?? "") : null
+    );
+  }
+  function drawChart() {
+    const g = chart.getContext("2d");
+    if (g === null) return;
+    const points = rt.journal().runLog().depthCurve();
+    g.fillStyle = "#0c0b09";
+    g.fillRect(0, 0, chart.width, chart.height);
+    if (points.length < 2) {
+      g.fillStyle = "#9b917a";
+      g.font = "12px system-ui";
+      g.fillText("The depth chart fills in as the character goes down.", 10, 20);
+      return;
+    }
+    const first = points[0].turn;
+    const span = Math.max(1, points[points.length - 1].turn - first);
+    const deepest = Math.max(1, ...points.map((p) => p.depth));
+    g.strokeStyle = "#f2c66d";
+    g.lineWidth = 2;
+    g.beginPath();
+    points.forEach((p, i) => {
+      const x = 10 + (p.turn - first) / span * (chart.width - 20);
+      const y = 10 + p.depth / deepest * (chart.height - 20);
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    });
+    g.stroke();
+    g.fillStyle = "#9b917a";
+    g.font = "11px system-ui";
+    g.fillText(`deepest ${String(deepest * 50)} ft`, 10, chart.height - 4);
+  }
+  function drawRecent() {
+    fill(
+      recent,
+      rows.length === 0 ? h("p", { class: "muted" }, "No decisions yet. Hand the keyboard to Squire with Ctrl-Z.") : null,
+      ...rows.slice(-12).reverse().map(
+        (r) => h("div", { class: r.against ? "entry disagree" : "entry" }, `Turn ${String(r.turn)}: ${r.pick.replace(/_/g, " ")} (${String(Math.round(r.confidence * 100))}%)${r.against ? ", against advice" : ""}`)
+      )
+    );
+  }
+  function drawChronicle() {
+    const lines2 = rt.journal().chronicle();
+    fill(chronicle, lines2.length === 0 ? h("p", { class: "muted" }, "Notable moments land here.") : null, ...lines2.slice(-15).reverse().map((l) => h("div", { class: "entry" }, l)));
+  }
+  function drawAll() {
+    drawStats();
+    drawChart();
+    drawRecent();
+    drawChronicle();
+  }
+  const offDecision = rt.onDecision((record2, turn) => {
+    const goal = record2.answers["goal"];
+    const trace = record2.context.trace;
+    rows.push({
+      turn,
+      pick: trace?.pick ?? (goal?.type === "choice" ? goal.choice : "?"),
+      confidence: goal?.type === "choice" ? goal.confidence : 0,
+      against: trace !== void 0 && trace.pick !== trace.advice
+    });
+    if (rows.length > 500) rows.splice(0, rows.length - 500);
+    drawAll();
+  });
+  const offChronicle = rt.onChronicle(() => drawChronicle());
+  const timer = setInterval(drawStats, 1e3);
+  body2.append(h("h3", {}, "Now"), stats, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
+  drawAll();
+  return () => {
+    offDecision();
+    offChronicle();
+    clearInterval(timer);
+  };
+}
+
+// src/report/card.ts
+var DEFAULT_CARD_THEME = {
+  background: "#101820",
+  foreground: "#f4f0e8",
+  muted: "#aeb8bb",
+  accent: "#d9ac64"
+};
+function fitted(ctx, text, x, y, width) {
+  if (ctx.measureText(text).width <= width) {
+    ctx.fillText(text, x, y);
+    return;
+  }
+  let end = text.length;
+  while (end > 0 && ctx.measureText(`${text.slice(0, end)}...`).width > width) end -= 1;
+  ctx.fillText(`${text.slice(0, end)}...`, x, y);
+}
+function drawCard(ctx, model, theme = DEFAULT_CARD_THEME) {
+  ctx.save();
+  try {
+    ctx.fillStyle = theme.background;
+    ctx.fillRect(0, 0, 1200, 630);
+    ctx.fillStyle = theme.accent;
+    ctx.font = "22px sans-serif";
+    ctx.fillText("SQUIRE RUN", 56, 62);
+    ctx.fillStyle = theme.foreground;
+    ctx.font = "bold 54px sans-serif";
+    fitted(ctx, model.headline.name, 56, 132, 650);
+    ctx.font = "24px sans-serif";
+    fitted(ctx, `${model.headline.race} ${model.headline.class}  |  Level ${String(model.headline.level)}`, 56, 177, 650);
+    ctx.fillStyle = theme.accent;
+    ctx.font = "bold 30px sans-serif";
+    ctx.fillText(model.headline.outcome.toUpperCase(), 56, 236);
+    ctx.fillStyle = theme.foreground;
+    ctx.font = "22px sans-serif";
+    fitted(ctx, model.headline.outcome === "death" ? `Cause: ${model.headline.cause}` : model.headline.cause, 56, 274, 650);
+    ctx.fillText(`Deepest: ${String(model.headline.deepestFeet)} ft`, 56, 318);
+    ctx.fillStyle = theme.muted;
+    ctx.font = "18px sans-serif";
+    ctx.fillText("Top kills", 56, 370);
+    ctx.fillStyle = theme.foreground;
+    model.topKills.slice(0, 3).forEach((kill, index) => {
+      fitted(ctx, `${kill.name} x${String(kill.count)}`, 56, 404 + index * 31, 600);
+    });
+    const highlight = model.chronicleHighlights[0];
+    if (highlight) {
+      ctx.fillStyle = theme.muted;
+      ctx.font = "18px sans-serif";
+      ctx.fillText("Chronicle", 56, 532);
+      ctx.fillStyle = theme.foreground;
+      fitted(ctx, highlight, 56, 566, 1080);
+    }
+    const radar = model.personaRadar;
+    if (radar.length >= 3) {
+      const cx = 940;
+      const cy = 297;
+      const radius = 174;
+      ctx.strokeStyle = theme.muted;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      radar.forEach((_, index) => {
+        const angle = -Math.PI / 2 + index * Math.PI * 2 / radar.length;
+        const x = cx + Math.cos(angle) * radius;
+        const y = cy + Math.sin(angle) * radius;
+        ctx.moveTo(cx, cy);
+        ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+      ctx.fillStyle = theme.accent;
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      radar.forEach((trait, index) => {
+        const angle = -Math.PI / 2 + index * Math.PI * 2 / radar.length;
+        const r = radius * Math.max(0, Math.min(100, trait.value)) / 100;
+        const x = cx + Math.cos(angle) * r;
+        const y = cy + Math.sin(angle) * r;
+        if (index === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.stroke();
+      ctx.fill();
+      ctx.fillStyle = theme.muted;
+      ctx.font = "15px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("PERSONA", cx, 505);
+    }
+  } finally {
+    ctx.restore();
+  }
+}
+function shareLinks(text, url) {
+  const encoded = encodeURIComponent(text);
+  return {
+    x: `https://twitter.com/intent/tweet?text=${encoded}${url === void 0 ? "" : `&url=${encodeURIComponent(url)}`}`,
+    ...url === void 0 ? {} : { facebook: `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}` },
+    reddit: `https://www.reddit.com/submit?title=${encoded}${url === void 0 ? "" : `&url=${encodeURIComponent(url)}`}`
+  };
+}
+
+// src/report/render.ts
+function cell(text) {
+  return String(text).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+function lines(items) {
+  return items.length ? items.map((item) => `- ${item}`).join("\n") : "- None recorded";
+}
+function reportMarkdown(model) {
+  const h2 = model.headline;
+  return [
+    `# ${h2.name}'s run`,
+    "",
+    "| Stat | Value |",
+    "| --- | --- |",
+    `| Character | ${cell(`${h2.race} ${h2.class}`)} |`,
+    `| Outcome | ${cell(h2.outcome)} |`,
+    `| Cause | ${cell(h2.cause)} |`,
+    `| Level | ${cell(h2.level)} |`,
+    `| Deepest | ${cell(h2.deepestFeet)} ft |`,
+    `| Turns | ${cell(h2.turns)} |`,
+    "",
+    "## Kills",
+    "",
+    lines(model.topKills.map((kill) => `${kill.name}: ${String(kill.count)}`)),
+    "",
+    "## Close calls",
+    "",
+    lines(model.closeCalls.map((event) => `Turn ${String(event.turn)}, ${String(event.depth * 50)} ft: ${event.text}`)),
+    "",
+    "## Lessons learned",
+    "",
+    lines(model.lessonsLearned),
+    "",
+    "## Lessons inherited",
+    "",
+    lines(model.lessonsInherited),
+    "",
+    "## Token tally",
+    "",
+    "| Measure | Total |",
+    "| --- | ---: |",
+    `| Calls | ${String(model.tokens.requests)} |`,
+    `| Input tokens | ${String(model.tokens.inputTokens)} |`,
+    `| Output tokens | ${String(model.tokens.outputTokens)} |`,
+    `| Estimated calls | ${String(model.tokens.estimated)} |`,
+    `| Cost (USD) | ${model.tokens.usd.toFixed(4)} |`,
+    ""
+  ].join("\n");
+}
+function reportJson(model) {
+  return JSON.stringify({ format: "neo-angband/squire/report", schemaVersion: 1, data: model });
+}
+
+// src/ui/report-view.ts
+function mountReport(body2, rt) {
+  const view = h("div");
+  body2.append(view);
+  function draw(model) {
+    const exportDecisions = h("button", { class: "act", onclick: () => download("squire-decisions.jsonl", rt.exportDecisions(), "application/x-ndjson") }, "Save decision log");
+    if (model === null) {
+      fill(
+        view,
+        h("p", { class: "muted" }, "The report is made when a character Squire played dies, wins or retires. The decision log for this run can be saved now."),
+        exportDecisions
+      );
+      return;
+    }
+    const hl = model.headline;
+    const card = h("canvas", { width: "1200", height: "630" });
+    const g = card.getContext("2d");
+    if (g !== null) drawCard(g, model);
+    const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "victory" ? "Won the game." : "Retired."}`;
+    const links = shareLinks(text);
+    const base = hl.name.replace(/[^A-Za-z0-9_-]+/g, "_") || "squire";
+    fill(
+      view,
+      h("h3", {}, `${hl.name}, level ${String(hl.level)} ${hl.race} ${hl.class}`),
+      h("p", {}, `${hl.outcome === "death" ? `Killed by ${hl.cause}` : hl.outcome === "victory" ? "Won the game" : "Retired"} at ${String(hl.deepestFeet)} ft after ${hl.turns.toLocaleString()} turns.`),
+      model.topKills.length === 0 ? null : h("p", {}, `Most killed: ${model.topKills.slice(0, 5).map((k) => `${k.name} (${String(k.count)})`).join(", ")}`),
+      model.uniquesKilled.length === 0 ? null : h("p", {}, `Uniques killed: ${model.uniquesKilled.join(", ")}`),
+      h("p", {}, `Went against advice ${String(model.divergence.count)} times. Used ${model.tokens.inputTokens.toLocaleString()} input tokens${model.tokens.usd > 0 ? `, about $${model.tokens.usd.toFixed(3)}` : ""}.`),
+      model.chronicleHighlights.length === 0 ? null : h("div", {}, h("h3", {}, "Chronicle"), ...model.chronicleHighlights.map((l) => h("div", { class: "entry" }, l))),
+      model.lessonsLearned.length === 0 ? null : h("div", {}, h("h3", {}, "Lessons"), ...model.lessonsLearned.slice(-8).map((l) => h("div", { class: "entry" }, l))),
+      h("h3", {}, "Share"),
+      card,
+      h(
+        "div",
+        {},
+        h("button", { class: "act", onclick: () => card.toBlob((blob) => blob && saveBlob(`${base}-card.png`, blob)) }, "Save card image"),
+        h("button", { class: "act", onclick: () => download(`${base}-report.md`, reportMarkdown(model), "text/markdown") }, "Save report"),
+        h("button", { class: "act", onclick: () => download(`${base}-report.json`, reportJson(model)) }, "Save report data"),
+        exportDecisions
+      ),
+      h(
+        "p",
+        {},
+        h("a", { href: links.x, target: "_blank", rel: "noopener" }, "Post on X"),
+        " / ",
+        h("a", { href: links.reddit, target: "_blank", rel: "noopener" }, "Post on Reddit")
+      )
+    );
+  }
+  void rt.lastSummary().then(draw);
+  return () => {
+  };
+}
+function saveBlob(filename, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = h("a", { href: url, download: filename });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5e3);
+}
+
+// src/ui/panel.ts
+var TABS = [
+  ["setup", "Setup"],
+  ["persona", "Persona"],
+  ["lessons", "Lessons"],
+  ["dashboard", "Dashboard"],
+  ["report", "Report"]
+];
+function mountPanel(host, rt, lessons) {
+  const root = host.root;
+  const body2 = h("div", { class: "body" });
+  const bar = h("div", { class: "tabs", role: "tablist" });
+  root.append(h("style", {}, STYLE), h("div", { class: "squire" }, bar, body2));
+  let cleanup = null;
+  let current2 = rt.config().setupDone ? "dashboard" : "setup";
+  function show(tab) {
+    current2 = tab;
+    cleanup?.();
+    body2.replaceChildren();
+    for (const button of bar.querySelectorAll("button")) {
+      button.setAttribute("aria-selected", button.dataset["tab"] === tab ? "true" : "false");
+    }
+    switch (tab) {
+      case "setup":
+        cleanup = mountSetup(body2, rt, () => show("persona"));
+        break;
+      case "persona":
+        cleanup = mountPersona(body2, rt);
+        break;
+      case "lessons":
+        cleanup = mountLessons(body2, lessons);
+        break;
+      case "dashboard":
+        cleanup = mountDashboard(body2, rt);
+        break;
+      case "report":
+        cleanup = mountReport(body2, rt);
+        break;
+    }
+  }
+  for (const [tab, label] of TABS) {
+    const button = h("button", { role: "tab", onclick: () => show(tab) }, label);
+    button.dataset["tab"] = tab;
+    bar.append(button);
+  }
+  show(current2);
+  return () => cleanup?.();
+}
+
+// src/attach.ts
+var APPRENTICE_KEY = "squire/apprentice";
+var DEMONSTRATION_DECISIONS = 5;
+function attachSquire(ctx, rt) {
+  const make = ctx.core?.createAgentView;
+  function viewNow() {
+    if (make === void 0 || ctx.state === void 0) return null;
+    const base = make(ctx.state);
+    const snap = ctx.snapshot?.();
+    const inventory = snap?.core?.inventory ?? [];
+    const equipment = snap?.core?.equipment ?? [];
+    return { ...base, inventory: () => inventory, equipment: () => equipment };
+  }
+  ctx.events?.on("combat-outcome", (_name, payload) => {
+    const p = payload;
+    if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
+    const view = viewNow();
+    const monster = view?.monsters().find((m) => m.id === p.target);
+    if (monster !== void 0) rt.recordKill(monster.race, monster.raceFlags.includes("UNIQUE"), view ?? null);
+  });
+  let apprentice = emptyApprentice();
+  const listeners = /* @__PURE__ */ new Set();
+  let demonstrations = 0;
+  let previous = null;
+  let asking = false;
+  void rt.store().get(APPRENTICE_KEY).then((stored) => {
+    const s = stored;
+    if (s !== void 0 && Array.isArray(s.entries) && typeof s.agreed === "number" && typeof s.total === "number") {
+      apprentice = { entries: s.entries, agreed: s.agreed, total: s.total };
+      for (const l of listeners) l(apprentice);
+    }
+  });
+  function save(next) {
+    apprentice = next;
+    void rt.store().set(APPRENTICE_KEY, next);
+    for (const l of listeners) l(next);
+  }
+  const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {
+  } });
+  function record2(squire, knight, view) {
+    const p = view.player();
+    const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const demonstration = demonstrations > 0;
+    if (demonstration) demonstrations -= 1;
+    save(
+      note(apprentice, {
+        turn: view.turn(),
+        squire,
+        knight,
+        agreed: squire === knight,
+        line: noteLine(squire, knight, share),
+        demonstration
+      })
+    );
+  }
+  ctx.events?.on("player-command", (_name, payload) => {
+    const config = rt.config();
+    if (!config.knightsLessons.enabled || rt.brain() !== null) return;
+    const view = viewNow();
+    if (view === null) return;
+    rt.observe(view);
+    const knight = goalOfCommand(payload, view);
+    const moment = momentOf(view);
+    const point = isDecisionPoint(previous, moment, knight);
+    previous = moment;
+    if (!point || knight === null) return;
+    const asked = planner.ask(view);
+    if ("handBack" in asked) return;
+    const question = asked;
+    const p = view.player();
+    const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const offline = proceduralPick(question.context.offers, share);
+    const backend = rt.backend();
+    if (backend === null || asking) {
+      if (offline !== null) record2(offline, knight, view);
+      return;
+    }
+    asking = true;
+    void rt.send(question.request).then((result) => {
+      asking = false;
+      if (result.ok) {
+        rt.tally().record(backend, result.usage, Date.now());
+        const answer = result.answers["goal"];
+        const pick2 = answer?.type === "choice" ? answer.choice : "none_of_these";
+        const squire = question.context.offers.find((o) => o.goal === pick2)?.goal ?? offline;
+        if (squire !== null && squire !== void 0) record2(squire, knight, view);
+      } else if (offline !== null) {
+        record2(offline, knight, view);
+      }
+    });
+  });
+  const lessons = {
+    apprentice: () => apprentice,
+    onChange(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    watchThis() {
+      demonstrations = DEMONSTRATION_DECISIONS;
+    },
+    why(entry, reason) {
+      save({
+        ...apprentice,
+        entries: apprentice.entries.map((e) => e === entry ? { ...e, reason } : e)
+      });
+    }
+  };
+  const register = ctx.ui?.registerPanelKind;
+  if (register !== void 0) {
+    register.call(ctx.ui, {
+      kind: "squire",
+      label: "Squire",
+      tab: "Squire",
+      minWidth: 260,
+      minHeight: 200,
+      preferredPlacement: { kind: "dock", target: "main", edge: "right" },
+      mount: (host) => mountPanel(host, rt, lessons)
+    });
+  }
+  return lessons;
+}
+
 // plugin.ts
 var NOSCORE_BORG = 32;
 function characterAlreadyAutoplayed(ctx) {
@@ -1788,35 +4666,13 @@ function terrainFrom(ctx) {
   if (features === void 0 || tf === void 0) return noTerrain();
   return readTerrain(features.allFeatures(), tf);
 }
-function errandController(ctx, cfg, terrain) {
-  return createSquire({ cfg, terrain, log: ctx.log }).controller;
-}
-function modelController(ctx, net, cfg, terrain) {
-  const now = () => Date.now();
-  const brain = createBrain({
-    backend: JEV,
-    planner: createGoalPlanner({ cfg, terrain, log: ctx.log }),
-    tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
-    send: (request) => ask(net, JEV, request, now),
-    token: () => ctx.snapshot?.()?.token ?? null,
-    now,
-    log: ctx.log,
-    status: (label, reason) => ctx.controller?.setStatus(reason === void 0 ? { label } : { label, reason })
-  });
-  ctx.log(`Squire has the keyboard and asks ${JEV.label} what to do`);
-  return brain.controller;
-}
-function pickController(ctx, net, cfg, terrain) {
-  const mark = ctx.controller?.markNondeterministic;
-  if (mark === void 0) {
-    ctx.log("This version of the game cannot mark the save for a model, so Squire runs its errands without one");
-    return errandController(ctx, cfg, terrain);
-  }
-  mark.call(ctx.controller);
-  return modelController(ctx, net, cfg, terrain);
-}
 var plugin_default = {
   api: 1,
+  /* The panel, Knight's Lessons and run bookkeeping, for every character with
+   * Squire enabled, whether or not it has been handed over. */
+  register(_host, ctx) {
+    attachSquire(ctx, runtime(ctx));
+  },
   controller(ctx) {
     if (!characterAlreadyAutoplayed(ctx)) return void 0;
     const cfg = cfgFromFlags(ctx.flags);
@@ -1828,20 +4684,9 @@ var plugin_default = {
     ctx.log(
       changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
     );
-    const net = ctx.net;
-    if (!cfg.useModel || net === void 0) {
-      if (cfg.useModel) ctx.log("This version of the game cannot send Squire's requests, so Squire runs its errands without a model");
-      return errandController(ctx, cfg, terrain);
-    }
-    const ready = keyReady(net.secrets, JEV, net.transport === "relay", ctx.log);
-    return {
-      controller: bootController(
-        ready,
-        () => pickController(ctx, net, cfg, terrain),
-        () => errandController(ctx, cfg, terrain)
-      ),
-      onDeath: "end"
-    };
+    const errands = () => createSquire({ cfg, terrain, log: ctx.log }).controller;
+    if (ctx.net === void 0) return errands();
+    return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
   }
 };
 export {
