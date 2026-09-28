@@ -380,9 +380,12 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
-  if (!s.awake.some((m) => steps(at, m.grid) <= 3)) {
-    const candidate = gearCandidates(view).find((gear) => !gear.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
-    if (candidate !== undefined) add("wear", candidate.criteria, candidate.unknown ? 0.05 : 0.02);
+  const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+  /* Walking in the dark shows nothing, so while a light sits unused in the pack
+   * lighting it comes before exploring or the stairs. */
+  const unlit = player.light <= 0 && gear !== undefined && gear.criteria.includes("has no light");
+  if (gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+    add("wear", gear.criteria, gear.unknown ? 0.05 : 0.02);
   }
   if (newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -394,10 +397,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (reachableFrontier(view, terrain)) {
+  if (!unlit && reachableFrontier(view, terrain)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (knownDownStairs(view, terrain).length > 0 && cfg.descend &&
+  if (!unlit && knownDownStairs(view, terrain).length > 0 && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0)))) {

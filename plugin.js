@@ -1369,7 +1369,7 @@ function gearCandidates(view) {
     if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
       const oldLight = replaced === null ? null : shownName2(replaced) ?? "";
       const fuel = (shown) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
-      if (oldLight === null || fuel(oldLight) === 0) {
+      if (oldLight === null || fuel(oldLight) === 0 || view.player().light <= 0) {
         out.push({
           handle: item.handle,
           name,
@@ -1956,9 +1956,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hungry(view) && s.pack.food[0] !== void 0) {
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
-  if (!s.awake.some((m) => steps(at, m.grid) <= 3)) {
-    const candidate = gearCandidates(view).find((gear) => !gear.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
-    if (candidate !== void 0) add2("wear", candidate.criteria, candidate.unknown ? 0.05 : 0.02);
+  const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+  const unlit = player.light <= 0 && gear !== void 0 && gear.criteria.includes("has no light");
+  if (gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+    add2("wear", gear.criteria, gear.unknown ? 0.05 : 0.02);
   }
   if (newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -1969,10 +1970,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (reachableFrontier(view, terrain)) {
+  if (!unlit && reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+  if (!unlit && knownDownStairs(view, terrain).length > 0 && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);

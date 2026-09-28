@@ -79,6 +79,13 @@ describe("goal planner", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("lights a torch before exploring in the dark", () => {
+    const w = world({ map: CORRIDOR, player: { light: 0 }, pack: ["2 Wooden Torches (5000 turns)"] });
+    const goals = asked(planner(w).p.ask(w.view)).context.offers.map((o) => o.goal);
+    expect(goals).toContain("wear");
+    expect(goals).not.toContain("explore");
+  });
+
   it("takes the likeliest offer once the errand order has nothing to do", () => {
     const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 15, maxHp: 20 } });
     const { p, logged } = planner(w);
