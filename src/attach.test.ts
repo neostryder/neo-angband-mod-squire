@@ -63,3 +63,15 @@ it("stores the exam result after 20 Squire decisions", async () => {
   expect(saved.examArmed).toBe(false);
   expect(saved.entries.at(-1)?.line).toBe("Exam: matched your choice 20 of 20 times");
 });
+
+it("saves a Knight's Lessons decision as a Laya row with the knight's goal as its label", async () => {
+  const store = memoryStore();
+  const host: AttachHost = { log: () => {}, flags: {} };
+  const rt = createRuntime(host, { store });
+  const request = { state: { character: "Level 1 Human Mage" }, questions: { goal: { type: "choice" as const, instructions: "Which?", criteria: { fight: "Fight.", retreat: "Back off.", none_of_these: null } } } };
+  const answers = { goal: { type: "choice" as const, choice: "fight", confidence: 0.7, probabilities: { fight: 0.8, retreat: 0.2 } } };
+  await rt.recordLesson(request, answers, "jev-1.13.0", 3, "retreat");
+  const rows = (await rt.exportLayaRows()).trim().split("\n").map((line) => JSON.parse(line) as { pilot: string; human?: Record<string, string>; jev: { model: string } });
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toMatchObject({ pilot: "squire_goal", human: { goal: "retreat" }, jev: { model: "jev-1.13.0" } });
+});

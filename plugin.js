@@ -3936,6 +3936,7 @@ function createShadow(options) {
 // src/runtime.ts
 var CHARACTER_FORMAT = "neo-angband/squire/character";
 var MOD_VERSION = "1.0.0-dev";
+var LESSON_SEQ_BASE = 5e5;
 function runIdFor(key2, now) {
   const base = (key2 ?? "char").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "char";
   return `${base}-${now.toString(36)}`;
@@ -4127,6 +4128,12 @@ function createRuntime(host, options = {}) {
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    async recordLesson(request2, answers, model, n, knightGoal) {
+      if (config.backend !== "jev") return;
+      const seq = LESSON_SEQ_BASE + n;
+      await shadow.record({ token: null, backend: "Jev", request: request2, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url);
+      await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
+    },
     async exportLayaRows() {
       await logLoaded;
       await shadow.rowsReady();
@@ -5618,6 +5625,8 @@ function attachSquire(ctx, rt) {
           serial,
           answer?.type === "choice" ? answer.confidence : void 0
         );
+        void rt.recordLesson(question.request, result.answers, result.model, apprentice.total, knight).catch(() => {
+        });
       } else if (offline !== null) {
         record2(offline, knight, view, dangerousNear, serial);
       }

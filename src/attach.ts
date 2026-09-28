@@ -223,6 +223,8 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
         const squire = question.context.offers.find((o) => o.goal === pick)?.goal ?? offline;
         if (squire !== null && squire !== undefined) record(squire, knight, view, dangerousNear, serial,
           answer?.type === "choice" ? answer.confidence : undefined);
+        /* The knight's own goal is a human label for Laya's training. */
+        void rt.recordLesson(question.request, result.answers, result.model, apprentice.total, knight).catch(() => {});
       } else if (offline !== null) {
         record(offline, knight, view, dangerousNear, serial);
       }

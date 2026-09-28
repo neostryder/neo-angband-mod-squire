@@ -14,7 +14,7 @@ import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, type Brain, type DecisionRecord, type Token } from "./brain/brain.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
-import type { SystemOneRequest } from "./brain/systemone.js";
+import type { Answer, SystemOneRequest } from "./brain/systemone.js";
 import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
@@ -28,7 +28,7 @@ import { createJournal, emptyJournal, heirFrom, withAncestor, type Journal, type
 import { buildRunSummary, summaryForTelemetry, type RunReport, type RunSummary } from "./report/summary.js";
 import { defaultPersona } from "./persona/persona.js";
 import { createSender } from "./telemetry/sender.js";
-import { createRows, countRows, exportRows } from "./laya/rows.js";
+import { createRows, countRows, exportRows, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import type { Apprentice } from "./knight.js";
 
@@ -75,6 +75,9 @@ export interface CharacterData {
 const CHARACTER_FORMAT = "neo-angband/squire/character";
 
 export const MOD_VERSION = "1.0.0-dev";
+
+/** Where Knight's Lessons row numbers start, far above any decision sequence number. */
+const LESSON_SEQ_BASE = 500_000;
 
 function runIdFor(key: string | null | undefined, now: number): string {
   const base = (key ?? "char").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "char";
@@ -147,6 +150,11 @@ export interface Runtime {
   store(): KvStore;
   exportDecisions(): string;
   exportLayaRows(): Promise<string>;
+  /**
+   * Save a Knight's Lessons decision as a Laya training row, with the knight's
+   * own goal as its human label. `n` is a count that only grows for this run.
+   */
+  recordLesson(request: SystemOneRequest, answers: Readonly<Record<string, Answer>>, model: string | null, n: number, knightGoal: string): Promise<void>;
   layaRowCount(): Promise<number>;
   /** This run's logged decisions, once the saved log has been read back. */
   decisions(): Promise<readonly LoggedDecision[]>;
@@ -332,6 +340,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
+    async recordLesson(request, answers, model, n, knightGoal) {
+      if (config.backend !== "jev") return;
+      /* Lesson rows sit above every decision sequence number, so the two kinds never share an id. */
+      const seq = LESSON_SEQ_BASE + n;
+      await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url);
+      await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
+    },
     async exportLayaRows() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
     async layaRowCount() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return countRows(store); },
     decisions: () => logLoaded.then(() => log.records()),
