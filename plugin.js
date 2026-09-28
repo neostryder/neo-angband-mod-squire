@@ -975,6 +975,31 @@ function createBrain(deps) {
 
 // src/brain/pack.ts
 var HUNGRY_BELOW = 1500;
+var DETECTION_SPELLS = [
+  "Find Traps, Doors & Stairs",
+  "Detect Monsters",
+  "Treasure Detection",
+  "Reveal Monsters",
+  "Detection",
+  "Detect Evil",
+  "Object Detection"
+];
+function detectionSources(view) {
+  const out = [];
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null || empty(name)) continue;
+    if (/\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
+    if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
+  }
+  for (const spell of castable(view)) {
+    if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });
+  }
+  return out;
+}
+function detectionSource(view) {
+  return detectionSources(view)[0] ?? null;
+}
 var HEAL_POTIONS = [
   [/\bPotions? of Life\b/i, 6],
   [/\bPotions? of \*Healing\*/i, 5],
@@ -1102,6 +1127,239 @@ function readPack(view) {
 }
 function hungry(view) {
   return view.player().status.food < HUNGRY_BELOW;
+}
+
+// src/town/needs.ts
+function shownName2(item) {
+  const name = item.name;
+  return typeof name === "string" && name.length > 0 ? name : null;
+}
+function matchesSupplyName(shown, wanted) {
+  if (wanted === "Flask of Oil") return /\bFlasks? of Oil\b/i.test(shown);
+  if (wanted === "Ration of Food") return /\bRations? of Food\b/i.test(shown);
+  if (wanted === "Wooden Torch") return /\bWooden (Torch|Torches)\b/i.test(shown);
+  return shown.toLowerCase().includes(wanted.toLowerCase());
+}
+function supplyName(kind, level, lantern, launcher) {
+  switch (kind) {
+    case "healing":
+      return level >= 15 ? "Cure Serious Wounds" : "Cure Light Wounds";
+    case "phase":
+      return "Phase Door";
+    case "recall":
+      return "Word of Recall";
+    case "oil":
+      return "Flask of Oil";
+    case "food":
+      return "Ration of Food";
+    case "light":
+      return lantern ? "Flask of Oil" : "Wooden Torch";
+    case "ammo":
+      return launcher === "Sling" ? "Iron Shot" : launcher?.includes("Crossbow") ? "Bolt" : "Arrow";
+  }
+}
+function count(items, needle) {
+  return items.reduce((sum, item) => {
+    const name = shownName2(item);
+    return sum + (name !== null && matchesSupplyName(name, needle) ? item.number : 0);
+  }, 0);
+}
+var RECALL_FROM_DEPTH = 5;
+function scale(base, slider, minimum) {
+  return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
+}
+function supplyNeeds(view, pack, persona) {
+  const items = view.inventory();
+  const worn = view.equipment().map((item) => item === null ? null : shownName2(item));
+  const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
+  const launcher = worn.find((name) => name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow)\b/i.test(name)) ?? null;
+  const level = view.player().level;
+  const consumables = persona?.sliders.consumables ?? 50;
+  const escapes = persona?.sliders.escapes ?? 50;
+  const healAt = persona?.sliders.healat ?? 50;
+  const make = (kind, want, extra = {}) => {
+    const name = supplyName(kind, level, lantern, launcher);
+    return { kind, want, have: count(items, name), name, ...extra };
+  };
+  const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
+  return [
+    make("healing", healing),
+    make("phase", scale(5, escapes, 1)),
+    make("recall", recall),
+    ...level < 20 ? [make("oil", scale(10, consumables, 1))] : [],
+    make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
+    make("light", scale(2, consumables, 1)),
+    ...pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []
+  ];
+}
+function lowOnSupplies(needs) {
+  if ((needs.find((n) => n.kind === "recall")?.have ?? 0) < 1) return false;
+  return (needs.find((n) => n.kind === "healing")?.have ?? 0) < 2 || (needs.find((n) => n.kind === "phase")?.have ?? 0) < 1 || needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
+}
+function recallItem(view) {
+  return view.inventory().find((item) => /\bScrolls? of Word of Recall\b/i.test(shownName2(item) ?? "")) ?? null;
+}
+
+// src/gear/compare.ts
+var TV = Object.freeze({
+  SHOT: 2,
+  ARROW: 3,
+  BOLT: 4,
+  BOW: 5,
+  DIGGING: 6,
+  HAFTED: 7,
+  POLEARM: 8,
+  SWORD: 9,
+  BOOTS: 10,
+  GLOVES: 11,
+  HELM: 12,
+  CROWN: 13,
+  SHIELD: 14,
+  CLOAK: 15,
+  SOFT_ARMOR: 16,
+  HARD_ARMOR: 17,
+  DRAG_ARMOR: 18,
+  LIGHT: 19,
+  AMULET: 20,
+  RING: 21
+});
+var GEAR_WEIGHTS = {
+  ac: 0.5,
+  toHit: 1,
+  toDam: 1.5,
+  blows: 0.2,
+  shots: 0.2,
+  speed: 5,
+  maxHp: 0.2,
+  maxSp: 0.7,
+  light: 3,
+  resist: 6,
+  threshold: 2
+};
+var WEAPONS = [TV.DIGGING, TV.HAFTED, TV.POLEARM, TV.SWORD];
+var BODY = [TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
+var HEAD = [TV.HELM, TV.CROWN];
+var WEARABLE = [...WEAPONS, TV.BOW, TV.BOOTS, TV.GLOVES, ...HEAD, TV.SHIELD, TV.CLOAK, ...BODY, TV.LIGHT, TV.AMULET, TV.RING];
+function slot(tval) {
+  if (WEAPONS.includes(tval)) return "weapon";
+  if (BODY.includes(tval)) return "body";
+  if (HEAD.includes(tval)) return "head";
+  return { [TV.BOW]: "bow", [TV.BOOTS]: "boots", [TV.GLOVES]: "gloves", [TV.SHIELD]: "shield", [TV.CLOAK]: "cloak", [TV.LIGHT]: "light", [TV.AMULET]: "amulet", [TV.RING]: "ring" }[tval] ?? null;
+}
+function fullyKnown(name) {
+  const marks = [...name.matchAll(/\{([^}]*)\}/g)].flatMap((match) => (match[1] ?? "").toLowerCase().split(/,\s*/));
+  return marks.every((mark) => mark === "cursed" || mark === "ignore") && (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name));
+}
+function cursed(name) {
+  return /\{[^}]*curs[^}]*\}|\bcursed\b/i.test(name);
+}
+function wornFor(item, equipment) {
+  const kind = slot(item.tval);
+  if (kind === null) return null;
+  const matching = equipment.filter((worn) => worn !== null && slot(worn.tval) === kind);
+  if (kind === "ring" && matching.length < 2) return null;
+  return matching[0] ?? null;
+}
+function keepsLauncher(equipment, after, hasAmmo) {
+  if (!hasAmmo || !equipment.some((worn) => worn?.tval === TV.BOW)) return true;
+  return after.some((worn) => worn?.tval === TV.BOW);
+}
+function visibleBase(name, tval) {
+  if (tval === TV.LIGHT && /\(0 turns\)/i.test(name)) return 0;
+  if (tval === TV.LIGHT) return /\bLantern\b/i.test(name) ? 2 : /\bTorch\b/i.test(name) ? 1 : null;
+  if (tval === TV.BOW) {
+    const match = /\(x(\d+)\)/.exec(name);
+    return match === null ? null : Number(match[1]);
+  }
+  if ([...BODY, ...HEAD, TV.BOOTS, TV.GLOVES, TV.SHIELD, TV.CLOAK].includes(tval)) {
+    const match = /\[(\d+)(?:,[+-]?\d+)?\]/.exec(name);
+    return match === null ? null : Number(match[1]);
+  }
+  if (WEAPONS.includes(tval)) {
+    const match = /\((\d+)d(\d+)\)/.exec(name);
+    return match === null ? null : Number(match[1]) * (Number(match[2]) + 1) / 2;
+  }
+  return null;
+}
+function visibleValue(name, tval, base) {
+  if ([...BODY, ...HEAD, TV.BOOTS, TV.GLOVES, TV.SHIELD, TV.CLOAK].includes(tval)) {
+    return base + Number(/\[\d+,([+-]?\d+)\]/.exec(name)?.[1] ?? 0);
+  }
+  if (WEAPONS.includes(tval) || tval === TV.BOW) {
+    const plus = /\(([+-]?\d+),([+-]?\d+)\)/.exec(name);
+    return base + Number(plus?.[2] ?? 0) + Number(plus?.[1] ?? 0) * 0.3;
+  }
+  return base;
+}
+function simulated(name, handle, result) {
+  if (result.unresolved.length > 0 || result.placements.length === 0) return null;
+  const d = result.delta;
+  const w = GEAR_WEIGHTS;
+  const resistValue = d.resists.reduce((sum, change) => sum + change, 0);
+  const score = d.ac * w.ac + d.toH * w.toHit + d.toD * w.toDam + d.blows * w.blows + d.shots * w.shots + d.speed * w.speed + d.maxHp * w.maxHp + d.maxSp * w.maxSp + d.light * w.light + resistValue * w.resist;
+  if (score <= w.threshold) return null;
+  const before = result.before.player;
+  const after = result.after.player;
+  const changes = [];
+  const note2 = (label, a, b) => {
+    if (a !== b) changes.push(`${label} ${String(b)} instead of ${String(a)}`);
+  };
+  note2("armour class", before.ac, after.ac);
+  note2("to-hit", before.toHit, after.toHit);
+  note2("to-damage", before.toDam, after.toDam);
+  note2("blows", before.blows, after.blows);
+  note2("shots", before.shots, after.shots);
+  note2("speed", before.speed, after.speed);
+  note2("maximum hit points", before.maxHp, after.maxHp);
+  note2("maximum mana", before.maxSp, after.maxSp);
+  note2("light radius", before.light, after.light);
+  result.after.stats.resistElements.forEach((element, i) => {
+    const old = result.before.stats.resists[i] ?? 0;
+    const now = result.after.stats.resists[i] ?? 0;
+    if (old !== now) changes.push(`${element} resistance ${String(now)} instead of ${String(old)}`);
+  });
+  return { handle, name, score, unknown: false, criteria: `Wear ${name}: ${changes.join(", ")}.` };
+}
+function gearCandidates(view) {
+  const equipment = view.equipment();
+  const ammoTypes = [TV.SHOT, TV.ARROW, TV.BOLT];
+  const hasAmmo = view.inventory().some((item) => ammoTypes.includes(item.tval));
+  const out = [];
+  for (const item of view.inventory()) {
+    const name = shownName2(item);
+    if (name === null || !WEARABLE.includes(item.tval) || cursed(name)) continue;
+    if (item.tval === TV.LIGHT && /\(0 turns\)/i.test(name)) continue;
+    const replaced = wornFor(item, equipment);
+    if (replaced !== null && cursed(shownName2(replaced) ?? "")) continue;
+    if (fullyKnown(name) && view.simulateLoadout !== void 0) {
+      const result = view.simulateLoadout({ wield: [{ from: "gear", handle: item.handle }] });
+      if (result !== null) {
+        if (!keepsLauncher(equipment, result.after.equipment, hasAmmo)) continue;
+        if (result.placements.some((place) => place.displaced !== null && cursed(shownName2(place.displaced) ?? ""))) continue;
+        const candidate = simulated(name, item.handle, result);
+        if (candidate !== null) out.push(candidate);
+        continue;
+      }
+    }
+    const base = visibleBase(name, item.tval);
+    const oldName = replaced === null ? null : shownName2(replaced);
+    const oldBase = oldName === null || replaced === null ? null : visibleBase(oldName, replaced.tval);
+    const visible = base === null ? null : visibleValue(name, item.tval, base);
+    const oldVisible = oldBase === null || oldName === null || replaced === null ? null : visibleValue(oldName, replaced.tval, oldBase);
+    if (visible !== null && oldVisible !== null && visible < oldVisible) continue;
+    if (oldName === name && base === oldBase) continue;
+    const metric = item.tval === TV.LIGHT ? "light radius" : item.tval === TV.BOW ? "launcher multiplier" : WEAPONS.includes(item.tval) ? "base damage" : "base armour class";
+    const detail = base !== null && oldBase !== null && base > oldBase ? ` Its shown ${metric} is ${String(base)} instead of ${String(oldBase)}.` : "";
+    out.push({
+      handle: item.handle,
+      name,
+      score: visible !== null && oldVisible !== null ? visible - oldVisible : 0,
+      unknown: true,
+      criteria: `Try on the unknown ${name} to learn what it does.${detail}`
+    });
+  }
+  return out.sort((a, b) => Number(a.unknown) - Number(b.unknown) || b.score - a.score);
 }
 
 // src/persona/blend.ts
@@ -1294,78 +1552,6 @@ function personaState(persona, budgetTokens) {
 }
 function inCharacterInstructions(persona) {
   return `Which option would ${persona.name} choose, given this character's nature and history? Answer as the character would act, even when another option seems wiser.`;
-}
-
-// src/town/needs.ts
-function shownName2(item) {
-  const name = item.name;
-  return typeof name === "string" && name.length > 0 ? name : null;
-}
-function matchesSupplyName(shown, wanted) {
-  if (wanted === "Flask of Oil") return /\bFlasks? of Oil\b/i.test(shown);
-  if (wanted === "Ration of Food") return /\bRations? of Food\b/i.test(shown);
-  if (wanted === "Wooden Torch") return /\bWooden (Torch|Torches)\b/i.test(shown);
-  return shown.toLowerCase().includes(wanted.toLowerCase());
-}
-function supplyName(kind, level, lantern, launcher) {
-  switch (kind) {
-    case "healing":
-      return level >= 15 ? "Cure Serious Wounds" : "Cure Light Wounds";
-    case "phase":
-      return "Phase Door";
-    case "recall":
-      return "Word of Recall";
-    case "oil":
-      return "Flask of Oil";
-    case "food":
-      return "Ration of Food";
-    case "light":
-      return lantern ? "Flask of Oil" : "Wooden Torch";
-    case "ammo":
-      return launcher === "Sling" ? "Iron Shot" : launcher?.includes("Crossbow") ? "Bolt" : "Arrow";
-  }
-}
-function count(items, needle) {
-  return items.reduce((sum, item) => {
-    const name = shownName2(item);
-    return sum + (name !== null && matchesSupplyName(name, needle) ? item.number : 0);
-  }, 0);
-}
-var RECALL_FROM_DEPTH = 5;
-function scale(base, slider, minimum) {
-  return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
-}
-function supplyNeeds(view, pack, persona) {
-  const items = view.inventory();
-  const worn = view.equipment().map((item) => item === null ? null : shownName2(item));
-  const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
-  const launcher = worn.find((name) => name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow)\b/i.test(name)) ?? null;
-  const level = view.player().level;
-  const consumables = persona?.sliders.consumables ?? 50;
-  const escapes = persona?.sliders.escapes ?? 50;
-  const healAt = persona?.sliders.healat ?? 50;
-  const make = (kind, want, extra = {}) => {
-    const name = supplyName(kind, level, lantern, launcher);
-    return { kind, want, have: count(items, name), name, ...extra };
-  };
-  const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
-  const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
-  return [
-    make("healing", healing),
-    make("phase", scale(5, escapes, 1)),
-    make("recall", recall),
-    ...level < 20 ? [make("oil", scale(10, consumables, 1))] : [],
-    make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
-    make("light", scale(2, consumables, 1)),
-    ...pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []
-  ];
-}
-function lowOnSupplies(needs) {
-  if ((needs.find((n) => n.kind === "recall")?.have ?? 0) < 1) return false;
-  return (needs.find((n) => n.kind === "healing")?.have ?? 0) < 2 || (needs.find((n) => n.kind === "phase")?.have ?? 0) < 1 || needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
-}
-function recallItem(view) {
-  return view.inventory().find((item) => /\bScrolls? of Word of Recall\b/i.test(shownName2(item) ?? "")) ?? null;
 }
 
 // src/settings.ts
@@ -1582,7 +1768,9 @@ var HANDBOOK = Object.freeze([
   "Resting with an awake creature in sight gets interrupted, and a creature that is deadly should be escaped rather than fought.",
   "Healing potions are worth drinking before hit points get too low to survive one more round, and Phase Door breaks contact for a moment while Teleportation leaves the fight entirely.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
-  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level."
+  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
+  "Wear better gear when it is safe to change equipment.",
+  "Map or detect a new dungeon level before exploring it when a source is available."
 ]);
 function situationOf(view) {
   const player = view.player();
@@ -1613,7 +1801,7 @@ function exposure(s) {
 function within(s, range) {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set()) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -1676,6 +1864,14 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hungry(view) && s.pack.food[0] !== void 0) {
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
+  if (!s.awake.some((m) => steps(at, m.grid) <= 3)) {
+    const candidate = gearCandidates(view).find((gear) => !gear.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+    if (candidate !== void 0) add2("wear", candidate.criteria, candidate.unknown ? 0.05 : 0.02);
+  }
+  if (newLevel && player.depth > 0 && s.awake.length === 0) {
+    const source = detectionSource(view);
+    if (source !== null) add2("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
+  }
   const study = studyable(view, triedStudies);
   if (study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
@@ -1698,6 +1894,7 @@ function createGoalPlanner(options) {
   let lastAwake = /* @__PURE__ */ new Set();
   const visitedShops = /* @__PURE__ */ new Set();
   const triedStudies = /* @__PURE__ */ new Set();
+  let decisionDepth = null;
   const stalled = /* @__PURE__ */ new Map();
   function noteStalls(goal, plan) {
     let issued = 0;
@@ -1866,6 +2063,18 @@ function createGoalPlanner(options) {
         triedStudies.add(`${String(view.player().level)}:${String(study.sidx)}`);
         return once("study", view, (ctx) => ctx.act.raw("study", { handle: study.handle, spell: study.sidx }));
       }
+      case "wear": {
+        const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 ? null : ctx.act.wear(candidate.handle));
+      }
+      case "detect": {
+        const source = detectionSource(view);
+        return once(`detect with ${source?.name ?? "a known source"}`, view, (ctx) => {
+          if (source === null) return null;
+          if (source.kind === "cast") return ctx.act.cast(source.sidx);
+          return source.kind === "zap" ? ctx.act.zapRod(source.handle) : ctx.act.read(source.handle);
+        });
+      }
       case "eat": {
         const food = pack.food[0];
         return once("eat", view, (ctx) => food === void 0 ? null : ctx.act.eat(food.handle));
@@ -1929,7 +2138,9 @@ function createGoalPlanner(options) {
       const s = situationOf(view);
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
-      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies).filter((offer) => !stalled.has(offer.goal));
+      const newLevel = decisionDepth !== player.depth;
+      decisionDepth = player.depth;
+      const offers = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel).filter((offer) => !stalled.has(offer.goal));
       if (offers.length === 0) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
@@ -3509,6 +3720,7 @@ function goalOfCommand(command, view) {
   const awake = view.monsters().filter((m) => m.visible && !m.asleep);
   const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
   const pack = readPack(view);
+  const detection = detectionSources(view);
   const has = (list) => handle !== null && list.some((i) => i.handle === handle);
   switch (command.code) {
     case "walk":
@@ -3537,6 +3749,12 @@ function goalOfCommand(command, view) {
       return "eat";
     case "study":
       return "study";
+    case "wield":
+    case "wear":
+      return "wear";
+    case "zap-rod":
+    case "zap":
+      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
     case "fire":
       return "shoot";
     case "throw":
@@ -3546,6 +3764,7 @@ function goalOfCommand(command, view) {
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
       if (has(pack.teleport)) return "teleport";
@@ -3561,6 +3780,7 @@ function goalOfCommand(command, view) {
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
       if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
       return null;
     }
     default:
@@ -3579,7 +3799,7 @@ function proceduralPick(offers, hpShare) {
     if (safe !== null) return safe;
   }
   if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
 }
 var LABEL = {
   fight: "fight in melee",
@@ -3595,6 +3815,8 @@ var LABEL = {
   rest: "rest",
   eat: "eat",
   study: "learn a spell",
+  wear: "wear gear",
+  detect: "survey the level",
   pick_up: "pick it up",
   explore: "explore",
   descend: "take the stairs",
@@ -3827,8 +4049,8 @@ function createRows(store, runId) {
   return {
     append(row2, seq) {
       return write(async () => {
-        const slot = seq * 2 + (row2.pilot === "squire_goal" ? 0 : 1);
-        const key2 = chunkKey2(runId, slot);
+        const slot2 = seq * 2 + (row2.pilot === "squire_goal" ? 0 : 1);
+        const key2 = chunkKey2(runId, slot2);
         const old = await store.get(key2);
         const rows = Array.isArray(old) ? old : [];
         await store.set(key2, [...rows.filter((entry) => entry.id !== row2.id), row2]);

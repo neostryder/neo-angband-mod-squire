@@ -1,6 +1,17 @@
 /** Gear choices use item types and shown names; hidden item fields are not player knowledge. */
 
-import { TV, type AgentView, type ItemView, type LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
+
+/**
+ * The item kinds (tvals) this file sorts gear by, as Angband 4.2 numbers them.
+ * A mod folder cannot import the engine's own table at run time, so it is
+ * copied here, and a test checks it still matches the engine's.
+ */
+export const TV = Object.freeze({
+  SHOT: 2, ARROW: 3, BOLT: 4, BOW: 5, DIGGING: 6, HAFTED: 7, POLEARM: 8, SWORD: 9,
+  BOOTS: 10, GLOVES: 11, HELM: 12, CROWN: 13, SHIELD: 14, CLOAK: 15,
+  SOFT_ARMOR: 16, HARD_ARMOR: 17, DRAG_ARMOR: 18, LIGHT: 19, AMULET: 20, RING: 21,
+});
 import { shownName } from "../town/needs.js";
 
 /** A candidate that can be worn without giving up known cursed gear or ammunition use. */
