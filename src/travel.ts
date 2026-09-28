@@ -48,17 +48,20 @@ function enter(ctx: SquireContext, from: Loc, to: Loc): AgentCommand | null {
  * The flood is poured from the goals rather than from the character on purpose:
  * one flood then answers for every goal at once, and the character simply walks
  * downhill from wherever it happens to be standing.
+ *
+ * `avoid` marks grids to route around when another way exists, such as those
+ * next to a creature in view. When avoiding them leaves no way at all, the walk
+ * goes through them rather than giving up on the goals.
  */
-export function travelTo(ctx: SquireContext, goals: readonly Loc[]): Travel {
+export function travelTo(ctx: SquireContext, goals: readonly Loc[], avoid?: (grid: Loc) => boolean): Travel {
   if (goals.length === 0) return { kind: "unreachable" };
   const at = ctx.view.player().grid;
   const here = key(at);
   if (goals.some((goal) => key(goal) === here)) return { kind: "arrived" };
 
-  const field = flowFrom({
-    goals,
-    canEnter: (grid) => isRoutable(ctx.view, ctx.terrain, grid),
-  });
+  const routable = (grid: Loc) => isRoutable(ctx.view, ctx.terrain, grid);
+  const careful = avoid === undefined ? null : flowFrom({ goals, canEnter: (grid) => routable(grid) && (key(grid) === here || !avoid(grid)) });
+  const field = careful !== null && Number.isFinite(careful.distance(at)) ? careful : flowFrom({ goals, canEnter: routable });
   if (!Number.isFinite(field.distance(at))) return { kind: "unreachable" };
 
   const direction = stepDown(field, at, (grid) => isWalkable(ctx.view, ctx.terrain, grid));

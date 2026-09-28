@@ -105,7 +105,12 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
         return stop("done", "This floor is walked out.");
       }
 
-      const travel = travelTo(ctx, goals);
+      /* Walking past a creature in view is how a mushroom patch confuses a
+       * character that was only exploring, so the route keeps a step away from
+       * every one it can when there is another way. */
+      const seen = ctx.view.monsters().filter((m) => m.visible).map((m) => m.grid);
+      const nearCreature = (grid: { x: number; y: number }) => seen.some((m) => Math.max(Math.abs(m.x - grid.x), Math.abs(m.y - grid.y)) <= 1);
+      const travel = travelTo(ctx, goals, seen.length === 0 ? undefined : nearCreature);
       switch (travel.kind) {
         case "step":
           return issue(travel.command);

@@ -51,6 +51,24 @@ describe("autoexplore", () => {
     expect(commandOf(errand.step()).code).toBe("walk");
   });
 
+  it("keeps a step away from a creature in view when there is room to", () => {
+    const room = ["##########", "#........#", "#........#", "#..@.....  ", "#........#", "#........#", "##########"];
+    const w = world({ map: room, monsters: [{ grid: { x: 5, y: 3 }, race: "grey mushroom patch", asleep: true }] });
+    const errand = run(w, autoexplore());
+    errand.begin();
+    const dir = commandOf(errand.step()).dir ?? 0;
+    const delta: Record<number, [number, number]> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
+    const [dx, dy] = delta[dir] ?? [0, 0];
+    expect(Math.max(Math.abs(3 + dx - 5), Math.abs(3 + dy - 3))).toBeGreaterThan(1);
+  });
+
+  it("still walks past a creature when that is the only way on", () => {
+    const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 5, y: 1 }, asleep: true }] });
+    const errand = run(w, autoexplore());
+    errand.begin();
+    expect(commandOf(errand.step())).toEqual({ code: "walk", dir: 6 });
+  });
+
   it("reports the floor walked out when nothing is left unexplored", () => {
     const w = world({ map: ["#####", "#...#", "#.@.#", "#####"] });
     const errand = run(w, autoexplore());

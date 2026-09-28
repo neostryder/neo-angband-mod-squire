@@ -317,15 +317,14 @@ function enter(ctx, from, to) {
   if (isClosedDoor(ctx.view, ctx.terrain, to)) return ctx.act.open(dir);
   return ctx.act.move(dir);
 }
-function travelTo(ctx, goals) {
+function travelTo(ctx, goals, avoid) {
   if (goals.length === 0) return { kind: "unreachable" };
   const at = ctx.view.player().grid;
   const here = key(at);
   if (goals.some((goal) => key(goal) === here)) return { kind: "arrived" };
-  const field = flowFrom({
-    goals,
-    canEnter: (grid) => isRoutable(ctx.view, ctx.terrain, grid)
-  });
+  const routable = (grid) => isRoutable(ctx.view, ctx.terrain, grid);
+  const careful = avoid === void 0 ? null : flowFrom({ goals, canEnter: (grid) => routable(grid) && (key(grid) === here || !avoid(grid)) });
+  const field = careful !== null && Number.isFinite(careful.distance(at)) ? careful : flowFrom({ goals, canEnter: routable });
   if (!Number.isFinite(field.distance(at))) return { kind: "unreachable" };
   const direction = stepDown(field, at, (grid) => isWalkable(ctx.view, ctx.terrain, grid));
   if (direction === null) return { kind: "blocked" };
@@ -490,7 +489,9 @@ function autoexplore(options = {}) {
       if (goals.length === 0) {
         return stop("done", "This floor is walked out.");
       }
-      const travel = travelTo(ctx, goals);
+      const seen = ctx.view.monsters().filter((m) => m.visible).map((m) => m.grid);
+      const nearCreature = (grid) => seen.some((m) => Math.max(Math.abs(m.x - grid.x), Math.abs(m.y - grid.y)) <= 1);
+      const travel = travelTo(ctx, goals, seen.length === 0 ? void 0 : nearCreature);
       switch (travel.kind) {
         case "step":
           return issue(travel.command);
@@ -4446,7 +4447,7 @@ function createRuntime(host, options = {}) {
       self.saveConfig({ ...config, pendingHeir: null, ...born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } } });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
-        host.log(`Squire's new character carries on the ${heir.lineage} line`);
+        host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
     }
@@ -4540,7 +4541,7 @@ function createRuntime(host, options = {}) {
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
     const persona = character.persona ?? activePersona(config) ?? defaultPersona();
-    const lineageName = character.lineage ?? (report.name.trim() === "" ? "Squire" : report.name);
+    const lineageName = character.lineage?.trim() || (report.name.trim() === "" ? "Squire" : report.name);
     const lineage = config.lineages[lineageName];
     try {
       const storedApprentice = await store.get("squire/apprentice");

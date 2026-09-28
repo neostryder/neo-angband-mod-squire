@@ -362,7 +362,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       self.saveConfig({ ...config, pendingHeir: null, ...(born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } }) });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
-        host.log(`Squire's new character carries on the ${heir.lineage} line`);
+        host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
     }
@@ -465,7 +465,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     await log.flush();
     const persona = character.persona ?? activePersona(config) ?? defaultPersona();
     /* A character can die nameless; its line still needs a name to be found by. */
-    const lineageName = character.lineage ?? (report.name.trim() === "" ? "Squire" : report.name);
+    /* A blank lineage, saved by an earlier version, falls back like a missing one. */
+    const lineageName = character.lineage?.trim() || (report.name.trim() === "" ? "Squire" : report.name);
     const lineage = config.lineages[lineageName];
     try {
       const storedApprentice = await store.get("squire/apprentice") as Apprentice | undefined;
