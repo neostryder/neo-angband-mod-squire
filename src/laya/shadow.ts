@@ -9,7 +9,7 @@ const PILOTS: readonly [string, Pilot][] = [["goal", "squire_goal"], ["in_charac
 
 export interface RowSink {
   append(row: LayaRow, seq: number): Promise<void>;
-  attachLaya(id: string, adapter: string, answers: Readonly<Record<string, Answer>>): Promise<void>;
+  attachLaya(id: string, adapter: string, answers: Readonly<Record<string, Answer>>, server?: string): Promise<void>;
 }
 
 /** Capture the routing field while the normal backend parser checks the answers. */
@@ -55,7 +55,7 @@ export function createShadow(options: {
 
   return {
     /** One teacher row is saved per known pilot, including when shadowing is off. */
-    record(record: DecisionRecord<unknown>, seq: number, enabled: boolean, url: string): Promise<void> {
+    record(record: DecisionRecord<unknown>, seq: number, enabled: boolean, url: string, fallbacks: readonly string[] = []): Promise<void> {
       if (record.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks: Promise<void>[] = [];
@@ -87,10 +87,10 @@ export function createShadow(options: {
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
             const request: SystemOneRequest = { state: record.request.state, questions };
-            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`);
+            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => { adapter = value; }), backend, request, options.now);
             if (!result.ok) { failed(); return; }
-            await options.rows.attachLaya(id, adapter, result.answers);
+            await options.rows.attachLaya(id, adapter, result.answers, backend.fallbacks === undefined ? undefined : result.server);
           } catch {
             failed();
           } finally {

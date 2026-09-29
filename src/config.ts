@@ -29,10 +29,12 @@ export interface SquireConfig {
   readonly backend: BackendChoice;
   /** The server address for Laya or another System One server. */
   readonly serverUrl: string;
+  /** More addresses for the same server, tried in order when the first is busy or not answering. */
+  readonly serverFallbacks: readonly string[];
   /** The model name to send, for servers that want one. Empty sends none. */
   readonly serverModel: string;
   /** Send Jev's decisions to a local Laya server for training rows. */
-  readonly layaShadow: { readonly enabled: boolean; readonly url: string };
+  readonly layaShadow: { readonly enabled: boolean; readonly url: string; readonly fallbacks: readonly string[] };
   /** The most tokens of context a server takes, for trimming the backstory. */
   readonly contextTokens: number;
   readonly caps: { readonly perSessionUsd: number; readonly perDayUsd: number };
@@ -64,8 +66,9 @@ export function defaultConfig(): SquireConfig {
   return {
     backend: "jev",
     serverUrl: LAYA_DEFAULT_URL,
+    serverFallbacks: [],
     serverModel: "",
-    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL },
+    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL, fallbacks: [] },
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
@@ -118,6 +121,17 @@ function bool(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+/** Up to eight server addresses, in order, from a stored list. */
+export function addresses(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v): v is string => typeof v === "string").map((v) => v.trim()).filter((v) => v !== "" && v.length <= 300).slice(0, 8);
+}
+
+/** Split typed addresses on commas, spaces or new lines. */
+export function parseAddresses(text: string): string[] {
+  return addresses(text.split(/[\s,]+/));
+}
+
 /** Read the stored value, or the defaults. */
 export function readConfig(stored: unknown): SquireConfig {
   const base = defaultConfig();
@@ -134,8 +148,9 @@ export function readConfig(stored: unknown): SquireConfig {
   return {
     backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
     serverUrl: str(data["serverUrl"], base.serverUrl),
+    serverFallbacks: addresses(data["serverFallbacks"]),
     serverModel: str(data["serverModel"], base.serverModel, 100),
-    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL) },
+    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL), fallbacks: addresses(layaShadow["fallbacks"]) },
     contextTokens: numberIn(data["contextTokens"], 512, 200_000, base.contextTokens),
     caps: {
       perSessionUsd: numberIn(caps["perSessionUsd"], 0, 1000, 0),
@@ -172,9 +187,9 @@ export function backendFor(config: SquireConfig): Backend | null {
     case "jev":
       return JEV;
     case "laya":
-      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel);
+      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel, config.serverFallbacks);
     case "custom":
-      return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel);
+      return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel, config.serverFallbacks);
     case "none":
       return null;
   }

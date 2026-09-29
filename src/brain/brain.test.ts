@@ -35,7 +35,7 @@ const GOOD_BODY = JSON.stringify({
 function answered(): AskResult {
   const parsed = parseReply(REQUEST, "{}", GOOD_BODY);
   if (!parsed.ok) throw new Error(parsed.problem);
-  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs: 300 };
+  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs: 300, server: "http://localhost:8010/v1/systemone" };
 }
 
 /** A plan that walks `n` times, then finishes. */

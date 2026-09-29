@@ -369,7 +369,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       if (config.backend !== "jev") return;
       /* Lesson rows sit above every decision sequence number, so the two kinds never share an id. */
       const seq = LESSON_SEQ_BASE + n;
-      await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url);
+      await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
       await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
     },
     async exportLayaRows() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
@@ -450,6 +450,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       options: record.context.offers.map((o) => o.goal),
       plan: record.outcome,
       latencyMs: record.latencyMs,
+      ...(record.server === undefined ? {} : { server: record.server }),
       inputTokens: record.usage.inputTokens,
       outputTokens: record.usage.outputTokens,
       estimatedTokens: record.usage.estimated,
@@ -465,7 +466,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
             },
           }),
     });
-    void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url);
+    void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== undefined && lastView !== null) journal.decided(logged, lastView);
     unsavedSpend += 1;

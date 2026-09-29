@@ -5,11 +5,13 @@
 
 import type { Runtime } from "../runtime.js";
 import type { BackendChoice, RollOn, SquireConfig } from "../config.js";
-import { LAYA_DEFAULT_URL } from "../config.js";
+import { LAYA_DEFAULT_URL, parseAddresses } from "../config.js";
 import { describeLevel, type ConsentLevel } from "../telemetry/consent.js";
 import { DEFAULT_ENDPOINT, createSender } from "../telemetry/sender.js";
 import { installId } from "../memory/install.js";
 import { download, fill, h } from "./dom.js";
+
+const BACKUP_HELP = "Squire tries these in order when the first server is busy or not answering, such as a second computer running Laya at http://192.168.1.21:8010/v1/systemone. Separate addresses with commas.";
 
 const BRAINS: readonly [BackendChoice, string, string][] = [
   ["jev", "Jev", "TypeSafe's hosted model. Fast and strong; it needs an API key and charges a small amount per decision."],
@@ -71,12 +73,16 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     } else if (config.backend === "laya" || config.backend === "custom") {
       const url = h("input", { type: "text", value: config.serverUrl, placeholder: LAYA_DEFAULT_URL });
       url.addEventListener("change", () => update({ serverUrl: url.value.trim() }));
+      const backups = h("input", { type: "text", value: config.serverFallbacks.join(", ") });
+      backups.addEventListener("change", () => update({ serverFallbacks: parseAddresses(backups.value) }));
       const model = h("input", { type: "text", value: config.serverModel, placeholder: "Leave empty for the server's default" });
       model.addEventListener("change", () => update({ serverModel: model.value.trim() }));
       fill(
         serverBox,
         h("label", {}, "Server address", url),
         h("p", { class: "muted" }, "Use localhost or an IP address on your home network, such as http://192.168.1.20:8010/v1/systemone. A name like laya.lan is not allowed."),
+        h("label", {}, "Backup server addresses", backups),
+        h("p", { class: "muted" }, BACKUP_HELP),
         h("label", {}, "Model name", model),
         h("label", {}, "Context size (tokens)", numberInput(config.contextTokens, (v) => update({ contextTokens: Math.max(512, Math.round(v)) }))),
       );
@@ -108,6 +114,8 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
   shadowEnabled.addEventListener("change", () => update({ layaShadow: { ...config.layaShadow, enabled: shadowEnabled.checked } }));
   const shadowUrl = h("input", { type: "text", value: config.layaShadow.url, placeholder: LAYA_DEFAULT_URL });
   shadowUrl.addEventListener("change", () => update({ layaShadow: { ...config.layaShadow, url: shadowUrl.value.trim() || LAYA_DEFAULT_URL } }));
+  const shadowBackups = h("input", { type: "text", value: config.layaShadow.fallbacks.join(", ") });
+  shadowBackups.addEventListener("change", () => update({ layaShadow: { ...config.layaShadow, fallbacks: parseAddresses(shadowBackups.value) } }));
   const rowCount = h("p", { class: "muted" }, "Counting saved rows...");
   void rt.layaRowCount().then((count) => { rowCount.textContent = `${String(count)} training rows saved.`; });
   const shadowBox = h(
@@ -117,6 +125,8 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     h("label", {}, shadowEnabled, " Send decisions to Laya (off by default)"),
     h("p", { class: "muted" }, "Squire sends each decision to Laya too. It never acts on Laya's answer."),
     h("label", {}, "Laya address (default: localhost:8010)", shadowUrl),
+    h("label", {}, "Backup server addresses", shadowBackups),
+    h("p", { class: "muted" }, BACKUP_HELP),
     h("button", { class: "act", onclick: async () => download("squire-laya-rows.jsonl", await rt.exportLayaRows(), "application/x-ndjson") }, "Save Laya training rows"),
     rowCount,
   );

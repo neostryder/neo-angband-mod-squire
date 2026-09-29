@@ -762,16 +762,39 @@ var JEV = Object.freeze({
   timeoutMs: 15e3
 });
 var JEV_KEY_VARIABLES = Object.freeze(["TYPESAFE_API_KEY", "JEV_API_KEY"]);
-function selfHosted(kind, label, url, model) {
+function selfHosted(kind, label, url, model, fallbacks = []) {
+  const others = fallbacks.filter((f) => f !== "" && f !== url);
   return Object.freeze({
     kind,
     label,
     url,
+    ...others.length === 0 ? {} : { fallbacks: Object.freeze([...others]) },
     ...model === void 0 ? {} : { model },
     metered: false,
     usdPerMillionInput: 0,
     timeoutMs: 3e4
   });
+}
+var SHARED_MEMORY = /* @__PURE__ */ new Map();
+var BUSY_SKIP_MS = 5e3;
+var DOWN_SKIP_MS = 3e4;
+var PROBE_TIMEOUT_MS = 600;
+function originOf(url) {
+  const match = /^(https?:\/\/[^/]+)/i.exec(url);
+  return match?.[1] ?? url;
+}
+async function busyReason(net, url) {
+  const reply = await net.request({ url: `${originOf(url)}/load`, method: "GET", timeoutMs: PROBE_TIMEOUT_MS });
+  if (!reply.ok) return { reason: `not answering (${reply.problem})`, skipMs: DOWN_SKIP_MS };
+  if (reply.status === 404) return null;
+  if (reply.status !== 200) return { reason: `load check answered HTTP ${String(reply.status)}`, skipMs: DOWN_SKIP_MS };
+  try {
+    const load = JSON.parse(reply.body);
+    if (load.busy === true) return { reason: "busy", skipMs: BUSY_SKIP_MS };
+    if (load.ready === false) return { reason: "not ready", skipMs: BUSY_SKIP_MS };
+  } catch {
+  }
+  return null;
 }
 function retryAfter(headers) {
   const value = headers["retry-after"];
@@ -809,7 +832,45 @@ function statusFailure(backend, status, headers) {
     retryable: false
   };
 }
-async function ask(net, backend, request2, now) {
+async function ask(net, backend, request2, now, memory = SHARED_MEMORY) {
+  const fallbacks = backend.fallbacks ?? [];
+  if (fallbacks.length === 0) return askOne(net, backend, request2, now);
+  const started = now();
+  const passed = [];
+  for (const url of [backend.url, ...fallbacks]) {
+    const skipped = memory.get(url);
+    if (skipped !== void 0 && skipped.until > now()) {
+      passed.push(`${url} ${skipped.reason}`);
+      continue;
+    }
+    const busy = await busyReason(net, url);
+    if (busy !== null) {
+      memory.set(url, { until: now() + busy.skipMs, reason: busy.reason });
+      passed.push(`${url} ${busy.reason}`);
+      continue;
+    }
+    const result = await askOne(net, { ...backend, url }, request2, now);
+    if (result.ok) return { ...result, latencyMs: now() - started };
+    const kind = result.failure.kind;
+    if (kind === "unreachable" || kind === "server-error") {
+      const reason = kind === "unreachable" ? "not answering" : "server error";
+      memory.set(url, { until: now() + (kind === "unreachable" ? DOWN_SKIP_MS : BUSY_SKIP_MS), reason });
+      passed.push(`${url} ${reason}`);
+      continue;
+    }
+    return { ...result, latencyMs: now() - started };
+  }
+  return {
+    ok: false,
+    latencyMs: now() - started,
+    failure: {
+      kind: "unreachable",
+      message: `No ${backend.label} server could take the request: ${passed.join("; ")}. Squire will try again shortly.`,
+      retryable: true
+    }
+  };
+}
+async function askOne(net, backend, request2, now) {
   const started = now();
   const body2 = JSON.stringify(backend.model === void 0 ? request2 : { model: backend.model, ...request2 });
   const headers = { "Content-Type": "application/json" };
@@ -860,7 +921,7 @@ async function ask(net, backend, request2, now) {
       }
     };
   }
-  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs };
+  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs, server: backend.url };
 }
 
 // src/brain/boot.ts
@@ -962,6 +1023,7 @@ function createBrain(deps) {
       usage: result.usage,
       model: result.model,
       latencyMs: result.latencyMs,
+      server: result.server,
       outcome
     });
     if ("handBack" in choice) {
@@ -2882,8 +2944,9 @@ function defaultConfig() {
   return {
     backend: "jev",
     serverUrl: LAYA_DEFAULT_URL,
+    serverFallbacks: [],
     serverModel: "",
-    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL },
+    layaShadow: { enabled: false, url: LAYA_DEFAULT_URL, fallbacks: [] },
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
@@ -2929,6 +2992,13 @@ function str(value, fallback, max = 500) {
 function bool(value, fallback) {
   return typeof value === "boolean" ? value : fallback;
 }
+function addresses(value) {
+  if (!Array.isArray(value)) return [];
+  return value.filter((v) => typeof v === "string").map((v) => v.trim()).filter((v) => v !== "" && v.length <= 300).slice(0, 8);
+}
+function parseAddresses(text) {
+  return addresses(text.split(/[\s,]+/));
+}
 function readConfig(stored) {
   const base = defaultConfig();
   const envelope = rec(stored);
@@ -2944,8 +3014,9 @@ function readConfig(stored) {
   return {
     backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
     serverUrl: str(data["serverUrl"], base.serverUrl),
+    serverFallbacks: addresses(data["serverFallbacks"]),
     serverModel: str(data["serverModel"], base.serverModel, 100),
-    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL) },
+    layaShadow: { enabled: bool(layaShadow["enabled"], false), url: str(layaShadow["url"], LAYA_DEFAULT_URL), fallbacks: addresses(layaShadow["fallbacks"]) },
     contextTokens: numberIn(data["contextTokens"], 512, 2e5, base.contextTokens),
     caps: {
       perSessionUsd: numberIn(caps["perSessionUsd"], 0, 1e3, 0),
@@ -2978,9 +3049,9 @@ function backendFor(config) {
     case "jev":
       return JEV;
     case "laya":
-      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel);
+      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel, config.serverFallbacks);
     case "custom":
-      return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel);
+      return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel, config.serverFallbacks);
     case "none":
       return null;
   }
@@ -4397,8 +4468,8 @@ function createRows(store, runId) {
         for (const stale of keys.slice(0, -MAX_CHUNKS)) await store.delete(stale);
       });
     },
-    attachLaya(rowId2, adapter, answers) {
-      return write(() => change(rowId2, { laya: { adapter, answers } }));
+    attachLaya(rowId2, adapter, answers, server) {
+      return write(() => change(rowId2, { laya: { adapter, answers, ...server === void 0 ? {} : { server } } }));
     },
     /** Knight's Lessons can add a correction without changing the stable row id. */
     attachHuman(rowId2, answers) {
@@ -4445,7 +4516,7 @@ function createShadow(options) {
   }
   return {
     /** One teacher row is saved per known pilot, including when shadowing is off. */
-    record(record2, seq, enabled, url) {
+    record(record2, seq, enabled, url, fallbacks = []) {
       if (record2.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks = [];
@@ -4480,7 +4551,7 @@ function createShadow(options) {
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
             const request2 = { state: record2.request.state, questions };
-            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`);
+            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => {
               adapter = value;
             }), backend, request2, options.now);
@@ -4488,7 +4559,7 @@ function createShadow(options) {
               failed();
               return;
             }
-            await options.rows.attachLaya(id, adapter, result.answers);
+            await options.rows.attachLaya(id, adapter, result.answers, backend.fallbacks === void 0 ? void 0 : result.server);
           } catch {
             failed();
           } finally {
@@ -4722,7 +4793,7 @@ function createRuntime(host, options = {}) {
     async recordLesson(request2, answers, model, n, knightGoal) {
       if (config.backend !== "jev") return;
       const seq = LESSON_SEQ_BASE + n;
-      await shadow.record({ token: null, backend: "Jev", request: request2, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url);
+      await shadow.record({ token: null, backend: "Jev", request: request2, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
       await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
     },
     async exportLayaRows() {
@@ -4808,6 +4879,7 @@ function createRuntime(host, options = {}) {
       options: record2.context.offers.map((o) => o.goal),
       plan: record2.outcome,
       latencyMs: record2.latencyMs,
+      ...record2.server === void 0 ? {} : { server: record2.server },
       inputTokens: record2.usage.inputTokens,
       outputTokens: record2.usage.outputTokens,
       estimatedTokens: record2.usage.estimated,
@@ -4821,7 +4893,7 @@ function createRuntime(host, options = {}) {
         }
       }
     });
-    void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url);
+    void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
     unsavedSpend += 1;
@@ -5068,6 +5140,7 @@ canvas { width: 100%; background: #0c0b09; border: 1px solid #3a342a; }
 `;
 
 // src/ui/setup.ts
+var BACKUP_HELP = "Squire tries these in order when the first server is busy or not answering, such as a second computer running Laya at http://192.168.1.21:8010/v1/systemone. Separate addresses with commas.";
 var BRAINS = [
   ["jev", "Jev", "TypeSafe's hosted model. Fast and strong; it needs an API key and charges a small amount per decision."],
   ["laya", "Laya", "An open model you run on your own computer or home network. Free to use, but it plays worse until it has been trained on Squire's decisions."],
@@ -5122,12 +5195,16 @@ function mountSetup(body2, rt, done) {
     } else if (config.backend === "laya" || config.backend === "custom") {
       const url = h("input", { type: "text", value: config.serverUrl, placeholder: LAYA_DEFAULT_URL });
       url.addEventListener("change", () => update2({ serverUrl: url.value.trim() }));
+      const backups = h("input", { type: "text", value: config.serverFallbacks.join(", ") });
+      backups.addEventListener("change", () => update2({ serverFallbacks: parseAddresses(backups.value) }));
       const model = h("input", { type: "text", value: config.serverModel, placeholder: "Leave empty for the server's default" });
       model.addEventListener("change", () => update2({ serverModel: model.value.trim() }));
       fill(
         serverBox,
         h("label", {}, "Server address", url),
         h("p", { class: "muted" }, "Use localhost or an IP address on your home network, such as http://192.168.1.20:8010/v1/systemone. A name like laya.lan is not allowed."),
+        h("label", {}, "Backup server addresses", backups),
+        h("p", { class: "muted" }, BACKUP_HELP),
         h("label", {}, "Model name", model),
         h("label", {}, "Context size (tokens)", numberInput(config.contextTokens, (v) => update2({ contextTokens: Math.max(512, Math.round(v)) })))
       );
@@ -5156,6 +5233,8 @@ function mountSetup(body2, rt, done) {
   shadowEnabled.addEventListener("change", () => update2({ layaShadow: { ...config.layaShadow, enabled: shadowEnabled.checked } }));
   const shadowUrl = h("input", { type: "text", value: config.layaShadow.url, placeholder: LAYA_DEFAULT_URL });
   shadowUrl.addEventListener("change", () => update2({ layaShadow: { ...config.layaShadow, url: shadowUrl.value.trim() || LAYA_DEFAULT_URL } }));
+  const shadowBackups = h("input", { type: "text", value: config.layaShadow.fallbacks.join(", ") });
+  shadowBackups.addEventListener("change", () => update2({ layaShadow: { ...config.layaShadow, fallbacks: parseAddresses(shadowBackups.value) } }));
   const rowCount = h("p", { class: "muted" }, "Counting saved rows...");
   void rt.layaRowCount().then((count2) => {
     rowCount.textContent = `${String(count2)} training rows saved.`;
@@ -5167,6 +5246,8 @@ function mountSetup(body2, rt, done) {
     h("label", {}, shadowEnabled, " Send decisions to Laya (off by default)"),
     h("p", { class: "muted" }, "Squire sends each decision to Laya too. It never acts on Laya's answer."),
     h("label", {}, "Laya address (default: localhost:8010)", shadowUrl),
+    h("label", {}, "Backup server addresses", shadowBackups),
+    h("p", { class: "muted" }, BACKUP_HELP),
     h("button", { class: "act", onclick: async () => download("squire-laya-rows.jsonl", await rt.exportLayaRows(), "application/x-ndjson") }, "Save Laya training rows"),
     rowCount
   );

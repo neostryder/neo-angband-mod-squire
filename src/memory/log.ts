@@ -16,6 +16,8 @@ export interface LoggedDecision {
   readonly options: readonly string[];
   readonly plan: string;
   readonly latencyMs: number;
+  /** The address that answered, when the backend has more than one. */
+  readonly server?: string;
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly estimatedTokens: boolean;

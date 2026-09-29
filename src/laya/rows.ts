@@ -12,7 +12,7 @@ export interface LayaRow {
   readonly state: Readonly<Record<string, unknown>>;
   readonly questions: Readonly<Record<string, Question>>;
   readonly jev: { readonly model: string; readonly answers: Readonly<Record<string, Answer>> };
-  readonly laya?: { readonly adapter: string; readonly answers: Readonly<Record<string, Answer>> };
+  readonly laya?: { readonly adapter: string; readonly answers: Readonly<Record<string, Answer>>; readonly server?: string };
   readonly outcome: { readonly plan: string };
   readonly human?: Readonly<Record<string, string>>;
 }
@@ -95,8 +95,8 @@ export function createRows(store: KvStore, runId: string) {
         for (const stale of keys.slice(0, -MAX_CHUNKS)) await store.delete(stale);
       });
     },
-    attachLaya(rowId: string, adapter: string, answers: Readonly<Record<string, Answer>>): Promise<void> {
-      return write(() => change(rowId, { laya: { adapter, answers } }));
+    attachLaya(rowId: string, adapter: string, answers: Readonly<Record<string, Answer>>, server?: string): Promise<void> {
+      return write(() => change(rowId, { laya: { adapter, answers, ...(server === undefined ? {} : { server }) } }));
     },
     /** Knight's Lessons can add a correction without changing the stable row id. */
     attachHuman(rowId: string, answers: Readonly<Record<string, string>>): Promise<void> {

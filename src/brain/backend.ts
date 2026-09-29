@@ -35,6 +35,11 @@ export interface Backend {
   /** The name shown in setup and reports. */
   readonly label: string;
   readonly url: string;
+  /**
+   * More addresses for the same kind of server, tried in order after `url`
+   * when it is busy, not ready or not answering. Empty for a single server.
+   */
+  readonly fallbacks?: readonly string[];
   /** Sent as the request's `model`, when the server wants one. */
   readonly model?: string;
   /** The `ctx.net` secret that holds this server's key, when it takes one. */
@@ -65,11 +70,13 @@ export const JEV: Backend = Object.freeze({
 export const JEV_KEY_VARIABLES: readonly string[] = Object.freeze(["TYPESAFE_API_KEY", "JEV_API_KEY"]);
 
 /** A Laya server, or any unmetered server with the same request shape. */
-export function selfHosted(kind: "laya" | "custom", label: string, url: string, model?: string): Backend {
+export function selfHosted(kind: "laya" | "custom", label: string, url: string, model?: string, fallbacks: readonly string[] = []): Backend {
+  const others = fallbacks.filter((f) => f !== "" && f !== url);
   return Object.freeze({
     kind,
     label,
     url,
+    ...(others.length === 0 ? {} : { fallbacks: Object.freeze([...others]) }),
     ...(model === undefined ? {} : { model }),
     metered: false,
     usdPerMillionInput: 0,
@@ -111,8 +118,44 @@ export type AskResult =
       readonly usage: Usage;
       readonly model: string | null;
       readonly latencyMs: number;
+      /** The address that answered. */
+      readonly server: string;
     }
   | { readonly ok: false; readonly failure: Failure; readonly latencyMs: number };
+
+/**
+ * Servers recently found busy or not answering, and until when to pass them
+ * over: a busy one for a few seconds, one that did not answer for longer.
+ */
+export type ServerMemory = Map<string, { readonly until: number; readonly reason: string }>;
+
+const SHARED_MEMORY: ServerMemory = new Map();
+const BUSY_SKIP_MS = 5_000;
+const DOWN_SKIP_MS = 30_000;
+const PROBE_TIMEOUT_MS = 600;
+
+/** The server's own address, where Laya reports its load at `/load`. */
+function originOf(url: string): string {
+  const match = /^(https?:\/\/[^/]+)/i.exec(url);
+  return match?.[1] ?? url;
+}
+
+/**
+ * Ask a Laya server whether it can take a request. Null means go ahead; a
+ * server with no load report is taken as ready.
+ */
+async function busyReason(net: NetLike, url: string): Promise<{ reason: string; skipMs: number } | null> {
+  const reply = await net.request({ url: `${originOf(url)}/load`, method: "GET", timeoutMs: PROBE_TIMEOUT_MS });
+  if (!reply.ok) return { reason: `not answering (${reply.problem})`, skipMs: DOWN_SKIP_MS };
+  if (reply.status === 404) return null;
+  if (reply.status !== 200) return { reason: `load check answered HTTP ${String(reply.status)}`, skipMs: DOWN_SKIP_MS };
+  try {
+    const load = JSON.parse(reply.body) as { busy?: unknown; ready?: unknown };
+    if (load.busy === true) return { reason: "busy", skipMs: BUSY_SKIP_MS };
+    if (load.ready === false) return { reason: "not ready", skipMs: BUSY_SKIP_MS };
+  } catch { /* An unreadable load report is not a reason to pass the server over. */ }
+  return null;
+}
 
 function retryAfter(headers: Readonly<Record<string, string>>): number | undefined {
   const value = headers["retry-after"];
@@ -157,8 +200,59 @@ export function statusFailure(
   };
 }
 
-/** Send one request and check the answers. */
+/**
+ * Send one request and check the answers. A backend with fallback addresses
+ * tries each in order, passing over one that is busy, not ready, answering
+ * with a server error, or not answering at all. A refusal of the request
+ * itself (an HTTP 4xx) is not retried elsewhere, since another server would
+ * refuse it too.
+ */
 export async function ask(
+  net: NetLike,
+  backend: Backend,
+  request: SystemOneRequest,
+  now: () => number,
+  memory: ServerMemory = SHARED_MEMORY,
+): Promise<AskResult> {
+  const fallbacks = backend.fallbacks ?? [];
+  if (fallbacks.length === 0) return askOne(net, backend, request, now);
+  const started = now();
+  const passed: string[] = [];
+  for (const url of [backend.url, ...fallbacks]) {
+    const skipped = memory.get(url);
+    if (skipped !== undefined && skipped.until > now()) {
+      passed.push(`${url} ${skipped.reason}`);
+      continue;
+    }
+    const busy = await busyReason(net, url);
+    if (busy !== null) {
+      memory.set(url, { until: now() + busy.skipMs, reason: busy.reason });
+      passed.push(`${url} ${busy.reason}`);
+      continue;
+    }
+    const result = await askOne(net, { ...backend, url }, request, now);
+    if (result.ok) return { ...result, latencyMs: now() - started };
+    const kind = result.failure.kind;
+    if (kind === "unreachable" || kind === "server-error") {
+      const reason = kind === "unreachable" ? "not answering" : "server error";
+      memory.set(url, { until: now() + (kind === "unreachable" ? DOWN_SKIP_MS : BUSY_SKIP_MS), reason });
+      passed.push(`${url} ${reason}`);
+      continue;
+    }
+    return { ...result, latencyMs: now() - started };
+  }
+  return {
+    ok: false,
+    latencyMs: now() - started,
+    failure: {
+      kind: "unreachable",
+      message: `No ${backend.label} server could take the request: ${passed.join("; ")}. Squire will try again shortly.`,
+      retryable: true,
+    },
+  };
+}
+
+async function askOne(
   net: NetLike,
   backend: Backend,
   request: SystemOneRequest,
@@ -218,5 +312,5 @@ export async function ask(
       },
     };
   }
-  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs };
+  return { ok: true, answers: parsed.answers, usage: parsed.usage, model: parsed.model, latencyMs, server: backend.url };
 }

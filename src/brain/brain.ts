@@ -76,6 +76,8 @@ export interface DecisionRecord<C> {
   readonly usage: Usage;
   readonly model: string | null;
   readonly latencyMs: number;
+  /** The address that answered, when the backend has more than one. */
+  readonly server?: string;
   /** The plan chosen, or the reason for handing back. */
   readonly outcome: string;
 }
@@ -214,6 +216,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       usage: result.usage,
       model: result.model,
       latencyMs: result.latencyMs,
+      server: result.server,
       outcome,
     });
     if ("handBack" in choice) {
