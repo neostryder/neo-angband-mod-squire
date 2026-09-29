@@ -1994,18 +1994,18 @@ function statusOf(view, readable) {
   const p = view.player();
   const s = p.status;
   const lines2 = [
-    s.paralyzed > 0 ? "Paralyzed, so it cannot act." : "",
-    s.afraid > 0 ? "Afraid, so it cannot attack in melee." : "",
-    s.confused > 0 ? "Confused, so it cannot read or cast, and its steps may go astray." : "",
-    s.blind > 0 ? "Blind, so it cannot read, cast or see creatures." : "",
-    !readable && s.blind === 0 && s.confused === 0 ? "In the dark, so it cannot read or cast here." : "",
-    s.stun > 0 ? "Stunned, so its blows and spells fail more often." : "",
-    s.poisoned > 0 ? "Poisoned, losing a little health each turn." : "",
-    s.cut > 0 ? "Bleeding, losing health each turn until healed." : "",
-    p.speed < 110 ? "Slowed, so creatures act more often than it does." : "",
-    p.speed > 110 ? "Hasted, so it acts more often than normal." : ""
+    s.paralyzed > 0 ? "Paralyzed, so it cannot act until this wears off." : "",
+    s.afraid > 0 ? "Afraid, so it cannot attack in melee, though it can still shoot, throw and cast." : "",
+    s.confused > 0 ? "Confused, so it cannot read scrolls or cast spells, and a step may go in a random direction." : "",
+    s.blind > 0 ? "Blind, so it cannot read scrolls, cast spells or see monsters." : "",
+    !readable && s.blind === 0 && s.confused === 0 ? "Too dark here to read scrolls or cast spells." : "",
+    s.stun > 0 ? "Stunned, so its attacks miss more often and its spells fail more often." : "",
+    s.poisoned > 0 ? "Poisoned, losing a few hit points each turn." : "",
+    s.cut > 0 ? "Bleeding, losing hit points each turn until the cut heals or is cured." : "",
+    p.speed < 110 ? "Slowed, so monsters get more turns than it does." : "",
+    p.speed > 110 ? "Hasted, so it gets more turns than monsters of normal speed." : ""
   ].filter((line) => line !== "");
-  return lines2.length === 0 ? "Nothing is affecting the character." : lines2.join(" ");
+  return lines2.length === 0 ? "No status effects." : lines2.join(" ");
 }
 function swarmNote(seen) {
   const counts = /* @__PURE__ */ new Map();
