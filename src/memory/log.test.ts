@@ -19,6 +19,10 @@ it("persists outcomes in chunks and exports JSONL", async () => {
   expect(loaded.records()[0]?.outcome).toBe("reached stair");
   expect(loaded.exportJsonl()).toBe(`${JSON.stringify(loaded.records()[0])}\n`);
   expect(await listRuns(store)).toEqual(["run-1"]);
+  const second = loaded.append(input);
+  const end = { stop: "interrupted", reason: "a creature appeared", commands: 2, refused: 1, hpBefore: 20, hpAfter: 14 } as const;
+  loaded.attachOutcome(second, "interrupted, 2 commands, 1 refused, hp -6", end);
+  expect(loaded.records()[1]?.result).toEqual(end);
   await deleteRun(store, "run-1");
   expect(await listRuns(store)).toEqual([]);
 });

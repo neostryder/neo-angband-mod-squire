@@ -1,3 +1,4 @@
+import type { PlanEnd } from "../brain/brain.js";
 import type { KvStore } from "./kv.js";
 
 export interface LoggedDecision {
@@ -21,11 +22,14 @@ export interface LoggedDecision {
   readonly inputTokens: number;
   readonly outputTokens: number;
   readonly estimatedTokens: boolean;
+  /** How the decision's plan ended, in one line; null until it ends, and for good if the player took the keyboard first. */
   readonly outcome: string | null;
+  /** The same ending in full, kept on this machine for measuring later decisions. */
+  readonly result?: PlanEnd;
   readonly persona?: { readonly best: string; readonly inCharacter: string; readonly blended: string; readonly strength: number; readonly removed: boolean };
 }
 
-export type DecisionInput = Omit<LoggedDecision, "id" | "runId" | "seq" | "outcome"> & { readonly outcome?: string | null };
+export type DecisionInput = Omit<LoggedDecision, "id" | "runId" | "seq" | "outcome" | "result"> & { readonly outcome?: string | null };
 
 const CHUNK = 200;
 const LIMIT = 20_000;
@@ -55,11 +59,11 @@ export function createDecisionLog(store: KvStore, runId: string) {
       }
       return id;
     },
-    attachOutcome(id: string, outcome: string): void {
+    attachOutcome(id: string, outcome: string, result?: PlanEnd): void {
       const index = entries.findIndex((entry) => entry.id === id);
       if (index < 0) return;
       const old = entries[index]!;
-      entries[index] = { ...old, outcome };
+      entries[index] = { ...old, outcome, ...(result === undefined ? {} : { result }) };
       dirty.add(Math.floor(old.seq / CHUNK));
     },
     records(): readonly LoggedDecision[] { return entries.slice(); },

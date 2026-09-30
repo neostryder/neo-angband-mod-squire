@@ -82,6 +82,38 @@ export interface DecisionRecord<C> {
   readonly outcome: string;
 }
 
+/** How the plan from the last decision ended, for the decision log. */
+export interface PlanEnd {
+  /** Finished on its own, dropped by a trigger, or no plan because Squire handed back. */
+  readonly stop: "finished" | "interrupted" | "handed back";
+  /** The trigger that dropped the plan, or the reason for handing back. */
+  readonly reason: string | null;
+  readonly commands: number;
+  /** Commands after which no game time passed: the game did not carry them out. */
+  readonly refused: number;
+  /** Hit points when the answer was used and when the plan ended, when a gauge is wired. */
+  readonly hpBefore: number | null;
+  readonly hpAfter: number | null;
+}
+
+/** What the brain reads from the game to measure a plan. */
+export interface Gauge {
+  readonly turn: number;
+  readonly hp: number;
+}
+
+/** One short line for the log's outcome field, which telemetry caps at 64 characters. */
+export function outcomeLine(end: PlanEnd): string {
+  const parts: string[] = [end.stop];
+  if (end.stop !== "handed back") parts.push(`${String(end.commands)} command${end.commands === 1 ? "" : "s"}`);
+  if (end.refused > 0) parts.push(`${String(end.refused)} refused`);
+  if (end.hpBefore !== null && end.hpAfter !== null && end.stop !== "handed back") {
+    const change = end.hpAfter - end.hpBefore;
+    parts.push(`hp ${change > 0 ? "+" : ""}${String(change)}`);
+  }
+  return parts.join(", ").slice(0, 64);
+}
+
 export interface BrainDeps<C> {
   readonly backend: Backend;
   readonly planner: Planner<C>;
@@ -95,6 +127,10 @@ export interface BrainDeps<C> {
   /** Publish the current task, through `ctx.controller.setStatus`. */
   status(label: string, reason?: string): void;
   onDecision?(record: DecisionRecord<C>): void;
+  /** Called once per decision, after onDecision, when its plan ends. */
+  onPlanEnd?(end: PlanEnd): void;
+  /** Read the game turn and hit points. Without it, refused commands and hit points go unmeasured. */
+  gauge?(view: AgentView): Gauge;
 }
 
 /** Waits between retries, in milliseconds. Once these run out, Squire stops. */
@@ -112,10 +148,19 @@ export const MAX_EMPTY_DECISIONS = 4;
 /** How to get Squire going again, said the same way everywhere. */
 export const RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 
+/** What the running plan has done so far. */
+interface PlanRun {
+  readonly hpBefore: number | null;
+  commands: number;
+  refused: number;
+  /* The game turn when the last command was issued, until the next call checks it. */
+  issuedAt: number | null;
+}
+
 type State<C> =
   | { readonly kind: "idle" }
   | { readonly kind: "asking"; readonly token: Token | null; readonly question: Question<C> }
-  | { readonly kind: "running"; readonly plan: Plan }
+  | { readonly kind: "running"; readonly plan: Plan; readonly run: PlanRun }
   | { readonly kind: "waiting"; readonly until: number }
   | { readonly kind: "stopped"; readonly message: string };
 
@@ -219,11 +264,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       server: result.server,
       outcome,
     });
+    const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice) {
+      deps.onPlanEnd?.({ stop: "handed back", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       stopWith(choice.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice.plan };
+    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null } };
     deps.status(choice.plan.label);
     return "planned";
   }
@@ -241,18 +288,31 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     }
 
     if (state.kind === "running") {
-      const plan = state.plan;
+      const { plan, run } = state;
+      const gauge = deps.gauge?.(view) ?? null;
+      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt) run.refused += 1;
+      run.issuedAt = null;
       const reason = planner.trigger(view, plan);
       if (reason === null) {
         const command = plan.step(view, act);
         if (command !== null) {
           emptyDecisions = 0;
+          run.commands += 1;
+          run.issuedAt = gauge?.turn ?? null;
           return command;
         }
         deps.log(`finished: ${plan.label}`);
       } else {
         deps.log(`${plan.label}: ${reason}`);
       }
+      deps.onPlanEnd?.({
+        stop: reason === null ? "finished" : "interrupted",
+        reason,
+        commands: run.commands,
+        refused: run.refused,
+        hpBefore: run.hpBefore,
+        hpAfter: gauge?.hp ?? null,
+      });
       emptyDecisions += 1;
       if (emptyDecisions > MAX_EMPTY_DECISIONS) {
         return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);

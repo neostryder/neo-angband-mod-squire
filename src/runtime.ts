@@ -11,7 +11,7 @@
 import type { AgentController, AgentView } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
-import { createBrain, type Brain, type DecisionRecord, type Token } from "./brain/brain.js";
+import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
@@ -429,9 +429,23 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         void logLoaded.then(() => logDecision(record));
         for (const listener of listeners) listener(record, lastTurn);
       },
+      onPlanEnd: (end) => {
+        void logLoaded.then(() => endDecision(end));
+      },
+      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp }),
     });
     host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;
+  }
+
+  /* The logged decision whose plan is still running. */
+  let openDecision: string | null = null;
+
+  function endDecision(end: PlanEnd): void {
+    if (openDecision === null) return;
+    log.attachOutcome(openDecision, outcomeLine(end), end);
+    openDecision = null;
+    void log.flush();
   }
 
   function logDecision(record: DecisionRecord<GoalDigest>): void {
@@ -466,6 +480,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
             },
           }),
     });
+    openDecision = id;
     void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== undefined && lastView !== null) journal.decided(logged, lastView);

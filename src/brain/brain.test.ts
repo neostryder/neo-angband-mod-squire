@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { AgentActions, AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, selfHosted, type AskResult, type NetLike } from "./backend.js";
-import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, type Plan, type Planner, type Token } from "./brain.js";
+import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, outcomeLine, type Gauge, type Plan, type PlanEnd, type Planner, type Token } from "./brain.js";
 import { parseReply, type SystemOneRequest } from "./systemone.js";
 import { createTally, dayKey } from "./tally.js";
 
@@ -62,10 +62,12 @@ function rig(options: {
   planner: Planner<null>;
   results: AskResult[];
   token?: () => Token | null;
+  gauge?: () => Gauge;
 }) {
   let clock = 1_000_000;
   const sent: SystemOneRequest[] = [];
   const logs: string[] = [];
+  const ends: PlanEnd[] = [];
   const brain = createBrain({
     backend: JEV,
     planner: options.planner,
@@ -80,11 +82,14 @@ function rig(options: {
     now: () => clock,
     log: (m) => logs.push(m),
     status: () => {},
+    onPlanEnd: (end) => ends.push(end),
+    ...(options.gauge === undefined ? {} : { gauge: options.gauge }),
   });
   return {
     brain,
     sent,
     logs,
+    ends,
     tick: () => brain.controller(view, act),
     advance: (ms: number) => {
       clock += ms;
@@ -235,6 +240,64 @@ describe("brain", () => {
     });
     expect(r.tick()).toBeNull();
     expect(r.brain.stoppedBecause()).toBe("Nothing to do here.");
+  });
+});
+
+describe("plan outcomes", () => {
+  it("reports a finished plan with its commands and hit point change", async () => {
+    const game = { turn: 10, hp: 30 };
+    const r = rig({ planner: planner(() => walks(2)), results: [answered(), answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    r.tick();
+    game.turn += 1;
+    game.hp -= 4;
+    r.tick();
+    game.turn += 1;
+    game.hp -= 3;
+    r.tick();
+    expect(r.ends).toEqual([{ stop: "finished", reason: null, commands: 2, refused: 0, hpBefore: 30, hpAfter: 23 }]);
+    expect(outcomeLine(r.ends[0]!)).toBe("finished, 2 commands, hp -7");
+  });
+
+  it("counts a command after which no game time passed as refused", async () => {
+    const game = { turn: 10, hp: 30 };
+    const r = rig({ planner: planner(() => walks(3)), results: [answered(), answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    r.tick();
+    r.tick();
+    game.turn += 1;
+    r.tick();
+    game.turn += 1;
+    r.tick();
+    expect(r.ends[0]).toMatchObject({ stop: "finished", commands: 3, refused: 1 });
+    expect(outcomeLine(r.ends[0]!)).toBe("finished, 3 commands, 1 refused, hp 0");
+  });
+
+  it("reports the trigger that dropped a plan", async () => {
+    let fire = false;
+    const r = rig({ planner: planner(() => walks(10), () => (fire ? "a creature appeared" : null)), results: [answered(), answered()] });
+    r.tick();
+    await flush();
+    r.tick();
+    fire = true;
+    r.tick();
+    expect(r.ends).toEqual([{ stop: "interrupted", reason: "a creature appeared", commands: 1, refused: 0, hpBefore: null, hpAfter: null }]);
+    expect(outcomeLine(r.ends[0]!)).toBe("interrupted, 1 command");
+  });
+
+  it("reports a hand-back as the decision's ending", async () => {
+    const r = rig({
+      planner: { ask: () => ({ request: REQUEST, context: null }), choose: () => ({ handBack: "The character is in town." }), trigger: () => null },
+      results: [answered()],
+      gauge: () => ({ turn: 1, hp: 12 }),
+    });
+    r.tick();
+    await flush();
+    r.tick();
+    expect(r.ends).toEqual([{ stop: "handed back", reason: "The character is in town.", commands: 0, refused: 0, hpBefore: 12, hpAfter: 12 }]);
+    expect(outcomeLine(r.ends[0]!)).toBe("handed back");
   });
 });
 

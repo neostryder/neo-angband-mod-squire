@@ -944,6 +944,16 @@ async function keyReady(secrets, backend, canReadEnv, log) {
 function sameToken(a, b) {
   return a !== null && b !== null && a.epoch === b.epoch && a.revision === b.revision;
 }
+function outcomeLine(end) {
+  const parts = [end.stop];
+  if (end.stop !== "handed back") parts.push(`${String(end.commands)} command${end.commands === 1 ? "" : "s"}`);
+  if (end.refused > 0) parts.push(`${String(end.refused)} refused`);
+  if (end.hpBefore !== null && end.hpAfter !== null && end.stop !== "handed back") {
+    const change = end.hpAfter - end.hpBefore;
+    parts.push(`hp ${change > 0 ? "+" : ""}${String(change)}`);
+  }
+  return parts.join(", ").slice(0, 64);
+}
 var BACKOFF_MS = Object.freeze([1e3, 2e3, 4e3, 8e3, 15e3, 3e4]);
 var MAX_RETRY_AFTER_MS = 6e4;
 var MAX_EMPTY_DECISIONS = 4;
@@ -1026,11 +1036,13 @@ function createBrain(deps) {
       server: result.server,
       outcome
     });
+    const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice) {
+      deps.onPlanEnd?.({ stop: "handed back", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       stopWith(choice.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice.plan };
+    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null } };
     deps.status(choice.plan.label);
     return "planned";
   }
@@ -1044,18 +1056,31 @@ function createBrain(deps) {
       state = { kind: "idle" };
     }
     if (state.kind === "running") {
-      const plan = state.plan;
+      const { plan, run } = state;
+      const gauge = deps.gauge?.(view) ?? null;
+      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt) run.refused += 1;
+      run.issuedAt = null;
       const reason = planner.trigger(view, plan);
       if (reason === null) {
         const command = plan.step(view, act);
         if (command !== null) {
           emptyDecisions = 0;
+          run.commands += 1;
+          run.issuedAt = gauge?.turn ?? null;
           return command;
         }
         deps.log(`finished: ${plan.label}`);
       } else {
         deps.log(`${plan.label}: ${reason}`);
       }
+      deps.onPlanEnd?.({
+        stop: reason === null ? "finished" : "interrupted",
+        reason,
+        commands: run.commands,
+        refused: run.refused,
+        hpBefore: run.hpBefore,
+        hpAfter: gauge?.hp ?? null
+      });
       emptyDecisions += 1;
       if (emptyDecisions > MAX_EMPTY_DECISIONS) {
         return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);
@@ -3188,11 +3213,11 @@ function createDecisionLog(store, runId) {
       }
       return id;
     },
-    attachOutcome(id, outcome) {
+    attachOutcome(id, outcome, result) {
       const index = entries.findIndex((entry) => entry.id === id);
       if (index < 0) return;
       const old = entries[index];
-      entries[index] = { ...old, outcome };
+      entries[index] = { ...old, outcome, ...result === void 0 ? {} : { result } };
       dirty.add(Math.floor(old.seq / CHUNK));
     },
     records() {
@@ -4858,10 +4883,21 @@ function createRuntime(host, options = {}) {
       onDecision: (record2) => {
         void logLoaded.then(() => logDecision(record2));
         for (const listener of listeners) listener(record2, lastTurn);
-      }
+      },
+      onPlanEnd: (end) => {
+        void logLoaded.then(() => endDecision(end));
+      },
+      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp })
     });
     host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;
+  }
+  let openDecision = null;
+  function endDecision(end) {
+    if (openDecision === null) return;
+    log.attachOutcome(openDecision, outcomeLine(end), end);
+    openDecision = null;
+    void log.flush();
   }
   function logDecision(record2) {
     const goal = record2.answers["goal"];
@@ -4893,6 +4929,7 @@ function createRuntime(host, options = {}) {
         }
       }
     });
+    openDecision = id;
     void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
