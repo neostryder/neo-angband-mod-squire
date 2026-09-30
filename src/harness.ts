@@ -175,6 +175,8 @@ export interface World {
   reveal(at: Loc): void;
   /** The character's grid. */
   at(): Loc;
+  /** Let game time pass. The turn starts at 1 and stays there unless a test moves it. */
+  advance(turns: number): void;
 }
 
 function fullPlayer(spec: PlayerSpec, grid: Loc): PlayerView {
@@ -278,12 +280,13 @@ export function world(spec: WorldSpec): World {
   let packSpec: readonly string[] = spec.pack ?? [];
   let storeSpec: readonly StoreView[] = spec.stores ?? [];
   const issued: AgentCommand[] = [];
+  let turn = 1;
 
   const monsters = (): MonsterView[] => monsterSpecs.map(fullMonster);
 
   const view: AgentView = {
     apiVersion: "1.3.0",
-    turn: () => 1,
+    turn: () => turn,
     player: () => fullPlayer(playerSpec, where),
     monsters,
     cell: (x, y): CellView | null => {
@@ -400,6 +403,9 @@ export function world(spec: WorldSpec): World {
     terrain: harnessTerrain(),
     issued,
     at: () => where,
+    advance(turns: number): void {
+      turn += turns;
+    },
     moveTo(to: Loc): void {
       where = to;
     },

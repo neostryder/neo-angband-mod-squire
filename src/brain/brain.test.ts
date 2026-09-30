@@ -243,6 +243,31 @@ describe("brain", () => {
   });
 });
 
+describe("reflexes", () => {
+  it("runs a reflex without sending a request, and logs it as a decision", () => {
+    const decisions: string[] = [];
+    const brain = createBrain({
+      backend: JEV,
+      planner: {
+        ask: () => ({ reflex: "routine upkeep", plan: walks(1), context: null, answers: {} }),
+        choose: () => ({ handBack: "" }),
+        trigger: () => null,
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => { throw new Error("a reflex sends nothing"); },
+      token: () => ({ epoch: 1, revision: 1 }),
+      now: () => 0,
+      log: () => {},
+      status: () => {},
+      onDecision: (record) => decisions.push(`${record.reflex ?? "asked"}: ${record.outcome}`),
+    });
+    expect(brain.controller(view, act)).toBeNull();
+    expect(brain.state()).toBe("running");
+    expect(brain.controller(view, act)).toEqual(WALK);
+    expect(decisions).toEqual(["routine upkeep: walk 1"]);
+  });
+});
+
 describe("plan outcomes", () => {
   it("reports a finished plan with its commands and hit point change", async () => {
     const game = { turn: 10, hp: 30 };

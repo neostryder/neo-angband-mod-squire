@@ -37,6 +37,8 @@ export function subscribeExam(rt: Runtime, entries: () => readonly NotebookEntry
   let armed = false;
   let state: ExamState | null = null;
   const off = rt.onDecision((record: DecisionRecord<GoalDigest>) => {
+    /* Reflexes are Squire's upkeep rather than a judgement, so the exam ignores them. */
+    if (record.reflex !== undefined) return;
     if (state === null) {
       if (!armed) return;
       armed = false;

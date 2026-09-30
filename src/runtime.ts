@@ -454,12 +454,14 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const id = log.append({
       at: now(),
       turn: lastTurn,
-      trigger: "decision",
+      trigger: record.reflex === undefined ? "decision" : "reflex",
       backend: record.backend,
       question: "goal",
       choice: trace?.pick ?? (goal?.type === "choice" ? goal.choice : ""),
-      confidence: goal?.type === "choice" ? goal.confidence : null,
-      probs: goal?.type === "choice" ? goal.probabilities : null,
+      /* No model answered a reflex, so there is no confidence to log or calibrate. */
+      confidence: goal?.type === "choice" && record.reflex === undefined ? goal.confidence : null,
+      probs: goal?.type === "choice" && record.reflex === undefined ? goal.probabilities : null,
+      ...(record.reflex === undefined ? {} : { reflex: record.reflex }),
       state: record.request.state,
       options: record.context.offers.map((o) => o.goal),
       plan: record.outcome,
@@ -481,10 +483,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
           }),
     });
     openDecision = id;
-    void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+    if (record.reflex === undefined) void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== undefined && lastView !== null) journal.decided(logged, lastView);
-    unsavedSpend += 1;
+    if (record.reflex === undefined) unsavedSpend += 1;
     if (unsavedSpend >= 20) persistSpend();
     void log.flush();
   }

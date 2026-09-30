@@ -24,6 +24,8 @@ export interface LoggedDecision {
   readonly estimatedTokens: boolean;
   /** How the decision's plan ended, in one line; null until it ends, and for good if the player took the keyboard first. */
   readonly outcome: string | null;
+  /** Why no model was asked, when Squire decided alone. */
+  readonly reflex?: string;
   /** The same ending in full, kept on this machine for measuring later decisions. */
   readonly result?: PlanEnd;
   readonly persona?: { readonly best: string; readonly inCharacter: string; readonly blended: string; readonly strength: number; readonly removed: boolean };

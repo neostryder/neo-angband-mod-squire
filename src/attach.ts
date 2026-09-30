@@ -203,6 +203,13 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     if (!point || knight === null) return;
     const asked = planner.ask(view);
     if ("handBack" in asked) return;
+    /* Squire's choice at a forced or routine moment is known without asking the model. */
+    if ("reflex" in asked) {
+      const answer = asked.answers["goal"];
+      const goal = asked.context.offers.find((o) => answer?.type === "choice" && o.goal === answer.choice)?.goal;
+      if (goal !== undefined) record(goal, knight, view, dangerousNear, serial);
+      return;
+    }
     const question: Question<GoalDigest> = asked;
     const p = view.player();
     const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;

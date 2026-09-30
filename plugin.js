@@ -987,6 +987,23 @@ function createBrain(deps) {
     if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
     const question = planner.ask(view);
     if ("handBack" in question) return stopWith(question.handBack);
+    if ("reflex" in question) {
+      deps.onDecision?.({
+        token: deps.token(),
+        backend: backend.label,
+        request: { state: {}, questions: {} },
+        context: question.context,
+        answers: question.answers,
+        usage: { inputTokens: 0, outputTokens: 0, estimated: false },
+        model: null,
+        latencyMs: 0,
+        outcome: question.plan.label,
+        reflex: question.reflex
+      });
+      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null } };
+      deps.status(question.plan.label);
+      return null;
+    }
     const token = deps.token();
     state = { kind: "asking", token, question };
     deps.status("thinking");
@@ -1952,6 +1969,11 @@ var STATIONARY_DECISIONS = 3;
 var SWARM_LEAVE = 6;
 var SWARM_LEAVE_DREADED = 3;
 var REFUSED_COMMANDS = 3;
+var SAME_SITUATION_TURNS = 50;
+var FORCED_RISK = 0.3;
+var ROUTINE = ["wear", "detect", "study", "wait"];
+var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon"]);
+var REFUSAL_HOLD_TURNS = 200;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on.",
@@ -2094,7 +2116,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
   const out = [];
-  const add2 = (goal, criteria, risk) => out.push({ goal, criteria, risk: clamp01(risk) });
+  const add2 = (goal, criteria, risk, routine = false) => out.push({ goal, criteria, risk: clamp01(risk), ...routine ? { routine: true } : {} });
   const needs = supplyNeeds(view, s.pack, persona);
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
@@ -2102,7 +2124,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
   const tripPays = starving || player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless);
   if (recallActive) {
-    add2("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8);
+    add2("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8, s.awake.length === 0);
   }
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
@@ -2173,16 +2195,16 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   const unlit = gear !== void 0 && gear.criteria.includes("has no light");
   if (!bleeding && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
-    add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
+    add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && s.awake.length === 0);
   }
   if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
-    if (source !== null) add2("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
+    if (source !== null) add2("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02, true);
   }
   const study = studyable(view, triedStudies);
   const learnFirst = study !== null && s.awake.length === 0;
   if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
-    add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
+    add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0);
   }
   if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
@@ -2207,6 +2229,8 @@ function createGoalPlanner(options) {
   let decisionDepth = null;
   let recallRead = null;
   const stalled = /* @__PURE__ */ new Map();
+  const refused = /* @__PURE__ */ new Map();
+  let lastAnswer = null;
   let fallbackStalled = null;
   let lastOutcome = null;
   let outcomeVersion = 0;
@@ -2225,13 +2249,32 @@ function createGoalPlanner(options) {
       else if (issued === 0 || v.turn() === startTurn) {
         if (goal === null) fallbackStalled = v.turn();
         else stalled.set(goal, v.turn());
-        noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
+        if (goal !== null && issued > 0) {
+          refused.set(goal, { where: whereNow(v), turn: v.turn() });
+          const why = refusalOf(goal, v);
+          noteOutcome(`${plan.label}: the game refused it${why === null ? "" : ` ${why}`}, and no game time passed.`);
+        } else {
+          noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
+        }
       } else if (outcomeVersion === version) {
         noteOutcome(`${plan.label}: done.`);
       }
       return command;
     };
     return { ...plan, step };
+  }
+  function refusalOf(goal, v) {
+    const p = v.player();
+    if (goal === "fight" && p.status.afraid > 0) return "while the character is afraid";
+    if (READS.has(goal) && !canRead(v)) {
+      return p.status.blind > 0 ? "while the character is blind" : p.status.confused > 0 ? "while the character is confused" : "because it is too dark here to read";
+    }
+    return null;
+  }
+  function whereNow(v) {
+    const p = v.player();
+    const awake = awakeInSight(v.monsters()).map((m) => `${String(m.id)}@${String(m.grid.x)},${String(m.grid.y)}`).sort();
+    return JSON.stringify([p.depth, p.grid.x, p.grid.y, healthBand(p.hp, p.maxHp), statusOf(v, canRead(v)), awake]);
   }
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
@@ -2289,15 +2332,15 @@ function createGoalPlanner(options) {
     let begun = false;
     let done = false;
     let lastTurn = null;
-    let refused = 0;
+    let refused2 = 0;
     return {
       label,
       watcher: watch(view),
       step(v, act) {
         if (done || progress.steps >= limit) return null;
         const turn = v.turn();
-        refused = lastTurn !== null && turn === lastTurn ? refused + 1 : 0;
-        if (refused >= REFUSED_COMMANDS) {
+        refused2 = lastTurn !== null && turn === lastTurn ? refused2 + 1 : 0;
+        if (refused2 >= REFUSED_COMMANDS) {
           done = true;
           log(`${label}: the game refused the last command and no time passed.`);
           noteOutcome(`${label}: the game refused the command and no time passed.`);
@@ -2520,6 +2563,19 @@ function createGoalPlanner(options) {
     const pick2 = pick(floor.dist) ?? advice;
     return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
+  function reflexFor(offers, persona, situation, turn) {
+    if (options.reflex === false) return null;
+    const routine = ROUTINE.map((goal) => offers.find((o) => o.goal === goal && o.routine === true)).find((o) => o !== void 0);
+    if (routine !== void 0) return { goal: routine.goal, why: "routine upkeep" };
+    const only = offers.length === 1 ? offers[0] : void 0;
+    const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
+    if (only !== void 0 && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
+    const last = lastAnswer;
+    if (last !== null && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS && offers.some((o) => o.goal === last.pick)) {
+      return { goal: last.pick, why: "same situation as the last answer" };
+    }
+    return null;
+  }
   return {
     ask(view) {
       const persona = personaOf();
@@ -2530,15 +2586,17 @@ function createGoalPlanner(options) {
       const s = situationOf(view, dreadedNow(), stationaryNow(view));
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
+      const here = whereNow(view);
+      for (const [goal2, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal2);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
       const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
-      let offers = offered.filter((offer) => !stalled.has(offer.goal));
+      let offers = offered.filter((offer) => !stalled.has(offer.goal) && !refused.has(offer.goal));
       if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
-        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
       const criteria = {};
@@ -2563,6 +2621,28 @@ function createGoalPlanner(options) {
         const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", away: steps(player.grid, m.grid), tags };
       });
+      const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
+      const situation = JSON.stringify([
+        player.depth,
+        healthBand(player.hp, player.maxHp),
+        creatures,
+        statusOf(view, canRead(view)),
+        unexplored,
+        stairs,
+        hungry(view),
+        offers.map((o) => o.goal).sort()
+      ]);
+      const reflex = reflexFor(offers, persona, situation, turn);
+      if (reflex !== null) {
+        log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
+        const decided = {
+          reflex: reflex.why,
+          plan: noteStalls(reflex.goal, build(reflex.goal, view)),
+          context: { depth: player.depth, offers, newCreatures, situation, reflex: reflex.why },
+          answers: { goal: { type: "choice", choice: reflex.goal, confidence: 1, probabilities: { [reflex.goal]: 1 } } }
+        };
+        return decided;
+      }
       const question = {
         request: {
           state: {
@@ -2570,7 +2650,7 @@ function createGoalPlanner(options) {
             character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
-            creatures: seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines),
+            creatures,
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             status: statusOf(view, canRead(view)),
@@ -2582,7 +2662,7 @@ function createGoalPlanner(options) {
           },
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
         },
-        context: { depth: player.depth, offers, newCreatures }
+        context: { depth: player.depth, offers, newCreatures, situation }
       };
       return question;
     },
@@ -2612,6 +2692,7 @@ function createGoalPlanner(options) {
       if (offer === void 0) {
         return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
+      if (digest.situation !== void 0) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal };
       const trace = digest.trace;
       if (trace !== void 0 && trace.pick !== trace.advice) {
         log(`goal: ${pick2}, against advice (${trace.advice})${trace.quirk === void 0 ? "" : `: ${trace.quirk}`}`);
@@ -4905,12 +4986,14 @@ function createRuntime(host, options = {}) {
     const id = log.append({
       at: now(),
       turn: lastTurn,
-      trigger: "decision",
+      trigger: record2.reflex === void 0 ? "decision" : "reflex",
       backend: record2.backend,
       question: "goal",
       choice: trace?.pick ?? (goal?.type === "choice" ? goal.choice : ""),
-      confidence: goal?.type === "choice" ? goal.confidence : null,
-      probs: goal?.type === "choice" ? goal.probabilities : null,
+      /* No model answered a reflex, so there is no confidence to log or calibrate. */
+      confidence: goal?.type === "choice" && record2.reflex === void 0 ? goal.confidence : null,
+      probs: goal?.type === "choice" && record2.reflex === void 0 ? goal.probabilities : null,
+      ...record2.reflex === void 0 ? {} : { reflex: record2.reflex },
       state: record2.request.state,
       options: record2.context.offers.map((o) => o.goal),
       plan: record2.outcome,
@@ -4930,10 +5013,10 @@ function createRuntime(host, options = {}) {
       }
     });
     openDecision = id;
-    void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+    if (record2.reflex === void 0) void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
-    unsavedSpend += 1;
+    if (record2.reflex === void 0) unsavedSpend += 1;
     if (unsavedSpend >= 20) persistSpend();
     void log.flush();
   }
@@ -6195,6 +6278,7 @@ function subscribeExam(rt, entries, result, onStart = () => {
   let armed = false;
   let state = null;
   const off = rt.onDecision((record2) => {
+    if (record2.reflex !== void 0) return;
     if (state === null) {
       if (!armed) return;
       armed = false;
@@ -6356,6 +6440,12 @@ function attachSquire(ctx, rt) {
     if (!point || knight === null) return;
     const asked = planner.ask(view);
     if ("handBack" in asked) return;
+    if ("reflex" in asked) {
+      const answer = asked.answers["goal"];
+      const goal = asked.context.offers.find((o) => answer?.type === "choice" && o.goal === answer.choice)?.goal;
+      if (goal !== void 0) record2(goal, knight, view, dangerousNear, serial);
+      return;
+    }
     const question = asked;
     const p = view.player();
     const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;

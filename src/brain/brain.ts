@@ -9,7 +9,8 @@
  *
  * The brain moves between four states:
  *
- * - idle: no plan. The next call sends a question and moves to asking.
+ * - idle: no plan. The next call either sends a question and moves to asking,
+ *   or runs a reflex straight away.
  * - asking: a request is out. Calls return null until it resolves.
  * - running: a plan is issuing commands. Each call checks the planner's
  *   triggers first, and a trigger drops the plan and asks again.
@@ -56,10 +57,20 @@ export interface Question<C> {
 
 export type Choice = { readonly plan: Plan } | { readonly handBack: string };
 
+/** A decision the planner makes without the model, because the answer is forced, routine or the same as last time. */
+export interface Reflex<C> {
+  /** Why no model was asked, for the decision log. */
+  readonly reflex: string;
+  readonly plan: Plan;
+  readonly context: C;
+  /** Answers shaped like the model's, so the log and the dashboard treat a reflex like any other decision. */
+  readonly answers: Readonly<Record<string, Answer>>;
+}
+
 /** The game-specific half of the brain: what to ask, and what an answer means. */
 export interface Planner<C> {
-  /** The question for this moment, or a reason to hand the keyboard back. */
-  ask(view: AgentView): Question<C> | { readonly handBack: string };
+  /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back. */
+  ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string };
   /** Turn the answers into a plan. */
   choose(answers: Readonly<Record<string, Answer>>, context: C, view: AgentView): Choice;
   /** A reason to drop the running plan and decide again, or null to keep going. */
@@ -80,29 +91,31 @@ export interface DecisionRecord<C> {
   readonly server?: string;
   /** The plan chosen, or the reason for handing back. */
   readonly outcome: string;
+  /** Why no model was asked, when none was. */
+  readonly reflex?: string;
 }
 
-/** How the plan from the last decision ended, for the decision log. */
+/** How the last decision's plan ended, for the decision log. */
 export interface PlanEnd {
-  /** Finished on its own, dropped by a trigger, or no plan because Squire handed back. */
+  /** finished when the plan ran out, interrupted when a trigger dropped it, handed back when there was no plan. */
   readonly stop: "finished" | "interrupted" | "handed back";
-  /** The trigger that dropped the plan, or the reason for handing back. */
+  /** The trigger that dropped the plan, or why Squire handed back. */
   readonly reason: string | null;
   readonly commands: number;
-  /** Commands after which no game time passed: the game did not carry them out. */
+  /** Commands after which no game time passed, so the game did not carry them out. */
   readonly refused: number;
-  /** Hit points when the answer was used and when the plan ended, when a gauge is wired. */
+  /** Hit points when the plan started and when it ended, if the brain has a gauge. */
   readonly hpBefore: number | null;
   readonly hpAfter: number | null;
 }
 
-/** What the brain reads from the game to measure a plan. */
+/** The game turn and hit points, which the brain reads to measure a plan. */
 export interface Gauge {
   readonly turn: number;
   readonly hp: number;
 }
 
-/** One short line for the log's outcome field, which telemetry caps at 64 characters. */
+/** The ending in one line for the log's outcome field. Telemetry takes at most 64 characters there. */
 export function outcomeLine(end: PlanEnd): string {
   const parts: string[] = [end.stop];
   if (end.stop !== "handed back") parts.push(`${String(end.commands)} command${end.commands === 1 ? "" : "s"}`);
@@ -127,9 +140,9 @@ export interface BrainDeps<C> {
   /** Publish the current task, through `ctx.controller.setStatus`. */
   status(label: string, reason?: string): void;
   onDecision?(record: DecisionRecord<C>): void;
-  /** Called once per decision, after onDecision, when its plan ends. */
+  /** Called when a decision's plan ends, once per decision and after onDecision. */
   onPlanEnd?(end: PlanEnd): void;
-  /** Read the game turn and hit points. Without it, refused commands and hit points go unmeasured. */
+  /** Reads the game turn and hit points. Without it, refused commands and hit point changes are not measured. */
   gauge?(view: AgentView): Gauge;
 }
 
@@ -148,12 +161,12 @@ export const MAX_EMPTY_DECISIONS = 4;
 /** How to get Squire going again, said the same way everywhere. */
 export const RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 
-/** What the running plan has done so far. */
+/** Counts for the plan that is running. */
 interface PlanRun {
   readonly hpBefore: number | null;
   commands: number;
   refused: number;
-  /* The game turn when the last command was issued, until the next call checks it. */
+  /* The game turn at the last command, kept until the next call checks whether time passed. */
   issuedAt: number | null;
 }
 
@@ -207,6 +220,23 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
 
     const question = planner.ask(view);
     if ("handBack" in question) return stopWith(question.handBack);
+    if ("reflex" in question) {
+      deps.onDecision?.({
+        token: deps.token(),
+        backend: backend.label,
+        request: { state: {}, questions: {} },
+        context: question.context,
+        answers: question.answers,
+        usage: { inputTokens: 0, outputTokens: 0, estimated: false },
+        model: null,
+        latencyMs: 0,
+        outcome: question.plan.label,
+        reflex: question.reflex,
+      });
+      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null } };
+      deps.status(question.plan.label);
+      return null;
+    }
 
     const token = deps.token();
     state = { kind: "asking", token, question };

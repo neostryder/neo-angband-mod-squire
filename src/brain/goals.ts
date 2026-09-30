@@ -31,7 +31,7 @@ import { AUTOFIGHT_REACH, autofight } from "../missions/autofight.js";
 import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import type { Choice, Plan, Planner, Question } from "./brain.js";
+import type { Choice, Plan, Planner, Question, Reflex } from "./brain.js";
 import { canRead, detectionSource, hungry, readPack, studyable, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
@@ -147,6 +147,16 @@ export const SWARM_LEAVE = 6;
 export const SWARM_LEAVE_DREADED = 3;
 /** Commands in a row that pass no game time before an errand is given up as refused. */
 const REFUSED_COMMANDS = 3;
+/** Game turns (five player turns at normal speed) for which Squire repeats the model's last answer if nothing has changed. */
+const SAME_SITUATION_TURNS = 50;
+/** The most risk a lone option can carry for Squire to take it without asking, when there is no persona to set a ceiling. */
+const FORCED_RISK = 0.3;
+/** Upkeep Squire does on its own when nothing awake is in sight, first to last. */
+const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "wait"];
+/** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
+const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon"]);
+/** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
+const REFUSAL_HOLD_TURNS = 200;
 
 /** Rules of the game the model needs for this decision, in a few plain lines. */
 const HANDBOOK: readonly string[] = Object.freeze([
@@ -170,6 +180,8 @@ export interface Offer {
   readonly criteria: string;
   /** Rough chance, 0 to 1, that this choice leads to death soon. */
   readonly risk: number;
+  /** Upkeep that is safe to do without asking the model. */
+  readonly routine?: true;
 }
 
 /** How the persona bent one decision, kept for the decision log. */
@@ -193,6 +205,10 @@ export interface GoalDigest {
   readonly offers: readonly Offer[];
   /** Awake creatures that were not in sight at the previous decision. */
   readonly newCreatures: number;
+  /** A short form of the situation, to recognise it at the next decision. */
+  readonly situation?: string;
+  /** Why Squire decided without the model, when it did. */
+  readonly reflex?: string;
   /** Filled in by `choose`. */
   trace?: PersonaTrace;
 }
@@ -216,6 +232,8 @@ export interface GoalPlannerOptions {
   readonly rng?: () => number;
   /** Most tokens of persona backstory one decision may carry, from the backend's budget. */
   readonly backstoryTokens?: number;
+  /** Whether to skip the model for forced, routine and unchanged moments. On unless set to false. */
+  readonly reflex?: boolean;
 }
 
 /** A plan that owns a watcher, so `trigger` can ask it. */
@@ -444,7 +462,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
   const out: Offer[] = [];
-  const add = (goal: Goal, criteria: string, risk: number) => out.push({ goal, criteria, risk: clamp01(risk) });
+  const add = (goal: Goal, criteria: string, risk: number, routine = false) => out.push({ goal, criteria, risk: clamp01(risk), ...(routine ? { routine: true as const } : {}) });
 
   const needs = supplyNeeds(view, s.pack, persona);
   /* A recall scroll cannot be read while blind or confused. */
@@ -458,7 +476,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
   const tripPays = starving || (player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless));
   if (recallActive) {
-    add("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8);
+    add("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8, s.awake.length === 0);
   }
   /* A second reading cancels a recall already under way, so none is offered while one is pending. */
   if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
@@ -554,11 +572,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const unlit = gear !== undefined && gear.criteria.includes("has no light");
   if (!bleeding && gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     /* Changing gear spends a turn, which is as risky as any other turn not spent fighting. */
-    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)));
+    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && s.awake.length === 0);
   }
   if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
-    if (source !== null) add("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02);
+    if (source !== null) add("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02, true);
   }
   const study = studyable(view, triedStudies);
   /* Only a creature close enough to strike this turn makes a turn of study unsafe. */
@@ -566,7 +584,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
    * in sight it comes before walking on, the way lighting a torch does. */
   const learnFirst = study !== null && s.awake.length === 0;
   if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
-    add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s));
+    add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0);
   }
   if (hasFloorObject(view, at)) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
@@ -600,6 +618,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * plan, so it is left out until the turn changes. */
   const stalled = new Map<Goal, number>();
 
+  /* The game refused these goals where the character stood. Fear, blindness,
+   * confusion, darkness and low mana are already filtered out of the offers, so
+   * whatever blocked the goal is something the view doesn't show, and it will
+   * block it again until something here changes. */
+  const refused = new Map<Goal, { readonly where: string; readonly turn: number }>();
+
+  /* The model's last answer and the situation it answered. */
+  let lastAnswer: { readonly situation: string; readonly turn: number; readonly pick: Goal } | null = null;
+
   /* The game turn on which the errand-order fallback last ended having done nothing. */
   let fallbackStalled: number | null = null;
 
@@ -627,13 +654,36 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       else if (issued === 0 || v.turn() === startTurn) {
         if (goal === null) fallbackStalled = v.turn();
         else stalled.set(goal, v.turn());
-        noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
+        if (goal !== null && issued > 0) {
+          refused.set(goal, { where: whereNow(v), turn: v.turn() });
+          const why = refusalOf(goal, v);
+          noteOutcome(`${plan.label}: the game refused it${why === null ? "" : ` ${why}`}, and no game time passed.`);
+        } else {
+          noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
+        }
       } else if (outcomeVersion === version) {
         noteOutcome(`${plan.label}: done.`);
       }
       return command;
     };
     return { ...plan, step };
+  }
+
+  /** The cause of a refusal, when the view shows one. */
+  function refusalOf(goal: Goal, v: AgentView): string | null {
+    const p = v.player();
+    if (goal === "fight" && p.status.afraid > 0) return "while the character is afraid";
+    if (READS.has(goal) && !canRead(v)) {
+      return p.status.blind > 0 ? "while the character is blind" : p.status.confused > 0 ? "while the character is confused" : "because it is too dark here to read";
+    }
+    return null;
+  }
+
+  /** The character's depth, grid, health, status and the awake creatures around it. */
+  function whereNow(v: AgentView): string {
+    const p = v.player();
+    const awake = awakeInSight(v.monsters()).map((m) => `${String(m.id)}@${String(m.grid.x)},${String(m.grid.y)}`).sort();
+    return JSON.stringify([p.depth, p.grid.x, p.grid.y, healthBand(p.hp, p.maxHp), statusOf(v, canRead(v)), awake]);
   }
 
   /* A fight the model chose may wake a sleeper: the state says which creatures
@@ -974,6 +1024,25 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
 
+  /**
+   * Moments that don't need the model: upkeep with nothing awake in sight, a
+   * single option the persona's risk ceiling allows, and a situation the model
+   * answered within the last few turns.
+   */
+  function reflexFor(offers: readonly Offer[], persona: Persona | null, situation: string, turn: number): { readonly goal: Goal; readonly why: string } | null {
+    if (options.reflex === false) return null;
+    const routine = ROUTINE.map((goal) => offers.find((o) => o.goal === goal && o.routine === true)).find((o) => o !== undefined);
+    if (routine !== undefined) return { goal: routine.goal, why: "routine upkeep" };
+    const only = offers.length === 1 ? offers[0] : undefined;
+    const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
+    if (only !== undefined && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
+    const last = lastAnswer;
+    if (last !== null && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS && offers.some((o) => o.goal === last.pick)) {
+      return { goal: last.pick, why: "same situation as the last answer" };
+    }
+    return null;
+  }
+
   return {
     ask(view) {
       const persona = personaOf();
@@ -984,10 +1053,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const s = situationOf(view, dreadedNow(), stationaryNow(view));
       const turn = view.turn();
       for (const [goal, at] of stalled) if (at !== turn) stalled.delete(goal);
+      const here = whereNow(view);
+      for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
       const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
-      let offers = offered.filter((offer) => !stalled.has(offer.goal));
+      let offers = offered.filter((offer) => !stalled.has(offer.goal) && !refused.has(offer.goal));
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
@@ -995,7 +1066,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
-        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"})`);
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
 
@@ -1028,6 +1099,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", away: steps(player.grid, m.grid), tags };
       });
 
+      const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
+      const situation = JSON.stringify([
+        player.depth, healthBand(player.hp, player.maxHp), creatures, statusOf(view, canRead(view)), unexplored, stairs,
+        hungry(view), offers.map((o) => o.goal).sort(),
+      ]);
+      const reflex = reflexFor(offers, persona, situation, turn);
+      if (reflex !== null) {
+        log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
+        const decided: Reflex<GoalDigest> = {
+          reflex: reflex.why,
+          plan: noteStalls(reflex.goal, build(reflex.goal, view)),
+          context: { depth: player.depth, offers, newCreatures, situation, reflex: reflex.why },
+          answers: { goal: { type: "choice", choice: reflex.goal, confidence: 1, probabilities: { [reflex.goal]: 1 } } },
+        };
+        return decided;
+      }
+
       const question: Question<GoalDigest> = {
         request: {
           state: {
@@ -1035,7 +1123,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
             health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
             ...(player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {}),
-            creatures: seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines),
+            creatures,
             ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             status: statusOf(view, canRead(view)),
@@ -1050,7 +1138,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
               ? { goal }
               : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } },
         },
-        context: { depth: player.depth, offers, newCreatures },
+        context: { depth: player.depth, offers, newCreatures, situation },
       };
       return question;
     },
@@ -1089,6 +1177,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (offer === undefined) {
         return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
+      if (digest.situation !== undefined) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal };
       const trace = digest.trace;
       if (trace !== undefined && trace.pick !== trace.advice) {
         log(`goal: ${pick}, against advice (${trace.advice})${trace.quirk === undefined ? "" : `: ${trace.quirk}`}`);
