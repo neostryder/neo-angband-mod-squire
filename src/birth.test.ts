@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { writeConfig, readConfig } from "./config.js";
 import { HEIR_KEY, markRollOn, rollOnPresenter, ROLL_ON_WINDOW_MS, takeRollOn, type BirthSessionLike, type MarkStore } from "./birth.js";
+import { defaultPersona } from "./persona/persona.js";
+import type { Lineage } from "./learning/lineage.js";
 
 function marks(): MarkStore {
   const data = new Map<string, string>();
@@ -96,5 +98,61 @@ describe("roll-on birth", () => {
     markRollOn(store, 0);
     const { s } = session(true);
     expect(rollOnPresenter(host("wait").host, store, () => 5).show(s)).toBeUndefined();
+  });
+});
+
+describe("namesake births", () => {
+  function waiting(options: { mode?: "like" | "random"; enabled?: boolean; inheritance?: number } = {}) {
+    const parent = defaultPersona("Mira");
+    parent.sliders.inheritance = options.inheritance ?? 100;
+    parent.toggles.namesakes = options.enabled ?? true;
+    const line: Lineage = { name: "Mira", generation: 1, ancestors: [], lore: [], grudges: [], deepest: 20, turns: 40_000, died: { depth: 2, cause: "Grip", turn: 40_000 } };
+    let saved = writeConfig({ ...readConfig(undefined), rollOn: options.mode ?? "like", lineages: { Mira: line }, pendingHeir: { lineage: "Mira", parent } });
+    const logged: string[] = [];
+    return { host: { prefs: { get: () => saved, set: (value: unknown) => { saved = value; } }, log: (line: string) => logged.push(line) }, logged, config: () => readConfig(saved) };
+  }
+
+  it.each(["like", "random"] as const)("accepts a numbered ancestor name for %s and keeps the persona name across reload", (mode) => {
+    const h = waiting({ mode });
+    const store = marks();
+    markRollOn(store, 0);
+    const { s, calls } = session(true);
+    expect(rollOnPresenter(h.host, store, () => 5, () => 0).show(s)).toBe(true);
+    expect(calls).toContain("name Mira the Second");
+    expect(h.config().pendingHeir?.name).toBe("Mira the Second");
+    expect(h.logged.some((line) => line.includes("Mira the Second: I bear Mira's name."))).toBe(true);
+  });
+
+  it.each([{ enabled: false }, { inheritance: 0 }])("keeps the usual name when namesakes cannot pass: %j", (options) => {
+    const h = waiting(options);
+    const store = marks();
+    markRollOn(store, 0);
+    const { s, calls } = session(true);
+    expect(rollOnPresenter(h.host, store, () => 5, () => 0).show(s)).toBe(true);
+    expect(calls).toEqual(["usePrevious", "name Amram", "accept"]);
+    expect(h.logged).toEqual([]);
+  });
+
+  it("keeps a pinned name and writes no namesake line", () => {
+    const h = waiting();
+    const store = marks();
+    markRollOn(store, 0);
+    const { s, calls } = session(true);
+    const pinned: BirthSessionLike = { ...s, catalogue: () => ({ ...s.catalogue(), namePinned: true }), draft: () => ({ name: "Patron" }) };
+    expect(rollOnPresenter(h.host, store, () => 5, () => 0).show(pinned)).toBe(true);
+    expect(calls).toEqual(["usePrevious", "accept"]);
+    expect(h.config().pendingHeir?.name).toBe("Patron");
+    expect(h.logged).toEqual([]);
+  });
+
+  it("keeps the usual name when the game refuses the numbered name", () => {
+    const h = waiting();
+    const store = marks();
+    markRollOn(store, 0);
+    const { s } = session(true);
+    const refusing: BirthSessionLike = { ...s, setName: (name) => name === "Mira the Second" ? { ok: false, reason: "too long" } : s.setName(name) };
+    expect(rollOnPresenter(h.host, store, () => 5, () => 0).show(refusing)).toBe(true);
+    expect(h.config().pendingHeir?.name).toBe("Amram");
+    expect(h.logged).toEqual([]);
   });
 });

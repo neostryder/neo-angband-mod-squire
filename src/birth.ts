@@ -10,7 +10,9 @@
  * acts within a short window after Squire itself asked for the new character.
  */
 
-import { readConfig, type RollOn } from "./config.js";
+import { activePersona, readConfig, writeConfig, type RollOn } from "./config.js";
+import { namesakeFor, namesakeLog } from "./learning/flourishes.js";
+import { defaultPersona } from "./persona/persona.js";
 
 /** The part of the host's birth session this presenter uses. */
 export interface BirthResultLike {
@@ -88,7 +90,7 @@ export function takeRollOn(store: MarkStore | null, now: number, key: string = R
  * Fill in and accept the creation. Returns false, leaving the game's screens
  * to take over, when any step is refused.
  */
-export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wait">, random: () => number, log: (line: string) => void): boolean {
+export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wait">, random: () => number, log: (line: string) => void, namesake?: string): boolean {
   const cat = session.catalogue();
   const steps: (() => BirthResultLike)[] = [];
   if (mode === "like" && cat.previous !== null) {
@@ -122,6 +124,7 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
       return false;
     }
   }
+  if (!cat.namePinned && namesake !== undefined) session.setName(namesake);
   const accepted = session.accept();
   if (!accepted.ok) log(`Squire left the next character to you: ${accepted.reason ?? "the game refused it"}`);
   return accepted.ok;
@@ -129,7 +132,7 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
 
 /** The host context a birth presenter receives, as far as this file reads it. */
 export interface BirthHost {
-  readonly prefs?: { get(): unknown };
+  readonly prefs?: { get(): unknown; set?(value: unknown): void };
   readonly log: (msg: string) => void;
 }
 
@@ -143,9 +146,16 @@ export function rollOnPresenter(
   return {
     show(session) {
       if (!takeRollOn(store, now())) return undefined;
-      const mode = readConfig(host.prefs?.get()).rollOn;
+      const config = readConfig(host.prefs?.get());
+      const mode = config.rollOn;
       if (mode === "wait") return undefined;
-      if (!rollOnBirth(session, mode, random, host.log)) return undefined;
+      const heir = config.pendingHeir;
+      const persona = activePersona(config) ?? defaultPersona();
+      const namesake = heir === null || session.catalogue().namePinned ? null : namesakeFor(config.lineages[heir.lineage], heir.parent, persona, random);
+      if (!rollOnBirth(session, mode, random, host.log, namesake?.name)) return undefined;
+      const name = session.draft().name;
+      if (heir !== null) host.prefs?.set?.(writeConfig({ ...config, pendingHeir: { ...heir, name } }));
+      if (namesake !== null && name === namesake.name) host.log(namesakeLog({ ...persona, name }, namesake.ancestor));
       markRollOn(store, now(), HEIR_KEY);
       return true;
     },

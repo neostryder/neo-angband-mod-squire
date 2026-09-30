@@ -17,6 +17,7 @@ import { DEFAULT_ENDPOINT } from "./telemetry/sender.js";
 import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
 import { readFeelings, readKillers } from "./learning/grudges.js";
+import { readFlourishes } from "./learning/flourishes.js";
 import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 
@@ -64,7 +65,7 @@ export interface SquireConfig {
   /** Family lines, by name, so an heir inherits across characters. */
   readonly lineages: Readonly<Record<string, Lineage>>;
   /** Set when a Squire character died and roll-on is starting its heir. */
-  readonly pendingHeir: { readonly lineage: string; readonly parent: Persona } | null;
+  readonly pendingHeir: { readonly lineage: string; readonly parent: Persona; readonly name?: string } | null;
 }
 
 /** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
@@ -107,16 +108,40 @@ function lineagesOf(value: unknown): Record<string, Lineage> {
     out[name] = {
       name: l["name"],
       generation: l["generation"],
-      ancestors: Array.isArray(l["ancestors"]) ? (l["ancestors"] as Lineage["ancestors"]).slice(-50) : [],
+      ancestors: readAncestors(l["ancestors"]),
       lore: Array.isArray(l["lore"]) ? (l["lore"] as Lineage["lore"]).slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? (l["grudges"] as Lineage["grudges"]).slice(-30) : [],
       creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
       aims: readAims(l["aims"]),
       killers: readKillers(l["killers"]),
       feelings: readFeelings(l["feelings"]),
+      ...readFlourishes(l),
+      ...(typeof l["race"] === "string" ? { race: l["race"] } : {}),
+      ...(typeof l["cls"] === "string" ? { cls: l["cls"] } : {}),
+      ...(rec(l["died"]) === null ? {} : { died: readDeath(l["died"]) }),
     };
   }
   return out;
+}
+
+function readDeath(value: unknown): NonNullable<Lineage["died"]> | null {
+  const death = rec(value);
+  if (death === null || typeof death["cause"] !== "string") return null;
+  return { cause: death["cause"].slice(0, 160), depth: Math.round(numberIn(death["depth"], 0, 127, 0)), turn: Math.round(numberIn(death["turn"], 0, Number.MAX_SAFE_INTEGER, 0)) };
+}
+
+function readAncestors(value: unknown): Lineage["ancestors"] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-50).flatMap((raw): Lineage["ancestors"] => {
+    const ancestor = rec(raw);
+    if (ancestor === null || typeof ancestor["name"] !== "string") return [];
+    return [{
+      name: ancestor["name"].slice(0, 100), race: str(ancestor["race"], "unknown", 80), cls: str(ancestor["cls"], "unknown", 80),
+      generation: Math.round(numberIn(ancestor["generation"], 1, Number.MAX_SAFE_INTEGER, 1)), died: readDeath(ancestor["died"]),
+      ...(typeof ancestor["deepest"] === "number" ? { deepest: numberIn(ancestor["deepest"], 0, 127, 0) } : {}),
+      ...(typeof ancestor["turns"] === "number" ? { turns: numberIn(ancestor["turns"], 0, Number.MAX_SAFE_INTEGER, 0) } : {}),
+    }];
+  });
 }
 
 function readAims(value: unknown): InheritedAim[] {
@@ -201,7 +226,7 @@ export function readConfig(stored: unknown): SquireConfig {
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
       const heir = rec(data["pendingHeir"]);
-      return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]) } : null;
+      return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...(typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {}) } : null;
     })(),
   };
 }

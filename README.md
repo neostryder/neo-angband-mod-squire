@@ -67,6 +67,12 @@ When a character dies, Setup can have Squire start the next one for you, either 
 
 The family also remembers what killed its characters. A bold or proud heir hates that creature and a cautious or craven one fears it, more strongly with each ancestor it killed. Hatred adds weight to fighting it, and a hated unique can become an aim to avenge the family. Fear makes the heir believe the creature more dangerous and offers to leave the level when it appears. Neither overrides the safety floor. Killing a hated unique settles the grudge for the whole family, and a feeling toward an ordinary monster fades over later generations unless it kills again. The Squire panel lists these under Family memory. With Inheritance at nothing, or Blood grudges off, an heir starts with no grudges.
 
+Epitaphs gives each death a short line in the character's voice, naming the killer, depth, character level and last choice. The log records it, and Family memory shows the last few an heir inherits. Turn Epitaphs off to stop writing them. Inheritance sets how many pass to heirs.
+
+Family milestones remembers the first time the family slays each unique, its deepest level and its first known artifact. An heir recalls a milestone in the log when it reaches that depth or sees that unique. Family memory lists recent milestones. Turn Family milestones off to stop recording and recalling them; Inheritance sets how many an heir remembers.
+
+Namesakes lets an heir take an ancestor's name with a number, such as "Mira the Second". Ancestors who reached deeper or lived longer are more likely to lend their names. The log names the ancestor. Turn Namesakes off to keep the usual birth names. Inheritance lowers the chance, down to none when nothing passes, and a pinned name stays yours.
+
 ## Knight's Lessons
 
 When you have the keyboard, you are the knight and Squire is your apprentice. It issues no commands, so your character stays yours. At each moment that matters it forms its own choice, compares it with yours, and writes a line in its notebook on the Lessons tab.

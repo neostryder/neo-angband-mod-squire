@@ -28,6 +28,8 @@ import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
 import { dreadedRaces } from "./learning/lessons.js";
 import { feelingLine, feelingLog, remembered, settle, settledLine, type Feeling } from "./learning/grudges.js";
+import { addMilestone, epitaphFor, familyVoice, milestoneFact, milestoneId, recallMilestones, type Milestone } from "./learning/flourishes.js";
+import type { Lineage } from "./learning/lineage.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -162,6 +164,7 @@ export interface Runtime {
   recordKill(race: string, unique: boolean, view: AgentView | null): void;
   /** Where this character's hatred and fear of its ancestors' killers come from, one line each. */
   grudgeLines(): readonly string[];
+  familyMemoryLines(): readonly string[];
   /** Record what changed since the last look at the game. */
   observe(view: AgentView): void;
   journal(): Journal;
@@ -229,6 +232,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
+    observeFamily(view);
     channel.tick();
     const command = controller(view, act);
     if (command !== null) ownCommandAt = Date.now();
@@ -389,6 +393,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
+        observeFamily(view);
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
@@ -409,11 +414,21 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       self.saveCharacter({ ...character, kills });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
+      if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
     },
     grudgeLines: () => feelingsNow().map(feelingLine),
+    familyMemoryLines() {
+      const lineage = familyNow();
+      const persona = character.persona;
+      if (lineage === null || persona === null) return self.grudgeLines();
+      const epitaphs = [...(lineage.inheritedEpitaphs ?? []), ...(lineage.epitaphs ?? []).filter((e) => e.generation === lineage.generation)];
+      const milestones = [...(lineage.inheritedMilestones ?? []), ...(lineage.milestones ?? []).filter((m) => m.generation === lineage.generation)];
+      return [...self.grudgeLines(), ...(persona.toggles.epitaphs ? epitaphs.slice(-3).map((e) => e.line) : []), ...(persona.toggles.milestones ? milestones.slice(-5).map(milestoneFact) : [])];
+    },
     observe(view) {
       lastView = view;
       journal.observe(view);
+      observeFamily(view);
     },
     journal: () => journal,
     strategy: () => strategy,
@@ -447,7 +462,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     if (character.persona !== null) return character.persona;
     const heir = config.pendingHeir;
     if (heir !== null) {
-      const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize(activePersona(config) ?? defaultPersona()), Math.random);
+      const template = activePersona(config) ?? defaultPersona();
+      const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize({ ...template, ...(heir.name === undefined ? {} : { name: heir.name }) }), Math.random);
       self.saveConfig({ ...config, pendingHeir: null, ...(born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } }) });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
@@ -464,6 +480,45 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const adopted = normalize(chosen);
     self.saveCharacter({ ...character, persona: adopted });
     return adopted;
+  }
+
+  function familyNow(): Lineage | null {
+    const name = character.lineage?.trim();
+    return name === undefined || name === "" ? null : config.lineages[name] ?? null;
+  }
+
+  function saveFamily(lineage: Lineage): void {
+    const name = character.lineage?.trim() || character.persona?.name;
+    if (name === undefined) return;
+    if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: name });
+    self.saveConfig({ ...config, lineages: { ...config.lineages, [name]: lineage } });
+  }
+
+  function rememberMilestone(kind: Milestone["kind"], depth: number, fact: string): void {
+    const persona = character.persona;
+    if (persona === null || !persona.toggles.milestones) return;
+    const lineage = familyNow() ?? { name: persona.name, generation: 1, ancestors: [], lore: [], grudges: [] };
+    const milestone = addMilestone(lineage, persona, kind, depth, fact);
+    if (milestone === null) return;
+    const kept = (lineage.milestones ?? []).filter((m) => kind !== "depth" || m.kind !== "depth");
+    saveFamily({ ...lineage, milestones: [...kept, milestone] });
+    host.log(familyVoice(persona, milestoneFact(milestone)));
+  }
+
+  function observeFamily(view: AgentView): void {
+    const persona = character.persona;
+    if (persona === null || !persona.toggles.milestones) return;
+    const lineage = familyNow();
+    if (lineage !== null) {
+      const recalled = recallMilestones(lineage, persona, view.player().depth, view.monsters().filter((m) => m.visible && m.raceFlags.includes("UNIQUE")).map((m) => m.race));
+      if (recalled.length > 0) {
+        saveFamily({ ...lineage, mentionedMilestones: [...(lineage.mentionedMilestones ?? []), ...recalled.map(milestoneId)] });
+        for (const milestone of recalled) host.log(familyVoice(persona, milestoneFact(milestone)));
+      }
+    }
+    rememberMilestone("depth", view.player().maxDepth, "");
+    const artifact = [...view.inventory(), ...view.equipment()].find((item) => item?.artifact && item.artifactName !== null);
+    if (artifact !== undefined && artifact !== null) rememberMilestone("artifact", view.player().depth, artifact.artifactName!);
   }
 
   /** The heir's feelings, which only a character born into a line holds. */
@@ -630,7 +685,11 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
+      const last = log.records().at(-1);
+      const epitaph = epitaphFor(persona, { name: report.name.trim() || persona.name, generation: lineage?.generation ?? 1, cause: report.cause, depth: report.depth, level: report.level, action: last?.choice ?? "unknown" });
+      if (epitaph !== null) host.log(epitaph.line);
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), deepest: report.maxDepth, turns: report.turn, epitaphs: [...(lineage?.epitaphs ?? []), ...(epitaph === null ? [] : [epitaph])].slice(-12), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
+      if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: lineageName });
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },

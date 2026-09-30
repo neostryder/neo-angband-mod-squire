@@ -6,6 +6,7 @@ import { inheritCreeds } from "../orders/creed.js";
 import type { Instruction } from "../orders/types.js";
 import { inheritAims, type InheritedAim } from "../strategy/heirs.js";
 import { feelingKind, feelingsFor, remembered, type Feeling, type Killer } from "./grudges.js";
+import { inheritFlourishes, type Epitaph, type Milestone } from "./flourishes.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -13,6 +14,8 @@ export interface Ancestor {
   readonly cls: string;
   readonly generation: number;
   readonly died: { readonly depth: number; readonly cause: string; readonly turn: number } | null;
+  readonly deepest?: number;
+  readonly turns?: number;
 }
 
 export interface Lineage {
@@ -29,6 +32,13 @@ export interface Lineage {
   readonly killers?: readonly Killer[];
   /** The current heir's hatred or fear toward those killers, set when it is born. */
   readonly feelings?: readonly Feeling[];
+  readonly epitaphs?: readonly Epitaph[];
+  readonly milestones?: readonly Milestone[];
+  readonly inheritedEpitaphs?: readonly Epitaph[];
+  readonly inheritedMilestones?: readonly Milestone[];
+  readonly mentionedMilestones?: readonly string[];
+  readonly deepest?: number;
+  readonly turns?: number;
   /** Current-character facts are optional until a run has supplied them. */
   readonly race?: string;
   readonly cls?: string;
@@ -83,6 +93,8 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
   const parent: Ancestor = {
     name: parentLineage.name, race: parentLineage.race ?? "unknown", cls: parentLineage.cls ?? "unknown",
     generation: parentLineage.generation, died: death,
+    ...(parentLineage.deepest === undefined ? {} : { deepest: parentLineage.deepest }),
+    ...(parentLineage.turns === undefined ? {} : { turns: parentLineage.turns }),
   };
   return {
     lineage: {
@@ -91,6 +103,7 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
       aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
       killers, feelings,
+      ...inheritFlourishes(parentLineage, parentPersona, shaped),
     },
     persona: { ...heirPersona, sliders, lists },
   };

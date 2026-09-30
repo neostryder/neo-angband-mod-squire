@@ -170,8 +170,8 @@ function createWatcher(view, options) {
           detail: `Hit points are down to ${String(hp)} of ${String(p.maxHp)}.`
         };
       }
-      const share2 = options.stopOnDamageShare;
-      if (share2 !== void 0 && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share2 || startHp - hp >= p.maxHp * share2 * 2)) {
+      const share3 = options.stopOnDamageShare;
+      if (share3 !== void 0 && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share3 || startHp - hp >= p.maxHp * share3 * 2)) {
         return {
           reason: "hurt",
           detail: `The character took ${String(lost)} damage.`
@@ -2587,6 +2587,9 @@ var PARAMETERS = [
   { id: "cowardice", group: "quirks", name: "Craven", kind: "quirk", scale: "on or off", description: "Flees from anything new, then circles back." },
   { id: "inheritance", group: "lineage", name: "Inheritance", kind: "slider", scale: "nothing passes to everything passes", description: "How much ancestral lore an heir starts with." },
   { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An heir hates or fears whatever killed its ancestors, and the feeling grows with each one it killed.", default: true },
+  { id: "epitaphs", group: "lineage", name: "Epitaphs", kind: "toggle", scale: "on or off", description: "Squire writes an epitaph naming the killer and the character's last choice.", default: true },
+  { id: "milestones", group: "lineage", name: "Family milestones", kind: "toggle", scale: "on or off", description: "The family remembers depth records, unique kills and its first artifact.", default: true },
+  { id: "namesakes", group: "lineage", name: "Namesakes", kind: "toggle", scale: "on or off", description: "An heir can take an ancestor's name with a number.", default: true },
   { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
   { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
   { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
@@ -3810,8 +3813,8 @@ function feelingKind(persona, count2) {
   return lean >= 10 * (Math.min(3, count2) - 1) ? "hatred" : "fear";
 }
 function feelingsFor(killers, heirGeneration, heir, inheritance) {
-  const share2 = Math.max(0, Math.min(1, inheritance / 100));
-  const limit = Math.ceil(MAX_FEELINGS * share2);
+  const share3 = Math.max(0, Math.min(1, inheritance / 100));
+  const limit = Math.ceil(MAX_FEELINGS * share3);
   if (limit === 0) return [];
   const out = [];
   for (const killer of killers) {
@@ -3910,10 +3913,10 @@ var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
 function healthBand(hp, maxHp) {
   if (maxHp <= 0) return "unknown";
-  const share2 = hp / maxHp;
-  if (share2 >= 0.9) return "full";
-  if (share2 >= 0.6) return "lightly hurt";
-  if (share2 >= 0.35) return "badly hurt";
+  const share3 = hp / maxHp;
+  if (share3 >= 0.9) return "full";
+  if (share3 >= 0.6) return "lightly hurt";
+  if (share3 >= 0.35) return "badly hurt";
   return "near death";
 }
 var RECALL_MIN_GOLD = 50;
@@ -6972,6 +6975,335 @@ function createSender(options) {
   };
 }
 
+// src/learning/ranks.ts
+function rankFor(agreementShare, examples) {
+  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
+  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
+  return "Page";
+}
+function clamp012(value) {
+  return Math.max(0, Math.min(1, value));
+}
+function mean(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function inferPersona(examples, commands) {
+  const persona = defaultPersona("Player");
+  const confidence = {};
+  for (const key2 of Object.keys(persona.sliders)) {
+    persona.sliders[key2] = 50;
+    confidence[key2] = 0;
+  }
+  function set(key2, count2, value) {
+    if (count2 === 0) return;
+    persona.sliders[key2] = Math.round(clamp012(value) * 100);
+    confidence[key2] = clamp012(count2 / 20);
+  }
+  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
+  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
+  const dangerValues = [
+    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
+    ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
+  ];
+  set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);
+  const rests = commands.filter((command) => command.kind === "rest" && command.restedToFull !== void 0);
+  set("patience", rests.length, rests.length ? rests.filter((command) => command.restedToFull).length / rests.length : 0.5);
+  const heals = commands.filter((command) => command.kind === "heal" && command.hpShare !== void 0);
+  set("healat", heals.length, heals.length ? mean(heals.map((command) => command.hpShare)) : 0.5);
+  const retreats = commands.filter((command) => command.kind === "retreat" && command.hpShare !== void 0);
+  set("retreatat", retreats.length, retreats.length ? mean(retreats.map((command) => command.hpShare)) : 0.5);
+  const duration = commands.length < 2 ? 0 : Math.max(...commands.map((command) => command.turn)) - Math.min(...commands.map((command) => command.turn));
+  const consumed = commands.filter((command) => command.kind === "consumable");
+  if (duration > 0) set("consumables", commands.length, consumed.length * 1e3 / duration / 10);
+  const descents = commands.filter((command) => command.kind === "descend" && command.exploredShare !== void 0);
+  set("levelfeel", descents.length, descents.length ? mean(descents.map((command) => command.exploredShare)) : 0.5);
+  const attacks = commands.filter((command) => command.kind === "ranged" || command.kind === "melee");
+  set("range", attacks.length, attacks.length ? attacks.filter((command) => command.kind === "ranged").length / attacks.length : 0.5);
+  return { persona, confidence };
+}
+
+// src/knight.ts
+var DIR_DELTA = {
+  1: [-1, 1],
+  2: [0, 1],
+  3: [1, 1],
+  4: [-1, 0],
+  6: [1, 0],
+  7: [-1, -1],
+  8: [0, -1],
+  9: [1, -1]
+};
+function goalOfCommand(command, view) {
+  const player = view.player();
+  const at = player.grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
+  const pack = readPack(view);
+  const detection = detectionSources(view);
+  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
+  switch (command.code) {
+    case "walk":
+    case "run":
+    case "pathfind": {
+      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
+      if (delta !== void 0) {
+        const to = { x: at.x + delta[0], y: at.y + delta[1] };
+        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
+        if (awake.length > 0) {
+          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
+          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
+          if (nearestAfter > nearestNow) return "retreat";
+          if (nearestAfter < nearestNow) return "fight";
+        }
+      }
+      return "explore";
+    }
+    case "descend":
+      return "descend";
+    case "close":
+      return "close_door";
+    case "rest":
+      return "rest";
+    case "pickup":
+      return "pick_up";
+    case "eat":
+      return "eat";
+    case "study":
+      return "study";
+    case "wield":
+    case "wear":
+      return "wear";
+    case "zap-rod":
+    case "zap":
+      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
+    case "fire":
+      return "shoot";
+    case "throw":
+      return has(pack.oil) ? "throw_oil" : null;
+    case "aim-wand":
+      return "aim_wand";
+    case "quaff":
+      return has(pack.heal) ? "heal" : null;
+    case "read":
+      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
+      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
+      if (has(pack.phase)) return "phase";
+      if (has(pack.teleport)) return "teleport";
+      if (has(pack.descent)) return "deep_descent";
+      return null;
+    case "use-staff":
+      return has(pack.teleport) ? "teleport" : null;
+    case "shop-buy":
+    case "shop-sell":
+      return "shop";
+    case "cast": {
+      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
+      if (spell === null) return null;
+      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
+      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+function proceduralPick(offers, hpShare) {
+  const has = (g) => offers.find((o) => o.goal === g);
+  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
+  const fight = has("fight");
+  if (fight !== void 0 && fight.risk > 0.45) {
+    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+  }
+  if (hpShare < 0.35) {
+    const safe = first("heal", "cast_heal");
+    if (safe !== null) return safe;
+  }
+  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
+  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+}
+var LABEL = {
+  fight: "fight in melee",
+  shoot: "shoot",
+  throw_oil: "throw oil",
+  aim_wand: "aim a wand",
+  cast_attack: "cast an attack spell",
+  heal: "drink a healing potion",
+  cast_heal: "cast a healing spell",
+  phase: "phase away",
+  teleport: "teleport away",
+  deep_descent: "read Deep Descent",
+  retreat: "back away",
+  rest: "rest",
+  eat: "eat",
+  study: "learn a spell",
+  wear: "wear gear",
+  detect: "survey the level",
+  pick_up: "pick it up",
+  fetch: "fetch an item",
+  drop_junk: "drop junk",
+  buff: "use a combat buff",
+  resist: "drink a resist potion",
+  device: "use a curing device",
+  activate: "activate an item",
+  disarm: "disarm a trap",
+  tunnel: "tunnel through rubble",
+  explore: "explore",
+  descend: "take the stairs",
+  leave_level: "leave the level",
+  close_door: "close a door",
+  recall_town: "recall to town",
+  shop: "shop for supplies",
+  recall_dungeon: "recall into the dungeon",
+  wait: "wait a turn"
+};
+function goalLabel(goal) {
+  return LABEL[goal];
+}
+function noteLine(squire, knight, hpShare) {
+  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
+  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
+  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
+}
+var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
+function emptyApprentice() {
+  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
+}
+function note(apprentice, entry) {
+  const weight = entry.demonstration ? 2 : 1;
+  return {
+    entries: [...apprentice.entries, entry].slice(-200),
+    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
+    total: apprentice.total + weight,
+    commands: apprentice.commands,
+    exams: apprentice.exams,
+    examArmed: apprentice.examArmed,
+    ghostHint: apprentice.ghostHint,
+    ghostGoal: apprentice.ghostGoal
+  };
+}
+function rankOf(apprentice) {
+  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
+}
+function momentOf(view) {
+  const p = view.player();
+  const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
+  return { awake, hpBand: share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3, depth: p.depth };
+}
+function isDecisionPoint(previous, now, goal) {
+  if (goal === null) return false;
+  if (previous === null) return true;
+  if (goal !== "explore") return true;
+  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
+}
+
+// src/learning/flourishes.ts
+function share2(inheritance) {
+  return Number.isFinite(inheritance) ? Math.max(0, Math.min(1, inheritance / 100)) : 0;
+}
+function familyVoice(persona, fact, kind = "memory") {
+  const line = `${persona.name}: ${fact}`;
+  if (persona.sliders.chronicle < 50) return line;
+  if (persona.quirks.cowardice.on || persona.sliders.boldness <= 35) return `${line} ${kind === "death" ? "I should have turned back." : "I hope I get home."}`;
+  if (persona.sliders.pride >= 70 || persona.sliders.boldness >= 65) return `${line} ${kind === "death" ? "I meant to go deeper." : "I mean to go deeper."}`;
+  return line;
+}
+function namesakeLog(persona, ancestor) {
+  if (persona.sliders.chronicle >= 50) {
+    if (persona.quirks.cowardice.on || persona.sliders.boldness <= 35) return `${persona.name}: I hope I outlive ${ancestor}, whose name I bear.`;
+    if (persona.sliders.pride >= 70 || persona.sliders.boldness >= 65) return `${persona.name}: I took ${ancestor}'s name. I will go deeper than ${ancestor}.`;
+  }
+  return `${persona.name}: I bear ${ancestor}'s name.`;
+}
+function epitaphFor(persona, death) {
+  if (!persona.toggles.epitaphs) return null;
+  const cause = death.cause.replace(/^killed by\s+/i, "");
+  const action = goalLabel(death.action);
+  const during = action === void 0 ? "with my last choice unrecorded" : `while choosing to ${action}`;
+  const where = death.depth === 0 ? "in town" : `at ${String(death.depth * 50)} ft`;
+  const fact = `I died to ${cause} ${where}, level ${String(death.level)}, ${during}.`;
+  return { name: death.name, generation: death.generation, line: familyVoice({ ...persona, name: death.name }, fact, "death") };
+}
+function inheritFlourishes(lineage, parent, heir) {
+  const epitaphs = lineage.epitaphs ?? [];
+  const milestones = lineage.milestones ?? [];
+  const amount = share2(parent.sliders.inheritance);
+  const epitaphCount = parent.toggles.epitaphs && heir.toggles.epitaphs ? Math.ceil(3 * amount) : 0;
+  const milestoneCount = parent.toggles.milestones && heir.toggles.milestones ? Math.ceil(12 * amount) : 0;
+  return {
+    epitaphs,
+    milestones,
+    inheritedEpitaphs: epitaphCount === 0 ? [] : epitaphs.slice(-epitaphCount),
+    inheritedMilestones: milestoneCount === 0 ? [] : milestones.slice(-milestoneCount),
+    mentionedMilestones: []
+  };
+}
+function milestoneId(milestone) {
+  return `${milestone.kind}:${String(milestone.generation)}:${String(milestone.depth)}:${milestone.fact.toLowerCase()}`;
+}
+function addMilestone(lineage, persona, kind, depth, fact) {
+  if (!persona.toggles.milestones) return null;
+  const records = lineage.milestones ?? [];
+  if (kind === "depth" ? depth <= Math.max(0, lineage.deepest ?? 0, ...lineage.ancestors.map((a) => a.deepest ?? a.died?.depth ?? 0), ...records.filter((m) => m.kind === "depth").map((m) => m.depth)) : records.some((m) => m.kind === kind && (kind === "artifact" || m.fact.toLowerCase() === fact.toLowerCase()))) return null;
+  return { kind, depth, fact, name: lineage.name, generation: lineage.generation };
+}
+function milestoneFact(milestone) {
+  if (milestone.kind === "depth") return `${milestone.name} reached ${String(milestone.depth * 50)} ft.`;
+  if (milestone.kind === "unique") return `${milestone.name} was the first of the family to slay ${milestone.fact}.`;
+  return `${milestone.name} found the family's first artifact: ${milestone.fact}.`;
+}
+function recallMilestones(lineage, persona, depth, uniques) {
+  if (!persona.toggles.milestones) return [];
+  return (lineage.inheritedMilestones ?? []).filter((m) => !(lineage.mentionedMilestones ?? []).includes(milestoneId(m)) && (m.kind === "depth" ? depth >= m.depth : m.kind === "unique" && uniques.some((name) => name.toLowerCase() === m.fact.toLowerCase())));
+}
+var ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
+function rootName(name) {
+  const match = /^(.*) the (First|Second|Third|Fourth|Fifth|Sixth|Seventh|Eighth|Ninth|Tenth|\d+(?:st|nd|rd|th))$/.exec(name);
+  if (match === null) return { root: name, number: 1 };
+  const word = ORDINALS.indexOf(match[2]);
+  return { root: match[1], number: word < 0 ? Number.parseInt(match[2], 10) : word + 1 };
+}
+function ordinal(number) {
+  const word = ORDINALS[number - 1];
+  if (word !== void 0) return word;
+  const suffix = number % 100 >= 11 && number % 100 <= 13 ? "th" : { 1: "st", 2: "nd", 3: "rd" }[number % 10] ?? "th";
+  return `${String(number)}${suffix}`;
+}
+function namesakeFor(lineage, parent, heir, rng) {
+  if (lineage === void 0 || !parent.toggles.namesakes || !heir.toggles.namesakes || share2(parent.sliders.inheritance) === 0) return null;
+  const candidates = [...lineage.ancestors, { name: lineage.name, race: lineage.race ?? "unknown", cls: lineage.cls ?? "unknown", generation: lineage.generation, died: lineage.died ?? null, ...lineage.deepest === void 0 ? {} : { deepest: lineage.deepest }, ...lineage.turns === void 0 ? {} : { turns: lineage.turns } }];
+  const named3 = candidates.filter((a) => a.name.trim() !== "");
+  if (named3.length === 0) return null;
+  const weight = (a) => 1 + Math.min(4, (a.deepest ?? a.died?.depth ?? 0) / 10) + Math.min(4, (a.turns ?? a.died?.turn ?? 0) / 1e4);
+  const total = named3.reduce((sum, a) => sum + weight(a), 0);
+  const draw = rng();
+  let ticket = (Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 1) * total;
+  const ancestor = named3.find((a) => (ticket -= weight(a)) < 0) ?? named3[named3.length - 1];
+  const chance = share2(parent.sliders.inheritance) * Math.min(0.8, 0.15 + (weight(ancestor) - 1) * 0.08);
+  const roll = rng();
+  if (!Number.isFinite(roll) || roll >= chance) return null;
+  const root = rootName(ancestor.name).root;
+  const next = 1 + Math.max(...named3.filter((a) => rootName(a.name).root === root).map((a) => rootName(a.name).number));
+  return { name: `${root} the ${ordinal(next)}`, ancestor: ancestor.name };
+}
+function readFlourishes(value) {
+  const number = (v) => typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+  const entries = (v) => Array.isArray(v) ? v.slice(-100).filter((r) => r !== null && typeof r === "object" && !Array.isArray(r)) : [];
+  const epitaphs = (v) => entries(v).flatMap((r) => typeof r["name"] === "string" && typeof r["line"] === "string" ? [{ name: r["name"].slice(0, 100), line: r["line"].slice(0, 500), generation: number(r["generation"]) }] : []).slice(-12);
+  const milestones = (v) => entries(v).flatMap((r) => (r["kind"] === "depth" || r["kind"] === "unique" || r["kind"] === "artifact") && typeof r["name"] === "string" && typeof r["fact"] === "string" ? [{ kind: r["kind"], name: r["name"].slice(0, 100), fact: r["fact"].slice(0, 160), generation: number(r["generation"]), depth: number(r["depth"]) }] : []);
+  return {
+    epitaphs: epitaphs(value["epitaphs"]),
+    milestones: milestones(value["milestones"]),
+    inheritedEpitaphs: epitaphs(value["inheritedEpitaphs"]).slice(-3),
+    inheritedMilestones: milestones(value["inheritedMilestones"]).slice(-12),
+    mentionedMilestones: Array.isArray(value["mentionedMilestones"]) ? value["mentionedMilestones"].filter((v) => typeof v === "string").slice(-12) : [],
+    deepest: number(value["deepest"]),
+    turns: number(value["turns"])
+  };
+}
+
 // src/config.ts
 var CONFIG_FORMAT = "neo-angband/squire/prefs";
 var CONFIG_SCHEMA = 1;
@@ -7011,16 +7343,41 @@ function lineagesOf(value) {
     out[name] = {
       name: l["name"],
       generation: l["generation"],
-      ancestors: Array.isArray(l["ancestors"]) ? l["ancestors"].slice(-50) : [],
+      ancestors: readAncestors(l["ancestors"]),
       lore: Array.isArray(l["lore"]) ? l["lore"].slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : [],
       creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
       aims: readAims(l["aims"]),
       killers: readKillers(l["killers"]),
-      feelings: readFeelings(l["feelings"])
+      feelings: readFeelings(l["feelings"]),
+      ...readFlourishes(l),
+      ...typeof l["race"] === "string" ? { race: l["race"] } : {},
+      ...typeof l["cls"] === "string" ? { cls: l["cls"] } : {},
+      ...rec2(l["died"]) === null ? {} : { died: readDeath(l["died"]) }
     };
   }
   return out;
+}
+function readDeath(value) {
+  const death = rec2(value);
+  if (death === null || typeof death["cause"] !== "string") return null;
+  return { cause: death["cause"].slice(0, 160), depth: Math.round(numberIn(death["depth"], 0, 127, 0)), turn: Math.round(numberIn(death["turn"], 0, Number.MAX_SAFE_INTEGER, 0)) };
+}
+function readAncestors(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-50).flatMap((raw) => {
+    const ancestor = rec2(raw);
+    if (ancestor === null || typeof ancestor["name"] !== "string") return [];
+    return [{
+      name: ancestor["name"].slice(0, 100),
+      race: str(ancestor["race"], "unknown", 80),
+      cls: str(ancestor["cls"], "unknown", 80),
+      generation: Math.round(numberIn(ancestor["generation"], 1, Number.MAX_SAFE_INTEGER, 1)),
+      died: readDeath(ancestor["died"]),
+      ...typeof ancestor["deepest"] === "number" ? { deepest: numberIn(ancestor["deepest"], 0, 127, 0) } : {},
+      ...typeof ancestor["turns"] === "number" ? { turns: numberIn(ancestor["turns"], 0, Number.MAX_SAFE_INTEGER, 0) } : {}
+    }];
+  });
 }
 function readAims(value) {
   if (!Array.isArray(value)) return [];
@@ -7093,7 +7450,7 @@ function readConfig(stored) {
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
       const heir = rec2(data["pendingHeir"]);
-      return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]) } : null;
+      return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {} } : null;
     })()
   };
 }
@@ -7315,7 +7672,7 @@ function takeRollOn(store, now, key2 = ROLL_ON_KEY) {
     return false;
   }
 }
-function rollOnBirth(session, mode, random, log) {
+function rollOnBirth(session, mode, random, log, namesake) {
   const cat = session.catalogue();
   const steps2 = [];
   if (mode === "like" && cat.previous !== null) {
@@ -7346,6 +7703,7 @@ function rollOnBirth(session, mode, random, log) {
       return false;
     }
   }
+  if (!cat.namePinned && namesake !== void 0) session.setName(namesake);
   const accepted = session.accept();
   if (!accepted.ok) log(`Squire left the next character to you: ${accepted.reason ?? "the game refused it"}`);
   return accepted.ok;
@@ -7354,9 +7712,16 @@ function rollOnPresenter(host, store = sessionMarks(), now = Date.now, random = 
   return {
     show(session) {
       if (!takeRollOn(store, now())) return void 0;
-      const mode = readConfig(host.prefs?.get()).rollOn;
+      const config = readConfig(host.prefs?.get());
+      const mode = config.rollOn;
       if (mode === "wait") return void 0;
-      if (!rollOnBirth(session, mode, random, host.log)) return void 0;
+      const heir = config.pendingHeir;
+      const persona = activePersona(config) ?? defaultPersona();
+      const namesake = heir === null || session.catalogue().namePinned ? null : namesakeFor(config.lineages[heir.lineage], heir.parent, persona, random);
+      if (!rollOnBirth(session, mode, random, host.log, namesake?.name)) return void 0;
+      const name = session.draft().name;
+      if (heir !== null) host.prefs?.set?.(writeConfig({ ...config, pendingHeir: { ...heir, name } }));
+      if (namesake !== null && name === namesake.name) host.log(namesakeLog({ ...persona, name }, namesake.ancestor));
       markRollOn(store, now(), HEIR_KEY);
       return true;
     }
@@ -7423,8 +7788,8 @@ function familyOf(race) {
   return "other";
 }
 function signatureOf(input) {
-  const share2 = input.maxHp > 0 ? input.hp / input.maxHp : 1;
-  const hpBand = share2 >= 0.9 ? 0 : share2 >= 0.6 ? 1 : share2 >= 0.35 ? 2 : 3;
+  const share3 = input.maxHp > 0 ? input.hp / input.maxHp : 1;
+  const hpBand = share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3;
   return {
     depthBand: Math.floor(Math.max(0, input.depth) / 5),
     classId: input.classId,
@@ -7794,8 +8159,8 @@ function loadCreed(orders, text) {
   return { ok: true, taken };
 }
 function inheritCreeds(creeds, parent) {
-  const share2 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
-  const count2 = Math.min(12, Math.floor(12 * share2));
+  const share3 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
+  const count2 = Math.min(12, Math.floor(12 * share3));
   return creeds.filter((i) => i.kind === "standing" && i.familyCreed).sort((a, b) => b.memory - a.memory || a.createdTurn - b.createdTurn).slice(0, count2).map((i) => ({ ...i, memory: i.memory / 2 }));
 }
 
@@ -7844,7 +8209,9 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
     race: parentLineage.race ?? "unknown",
     cls: parentLineage.cls ?? "unknown",
     generation: parentLineage.generation,
-    died: death
+    died: death,
+    ...parentLineage.deepest === void 0 ? {} : { deepest: parentLineage.deepest },
+    ...parentLineage.turns === void 0 ? {} : { turns: parentLineage.turns }
   };
   return {
     lineage: {
@@ -7856,7 +8223,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
       aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
       killers,
-      feelings
+      feelings,
+      ...inheritFlourishes(parentLineage, parentPersona, shaped)
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -8268,230 +8636,6 @@ function withAncestor(lineage, name, race, cls, died, lessons, seen = []) {
   return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60), ...killers.length === 0 ? {} : { killers } };
 }
 
-// src/learning/ranks.ts
-function rankFor(agreementShare, examples) {
-  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
-  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
-  return "Page";
-}
-function clamp012(value) {
-  return Math.max(0, Math.min(1, value));
-}
-function mean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-function inferPersona(examples, commands) {
-  const persona = defaultPersona("Player");
-  const confidence = {};
-  for (const key2 of Object.keys(persona.sliders)) {
-    persona.sliders[key2] = 50;
-    confidence[key2] = 0;
-  }
-  function set(key2, count2, value) {
-    if (count2 === 0) return;
-    persona.sliders[key2] = Math.round(clamp012(value) * 100);
-    confidence[key2] = clamp012(count2 / 20);
-  }
-  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
-  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
-  const dangerValues = [
-    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
-    ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
-  ];
-  set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);
-  const rests = commands.filter((command) => command.kind === "rest" && command.restedToFull !== void 0);
-  set("patience", rests.length, rests.length ? rests.filter((command) => command.restedToFull).length / rests.length : 0.5);
-  const heals = commands.filter((command) => command.kind === "heal" && command.hpShare !== void 0);
-  set("healat", heals.length, heals.length ? mean(heals.map((command) => command.hpShare)) : 0.5);
-  const retreats = commands.filter((command) => command.kind === "retreat" && command.hpShare !== void 0);
-  set("retreatat", retreats.length, retreats.length ? mean(retreats.map((command) => command.hpShare)) : 0.5);
-  const duration = commands.length < 2 ? 0 : Math.max(...commands.map((command) => command.turn)) - Math.min(...commands.map((command) => command.turn));
-  const consumed = commands.filter((command) => command.kind === "consumable");
-  if (duration > 0) set("consumables", commands.length, consumed.length * 1e3 / duration / 10);
-  const descents = commands.filter((command) => command.kind === "descend" && command.exploredShare !== void 0);
-  set("levelfeel", descents.length, descents.length ? mean(descents.map((command) => command.exploredShare)) : 0.5);
-  const attacks = commands.filter((command) => command.kind === "ranged" || command.kind === "melee");
-  set("range", attacks.length, attacks.length ? attacks.filter((command) => command.kind === "ranged").length / attacks.length : 0.5);
-  return { persona, confidence };
-}
-
-// src/knight.ts
-var DIR_DELTA = {
-  1: [-1, 1],
-  2: [0, 1],
-  3: [1, 1],
-  4: [-1, 0],
-  6: [1, 0],
-  7: [-1, -1],
-  8: [0, -1],
-  9: [1, -1]
-};
-function goalOfCommand(command, view) {
-  const player = view.player();
-  const at = player.grid;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
-  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
-  const pack = readPack(view);
-  const detection = detectionSources(view);
-  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
-  switch (command.code) {
-    case "walk":
-    case "run":
-    case "pathfind": {
-      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
-      if (delta !== void 0) {
-        const to = { x: at.x + delta[0], y: at.y + delta[1] };
-        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
-        if (awake.length > 0) {
-          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
-          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
-          if (nearestAfter > nearestNow) return "retreat";
-          if (nearestAfter < nearestNow) return "fight";
-        }
-      }
-      return "explore";
-    }
-    case "descend":
-      return "descend";
-    case "close":
-      return "close_door";
-    case "rest":
-      return "rest";
-    case "pickup":
-      return "pick_up";
-    case "eat":
-      return "eat";
-    case "study":
-      return "study";
-    case "wield":
-    case "wear":
-      return "wear";
-    case "zap-rod":
-    case "zap":
-      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
-    case "fire":
-      return "shoot";
-    case "throw":
-      return has(pack.oil) ? "throw_oil" : null;
-    case "aim-wand":
-      return "aim_wand";
-    case "quaff":
-      return has(pack.heal) ? "heal" : null;
-    case "read":
-      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
-      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
-      if (has(pack.phase)) return "phase";
-      if (has(pack.teleport)) return "teleport";
-      if (has(pack.descent)) return "deep_descent";
-      return null;
-    case "use-staff":
-      return has(pack.teleport) ? "teleport" : null;
-    case "shop-buy":
-    case "shop-sell":
-      return "shop";
-    case "cast": {
-      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
-      if (spell === null) return null;
-      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
-      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
-      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
-      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
-      return null;
-    }
-    default:
-      return null;
-  }
-}
-function proceduralPick(offers, hpShare) {
-  const has = (g) => offers.find((o) => o.goal === g);
-  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
-  const fight = has("fight");
-  if (fight !== void 0 && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
-  }
-  if (hpShare < 0.35) {
-    const safe = first("heal", "cast_heal");
-    if (safe !== null) return safe;
-  }
-  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
-}
-var LABEL = {
-  fight: "fight in melee",
-  shoot: "shoot",
-  throw_oil: "throw oil",
-  aim_wand: "aim a wand",
-  cast_attack: "cast an attack spell",
-  heal: "drink a healing potion",
-  cast_heal: "cast a healing spell",
-  phase: "phase away",
-  teleport: "teleport away",
-  deep_descent: "read Deep Descent",
-  retreat: "back away",
-  rest: "rest",
-  eat: "eat",
-  study: "learn a spell",
-  wear: "wear gear",
-  detect: "survey the level",
-  pick_up: "pick it up",
-  fetch: "fetch an item",
-  drop_junk: "drop junk",
-  buff: "use a combat buff",
-  resist: "drink a resist potion",
-  device: "use a curing device",
-  activate: "activate an item",
-  disarm: "disarm a trap",
-  tunnel: "tunnel through rubble",
-  explore: "explore",
-  descend: "take the stairs",
-  leave_level: "leave the level",
-  close_door: "close a door",
-  recall_town: "recall to town",
-  shop: "shop for supplies",
-  recall_dungeon: "recall into the dungeon",
-  wait: "wait a turn"
-};
-function goalLabel(goal) {
-  return LABEL[goal];
-}
-function noteLine(squire, knight, hpShare) {
-  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
-  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
-  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
-}
-var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
-function emptyApprentice() {
-  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
-}
-function note(apprentice, entry) {
-  const weight = entry.demonstration ? 2 : 1;
-  return {
-    entries: [...apprentice.entries, entry].slice(-200),
-    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
-    total: apprentice.total + weight,
-    commands: apprentice.commands,
-    exams: apprentice.exams,
-    examArmed: apprentice.examArmed,
-    ghostHint: apprentice.ghostHint,
-    ghostGoal: apprentice.ghostGoal
-  };
-}
-function rankOf(apprentice) {
-  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
-}
-function momentOf(view) {
-  const p = view.player();
-  const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
-  return { awake, hpBand: share2 >= 0.9 ? 0 : share2 >= 0.6 ? 1 : share2 >= 0.35 ? 2 : 3, depth: p.depth };
-}
-function isDecisionPoint(previous, now, goal) {
-  if (goal === null) return false;
-  if (previous === null) return true;
-  if (goal !== "explore") return true;
-  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
-}
-
 // src/lessons/radar.ts
 var LESSON_SLIDERS = ["boldness", "patience", "healat", "retreatat", "consumables", "levelfeel", "range"];
 function drawRadar(ctx, persona, x, y, radius, color, confidence) {
@@ -8861,6 +9005,7 @@ function createRuntime(host, options = {}) {
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
+    observeFamily(view);
     channel.tick();
     const command = controller(view, act);
     if (command !== null) ownCommandAt = Date.now();
@@ -9011,6 +9156,7 @@ function createRuntime(host, options = {}) {
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
+        observeFamily(view);
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
@@ -9031,11 +9177,21 @@ function createRuntime(host, options = {}) {
       self.saveCharacter({ ...character, kills });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
+      if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
     },
     grudgeLines: () => feelingsNow().map(feelingLine),
+    familyMemoryLines() {
+      const lineage = familyNow();
+      const persona = character.persona;
+      if (lineage === null || persona === null) return self.grudgeLines();
+      const epitaphs = [...lineage.inheritedEpitaphs ?? [], ...(lineage.epitaphs ?? []).filter((e) => e.generation === lineage.generation)];
+      const milestones = [...lineage.inheritedMilestones ?? [], ...(lineage.milestones ?? []).filter((m) => m.generation === lineage.generation)];
+      return [...self.grudgeLines(), ...persona.toggles.epitaphs ? epitaphs.slice(-3).map((e) => e.line) : [], ...persona.toggles.milestones ? milestones.slice(-5).map(milestoneFact) : []];
+    },
     observe(view) {
       lastView = view;
       journal.observe(view);
+      observeFamily(view);
     },
     journal: () => journal,
     strategy: () => strategy,
@@ -9076,7 +9232,8 @@ function createRuntime(host, options = {}) {
     if (character.persona !== null) return character.persona;
     const heir = config.pendingHeir;
     if (heir !== null) {
-      const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize(activePersona(config) ?? defaultPersona()), Math.random);
+      const template = activePersona(config) ?? defaultPersona();
+      const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize({ ...template, ...heir.name === void 0 ? {} : { name: heir.name } }), Math.random);
       self.saveConfig({ ...config, pendingHeir: null, ...born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } } });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
@@ -9092,6 +9249,41 @@ function createRuntime(host, options = {}) {
     const adopted = normalize(chosen);
     self.saveCharacter({ ...character, persona: adopted });
     return adopted;
+  }
+  function familyNow() {
+    const name = character.lineage?.trim();
+    return name === void 0 || name === "" ? null : config.lineages[name] ?? null;
+  }
+  function saveFamily(lineage) {
+    const name = character.lineage?.trim() || character.persona?.name;
+    if (name === void 0) return;
+    if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: name });
+    self.saveConfig({ ...config, lineages: { ...config.lineages, [name]: lineage } });
+  }
+  function rememberMilestone(kind, depth, fact) {
+    const persona = character.persona;
+    if (persona === null || !persona.toggles.milestones) return;
+    const lineage = familyNow() ?? { name: persona.name, generation: 1, ancestors: [], lore: [], grudges: [] };
+    const milestone = addMilestone(lineage, persona, kind, depth, fact);
+    if (milestone === null) return;
+    const kept = (lineage.milestones ?? []).filter((m) => kind !== "depth" || m.kind !== "depth");
+    saveFamily({ ...lineage, milestones: [...kept, milestone] });
+    host.log(familyVoice(persona, milestoneFact(milestone)));
+  }
+  function observeFamily(view) {
+    const persona = character.persona;
+    if (persona === null || !persona.toggles.milestones) return;
+    const lineage = familyNow();
+    if (lineage !== null) {
+      const recalled = recallMilestones(lineage, persona, view.player().depth, view.monsters().filter((m) => m.visible && m.raceFlags.includes("UNIQUE")).map((m) => m.race));
+      if (recalled.length > 0) {
+        saveFamily({ ...lineage, mentionedMilestones: [...lineage.mentionedMilestones ?? [], ...recalled.map(milestoneId)] });
+        for (const milestone of recalled) host.log(familyVoice(persona, milestoneFact(milestone)));
+      }
+    }
+    rememberMilestone("depth", view.player().maxDepth, "");
+    const artifact = [...view.inventory(), ...view.equipment()].find((item) => item?.artifact && item.artifactName !== null);
+    if (artifact !== void 0 && artifact !== null) rememberMilestone("artifact", view.player().depth, artifact.artifactName);
   }
   function feelingsNow() {
     const line = character.lineage?.trim();
@@ -9242,7 +9434,11 @@ function createRuntime(host, options = {}) {
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), creeds, ...passable.length > 0 ? { aims: passable } : {} };
+      const last = log.records().at(-1);
+      const epitaph = epitaphFor(persona, { name: report.name.trim() || persona.name, generation: lineage?.generation ?? 1, cause: report.cause, depth: report.depth, level: report.level, action: last?.choice ?? "unknown" });
+      if (epitaph !== null) host.log(epitaph.line);
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), deepest: report.maxDepth, turns: report.turn, epitaphs: [...lineage?.epitaphs ?? [], ...epitaph === null ? [] : [epitaph]].slice(-12), creeds, ...passable.length > 0 ? { aims: passable } : {} };
+      if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: lineageName });
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },
@@ -9903,10 +10099,10 @@ function mountLessons(body2, lessons) {
   const ghostCheck = h("input", { type: "checkbox", checked: lessons.ghostEnabled() });
   ghostCheck.addEventListener("change", () => lessons.setGhost(ghostCheck.checked));
   function draw(a) {
-    const share2 = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
+    const share3 = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
     fill(
       head,
-      h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share2)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
+      h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share3)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
     );
     ghost.textContent = lessons.ghostEnabled() ? a.ghostHint ?? "" : "";
     const inferred = lessons.inferred();
@@ -10077,7 +10273,7 @@ function mountDashboard(body2, rt) {
     const player = rt.decisionView()?.player();
     const lines2 = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
     fill(aimsBox, ...lines2.map((l) => h("div", { class: "entry" }, l)));
-    const grudges = rt.grudgeLines();
+    const grudges = rt.familyMemoryLines();
     fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));
   }
   function drawAll() {
@@ -10756,7 +10952,7 @@ function attachSquire(ctx, rt) {
   }, ...ctx.core?.turnEnergy === void 0 ? {} : { speedEnergy: ctx.core.turnEnergy } });
   function record3(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
-    const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
     if (demonstration) demonstrations -= 1;
     save(
@@ -10765,7 +10961,7 @@ function attachSquire(ctx, rt) {
         squire,
         knight,
         agreed: squire === knight,
-        line: noteLine(squire, knight, share2),
+        line: noteLine(squire, knight, share3),
         demonstration,
         signature: signatureForView(view),
         dangerousNear,
@@ -10812,8 +11008,8 @@ function attachSquire(ctx, rt) {
     }
     const question = asked;
     const p = view.player();
-    const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-    const offline = proceduralPick(question.context.offers, share2);
+    const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const offline = proceduralPick(question.context.offers, share3);
     const backend = rt.backend();
     if (backend === null || asking) {
       if (offline !== null) record3(offline, knight, view, dangerousNear, serial);
