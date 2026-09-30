@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
+import { turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, clearShot, inspecting, knownCapability, pickAttackSpell, type InspectingView } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, incomingDamage, inspecting, knownCapability, monsterActions, pickAttackSpell, threatWindow, type InspectingView } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 
@@ -45,9 +46,9 @@ describe("threat model", () => {
     expect(hurt).toBeLessThan(rating().band);
   });
 
-  it("preserves old threat behavior without recall", () => {
+  it("uses the two-action fallback without recall", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
-    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(1);
   });
 
   it("does not call a townsperson with unseen blows dangerous to a lightly hurt priest", () => {
@@ -64,6 +65,8 @@ describe("threat model", () => {
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "mean-looking mercenary", level: 0 }]);
     expect(rate()).toBe(0);
     w.setPlayer({ hp: 3 });
+    expect(rate()).toBe(0);
+    w.setMonsters([{ grid: { x: 3, y: 1 }, race: "mean-looking mercenary", level: 0 }]);
     expect(rate()).toBeGreaterThanOrEqual(2);
   });
 
@@ -71,6 +74,133 @@ describe("threat model", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 7, maxHp: 13 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
     recall(w.view, "Nothing is known about his attack.");
     expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(2);
+  });
+});
+
+describe("incoming damage windows", () => {
+  const grip = { grid: { x: 3, y: 1 }, level: 2, speed: 120, race: "Grip, Farmer Maggot's Dog", raceFlags: ["UNIQUE"] };
+
+  it("counts two bites in one action and four in two against the recorded dog", () => {
+    const w = world({ map: MAP, player: { level: 1, hp: 1, maxHp: 14 }, monsters: [grip], monsterRecall: () => "He can bite to hurt (1d4, 50%)." });
+    const incoming = threatWindow(w.view, w.view.player().grid, w.terrain);
+    expect(incoming.one.damage).toBe(8);
+    expect(incoming.two.damage).toBe(16);
+    expect(incoming.one.uncertainty).toBe(0);
+  });
+
+  it("lets a fast enemy move and attack before adjacency", () => {
+    const w = world({ map: MAP, monsters: [{ ...grip, grid: { x: 4, y: 1 } }], monsterRecall: () => "He can bite to hurt (1d4, 50%)." });
+    expect(threatWindow(w.view, undefined, w.terrain).one.damage).toBe(4);
+    w.setMonsters([{ ...grip, grid: { x: 4, y: 1 }, speed: 110 }]);
+    expect(threatWindow(w.view, undefined, w.terrain).one.damage).toBe(0);
+    expect(threatWindow(w.view, undefined, w.terrain).two.damage).toBe(4);
+  });
+
+  it("uses energy ratios beyond the old doubling cap", () => {
+    const w = world({ map: MAP, monsters: [{ ...grip, speed: 130 }] });
+    expect(monsterActions(w.view.monsters()[0]!, w.view.player(), 1)).toBe(3);
+    expect(monsterActions(w.view.monsters()[0]!, w.view.player(), 2)).toBe(6);
+    w.setPlayer({ speed: 100 });
+    expect(monsterActions(w.view.monsters()[0]!, w.view.player(), 1)).toBe(6);
+  });
+
+  it("uses the supplied host table and keeps the fallback above actual action counts", () => {
+    const w = world({ map: MAP, player: { speed: 140 }, monsters: [{ ...grip, speed: 140 }], monsterRecall: () => "He can bite to hurt (1d4, 50%)." });
+    expect(incomingDamage(w.view, undefined, 1, w.terrain, { energy: turnEnergy }).damage).toBe(4);
+    expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(8);
+    for (let playerSpeed = 0; playerSpeed < 200; playerSpeed += 1) {
+      for (let monsterSpeed = 0; monsterSpeed < 200; monsterSpeed += 1) {
+        expect(monsterActions({ ...w.view.monsters()[0]!, speed: monsterSpeed }, { ...w.view.player(), speed: playerSpeed }, 2)).toBeGreaterThanOrEqual(monsterActions({ ...w.view.monsters()[0]!, speed: monsterSpeed }, { ...w.view.player(), speed: playerSpeed }, 2, turnEnergy));
+      }
+    }
+  });
+
+  it("retains a damage fallback and uncertainty for unseen blows and magic", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 7, y: 1 }, level: 2, spellFlags: ["BO_FIRE"], raceFlags: ["NEVER_BLOW"] }] });
+    const incoming = incomingDamage(w.view, undefined, 1, w.terrain);
+    expect(incoming.damage).toBe(14);
+    expect(incoming.uncertainty).toBeGreaterThan(0);
+  });
+
+  it("prices a candidate independently of the current square", () => {
+    const w = world({ map: MAP, monsters: [{ ...grip, grid: { x: 4, y: 1 } }], monsterRecall: () => "He can bite to hurt (1d4, 50%)." });
+    expect(incomingDamage(w.view, { x: 1, y: 1 }, 1, w.terrain).damage).toBe(0);
+    expect(incomingDamage(w.view, { x: 3, y: 1 }, 1, w.terrain).damage).toBe(8);
+  });
+
+  it("counts reachable attack slots rather than every corridor occupant", () => {
+    const w = world({ map: MAP, monsters: [3, 4, 5].map((x) => ({ grid: { x, y: 1 }, level: 0 })), monsterRecall: () => "It can hit to hurt (1d6, 50%)." });
+    expect(threatWindow(w.view, undefined, w.terrain).one.damage).toBe(6);
+    expect(threatWindow(w.view, undefined, w.terrain).two.damage).toBe(12);
+  });
+
+  it("blocks known walls and charges a monster's door opening", () => {
+    const w = world({ map: ["#########", "#.@+....#", "#########"], monsters: [{ grid: { x: 4, y: 1 }, level: 0, speed: 120, raceFlags: ["OPEN_DOOR"] }], monsterRecall: () => "It can bite to hurt (1d4, 50%)." });
+    expect(threatWindow(w.view, undefined, w.terrain).one.damage).toBe(0);
+    expect(threatWindow(w.view, undefined, w.terrain).two.damage).toBe(8);
+    w.setMonsters([{ grid: { x: 4, y: 1 }, level: 0, speed: 120 }]);
+    expect(threatWindow(w.view, undefined, w.terrain).two.damage).toBe(0);
+  });
+
+  it("counts ranged attacks around a corner when speed buys the approach", () => {
+    const w = world({ map: ["#######", "#.@...#", "#...#.#", "#.....#", "#######"], monsters: [{ grid: { x: 5, y: 3 }, speed: 130, level: 0, raceFlags: ["NEVER_BLOW"] }], monsterRecall: () => "It may cast spells which produce fire bolts (12)." });
+    expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBeGreaterThan(0);
+  });
+
+  it("blocks bolts on another creature and lets a breath cross it", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceIndex: 1, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }, { grid: { x: 4, y: 1 }, raceIndex: 2, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }], monsterRecall: (index) => index === 1 ? "It may cast spells which produce fire bolts (12)." : "Its attacks are unknown." });
+    expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(0);
+    Object.assign(w.view, { monsterRecall: (index: number) => ({ text: index === 1 ? "It may breathe fire (12)." : "Its attacks are unknown." }) });
+    expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(12);
+  });
+
+  it("applies permanent resistance, opposition, immunity and vulnerability", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, level: 0, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }], monsterRecall: () => "It may breathe fire (12)." });
+    let resistance = 1;
+    Object.assign(w.view, { simulateLoadout: () => ({ before: { stats: { resistElements: ["FIRE"], resists: [resistance] } } } as unknown as LoadoutSimulation) });
+    expect(incomingDamage(w.view).damage).toBe(4);
+    resistance = 2;
+    w.setPlayer({ status: { resFire: 10 } });
+    expect(incomingDamage(w.view).damage).toBe(2);
+    resistance = 3;
+    expect(incomingDamage(w.view).damage).toBe(0);
+    resistance = -1;
+    w.setPlayer({ status: { resFire: 0 } });
+    expect(incomingDamage(w.view).damage).toBe(16);
+  });
+
+  it("retains physical melee damage when resistance protects the element", () => {
+    const w = world({ map: MAP, player: { status: { resFire: 10 } }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }], monsterRecall: () => "It can bite to burn with fire (2d6, 50%)." });
+    expect(incomingDamage(w.view).damage).toBe(12);
+  });
+
+  it.each(["BASH_DOOR", "KILL_WALL", "SMASH_WALL"])("charges movement once for %s", (flag) => {
+    const w = world({ map: ["#########", "#.@+....#", "#########"], monsters: [{ grid: { x: 4, y: 1 }, level: 0, speed: 120, raceFlags: [flag] }], monsterRecall: () => "It can bite to hurt (1d4, 50%)." });
+    expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(4);
+  });
+
+  it("uses timed resistance when loadout inspection is unavailable", () => {
+    const w = world({ map: MAP, player: { status: { resFire: 10 } }, monsters: [{ grid: { x: 6, y: 1 }, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }], monsterRecall: () => "It may breathe fire (30)." });
+    expect(incomingDamage(w.view).damage).toBe(10);
+  });
+
+  it("keeps paralysis danger separate and recognizes Free Action", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"], spellFlags: ["HOLD"] }], monsterRecall: () => "It may cast spells which paralyze." });
+    expect(incomingDamage(w.view).status).toBe(150);
+    w.setPlayer({ objectFlags: ["FREE_ACT"] });
+    expect(incomingDamage(w.view).status).toBe(0);
+  });
+
+  it("keeps an unexplained hit in both action windows", () => {
+    const w = world({ map: MAP });
+    const incoming = threatWindow(w.view, undefined, w.terrain, { unseenDamage: 3 });
+    expect(incoming.one).toEqual({ damage: 3, status: 0, uncertainty: 3 });
+    expect(incoming.two).toEqual({ damage: 6, status: 0, uncertainty: 6 });
+  });
+
+  it("ignores never-seen hidden monsters", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 3, y: 1 }, visible: false, level: 50 }] });
+    expect(incomingDamage(w.view).damage).toBe(0);
   });
 });
 

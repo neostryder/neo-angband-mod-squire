@@ -10,6 +10,7 @@
 import type { AgentView, ItemView, MonsterView } from "@rpgm-tools/neo-angband-core";
 import { shownName } from "../town/needs.js";
 import { inspecting } from "./threat-model.js";
+import { readPack, type PackItem, type CastableSpell } from "./pack.js";
 
 /** One usable object or spell, with how the game consumes it. */
 export type CombatUse =
@@ -17,6 +18,46 @@ export type CombatUse =
   | { readonly how: "cast"; readonly sidx: number; readonly name: string }
   | { readonly how: "staff" | "rod"; readonly handle: number; readonly name: string }
   | { readonly how: "activate"; readonly handle: number; readonly name: string };
+
+/** The lower healing bound uses visible effect text before the standard cure fallback. */
+export function healingAmount(view: AgentView, source: PackItem | CastableSpell | CombatUse): number {
+  const text = "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? ""
+    : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  const fixed = /\b(?:heal\w*|restor\w*)\s+(?:you\s+for\s+|at least\s+)?((?:\d+\+)?\d+d\d+|\d+)\s+(?:hit\s?points|HP)\b(?:\s+\(or\s+(\d+)%, whichever is greater\))?/i.exec(text);
+  const fraction = /\b(\d+)%\s+of\s+(?:your\s+)?(?:missing hit points|wounds)\b/i.exec(text);
+  const missing = Math.max(0, view.player().maxHp - view.player().hp);
+  const dice = fixed === null ? null : /^(?:(\d+)\+)?(\d+)d\d+$/.exec(fixed[1]!);
+  const minimum = dice === null ? Number(fixed?.[1] ?? 0) : Number(dice[1] ?? 0) + Number(dice[2]);
+  if (fixed !== null || fraction !== null) return Math.min(missing, Math.max(minimum, Math.floor(missing * Number(fraction?.[1] ?? fixed?.[2] ?? 0) / 100)));
+  if ("sidx" in source || !/\bPotions? of\b/i.test(source.name)) return 0;
+  const fallback = /\bLife\b|\*Healing\*/i.test(source.name) ? [1200, 0]
+    : /\bHealing\b/i.test(source.name) ? [300, 35]
+      : /\bCritical\b/i.test(source.name) ? [30, 25]
+        : /\bSerious\b/i.test(source.name) ? [25, 20] : [15, 15];
+  return Math.min(missing, Math.max(fallback[0]!, Math.floor(missing * fallback[1]! / 100)));
+}
+
+export function healingPotion(view: AgentView, incoming: number): PackItem | undefined {
+  const potions = [...readPack(view).heal].sort((a, b) => a.power - b.power);
+  const hp = view.player().hp;
+  return potions.find((potion) => {
+    const amount = healingAmount(view, potion);
+    return hp + amount > incoming && (amount >= incoming || incoming >= hp && amount > incoming / 3);
+  }) ?? potions.at(-1);
+}
+
+export function healingSpell(view: AgentView, incoming: number): CastableSpell | undefined {
+  const spells = readPack(view).healSpell.flatMap((spell) => {
+    const info = inspecting(view).spellInfo?.(spell.sidx);
+    if (info !== undefined && info !== null && (!info.canCastNow || info.mana > view.player().sp)) return [];
+    const known = info === undefined || info === null ? spell : { ...spell, fail: info.failChance, mana: info.mana };
+    return known.fail <= 15 ? [known] : [];
+  });
+  return spells.find((spell) => {
+    const amount = healingAmount(view, spell);
+    return view.player().hp + amount > incoming && (amount >= incoming || incoming >= view.player().hp && amount > incoming / 3);
+  }) ?? spells[0];
+}
 
 const BUFF_ITEMS: readonly [RegExp, "quaff" | "read"][] = [
   [/\bPotions? of (Heroism|Berserk Strength|Speed)\b/i, "quaff"],
@@ -80,6 +121,7 @@ export function resistUse(view: AgentView): CombatUse | null {
 /** A staff or rod of Curing, which restores hit points and closes a cut. */
 export function deviceHealUse(view: AgentView): CombatUse | null {
   for (const { item, name } of held(view)) {
+    if (item.timeout > 0 || /\(0 charges?\)/i.test(name)) continue;
     const found = CURING.find(([pattern]) => pattern.test(name));
     if (found !== undefined) return { how: found[1], handle: item.handle, name };
   }

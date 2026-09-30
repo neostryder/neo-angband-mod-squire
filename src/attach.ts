@@ -41,6 +41,7 @@ export interface AttachHost extends SquireHost {
   readonly core?: {
     createAgentView?(state: unknown): AgentView;
     readonly TF?: TerrainFlagIndex;
+    readonly turnEnergy?: (speed: number) => number;
   };
   readonly registries?: { readonly features?: { allFeatures(): readonly FeatureLike[] } };
   readonly state?: unknown;
@@ -146,7 +147,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     ctx.registries?.features !== undefined && ctx.core?.TF !== undefined
       ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF)
       : noTerrain();
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {} });
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {}, ...(ctx.core?.turnEnergy === undefined ? {} : { speedEnergy: ctx.core.turnEnergy }) });
 
   function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();

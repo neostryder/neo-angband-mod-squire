@@ -42,6 +42,7 @@ import type { Apprentice } from "./knight.js";
 
 /** The parts of the host's plugin context Squire uses, declared so the mod builds without the host's source. */
 export interface SquireHost {
+  readonly core?: { readonly turnEnergy?: (speed: number) => number };
   readonly log: (message: string) => void;
   readonly prefs?: { get(): unknown; set(value: unknown): void };
   readonly characterStore?: { get(): unknown; set(value: unknown): void };
@@ -471,6 +472,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       planner: createGoalPlanner({
         cfg,
         terrain,
+        ...(host.core?.turnEnergy === undefined ? {} : { speedEnergy: host.core.turnEnergy }),
         log: host.log,
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),

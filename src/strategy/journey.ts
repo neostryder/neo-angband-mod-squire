@@ -145,7 +145,7 @@ export function createJourney(terrain: Terrain) {
       if (checkedRoute(view, exitTargets(view)) !== null) {
         footOffered = true;
         out = out.filter((offer) => offer.goal !== "leave_level");
-        out.push({ goal: "leave_level", criteria: home ? `Take the checked route to the up stairs and continue toward town. ${reason}` : `Take a checked staircase to a fresh or safer level. ${reason}`, risk: 0.02 });
+        out.push({ goal: "leave_level", criteria: home ? `Take the checked route to the up stairs and continue toward town. ${reason}` : `Take a checked staircase to a fresh or safer level. ${reason}`, risk: 0.02, survival: player.hp });
       }
     }
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {

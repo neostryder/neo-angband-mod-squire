@@ -107,7 +107,7 @@ describe("combat preparation", () => {
   });
 
   it("uses a curing device when hurt in a hard fight", () => {
-    const w = world({ map: CORRIDOR, pack: ["a Staff of Curing"], player: { hp: 5, maxHp: 40 }, monsters: HARD });
+    const w = world({ map: CORRIDOR, pack: ["a Staff of Curing"], player: { hp: 80, maxHp: 100 }, monsters: HARD });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toContain("device");
@@ -178,10 +178,11 @@ describe("level feeling and the worm-mass case", () => {
     expect(badLevelFeeling(["there is naught but cobwebs here."])).not.toBeNull();
   });
 
-  it("offers to leave the level to a caster out of mana beside a breeder", () => {
+  it("rejects a stair route blocked by a breeder when the caster is out of mana", () => {
     const worm = [{ grid: { x: 3, y: 1 }, race: "acid worm mass", level: 3, raceFlags: ["MULTIPLY"] }];
     const spent = world({ map: ROOM, player: { depth: 2, maxDepth: 2, cls: "Mage", level: 5, sp: 0, maxSp: 5 }, monsters: worm });
-    expect(offered(planner(spent).p.ask(spent.view))).toContain("leave_level");
+    expect(offered(planner(spent).p.ask(spent.view))).not.toContain("leave_level");
+    expect(offered(planner(spent).p.ask(spent.view))).toContain("fight");
     const rested = world({ map: ROOM, player: { depth: 2, maxDepth: 2, cls: "Mage", level: 5, sp: 5, maxSp: 5 }, monsters: worm });
     expect(offered(planner(rested).p.ask(rested.view))).not.toContain("leave_level");
   });

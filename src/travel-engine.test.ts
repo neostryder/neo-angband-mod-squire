@@ -101,13 +101,13 @@ describe("fleeing", () => {
   const ROOM = ["#######", "#@...>#", "#.....#", "#.....#", "#######"];
 
   it("heads for the nearest staircase", () => {
-    const w = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10 }], travelPath: (to: { x: number; y: number }) => [to] });
+    const w = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10, speed: 100 }], travelPath: (to: { x: number; y: number }) => [to] });
     const plan = planFor(w, "retreat");
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
   it("takes the stairs on arrival", () => {
-    const w = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10 }] });
+    const w = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10, speed: 100 }] });
     const plan = planFor(w, "retreat");
     plan.step(w.view, w.act);
     w.moveTo({ x: 5, y: 1 });
@@ -122,7 +122,7 @@ describe("fleeing", () => {
   });
 
   it("says in the criteria where the retreat goes", () => {
-    const withStairs = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10 }] });
+    const withStairs = world({ map: ROOM, monsters: [{ grid: { x: 1, y: 3 }, race: "cave orc", level: 10, speed: 100 }] });
     const offers = asked(planner(withStairs).ask(withStairs.view)).context.offers;
     expect(offers.find((o) => o.goal === "retreat")?.criteria).toContain("staircase");
 
