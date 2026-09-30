@@ -42,6 +42,9 @@ Fixed.
 - [Visible] **Heirs carry on the family's aims, and orders have their own key.** An heir inherits its predecessor's depth target and a weapon the line was hunting, as strongly as the Inheritance slider allows, and an unambitious heir can drop a deep depth target; aims tied to the old character's kit start fresh. Squire's order key (O, or the next free key) opens the order prompt during play whether or not the panel is open. An order Squire liked, or one it followed and was thanked for, now builds its Gratitude.
 - [Visible] **Viewers can give Squire orders.** With a "Viewer orders address" from Squire Link in Setup, Squire collects orders from Twitch or Discord chat every few seconds while it plays and weighs each as a viewer's request, which counts for less than your own orders unless the squire is very devoted. The Orders tab and journal name the viewer who gave each one.
 
+### Changed
+- [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.
+
 ### Removed
 
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.

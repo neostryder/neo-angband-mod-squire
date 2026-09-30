@@ -60,7 +60,7 @@ Neo Angband's core stays a faithful reproduction of Angband 4.2.6, and this mod 
 
 AI use does not change this repository's licensing obligations.
 
-This mod is part of a derivative work of Angband and retains the upstream licensing terms described in `LICENSE.md`. Generated output does not receive a special exception from copyright, attribution, dependency, or license requirements merely because an AI system produced it.
+Squire is licensed under the GNU General Public License, version 3, in `LICENSE`. Generated output does not receive a special exception from copyright, attribution, dependency, or license requirements merely because an AI system produced it.
 
 A model's statement that code is original, license-compatible, or safe to reuse is not accepted as evidence of those things.
 

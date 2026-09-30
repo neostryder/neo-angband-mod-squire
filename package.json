@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "description": "Squire: an alternative Angband autoplayer that runs one errand and hands the keyboard back",
-  "license": "GPL-2.0-only",
+  "license": "GPL-3.0-only",
   "author": "neostryder (RPGM Tools)",
   "homepage": "https://github.com/neostryder/neo-angband-mod-squire",
   "type": "module",

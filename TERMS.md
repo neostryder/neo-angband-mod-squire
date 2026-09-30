@@ -12,6 +12,6 @@ Handing a character to any autoplayer, including Squire, permanently marks that 
 
 Installing or updating the mod from the in-game mod manager can fetch its public files from GitHub; those requests come from the Neo Angband host's mod manager. The core Neo Angband Terms and Privacy Policy cover that shared host behavior, including local storage, update checks, and the risks of optional third-party mods.
 
-The GPL v2 or Angband licence in `LICENSE.md` governs copying, modification, and distribution of covered material. This document does not add a condition to those rights. The mod is provided as available and without a promise of compatibility, availability, security, accuracy, or fitness for a particular purpose, to the extent permitted by applicable law.
+The GNU General Public License, version 3, in `LICENSE` governs copying, modification, and distribution of covered material. This document does not add a condition to those rights. The mod is provided as available and without a promise of compatibility, availability, security, accuracy, or fitness for a particular purpose, to the extent permitted by applicable law.
 
 Use must comply with applicable law, the applicable licences, and the Neo Angband Terms. Project participation is subject to the shared Code of Conduct.

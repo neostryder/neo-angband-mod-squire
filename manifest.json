@@ -35,7 +35,7 @@
     "keymap:write"
   ],
   "author": "neostryder",
-  "license": "GPL-2.0-only",
+  "license": "GPL-3.0-only",
   "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press any key to take the keyboard back.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire runs one short errand instead: clear what is in front of you, or explore the floor, then give the keyboard back. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
   "rules": [
     {

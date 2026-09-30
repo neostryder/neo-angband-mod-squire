@@ -150,7 +150,7 @@ Asking about AI use in this project? [AI_USAGE_POLICY.md](AI_USAGE_POLICY.md) is
 
 ## Licence
 
-Same dual licence as Neo Angband and Angband: GPL v2 or the Angband licence. See [LICENSE.md](LICENSE.md).
+Squire is licensed under the GNU General Public License, version 3. See [LICENSE](LICENSE).
 
 ## Credits
 
