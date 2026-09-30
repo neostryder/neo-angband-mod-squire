@@ -284,6 +284,48 @@ describe("reflexes", () => {
 });
 
 describe("plan outcomes", () => {
+  it("abandons a plan that makes no progress for 30 seconds and asks again", async () => {
+    const game = { turn: 10, hp: 30, depth: 1 };
+    const r = rig({ planner: planner(() => walks(100)), results: [answered(), answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    r.advance(30_001);
+    expect(r.tick()).toBeNull();
+    expect(r.ends[0]).toMatchObject({ stop: "interrupted", reason: "The plan made no progress for 30 seconds." });
+    expect(r.sent).toHaveLength(2);
+  });
+
+  it("keeps a long plan when game turns continue to pass", async () => {
+    const game = { turn: 10, hp: 30, depth: 1 };
+    const r = rig({ planner: planner(() => walks(100)), results: [answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    r.advance(20_000);
+    game.turn += 1;
+    expect(r.tick()).toEqual(WALK);
+    r.advance(20_000);
+    expect(r.tick()).toEqual(WALK);
+    expect(r.ends).toHaveLength(0);
+  });
+
+  it("abandons a plan after 60 seconds even when commands pass game time", async () => {
+    const game = { turn: 10, hp: 30, depth: 1 };
+    const r = rig({ planner: planner(() => walks(100)), results: [answered(), answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    for (let i = 0; i < 3; i++) {
+      r.advance(20_000);
+      game.turn += 1;
+      if (i < 2) expect(r.tick()).toEqual(WALK);
+    }
+    expect(r.tick()).toBeNull();
+    expect(r.ends[0]).toMatchObject({ stop: "interrupted", reason: "The plan ran for 60 seconds." });
+    expect(r.sent).toHaveLength(2);
+  });
+
   it("reports a finished plan with its commands and hit point change", async () => {
     const game = { turn: 10, hp: 30 };
     const r = rig({ planner: planner(() => walks(2)), results: [answered(), answered()], gauge: () => ({ ...game }) });

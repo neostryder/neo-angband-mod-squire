@@ -160,12 +160,22 @@ const MAX_RETRY_AFTER_MS = 60_000;
  */
 export const MAX_EMPTY_DECISIONS = 4;
 
+/** Time a running plan can spend without a game turn or depth change. */
+export const MAX_PLAN_IDLE_MS = 30_000;
+
+/** Time a plan can run before Squire asks for a fresh decision. */
+export const MAX_PLAN_MS = 60_000;
+
 /** How to get Squire going again, said the same way everywhere. */
 export const RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 
 /** Counts for the plan that is running. */
 interface PlanRun {
   readonly hpBefore: number | null;
+  readonly startedAt: number;
+  lastTurn: number | null;
+  lastDepth: number | null;
+  lastProgressAt: number;
   commands: number;
   refused: number;
   /* The game turn at the last command, kept until the next call checks whether time passed. */
@@ -198,6 +208,21 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   let emptyDecisions = 0;
   /* Labels of the plans that ended with no command since the last command. */
   const emptyLabels = new Set<string>();
+
+  function newRun(view: AgentView): PlanRun {
+    const gauge = deps.gauge?.(view);
+    return {
+      hpBefore: gauge?.hp ?? null,
+      startedAt: deps.now(),
+      lastTurn: gauge?.turn ?? null,
+      lastDepth: gauge?.depth ?? null,
+      lastProgressAt: deps.now(),
+      commands: 0,
+      refused: 0,
+      issuedAt: null,
+      issuedDepth: null,
+    };
+  }
 
   function stopWith(message: string): null {
     state = { kind: "stopped", message };
@@ -239,7 +264,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         outcome: question.plan.label,
         reflex: question.reflex,
       });
-      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
+      state = { kind: "running", plan: question.plan, run: newRun(view) };
       deps.status(question.plan.label);
       return null;
     }
@@ -306,7 +331,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       stopWith(choice.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
+    state = { kind: "running", plan: choice.plan, run: newRun(view) };
     deps.status(choice.plan.label);
     return "planned";
   }
@@ -326,11 +351,20 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     if (state.kind === "running") {
       const { plan, run } = state;
       const gauge = deps.gauge?.(view) ?? null;
+      if (gauge !== null && (gauge.turn !== run.lastTurn || (gauge.depth ?? null) !== run.lastDepth)) {
+        run.lastTurn = gauge.turn;
+        run.lastDepth = gauge.depth ?? null;
+        run.lastProgressAt = deps.now();
+      }
       const moved = gauge?.depth !== undefined && run.issuedDepth !== null && gauge.depth !== run.issuedDepth;
       if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt && !moved) run.refused += 1;
       run.issuedAt = null;
       run.issuedDepth = null;
-      const reason = planner.trigger(view, plan);
+      const reason = deps.now() - run.startedAt >= MAX_PLAN_MS
+        ? "The plan ran for 60 seconds."
+        : gauge !== null && deps.now() - run.lastProgressAt >= MAX_PLAN_IDLE_MS
+          ? "The plan made no progress for 30 seconds."
+          : planner.trigger(view, plan);
       if (reason === null) {
         const command = plan.step(view, act);
         if (command !== null) {

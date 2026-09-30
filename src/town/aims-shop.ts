@@ -43,7 +43,7 @@ export function aimPurchase(aims: readonly Aim[], store: StoreView, gold: number
     if (aim.price === null || !affordable(aim, gold)) continue;
     const ware = store.stock.find((item) => {
       const name = shownName(item);
-      return name !== null && item.price !== undefined && item.price > 0 && matchesAim(aim, name, item.tval);
+      return name !== null && item.price !== undefined && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
     });
     if (ware === undefined) continue;
     return { index: ware.index, quantity: 1, name: shownName(ware) ?? aim.label, aim: aim.label };

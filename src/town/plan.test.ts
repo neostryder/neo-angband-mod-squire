@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { FEAT, itemNamed, world } from "../harness.js";
 import { defaultPersona } from "../persona/persona.js";
 import type { Aim } from "../strategy/aims.js";
+import { aimPurchase } from "./aims-shop.js";
 import { neededEntrances, townTripPlan } from "./plan.js";
 
 describe("town trip", () => {
@@ -52,6 +53,17 @@ describe("town trip", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
+  });
+
+  it("uses the displayed price when choosing an aim purchase", () => {
+    const stock = [
+      { ...itemNamed("Leather Armour [8,+0]", 0), index: 0, price: 100, number: 1 },
+      { ...itemNamed("Leather Shield [8,+0]", 1), index: 1, price: 6, number: 1 },
+    ] as StoreItemView[];
+    const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
+    const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 6, depth: null };
+    expect(aimPurchase([aim], store, 6)).toMatchObject({ index: 1, quantity: 1 });
+    expect(aimPurchase([aim], { ...store, stock: stock.slice(0, 1) }, 6)).toBeNull();
   });
 
   it("sells surplus loot in town to fund the trip", () => {

@@ -1022,6 +1022,8 @@ function outcomeLine(end) {
 var BACKOFF_MS = Object.freeze([1e3, 2e3, 4e3, 8e3, 15e3, 3e4]);
 var MAX_RETRY_AFTER_MS = 6e4;
 var MAX_EMPTY_DECISIONS = 4;
+var MAX_PLAN_IDLE_MS = 3e4;
+var MAX_PLAN_MS = 6e4;
 var RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 function createBrain(deps) {
   const { backend, planner, tally } = deps;
@@ -1030,6 +1032,20 @@ function createBrain(deps) {
   let attempt = 0;
   let emptyDecisions = 0;
   const emptyLabels = /* @__PURE__ */ new Set();
+  function newRun(view) {
+    const gauge = deps.gauge?.(view);
+    return {
+      hpBefore: gauge?.hp ?? null,
+      startedAt: deps.now(),
+      lastTurn: gauge?.turn ?? null,
+      lastDepth: gauge?.depth ?? null,
+      lastProgressAt: deps.now(),
+      commands: 0,
+      refused: 0,
+      issuedAt: null,
+      issuedDepth: null
+    };
+  }
   function stopWith(message) {
     state = { kind: "stopped", message };
     deps.log(message);
@@ -1066,7 +1082,7 @@ function createBrain(deps) {
         outcome: question.plan.label,
         reflex: question.reflex
       });
-      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
+      state = { kind: "running", plan: question.plan, run: newRun(view) };
       deps.status(question.plan.label);
       return null;
     }
@@ -1125,7 +1141,7 @@ function createBrain(deps) {
       stopWith(choice2.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice2.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
+    state = { kind: "running", plan: choice2.plan, run: newRun(view) };
     deps.status(choice2.plan.label);
     return "planned";
   }
@@ -1141,11 +1157,16 @@ function createBrain(deps) {
     if (state.kind === "running") {
       const { plan, run } = state;
       const gauge = deps.gauge?.(view) ?? null;
+      if (gauge !== null && (gauge.turn !== run.lastTurn || (gauge.depth ?? null) !== run.lastDepth)) {
+        run.lastTurn = gauge.turn;
+        run.lastDepth = gauge.depth ?? null;
+        run.lastProgressAt = deps.now();
+      }
       const moved = gauge?.depth !== void 0 && run.issuedDepth !== null && gauge.depth !== run.issuedDepth;
       if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt && !moved) run.refused += 1;
       run.issuedAt = null;
       run.issuedDepth = null;
-      const reason = planner.trigger(view, plan);
+      const reason = deps.now() - run.startedAt >= MAX_PLAN_MS ? "The plan ran for 60 seconds." : gauge !== null && deps.now() - run.lastProgressAt >= MAX_PLAN_IDLE_MS ? "The plan made no progress for 30 seconds." : planner.trigger(view, plan);
       if (reason === null) {
         const command = plan.step(view, act);
         if (command !== null) {
@@ -2273,7 +2294,7 @@ function aimPurchase(aims, store, gold) {
     if (aim.price === null || !affordable(aim, gold)) continue;
     const ware = store.stock.find((item) => {
       const name = shownName2(item);
-      return name !== null && item.price !== void 0 && item.price > 0 && matchesAim(aim, name, item.tval);
+      return name !== null && item.price !== void 0 && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
     });
     if (ware === void 0) continue;
     return { index: ware.index, quantity: 1, name: shownName2(ware) ?? aim.label, aim: aim.label };

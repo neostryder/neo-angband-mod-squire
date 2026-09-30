@@ -50,6 +50,7 @@ Fixed.
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.
 
 ### Fixed
+- [Visible] **Squire no longer stalls on a purchase it can't afford or on a plan that stops moving.** It checks a ware's price before buying it for an aim, and it drops a plan that goes 30 seconds without a game turn passing, or runs for 60 seconds, and then decides again.
 - [Visible] **Squire goes deeper and no longer loops.** Retreat below town takes a down staircase unless the danger is pressing, and in town it steps away instead of taking the stairs into the dungeon. Leaving a level prefers the way down. Townspeople are no longer rated dangerous before they have hit, a known worm mass no longer stops each walk, and exploring no longer paces beside a creature that drops in and out of sight. A choice that makes no game time pass is dropped after three tries on one turn, and Squire rests instead of waiting for a recall.
 
 - [Visible] **The fighting errand stops when the character is afraid.** The game refuses every blow from an afraid character without using a turn, so the errand swung at the same creature hundreds of times while nothing else moved. An errand whose commands pass no game time now ends as well.
