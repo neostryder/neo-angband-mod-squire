@@ -8,7 +8,7 @@
  * whichever call comes first and lives until the page goes.
  */
 
-import type { AgentController, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentController, AgentView } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
@@ -30,6 +30,7 @@ import { dreadedRaces } from "./learning/lessons.js";
 import { feelingLine, feelingLog, remembered, settle, settledLine, type Feeling } from "./learning/grudges.js";
 import { addMilestone, epitaphFor, familyVoice, milestoneFact, milestoneId, recallMilestones, type Milestone } from "./learning/flourishes.js";
 import type { Lineage } from "./learning/lineage.js";
+import { emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, flourishLines, learnedSuperstitions, observeFlourishes, readWays, usedItem, type Flourishes } from "./learning/family-ways.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -84,6 +85,7 @@ export interface CharacterData {
   readonly lineage: string | null;
   /** Orders and standing instructions, live and ended. */
   readonly orders: readonly Instruction[];
+  readonly flourishes?: Flourishes;
 }
 
 const CHARACTER_FORMAT = "neo-angband/squire/character";
@@ -123,6 +125,7 @@ function readCharacter(stored: unknown): CharacterData | null {
     journal,
     lineage: typeof data["lineage"] === "string" ? data["lineage"] : null,
     orders: readInstructions(data["orders"]),
+    flourishes: readWays(data["flourishes"]),
   };
 }
 
@@ -165,6 +168,8 @@ export interface Runtime {
   /** Where this character's hatred and fear of its ancestors' killers come from, one line each. */
   grudgeLines(): readonly string[];
   familyMemoryLines(): readonly string[];
+  flourishLines(): readonly string[];
+  recordCommand(command: AgentCommand, view: AgentView): void;
   /** Record what changed since the last look at the game. */
   observe(view: AgentView): void;
   journal(): Journal;
@@ -233,8 +238,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     lastView = view;
     journal.observe(view);
     observeFamily(view);
+    observeWays(view);
     channel.tick();
     const command = controller(view, act);
+    if (command !== null) rememberUse(command, view);
     if (command !== null) ownCommandAt = Date.now();
     return command;
   };
@@ -394,11 +401,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lastView = view;
         journal.observe(view);
         observeFamily(view);
+        observeWays(view);
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
         }
         const command = chosen(view, act);
+        if (command !== null) rememberUse(command, view);
         if (command !== null) ownCommandAt = Date.now();
         return command;
       };
@@ -411,10 +420,12 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     recordKill(race, unique, view) {
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
-      self.saveCharacter({ ...character, kills });
+      const run = character.flourishes ?? emptyFlourishes();
+      self.saveCharacter({ ...character, kills, ...(unique ? { flourishes: { ...run, uniqueKills: [...new Set([...run.uniqueKills, race])] } } : {}) });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
       if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
+      if (view !== null) observeWays(view);
     },
     grudgeLines: () => feelingsNow().map(feelingLine),
     familyMemoryLines() {
@@ -425,10 +436,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const milestones = [...(lineage.inheritedMilestones ?? []), ...(lineage.milestones ?? []).filter((m) => m.generation === lineage.generation)];
       return [...self.grudgeLines(), ...(persona.toggles.epitaphs ? epitaphs.slice(-3).map((e) => e.line) : []), ...(persona.toggles.milestones ? milestones.slice(-5).map(milestoneFact) : [])];
     },
+    flourishLines: () => flourishLines(character.flourishes ?? emptyFlourishes(), character.persona),
+    recordCommand: rememberUse,
     observe(view) {
       lastView = view;
       journal.observe(view);
       observeFamily(view);
+      observeWays(view);
     },
     journal: () => journal,
     strategy: () => strategy,
@@ -466,11 +480,12 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize({ ...template, ...(heir.name === undefined ? {} : { name: heir.name }) }), Math.random);
       self.saveConfig({ ...config, pendingHeir: null, ...(born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } }) });
       if (born !== null) {
-        self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
+        self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage, flourishes: born.lineage.flourishes ?? emptyFlourishes() });
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
         strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         for (const feeling of born.lineage.feelings ?? []) host.log(feelingLog(born.persona.name, feeling));
+        for (const line of self.flourishLines()) host.log(line);
         return born.persona;
       }
     }
@@ -528,6 +543,37 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     return config.lineages[line]?.feelings ?? [];
   }
 
+  let seenInventory: ReadonlySet<number> | null = null;
+  function observeWays(view: AgentView): void {
+    const run = character.flourishes ?? emptyFlourishes();
+    const handles = new Set(view.inventory().map((i) => i.handle));
+    const acquired = new Set([...handles].filter((h) => seenInventory !== null && !seenInventory.has(h)));
+    seenInventory = handles;
+    const before = flourishLines(run, character.persona);
+    const next = observeFlourishes(run, view, character.persona, run.uniqueKills, acquired);
+    if (JSON.stringify(next) !== JSON.stringify(run)) self.saveCharacter({ ...character, flourishes: next });
+    for (const line of flourishLines(next, character.persona)) if (!before.includes(line)) host.log(line);
+    const forgotten = run.superstitions.filter((s) => !next.superstitions.some((t) => t.key === s.key));
+    for (const s of forgotten) {
+      if (character.persona?.toggles.inheritedSuperstitions) host.log(`${character.persona.name} trusts the ${s.name} now.`);
+    }
+    const lineageName = character.lineage?.trim();
+    const lineage = lineageName === undefined ? undefined : config.lineages[lineageName];
+    if (lineageName !== undefined && lineage?.flourishRecord !== undefined) {
+      const family = lineage.flourishRecord;
+      const learned = learnedSuperstitions(family.superstitions, view);
+      if (learned.length > 0) self.saveConfig({ ...config, lineages: { ...config.lineages, [lineageName]: { ...lineage,
+        flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) } } } });
+    }
+  }
+
+  function rememberUse(command: AgentCommand, view: AgentView): void {
+    const run = character.flourishes ?? emptyFlourishes();
+    const lastUse = usedItem(command, view);
+    if (lastUse === null && run.lastUse === null) return;
+    self.saveCharacter({ ...character, flourishes: { ...run, lastUse } });
+  }
+
   /** A character that kills a unique the family holds a grudge against settles it for every later heir. */
   function settleGrudge(race: string): void {
     const line = character.lineage?.trim();
@@ -560,6 +606,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
+        flourishes: () => character.flourishes ?? emptyFlourishes(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
@@ -688,7 +735,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const last = log.records().at(-1);
       const epitaph = epitaphFor(persona, { name: report.name.trim() || persona.name, generation: lineage?.generation ?? 1, cause: report.cause, depth: report.depth, level: report.level, action: last?.choice ?? "unknown" });
       if (epitaph !== null) host.log(epitaph.line);
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), deepest: report.maxDepth, turns: report.turn, epitaphs: [...(lineage?.epitaphs ?? []), ...(epitaph === null ? [] : [epitaph])].slice(-12), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), deepest: report.maxDepth, turns: report.turn, epitaphs: [...(lineage?.epitaphs ?? []), ...(epitaph === null ? [] : [epitaph])].slice(-12), creeds, ...(passable.length > 0 ? { aims: passable } : {}),
+        flourishRecord: familyAfterDeath(lineage?.flourishRecord ?? emptyFamilyFlourishes(), character.flourishes ?? emptyFlourishes(), lastView, persona) };
       if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: lineageName });
       self.saveConfig({
         ...config,

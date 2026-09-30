@@ -97,7 +97,7 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
     const player = rt.decisionView()?.player();
     const lines = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
     fill(aimsBox, ...lines.map((l) => h("div", { class: "entry" }, l)));
-    const grudges = rt.familyMemoryLines();
+    const grudges = [...rt.familyMemoryLines(), ...rt.flourishLines()];
     fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));
   }
 

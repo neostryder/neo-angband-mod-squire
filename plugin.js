@@ -45,8 +45,8 @@ function key(at) {
 }
 
 // src/progress.ts
-function newProgress(depth) {
-  return { steps: 0, idle: 0, at: null, depth, collected: /* @__PURE__ */ new Set(), visited: /* @__PURE__ */ new Set() };
+function newProgress(depth2) {
+  return { steps: 0, idle: 0, at: null, depth: depth2, collected: /* @__PURE__ */ new Set(), visited: /* @__PURE__ */ new Set() };
 }
 function advance(progress, at) {
   progress.steps += 1;
@@ -1471,7 +1471,7 @@ var RECALL_FROM_DEPTH = 5;
 function scale(base, slider, minimum) {
   return Math.max(minimum, Math.round(base * (0.5 + slider / 100)));
 }
-function supplyNeeds(view, pack, persona) {
+function supplyNeeds(view, pack, persona, darkLesson = false) {
   const items = view.inventory();
   const worn = view.equipment().map((item) => item === null ? null : shownName2(item));
   const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
@@ -1487,6 +1487,8 @@ function supplyNeeds(view, pack, persona) {
   };
   const healingBase = view.player().cls === "Warrior" ? 6 : pack.healSpell.length > 0 ? 3 : 5;
   const healing = Math.max(2, scale(healingBase, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  const spareFuel = darkLesson && persona?.toggles.darkLessons === true;
+  const lightTarget = Math.max(scale(2, consumables, 2), spareFuel && lantern && level < 20 ? scale(10, consumables, 1) : 0) + (spareFuel ? 1 : 0);
   const recall = destination >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
   return [
     make("healing", healing),
@@ -1495,7 +1497,7 @@ function supplyNeeds(view, pack, persona) {
     make("recall", recall),
     ...level < 20 ? [make("oil", scale(10, consumables, 1))] : [],
     make("food", scale(5, consumables, 5), { hungry: hungry(view) }),
-    ...!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", scale(2, consumables, 2))] : [],
+    ...!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", lightTarget)] : [],
     ...pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []
   ];
 }
@@ -1517,8 +1519,8 @@ function roundEstimate(level) {
   return 8 + 3 * level;
 }
 var TOWN_ROUND = 6;
-function townsperson(monster, depth) {
-  return depth === 0 && monster.level === 0 && !monster.raceFlags.includes("UNIQUE");
+function townsperson(monster, depth2) {
+  return depth2 === 0 && monster.level === 0 && !monster.raceFlags.includes("UNIQUE");
 }
 function fastUniqueAtLowLevel(monster, player) {
   return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
@@ -2086,8 +2088,8 @@ function supplies(view) {
     lastingLight
   };
 }
-function classFloor(cls, depth) {
-  if (depth < 5) {
+function classFloor(cls, depth2) {
+  if (depth2 < 5) {
     if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
     if (cls === "Rogue") return [50, 8];
     if (["Priest", "Druid"].includes(cls)) return [40, 9];
@@ -2098,8 +2100,8 @@ function classFloor(cls, depth) {
   if (["Priest", "Druid"].includes(cls)) return [60, 15];
   return [80, 15];
 }
-function missingPreparation(view, depth) {
-  if (depth <= 1) return [];
+function missingPreparation(view, depth2) {
+  if (depth2 <= 1) return [];
   const player = view.player();
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
@@ -2107,40 +2109,40 @@ function missingPreparation(view, depth) {
   const need = (kind, enough, reason) => {
     if (!enough) out.push({ kind, reason });
   };
-  const [hpFloor, classLevel] = depth >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth) : [30, 2];
+  const [hpFloor, classLevel] = depth2 >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth2, 4) : depth2) : [30, 2];
   const caster = ["Mage", "Necromancer"].includes(player.cls);
-  const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
+  const levelFloor = Math.max(depth2, classLevel, depth2 >= 10 && caster && level <= 28 ? depth2 + 5 : 0);
   need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
   need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
-  need("light", player.light >= (depth >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
+  need("light", player.light >= (depth2 >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth2 >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
-  if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
-  if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
-  if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
-  if (depth >= 10) {
-    need("phase", stock.escapes >= (depth > 25 ? 6 : 2) && canRead(view), depth > 25 ? "six long escapes" : "two long escapes");
-    if (level < 30) need("healing", depth > 25 ? stock.serious >= 10 : stock.critical >= 3, depth > 25 ? "ten Cure Serious or Critical Wounds potions" : "three Cure Critical Wounds potions");
+  if (depth2 >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
+  if (depth2 >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
+  if (depth2 >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
+  if (depth2 >= 10) {
+    need("phase", stock.escapes >= (depth2 > 25 ? 6 : 2) && canRead(view), depth2 > 25 ? "six long escapes" : "two long escapes");
+    if (level < 30) need("healing", depth2 > 25 ? stock.serious >= 10 : stock.critical >= 3, depth2 > 25 ? "ten Cure Serious or Critical Wounds potions" : "three Cure Critical Wounds potions");
     const detectsInvisible = detectionSources(view).some((source) => {
       if (!/^(Detection|Reveal Monsters)$|Rods? of Detection/i.test(source.name) || /charging/i.test(source.name)) return false;
       return source.kind !== "cast" || view.spellbooks().some((book) => book.spells.some((spell) => spell.sidx === source.sidx && spell.fail <= 15));
     });
     need("protection", player.objectFlags.includes("SEE_INVIS") || player.objectFlags.includes("TELEPATHY") || detectsInvisible, "See Invisible, telepathy or usable detection of invisible creatures");
   }
-  if (depth >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
-  if (depth > 20) {
+  if (depth2 >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
+  if (depth2 > 20) {
     const inspect = view;
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
     const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:resistance|immunity) to ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
-    need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
+    need("protection", has("fire") && basics.length >= (depth2 > 25 ? 4 : 3), depth2 > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
     need("protection", player.stats.length >= 5 && [0, 3, 4, ...caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : []].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
-    if (depth >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
+    if (depth2 >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
   }
-  if (depth >= 46) {
+  if (depth2 >= 46) {
     need("hp", player.maxHp >= 500, "500 maximum hit points");
     need("protection", player.speed >= 115, "+5 speed");
     need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
-    need("protection", depth === 46, "readiness information for depths beyond 46");
+    need("protection", depth2 === 46, "readiness information for depths beyond 46");
   }
   return out;
 }
@@ -2308,21 +2310,21 @@ function keepsCapacity(view, result) {
   const attacks = readPack({ ...view, player: () => ({ ...before, sp: before.maxSp }) }).attackSpell.filter((spell) => spell.fail <= 25);
   const manaFloor = attacks.length === 0 ? reserve : reserve + Math.min(...attacks.map((spell) => spell.mana));
   if (before.maxSp > 0 && (after.maxSp <= 0 || before.maxSp >= manaFloor && after.maxSp < manaFloor)) return false;
-  const depth = Math.max(view.player().depth + 1, view.player().maxDepth);
+  const depth2 = Math.max(view.player().depth + 1, view.player().maxDepth);
   const has = (loadout, element) => {
     const index = loadout.stats.resistElements.findIndex((name) => name.toUpperCase() === element);
     return index >= 0 && (loadout.stats.resists[index] ?? 0) > 0;
   };
-  if (depth > 20) {
+  if (depth2 > 20) {
     const basics = ["ACID", "ELEC", "FIRE", "COLD"];
     if (has(result.before, "FIRE") && !has(result.after, "FIRE")) return false;
-    const required = depth > 25 ? 4 : 3;
-    if (depth > 25 && basics.some((element) => has(result.before, element) && !has(result.after, element))) return false;
+    const required = depth2 > 25 ? 4 : 3;
+    if (depth2 > 25 && basics.some((element) => has(result.before, element) && !has(result.after, element))) return false;
     if (basics.filter((element) => has(result.before, element)).length >= required && basics.filter((element) => has(result.after, element)).length < required) return false;
-    if (depth >= 40 && ["POIS", "CONFU"].some((element) => has(result.before, element) && !has(result.after, element))) return false;
+    if (depth2 >= 40 && ["POIS", "CONFU"].some((element) => has(result.before, element) && !has(result.after, element))) return false;
   }
-  const missingBefore = new Set(missingPreparation(loadoutView(view, result.before), depth).map((need) => need.reason));
-  return !missingPreparation(loadoutView(view, result.after), depth).some((need) => !missingBefore.has(need.reason));
+  const missingBefore = new Set(missingPreparation(loadoutView(view, result.before), depth2).map((need) => need.reason));
+  return !missingPreparation(loadoutView(view, result.after), depth2).some((need) => !missingBefore.has(need.reason));
 }
 function equipmentValue(result, view) {
   const damageBefore = loadoutDamage(result.before);
@@ -2590,6 +2592,10 @@ var PARAMETERS = [
   { id: "epitaphs", group: "lineage", name: "Epitaphs", kind: "toggle", scale: "on or off", description: "Squire writes an epitaph naming the killer and the character's last choice.", default: true },
   { id: "milestones", group: "lineage", name: "Family milestones", kind: "toggle", scale: "on or off", description: "The family remembers depth records, unique kills and its first artifact.", default: true },
   { id: "namesakes", group: "lineage", name: "Namesakes", kind: "toggle", scale: "on or off", description: "An heir can take an ancestor's name with a number.", default: true },
+  { id: "inheritedSuperstitions", group: "lineage", name: "Inherited superstitions", kind: "toggle", scale: "on or off", description: "An heir avoids the scroll, potion or wand its ancestor used just before dying, until that kind is identified.", default: true },
+  { id: "darkLessons", group: "lineage", name: "Lessons of the dark", kind: "toggle", scale: "on or off", description: "An heir carries extra fuel after an ancestor died without light.", default: true },
+  { id: "trophies", group: "lineage", name: "Trophies", kind: "toggle", scale: "on or off", description: "A proud character keeps one item from each unique it kills while the pack has room.", default: true },
+  { id: "favouredGrounds", group: "lineage", name: "Favoured grounds", kind: "toggle", scale: "on or off", description: "An heir prefers hunting where the family made its best find, once it is ready for that depth.", default: true },
   { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
   { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
   { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
@@ -2737,7 +2743,7 @@ function shoppingList(needs, store, gold, persona) {
 function mightBeSpecial(name) {
   return /\{\?\?\}/.test(name) || /'[^']+'/.test(name) || /(?<!\b(?:Pair|Set))\s+of\s+/i.test(name);
 }
-function sellList(_pack, view, persona) {
+function sellList(_pack, view, persona, trophies = /* @__PURE__ */ new Set()) {
   if (persona === null || persona.sliders.selling < 60) return [];
   const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
   const seen = /* @__PURE__ */ new Set();
@@ -2746,20 +2752,21 @@ function sellList(_pack, view, persona) {
   for (const item of view.inventory()) {
     const name = shownName2(item);
     if (name === null || worn.has(item.handle) || mightBeSpecial(name) || upgrades.has(item.handle)) continue;
-    const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
+    const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)s?\b/i.exec(name)?.[1];
     if (type === void 0) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
     if (seen.has(type.toLowerCase())) {
       const result = view.simulateLoadout?.({ release: [{ handle: item.handle, number: item.number }] });
       if (result !== void 0 && result !== null && (!keepsCapacity(view, result) || result.after.player.speed < result.before.player.speed || result.after.player.maxSp < result.before.player.maxSp || (loadoutDamage(result.after) ?? 0) < (loadoutDamage(result.before) ?? 0) || (loadoutMissileDamage(result.after, view) ?? 0) < (loadoutMissileDamage(result.before, view) ?? 0))) continue;
-      out.push({ handle: item.handle, quantity: item.number, name });
+      const quantity = item.number - (trophies.has(item.handle) ? 1 : 0);
+      if (quantity > 0) out.push({ handle: item.handle, quantity, name });
     }
     seen.add(type.toLowerCase());
   }
   return out;
 }
 function saleFits(name, storeName) {
-  return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.test(name) : storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)\b/i.test(name);
+  return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)s?\b/i.test(name) : storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)s?\b/i.test(name);
 }
 
 // src/strategy/aims.ts
@@ -2902,7 +2909,7 @@ function candidateAims(view) {
     price: null,
     depth: next
   };
-  const depth = {
+  const depth2 = {
     kind: "depth",
     label: "depth target",
     detail: `Reach dungeon level ${String(target)} (${String(target * 50)} ft), which suits a level ${String(player.level)} character with ${String(player.maxHp)} hit points.`,
@@ -2918,7 +2925,7 @@ function candidateAims(view) {
     protectionAim(view, "free-action", pack),
     protectionAim(view, "see-invisible", pack),
     preparation,
-    depth
+    depth2
   ];
   return found.filter((aim) => aim !== null);
 }
@@ -3084,210 +3091,6 @@ function createDeparture() {
   };
 }
 
-// src/town/plan.ts
-function shopEntrances(view, terrain) {
-  const bounds = view.mapBounds();
-  const found = [];
-  for (let y = 0; y < bounds.height; y++) {
-    for (let x = 0; x < bounds.width; x++) {
-      const cell2 = view.cell(x, y);
-      if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
-      const name = terrain.shopName(cell2.feat);
-      if (name !== null) found.push({ x, y, feat: cell2.feat, name });
-    }
-  }
-  return found;
-}
-function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new Set(), aims = []) {
-  if (view.player().depth !== 0) return [];
-  const pack = readPack(view);
-  const needs = basketNeeds(view, supplyNeeds(view, pack, persona));
-  const sales = sellList(pack, view, persona);
-  const gold = view.player().gold;
-  return shopEntrances(view, terrain).filter((entrance) => {
-    if (visited.has(entrance.feat)) return false;
-    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
-    const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && aimStores(aim).includes(entrance.name));
-    return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
-  }).sort((a, b) => {
-    const rank2 = (shop) => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
-    return rank2(a) - rank2(b);
-  });
-}
-function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
-}, aims = []) {
-  const progress = newProgress(0);
-  const boughtFor = /* @__PURE__ */ new Set();
-  let leftShopForSupplies = false;
-  return {
-    label: "shop for supplies",
-    step(view, act) {
-      if (view.player().depth !== 0) return null;
-      const at = view.player().grid;
-      const cell2 = view.cell(at.x, at.y);
-      const first = neededEntrances(view, terrain, persona, visited, aims)[0];
-      const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell2?.feat;
-      if (alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !leftShopForSupplies) {
-        leftShopForSupplies = true;
-        return act.shopExit();
-      }
-      if (!alchemyFirst) leftShopForSupplies = false;
-      if (!alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
-        const found = view.stores().find((entry) => entry.feat === cell2.feat);
-        const store = found === void 0 ? void 0 : { ...found, featName: terrain.shopName(cell2.feat) ?? found.featName };
-        if (store === void 0) {
-          visited.add(cell2.feat);
-          log("shop: this store has no stock to read");
-          return act.shopExit();
-        }
-        const pack = readPack(view);
-        const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
-        if (sale !== void 0) {
-          log(`shop: selling ${sale.name} in the ${store.featName}`);
-          return act.shopSell(sale.handle, sale.quantity);
-        }
-        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona)), store, view.player().gold, persona)[0];
-        if (purchase !== void 0) {
-          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
-          return act.shopBuy(purchase.index, purchase.quantity);
-        }
-        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
-        if (aimed !== null) {
-          boughtFor.add(aimed.aim);
-          log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
-          return act.shopBuy(aimed.index, aimed.quantity);
-        }
-        visited.add(cell2.feat);
-        const shelf = store.stock.slice(0, 8).map((item) => `${item.name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
-        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
-        return act.shopExit();
-      }
-      const next = neededEntrances(view, terrain, persona, visited, aims)[0];
-      if (next === void 0) {
-        log("shop: no shop left with anything needed");
-        return null;
-      }
-      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
-      } }, [next]);
-      if (travel.kind === "step") return travel.command;
-      if (travel.kind === "unreachable") visited.add(next.feat);
-      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
-      return null;
-    }
-  };
-}
-function recallPlan(item) {
-  let read = false;
-  return {
-    label: "read Word of Recall",
-    step(_view, act) {
-      if (read) return null;
-      read = true;
-      return act.read(item.handle);
-    }
-  };
-}
-
-// src/strategy/steer.ts
-var MAX_NUDGE = 0.2;
-var ARMOUR2 = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
-var WEAPONS4 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
-function wornKind(view, criteria) {
-  const candidate = gearCandidates(view).find((c) => c.criteria === criteria);
-  const item = candidate === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate.handle);
-  if (item === void 0) return null;
-  const name = shownName2(item) ?? "";
-  if (/Free Action/i.test(name)) return "free-action";
-  if (/See Invisible|Seeing/i.test(name)) return "see-invisible";
-  if (item.tval === TV.LIGHT && /Lantern/i.test(name)) return "lantern";
-  if (WEAPONS4.includes(item.tval)) return "weapon";
-  if (ARMOUR2.includes(item.tval)) return "armour";
-  return null;
-}
-function inSight2(view, name) {
-  const wanted = name.toLowerCase();
-  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted);
-}
-function servedBy(offer, view, aims, gold) {
-  const depth = view.player().depth;
-  const wear = offer.goal === "wear" ? wornKind(view, offer.criteria) : null;
-  for (const [rank2, aim] of aims.entries()) {
-    let serves = false;
-    switch (offer.goal) {
-      case "recall_town":
-        serves = affordable(aim, gold);
-        break;
-      case "pick_up":
-      case "fetch":
-        serves = aim.how === "save" && !affordable(aim, gold);
-        break;
-      case "wear":
-        serves = wear === aim.kind;
-        break;
-      case "descend":
-        serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth;
-        break;
-      case "explore":
-        serves = depth > 0 && (aim.kind === "depth" && aim.depth !== null && aim.depth <= depth || aim.how === "hunt");
-        break;
-      case "fight":
-      case "shoot":
-      case "throw_oil":
-      case "aim_wand":
-      case "cast_attack":
-        serves = aim.kind === "avenge" && aim.target !== void 0 && inSight2(view, aim.target);
-        break;
-    }
-    if (serves) return { aim, rank: rank2 };
-  }
-  return null;
-}
-function steerOffers(offers, view, steering, context, make) {
-  if (steering.aims.length === 0) return [...offers];
-  const player = view.player();
-  const out = [...offers];
-  const wanted = steering.aims.find((aim) => affordable(aim, player.gold));
-  if (wanted !== void 0 && player.depth > 0 && !context.recallActive && !out.some((o) => o.goal === "recall_town") && steering.tripAllowed(player.gold) && canRead(view) && recallItem(view) !== null) {
-    out.push(make("recall_town", `Read Word of Recall to return to town with ${String(player.gold)} gold, enough to buy the aim: ${wanted.label}.`, context.tripRisk));
-  }
-  return out.map((offer) => {
-    const served = servedBy(offer, view, steering.aims, player.gold);
-    if (served === null) return offer;
-    const text = `${offer.criteria.replace(/\.$/, "")}, which serves the aim: ${served.aim.label}.`;
-    return { ...offer, criteria: text, aim: { kind: served.aim.kind, rank: served.rank } };
-  });
-}
-function nudgeAims(dist, offers, ambition, ceiling) {
-  const out = { ...dist };
-  const scale2 = Math.max(0, Math.min(100, ambition)) / 100;
-  for (const offer of offers) {
-    if (offer.aim === void 0 || offer.risk > ceiling) continue;
-    const weight = offer.goal === "pick_up" ? 1 : Math.max(0.2, 1 - 0.25 * offer.aim.rank);
-    const current2 = out[offer.goal];
-    if (current2 !== void 0) out[offer.goal] = current2 * (1 + MAX_NUDGE * scale2 * weight);
-  }
-  return out;
-}
-
-// src/strategy/hold.ts
-var HOLD_SHARE = 0.25;
-function descentEscapes(view, badFeeling) {
-  const p = view.player();
-  if (badFeeling) return true;
-  if (p.maxHp > 0 && p.hp <= p.maxHp * 0.5) return true;
-  return view.monsters().some((m) => m.visible && !m.asleep);
-}
-function holdDescent(dist, aims, view, badFeeling, spent = false) {
-  const out = { ...dist };
-  const current2 = out["descend"];
-  if (current2 === void 0) return out;
-  const depth = view.player().depth;
-  const target = aims.find((a) => a.kind === "depth" && a.depth !== null)?.depth ?? null;
-  if (target === null || depth < target || spent || descentEscapes(view, badFeeling)) return out;
-  out["descend"] = current2 * HOLD_SHARE;
-  return out;
-}
-
 // src/brain/items.ts
 var TV_GOLD = 1;
 var LOOT_VALUE = 10;
@@ -3384,6 +3187,341 @@ function junkInPack(view) {
   return null;
 }
 
+// src/learning/family-ways.ts
+function emptyFlourishes() {
+  return { superstitions: [], darkLesson: false, favouredDepth: null, trophies: [], uniqueKills: [], bestFind: null, lastUse: null };
+}
+function itemKey(item) {
+  return item.kindId ?? `${String(item.tval)}:${String(item.sval)}`;
+}
+function unknownUse(item) {
+  const name = shownName2(item);
+  if (name === null || !/\b(?:Scrolls?|Potions?|Wands?)\b/i.test(name) || /\b(?:Scrolls?|Potions?|Wands?) of\b/i.test(name)) return null;
+  const plain = name.replace(/^(?:an?|the|\d+)\s+/i, "").replace(/\s*\([^)]*\)|\s*\{[^}]*\}/g, "").trim();
+  return { key: itemKey(item), name: plain };
+}
+function usedItem(command, view) {
+  if (!["read", "quaff", "aim-wand"].includes(command.code)) return null;
+  const item = view.inventory().find((i) => i.handle === command.args?.["handle"]);
+  return item === void 0 ? null : unknownUse(item);
+}
+function distrusted(item, memories, persona) {
+  const unknown = unknownUse(item);
+  return persona?.toggles.inheritedSuperstitions === true && unknown !== null && memories.superstitions.some((s) => s.key === unknown.key);
+}
+function distrustedUse(command, view, run, persona) {
+  const use = usedItem(command, view);
+  return persona?.toggles.inheritedSuperstitions === true && use !== null && run.superstitions.some((s) => s.key === use.key);
+}
+function learnedSuperstitions(superstitions, view) {
+  return superstitions.filter((s) => view.inventory().some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+}
+function inheritWays(family, parent, heir, rng) {
+  const share3 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
+  const enabled = (id) => parent.toggles[id] && heir.toggles[id];
+  return {
+    ...emptyFlourishes(),
+    superstitions: enabled("inheritedSuperstitions") ? family.superstitions.slice(-Math.ceil(6 * share3)).filter(() => share3 > 0) : [],
+    darkLesson: enabled("darkLessons") && family.darkDeaths > 0 && share3 > 0 && (share3 === 1 || rng() < share3),
+    favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share3 > 0 && (share3 === 1 || rng() < share3) ? family.bestFind.depth : null
+  };
+}
+function familyAfterDeath(family, run, view, persona) {
+  const last = run.lastUse;
+  const known = view?.inventory().some((i) => itemKey(i) === last?.key && unknownUse(i) === null) ?? false;
+  const learned = view === null ? [] : learnedSuperstitions(family.superstitions, view);
+  const remembered2 = family.superstitions.filter((s) => !learned.some((t) => s.key === t.key));
+  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && !known ? [...remembered2.filter((s) => s.key !== last.key), last].slice(-6) : remembered2;
+  const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
+  const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
+  return { superstitions, darkDeaths: family.darkDeaths + (persona.toggles.darkLessons && dark ? 1 : 0), bestFind };
+}
+function emptyFamilyFlourishes() {
+  return { superstitions: [], darkDeaths: 0, bestFind: null };
+}
+function observeFlourishes(run, view, persona, uniqueKills, acquired) {
+  const items = view.inventory();
+  const superstitions = run.superstitions.filter((s) => !items.some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+  const trophies = run.trophies.flatMap((t) => {
+    const item = items.find((i) => i.handle === t.handle);
+    return item === void 0 ? [] : [{ ...t, name: shownName2(item) ?? t.name }];
+  });
+  let bestFind = run.bestFind;
+  const upgrades = new Set(gearCandidates(view).map((g) => g.handle));
+  for (const item of items) {
+    const name = shownName2(item);
+    if (name === null) continue;
+    const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const originDepth = /(?:found|dropped)[\s\S]*?\(level (\d+)\)/i.exec(text);
+    const bought = /Bought from a store|An inheritance from your family|Created by debug option/i.test(text);
+    const depth2 = bought ? 0 : originDepth === null ? acquired.has(item.handle) ? view.player().depth : 0 : Number(originDepth[1]);
+    const value = item.value;
+    if (persona?.toggles.favouredGrounds && depth2 > 0 && typeof value === "number" && Number.isFinite(value) && value > (bestFind?.value ?? 0)) bestFind = { depth: depth2, value, name };
+    if (!persona?.toggles.trophies || persona.sliders.pride < 70 || items.length >= PACK_LIMIT || upgrades.has(item.handle) || item.number < 1) continue;
+    const unique = uniqueKills.find((race) => text.includes(`Dropped by ${race} `) || text.includes(`Dropped by ${race}, `));
+    if (unique === void 0 || trophies.some((t) => t.unique === unique || t.handle === item.handle)) continue;
+    trophies.push({ unique, handle: item.handle, name });
+  }
+  return { ...run, superstitions, trophies, bestFind };
+}
+function trophyHandles(run, view, persona) {
+  if (!persona?.toggles.trophies || persona.sliders.pride < 70 || view.inventory().length >= PACK_LIMIT) return /* @__PURE__ */ new Set();
+  const upgrades = new Set(gearCandidates(view).map((g) => g.handle));
+  return new Set(run.trophies.filter((t) => !upgrades.has(t.handle)).map((t) => t.handle));
+}
+function flourishLines(run, persona) {
+  if (persona === null) return [];
+  return [
+    ...persona.toggles.inheritedSuperstitions ? run.superstitions.map((s) => `${persona.name} distrusts the ${s.name} until its kind is known.`) : [],
+    ...persona.toggles.darkLessons && run.darkLesson ? [`${persona.name} wants a spare torch or extra oil after an ancestor died without light.`] : [],
+    ...persona.toggles.favouredGrounds && run.favouredDepth !== null ? [`${persona.name} favours hunting at ${String(run.favouredDepth * 50)} ft.`] : [],
+    ...persona.toggles.trophies ? run.trophies.map((t) => `${persona.name} keeps a trophy from ${t.unique}: ${t.name} (one item).`) : []
+  ];
+}
+function nudgeGrounds(dist, offers, run, view, persona, ceiling) {
+  const out = { ...dist };
+  const target = run.favouredDepth;
+  if (!persona?.toggles.favouredGrounds || target === null || missingPreparation(view, target).length > 0) return out;
+  const depth2 = view.player().depth;
+  const goal = depth2 < target ? "descend" : depth2 === target ? "explore" : null;
+  for (const offer of offers) if (offer.goal === goal && offer.risk <= ceiling && out[offer.goal] !== void 0) out[offer.goal] = out[offer.goal] * 1.1;
+  return out;
+}
+function record(raw) {
+  return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+function strings(raw) {
+  return Array.isArray(raw) ? raw.slice(-6).flatMap((s) => {
+    const r = record(s);
+    return typeof r["key"] === "string" && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
+  }) : [];
+}
+function depth(raw) {
+  return typeof raw === "number" && Number.isInteger(raw) && raw > 0 && raw <= 127 ? raw : null;
+}
+function find(raw) {
+  const r = record(raw);
+  const at = depth(r["depth"]);
+  return at !== null && typeof r["value"] === "number" && Number.isFinite(r["value"]) && r["value"] >= 0 && typeof r["name"] === "string" ? { depth: at, value: r["value"], name: r["name"].slice(0, 100) } : null;
+}
+function readFamilyFlourishes(raw) {
+  const r = record(raw);
+  return { superstitions: strings(r["superstitions"]), darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0, bestFind: find(r["bestFind"]) };
+}
+function readWays(raw) {
+  const r = record(raw);
+  const trophies = Array.isArray(r["trophies"]) ? r["trophies"].slice(0, PACK_LIMIT).flatMap((t) => {
+    const s = record(t);
+    return typeof s["unique"] === "string" && typeof s["name"] === "string" && typeof s["handle"] === "number" && Number.isInteger(s["handle"]) && s["handle"] > 0 ? [{ unique: s["unique"].slice(0, 100), name: s["name"].slice(0, 100), handle: s["handle"] }] : [];
+  }) : [];
+  const uniqueKills = Array.isArray(r["uniqueKills"]) ? r["uniqueKills"].filter((s) => typeof s === "string").slice(-200).map((s) => s.slice(0, 100)) : [];
+  return { superstitions: strings(r["superstitions"]), darkLesson: r["darkLesson"] === true, favouredDepth: depth(r["favouredDepth"]), trophies, uniqueKills, bestFind: find(r["bestFind"]), lastUse: strings([r["lastUse"]])[0] ?? null };
+}
+
+// src/town/plan.ts
+function shopEntrances(view, terrain) {
+  const bounds = view.mapBounds();
+  const found = [];
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
+      const name = terrain.shopName(cell2.feat);
+      if (name !== null) found.push({ x, y, feat: cell2.feat, name });
+    }
+  }
+  return found;
+}
+function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new Set(), aims = [], flourishes = emptyFlourishes()) {
+  if (view.player().depth !== 0) return [];
+  const pack = readPack(view);
+  const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson));
+  const sales = sellList(pack, view, persona, trophyHandles(flourishes, view, persona));
+  const gold = view.player().gold;
+  return shopEntrances(view, terrain).filter((entrance) => {
+    if (visited.has(entrance.feat)) return false;
+    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && aimStores(aim).includes(entrance.name));
+    return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
+  }).sort((a, b) => {
+    const rank2 = (shop) => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
+    return rank2(a) - rank2(b);
+  });
+}
+function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
+}, aims = [], flourishes = emptyFlourishes) {
+  const progress = newProgress(0);
+  const boughtFor = /* @__PURE__ */ new Set();
+  let leftShopForSupplies = false;
+  return {
+    label: "shop for supplies",
+    step(view, act) {
+      if (view.player().depth !== 0) return null;
+      const at = view.player().grid;
+      const cell2 = view.cell(at.x, at.y);
+      const first = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
+      const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell2?.feat;
+      if (alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !leftShopForSupplies) {
+        leftShopForSupplies = true;
+        return act.shopExit();
+      }
+      if (!alchemyFirst) leftShopForSupplies = false;
+      if (!alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
+        const found = view.stores().find((entry) => entry.feat === cell2.feat);
+        const store = found === void 0 ? void 0 : { ...found, featName: terrain.shopName(cell2.feat) ?? found.featName };
+        if (store === void 0) {
+          visited.add(cell2.feat);
+          log("shop: this store has no stock to read");
+          return act.shopExit();
+        }
+        const pack = readPack(view);
+        const sale = sellList(pack, view, persona, trophyHandles(flourishes(), view, persona)).find((item) => saleFits(item.name, store.featName));
+        if (sale !== void 0) {
+          log(`shop: selling ${sale.name} in the ${store.featName}`);
+          return act.shopSell(sale.handle, sale.quantity);
+        }
+        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson)), store, view.player().gold, persona)[0];
+        if (purchase !== void 0) {
+          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
+          return act.shopBuy(purchase.index, purchase.quantity);
+        }
+        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
+        if (aimed !== null) {
+          boughtFor.add(aimed.aim);
+          log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
+          return act.shopBuy(aimed.index, aimed.quantity);
+        }
+        visited.add(cell2.feat);
+        const shelf = store.stock.slice(0, 8).map((item) => `${item.name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
+        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
+        return act.shopExit();
+      }
+      const next = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
+      if (next === void 0) {
+        log("shop: no shop left with anything needed");
+        return null;
+      }
+      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
+      } }, [next]);
+      if (travel.kind === "step") return travel.command;
+      if (travel.kind === "unreachable") visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
+      return null;
+    }
+  };
+}
+function recallPlan(item) {
+  let read = false;
+  return {
+    label: "read Word of Recall",
+    step(_view, act) {
+      if (read) return null;
+      read = true;
+      return act.read(item.handle);
+    }
+  };
+}
+
+// src/strategy/steer.ts
+var MAX_NUDGE = 0.2;
+var ARMOUR2 = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
+var WEAPONS4 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
+function wornKind(view, criteria) {
+  const candidate = gearCandidates(view).find((c) => c.criteria === criteria);
+  const item = candidate === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate.handle);
+  if (item === void 0) return null;
+  const name = shownName2(item) ?? "";
+  if (/Free Action/i.test(name)) return "free-action";
+  if (/See Invisible|Seeing/i.test(name)) return "see-invisible";
+  if (item.tval === TV.LIGHT && /Lantern/i.test(name)) return "lantern";
+  if (WEAPONS4.includes(item.tval)) return "weapon";
+  if (ARMOUR2.includes(item.tval)) return "armour";
+  return null;
+}
+function inSight2(view, name) {
+  const wanted = name.toLowerCase();
+  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted);
+}
+function servedBy(offer, view, aims, gold) {
+  const depth2 = view.player().depth;
+  const wear = offer.goal === "wear" ? wornKind(view, offer.criteria) : null;
+  for (const [rank2, aim] of aims.entries()) {
+    let serves = false;
+    switch (offer.goal) {
+      case "recall_town":
+        serves = affordable(aim, gold);
+        break;
+      case "pick_up":
+      case "fetch":
+        serves = aim.how === "save" && !affordable(aim, gold);
+        break;
+      case "wear":
+        serves = wear === aim.kind;
+        break;
+      case "descend":
+        serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth2;
+        break;
+      case "explore":
+        serves = depth2 > 0 && (aim.kind === "depth" && aim.depth !== null && aim.depth <= depth2 || aim.how === "hunt");
+        break;
+      case "fight":
+      case "shoot":
+      case "throw_oil":
+      case "aim_wand":
+      case "cast_attack":
+        serves = aim.kind === "avenge" && aim.target !== void 0 && inSight2(view, aim.target);
+        break;
+    }
+    if (serves) return { aim, rank: rank2 };
+  }
+  return null;
+}
+function steerOffers(offers, view, steering, context, make) {
+  if (steering.aims.length === 0) return [...offers];
+  const player = view.player();
+  const out = [...offers];
+  const wanted = steering.aims.find((aim) => affordable(aim, player.gold));
+  if (wanted !== void 0 && player.depth > 0 && !context.recallActive && !out.some((o) => o.goal === "recall_town") && steering.tripAllowed(player.gold) && canRead(view) && recallItem(view) !== null) {
+    out.push(make("recall_town", `Read Word of Recall to return to town with ${String(player.gold)} gold, enough to buy the aim: ${wanted.label}.`, context.tripRisk));
+  }
+  return out.map((offer) => {
+    const served = servedBy(offer, view, steering.aims, player.gold);
+    if (served === null) return offer;
+    const text = `${offer.criteria.replace(/\.$/, "")}, which serves the aim: ${served.aim.label}.`;
+    return { ...offer, criteria: text, aim: { kind: served.aim.kind, rank: served.rank } };
+  });
+}
+function nudgeAims(dist, offers, ambition, ceiling) {
+  const out = { ...dist };
+  const scale2 = Math.max(0, Math.min(100, ambition)) / 100;
+  for (const offer of offers) {
+    if (offer.aim === void 0 || offer.risk > ceiling) continue;
+    const weight = offer.goal === "pick_up" ? 1 : Math.max(0.2, 1 - 0.25 * offer.aim.rank);
+    const current2 = out[offer.goal];
+    if (current2 !== void 0) out[offer.goal] = current2 * (1 + MAX_NUDGE * scale2 * weight);
+  }
+  return out;
+}
+
+// src/strategy/hold.ts
+var HOLD_SHARE = 0.25;
+function descentEscapes(view, badFeeling) {
+  const p = view.player();
+  if (badFeeling) return true;
+  if (p.maxHp > 0 && p.hp <= p.maxHp * 0.5) return true;
+  return view.monsters().some((m) => m.visible && !m.asleep);
+}
+function holdDescent(dist, aims, view, badFeeling, spent = false) {
+  const out = { ...dist };
+  const current2 = out["descend"];
+  if (current2 === void 0) return out;
+  const depth2 = view.player().depth;
+  const target = aims.find((a) => a.kind === "depth" && a.depth !== null)?.depth ?? null;
+  if (target === null || depth2 < target || spent || descentEscapes(view, badFeeling)) return out;
+  out["descend"] = current2 * HOLD_SHARE;
+  return out;
+}
+
 // src/brain/level-feel.ts
 var BAD_MONSTER = [
   /Omens of death haunt this place/i,
@@ -3426,7 +3564,7 @@ function stairLeash(level) {
   return level < 20 ? 3 * Math.max(1, level) + 9 : Infinity;
 }
 function createLevelPacing() {
-  let depth = -1;
+  let depth2 = -1;
   let entered = 0;
   let useful = 0;
   let lastTurn = -1;
@@ -3443,9 +3581,9 @@ function createLevelPacing() {
       const player = view.player();
       const turn = view.turn();
       const feeling = view.messages().find((message) => arrivalFeeling([message])) ?? null;
-      const fresh = depth !== player.depth || turn < lastTurn || feeling !== null && feeling !== arrival;
+      const fresh = depth2 !== player.depth || turn < lastTurn || feeling !== null && feeling !== arrival;
       if (fresh) {
-        depth = player.depth;
+        depth2 = player.depth;
         entered = turn;
         useful = turn;
         xp = player.exp;
@@ -3874,10 +4012,10 @@ function settledLine(who, name, _count) {
 function readKillers(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(-MAX_KILLERS).flatMap((raw) => {
-    const k = record(raw);
+    const k = record2(raw);
     if (k === null || typeof k["name"] !== "string" || k["name"].trim() === "") return [];
     const deaths = Array.isArray(k["deaths"]) ? k["deaths"].slice(-50).flatMap((d) => {
-      const r = record(d);
+      const r = record2(d);
       if (r === null) return [];
       const generation = num2(r["generation"]);
       return generation === null ? [] : [{ generation, depth: num2(r["depth"]) ?? 0, turn: num2(r["turn"]) ?? 0 }];
@@ -3890,7 +4028,7 @@ function readKillers(value) {
 function readFeelings(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, MAX_FEELINGS).flatMap((raw) => {
-    const f = record(raw);
+    const f = record2(raw);
     if (f === null || typeof f["name"] !== "string" || f["name"].trim() === "") return [];
     const count2 = num2(f["count"]);
     const kind = f["kind"] === "hatred" || f["kind"] === "fear" ? f["kind"] : null;
@@ -3899,7 +4037,7 @@ function readFeelings(value) {
     return [{ name: f["name"].slice(0, 80), unique: f["unique"] === true, kind, intensity, count: count2 }];
   });
 }
-function record(value) {
+function record2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function num2(value) {
@@ -4183,10 +4321,10 @@ var DEEP_DESCENT_WAIT_TURNS = 80;
 function recallPending(player, read, turn) {
   const reported = player.recall;
   if (typeof reported === "number") return reported > 0;
-  const depth = player.depth;
-  return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
+  const depth2 = player.depth;
+  return read !== null && read.depth === depth2 && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = []) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = [], flourishes = emptyFlourishes()) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -4209,7 +4347,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const remaining = attack.kill && s.target !== null ? damageFor({ ...s, threats: s.threats.filter((monster) => monster.id !== s.target.id) }, at, 1, terrain).damage : incoming.damage;
     add2(goal, criteria + attackDescription(attack, view), attackRisk(s, attack), false, player.hp - remaining, attack.failure > 0 && attack.kill);
   };
-  const needs = supplyNeeds(view, s.pack, persona);
+  const needs = supplyNeeds(view, s.pack, persona, flourishes.darkLesson);
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
   const starving = needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
@@ -4225,7 +4363,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
   if (player.depth === 0) {
-    const shops = neededEntrances(view, terrain, persona, visited, aims);
+    const shops = neededEntrances(view, terrain, persona, visited, aims, flourishes);
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add2("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
@@ -4389,7 +4527,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
-  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims).length === 0))) {
+  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
@@ -4403,6 +4541,13 @@ function createGoalPlanner(options) {
   const journey = createJourney(terrain);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
+  const flourishesNow = () => options.flourishes?.() ?? emptyFlourishes();
+  function flourishView(view) {
+    const run = flourishesNow();
+    const persona = personaOf();
+    if (!persona?.toggles.inheritedSuperstitions || run.superstitions.length === 0) return view;
+    return { ...view, inventory: () => view.inventory().map((item) => distrusted(item, run, persona) ? { ...item, activation: false } : item) };
+  }
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
@@ -4416,6 +4561,7 @@ function createGoalPlanner(options) {
   let observed = null;
   let unseenHit = null;
   function situationNow(view, update2 = false) {
+    view = flourishView(view);
     const player = view.player();
     const turn = view.turn();
     if (observed !== null && observed.depth !== player.depth) {
@@ -4447,10 +4593,10 @@ function createGoalPlanner(options) {
   let badFeeling = null;
   let feelingDepth = -1;
   function noteFeeling(view) {
-    const depth = view.player().depth;
+    const depth2 = view.player().depth;
     const messages = view.messages();
-    if (depth !== feelingDepth || arrivalFeeling(messages)) {
-      feelingDepth = depth;
+    if (depth2 !== feelingDepth || arrivalFeeling(messages)) {
+      feelingDepth = depth2;
       badFeeling = null;
     }
     const seen = badLevelFeeling(messages);
@@ -4481,7 +4627,8 @@ function createGoalPlanner(options) {
     const step = (v, act) => {
       startTurn ??= v.turn();
       settle2(v);
-      const command = plan.step(v, act);
+      const proposed = plan.step(v, act);
+      const command = proposed !== null && distrustedUse(proposed, v, flourishesNow(), personaOf()) ? null : proposed;
       if (command !== null) issued += 1;
       else if (issued === 0 || v.turn() === startTurn) {
         if (goal === null) fallbackStalled = v.turn();
@@ -4525,14 +4672,14 @@ function createGoalPlanner(options) {
   }
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
-    return { view, act, terrain, cfg: with_, progress, log };
+    return { view: flourishView(view), act, terrain, cfg: with_, progress, log };
   }
   let seenDepth = -1;
   const seenOnLevel = /* @__PURE__ */ new Set();
   function noteSeen(view) {
-    const depth = view.player().depth;
-    if (depth !== seenDepth) {
-      seenDepth = depth;
+    const depth2 = view.player().depth;
+    if (depth2 !== seenDepth) {
+      seenDepth = depth2;
       seenOnLevel.clear();
       breedersOnLevel.clear();
     }
@@ -4675,6 +4822,7 @@ function createGoalPlanner(options) {
     return aims.some((aim) => aim.how === "save" && aim.price !== null && gold < aim.price);
   }
   function build(goal, view) {
+    view = flourishView(view);
     const pack = readPack(view);
     switch (goal) {
       case "recall_town":
@@ -4685,7 +4833,7 @@ function createGoalPlanner(options) {
         return watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? []), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -4759,9 +4907,9 @@ function createGoalPlanner(options) {
       }
       case "retreat": {
         const flight = retreatStairs(situationNow(view), terrain, offeredWiden);
-        const depth = view.player().depth;
+        const depth2 = view.player().depth;
         return stepsPlan("back away", view, (ctx, i) => {
-          if (ctx.view.player().depth !== depth) return null;
+          if (ctx.view.player().depth !== depth2) return null;
           const here = ctx.view.player().grid;
           const cell2 = ctx.view.cell(here.x, here.y);
           if (flight !== "none" && cell2 !== null && terrain.isDownStair(cell2.feat)) return ctx.act.descend();
@@ -4942,15 +5090,15 @@ function createGoalPlanner(options) {
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal));
     const advice = best.choice;
-    const record3 = (pick3, extra) => {
+    const record4 = (pick3, extra) => {
       digest.trace = { advice, pick: pick3, ...extra };
       return pick3;
     };
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
-    if (mustPickUp(persona) && offered.has("pick_up")) return record3("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (mustPickUp(persona) && offered.has("pick_up")) return record4("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
-      if (away !== void 0) return record3(away, { ...blank, quirk: "craven" });
+      if (away !== void 0) return record4(away, { ...blank, quirk: "craven" });
     }
     const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
     const strength = jitteredStrength(persona, rng);
@@ -4962,10 +5110,11 @@ function createGoalPlanner(options) {
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
-    const nudged = holdDescent(felt, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
+    const nudged = holdDescent(grounded, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
-    return record3(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+    return record4(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
   function reflexFor(offers, persona, situation, turn, passes, s) {
     if (options.reflex === false) return null;
@@ -4987,6 +5136,7 @@ function createGoalPlanner(options) {
   }
   return {
     ask(view) {
+      view = flourishView(view);
       const persona = personaOf();
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
@@ -5017,7 +5167,7 @@ function createGoalPlanner(options) {
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow());
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow());
       const steered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
@@ -5083,7 +5233,8 @@ function createGoalPlanner(options) {
         offers.map((o) => [o.goal, o.risk, o.survival, o.uncertain]).sort(),
         options.orders?.revision(view) ?? "",
         [...passes].sort(),
-        persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on]
+        persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on],
+        flourishLines(flourishesNow(), persona)
       ]);
       const reflex = reflexFor(offers, persona, situation, turn, passes, s);
       if (reflex !== null) {
@@ -5116,7 +5267,7 @@ function createGoalPlanner(options) {
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
             ...swarmNote(seen),
             ...lessonsFor(view),
-            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } } }
+            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }, ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } } }
           },
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...options.orders?.ask(offers, view) ?? {} }
         },
@@ -5125,6 +5276,7 @@ function createGoalPlanner(options) {
       return question;
     },
     choose(answers, digest, view) {
+      view = flourishView(view);
       const answer = answers["goal"];
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick2 = decide(answer, answers["in_character"], digest, answers, view);
@@ -5278,9 +5430,9 @@ function inheritAims(aims, parent, heir) {
   for (const aim of aims) {
     if (!INHERITABLE.includes(aim.kind) || kept.some((k) => k.kind === aim.kind)) continue;
     if (aim.kind === "depth") {
-      const depth = aim.depth === null ? 0 : Math.max(1, Math.round(aim.depth * s));
-      if (depth < 1 || depth > ceiling) continue;
-      kept.push({ kind: "depth", depth });
+      const depth2 = aim.depth === null ? 0 : Math.max(1, Math.round(aim.depth * s));
+      if (depth2 < 1 || depth2 > ceiling) continue;
+      kept.push({ kind: "depth", depth: depth2 });
     } else {
       kept.push({ kind: "weapon", depth: null });
     }
@@ -5476,7 +5628,7 @@ function createStrategy(deps) {
 }
 
 // src/persona/persona.ts
-function record2(value) {
+function record3(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function bounded(value, fallback, high = 100) {
@@ -5509,12 +5661,12 @@ function defaultPersona(name = "Squire") {
 }
 function normalize(input) {
   try {
-    const raw = record2(input);
+    const raw = record3(input);
     const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
-    const sliders = record2(raw["sliders"]);
-    const lists = record2(raw["lists"]);
-    const quirks = record2(raw["quirks"]);
-    const toggles = record2(raw["toggles"]);
+    const sliders = record3(raw["sliders"]);
+    const lists = record3(raw["lists"]);
+    const quirks = record3(raw["quirks"]);
+    const toggles = record3(raw["toggles"]);
     for (const parameter of PARAMETERS) {
       switch (parameter.kind) {
         case "slider":
@@ -5526,7 +5678,7 @@ function normalize(input) {
           break;
         }
         case "quirk": {
-          const value = record2(quirks[parameter.id]);
+          const value = record3(quirks[parameter.id]);
           result.quirks[parameter.id] = {
             on: typeof value["on"] === "boolean" ? value["on"] : false,
             strength: bounded(value["strength"], 50)
@@ -5945,7 +6097,7 @@ function sortByCode(text) {
   let aim = null;
   let item = null;
   let count2 = 1;
-  let depth = null;
+  let depth2 = null;
   let deadlineLevel = null;
   let gold = null;
   const feet2 = /(\d[\d,]*)\s*(?:ft|feet)\b/.exec(t);
@@ -5953,10 +6105,10 @@ function sortByCode(text) {
   const before = /\b(?:before|by)\s+(?:character\s+)?level\s+(\d+)/.exec(t);
   const itemMatch = /\b(?:bring back|bring|keep|carry|buy|get|find|fetch|stock up on)\s+(?:(\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:of\s+)?((?:potions?|scrolls?|flasks?|rations?|wands?|rods?|staffs?|staves|rings?|amulets?|arrows?|bolts?|shots?|pebbles?)\b[^.,;]*)/.exec(t);
   if (feet2 !== null) {
-    depth = Math.max(1, Math.round(Number(feet2[1].replace(/,/g, "")) / 50));
+    depth2 = Math.max(1, Math.round(Number(feet2[1].replace(/,/g, "")) / 50));
     aim = "depth";
   } else if (/\b(?:reach|dive to|descend to|get to)\s+(?:dungeon\s+)?level\s+(\d+)/.exec(t) !== null) {
-    depth = Number(/level\s+(\d+)/.exec(t)[1]);
+    depth2 = Number(/level\s+(\d+)/.exec(t)[1]);
     aim = "depth";
   }
   if (before !== null) deadlineLevel = Number(before[1]);
@@ -6007,7 +6159,7 @@ function sortByCode(text) {
       response,
       avoids,
       store,
-      depth,
+      depth: depth2,
       deadlineLevel,
       item,
       count: count2,
@@ -7243,20 +7395,20 @@ function inheritFlourishes(lineage, parent, heir) {
 function milestoneId(milestone) {
   return `${milestone.kind}:${String(milestone.generation)}:${String(milestone.depth)}:${milestone.fact.toLowerCase()}`;
 }
-function addMilestone(lineage, persona, kind, depth, fact) {
+function addMilestone(lineage, persona, kind, depth2, fact) {
   if (!persona.toggles.milestones) return null;
   const records = lineage.milestones ?? [];
-  if (kind === "depth" ? depth <= Math.max(0, lineage.deepest ?? 0, ...lineage.ancestors.map((a) => a.deepest ?? a.died?.depth ?? 0), ...records.filter((m) => m.kind === "depth").map((m) => m.depth)) : records.some((m) => m.kind === kind && (kind === "artifact" || m.fact.toLowerCase() === fact.toLowerCase()))) return null;
-  return { kind, depth, fact, name: lineage.name, generation: lineage.generation };
+  if (kind === "depth" ? depth2 <= Math.max(0, lineage.deepest ?? 0, ...lineage.ancestors.map((a) => a.deepest ?? a.died?.depth ?? 0), ...records.filter((m) => m.kind === "depth").map((m) => m.depth)) : records.some((m) => m.kind === kind && (kind === "artifact" || m.fact.toLowerCase() === fact.toLowerCase()))) return null;
+  return { kind, depth: depth2, fact, name: lineage.name, generation: lineage.generation };
 }
 function milestoneFact(milestone) {
   if (milestone.kind === "depth") return `${milestone.name} reached ${String(milestone.depth * 50)} ft.`;
   if (milestone.kind === "unique") return `${milestone.name} was the first of the family to slay ${milestone.fact}.`;
   return `${milestone.name} found the family's first artifact: ${milestone.fact}.`;
 }
-function recallMilestones(lineage, persona, depth, uniques) {
+function recallMilestones(lineage, persona, depth2, uniques) {
   if (!persona.toggles.milestones) return [];
-  return (lineage.inheritedMilestones ?? []).filter((m) => !(lineage.mentionedMilestones ?? []).includes(milestoneId(m)) && (m.kind === "depth" ? depth >= m.depth : m.kind === "unique" && uniques.some((name) => name.toLowerCase() === m.fact.toLowerCase())));
+  return (lineage.inheritedMilestones ?? []).filter((m) => !(lineage.mentionedMilestones ?? []).includes(milestoneId(m)) && (m.kind === "depth" ? depth2 >= m.depth : m.kind === "unique" && uniques.some((name) => name.toLowerCase() === m.fact.toLowerCase())));
 }
 var ORDINALS = ["First", "Second", "Third", "Fourth", "Fifth", "Sixth", "Seventh", "Eighth", "Ninth", "Tenth"];
 function rootName(name) {
@@ -7353,7 +7505,9 @@ function lineagesOf(value) {
       ...readFlourishes(l),
       ...typeof l["race"] === "string" ? { race: l["race"] } : {},
       ...typeof l["cls"] === "string" ? { cls: l["cls"] } : {},
-      ...rec2(l["died"]) === null ? {} : { died: readDeath(l["died"]) }
+      ...rec2(l["died"]) === null ? {} : { died: readDeath(l["died"]) },
+      flourishRecord: readFamilyFlourishes(l["flourishRecord"]),
+      flourishes: readWays(l["flourishes"])
     };
   }
   return out;
@@ -7809,9 +7963,9 @@ function overlap(a, b) {
   return shared / union.size;
 }
 function similarity(a, b) {
-  const depth = 1 / (1 + Math.abs(a.depthBand - b.depthBand));
+  const depth2 = 1 / (1 + Math.abs(a.depthBand - b.depthBand));
   const level = 1 / (1 + Math.abs(a.levelBand - b.levelBand));
-  return 0.4 * overlap(a.families, b.families) + 0.3 * depth + 0.1 * (a.classId === b.classId ? 1 : 0) + 0.1 * level + 0.05 * (1 - Math.abs(a.hpBand - b.hpBand) / 3) + 0.05 * overlap(a.resources, b.resources);
+  return 0.4 * overlap(a.families, b.families) + 0.3 * depth2 + 0.1 * (a.classId === b.classId ? 1 : 0) + 0.1 * level + 0.05 * (1 - Math.abs(a.hpBand - b.hpBand) / 3) + 0.05 * overlap(a.resources, b.resources);
 }
 
 // src/learning/lessons.ts
@@ -7928,12 +8082,12 @@ function fade2(lessons, turnNow, learningRate01) {
 }
 function blameQuestion(records) {
   const criteria = {};
-  for (const record3 of records) criteria[record3.id] = `${record3.plan}: ${record3.summary}`;
+  for (const record4 of records) criteria[record4.id] = `${record4.plan}: ${record4.summary}`;
   criteria["none_of_these"] = "No listed decision contributed most to the death.";
   return { type: "choice", instructions: "Which earlier decision contributed most to this death? Choose one listed decision or none_of_these.", criteria };
 }
 function applyBlame(answer, records) {
-  return records.some((record3) => record3.id === answer.choice) ? answer.choice : null;
+  return records.some((record4) => record4.id === answer.choice) ? answer.choice : null;
 }
 
 // src/memory/install.ts
@@ -7969,15 +8123,15 @@ function strip(value) {
 function bytes(batch) {
   return Buffer.byteLength(JSON.stringify(batch), "utf8");
 }
-function decision(record3) {
+function decision(record4) {
   return strip({
-    t: record3.turn,
-    kind: record3.plan.trim().split(/\s+/)[0] || "unknown",
-    question: record3.question,
-    choice: record3.choice,
-    confidence: record3.confidence,
-    probs: record3.probs,
-    outcome: record3.outcome
+    t: record4.turn,
+    kind: record4.plan.trim().split(/\s+/)[0] || "unknown",
+    question: record4.question,
+    choice: record4.choice,
+    confidence: record4.confidence,
+    probs: record4.probs,
+    outcome: record4.outcome
   });
 }
 function buildBatches(input, level) {
@@ -8005,8 +8159,8 @@ function buildBatches(input, level) {
   let currentBytes = bytes(current2);
   if (currentBytes > LIMITS[level]) throw new RangeError("The summary exceeds the batch byte limit.");
   if (level !== "summary") {
-    for (const record3 of input.decisions) {
-      const mapped = decision(record3);
+    for (const record4 of input.decisions) {
+      const mapped = decision(record4);
       const count2 = current2.decisions?.length ?? 0;
       const addedBytes = Buffer.byteLength(JSON.stringify(mapped), "utf8") + (count2 ? 1 : 0);
       if (count2 >= MAX_RECORDS || currentBytes + addedBytes > LIMITS[level]) {
@@ -8224,7 +8378,9 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
       killers,
       feelings,
-      ...inheritFlourishes(parentLineage, parentPersona, shaped)
+      ...inheritFlourishes(parentLineage, parentPersona, shaped),
+      flourishRecord: parentLineage.flourishRecord ?? emptyFamilyFlourishes(),
+      flourishes: inheritWays(parentLineage.flourishRecord ?? emptyFamilyFlourishes(), parentPersona, shaped, rng)
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -8238,14 +8394,14 @@ function notorietyQuestion(_event) {
     criteria: ["routine", "worth a mention", "notable", "memorable", "legendary"]
   };
 }
-function notorietyState(event, personaName, depth, level) {
+function notorietyState(event, personaName, depth2, level) {
   return {
     persona: personaName,
     kind: event.kind,
     fact: event.text,
     turn: event.turn,
     eventDepth: event.depth,
-    depth,
+    depth: depth2,
     level,
     ...event.race === void 0 ? {} : { race: event.race },
     ...event.value === void 0 ? {} : { value: event.value }
@@ -8490,7 +8646,7 @@ function createJournal(initial, deps) {
       if (ability !== void 0) learn("ability", view, who.race, { ability }, `${who.race}:${ability}`);
     }
   }
-  function record3(event, notableByDefault) {
+  function record4(event, notableByDefault) {
     runLog.record(event);
     const persona = deps.persona();
     const voice = persona?.sliders.chronicle ?? 50;
@@ -8537,13 +8693,13 @@ function createJournal(initial, deps) {
       if (last !== null) {
         if (now.depth > last.depth) {
           const record_ = now.maxDepth > last.maxDepth;
-          record3(
+          record4(
             { kind: "descend", turn, depth: now.depth, text: record_ ? `a new record of ${String(now.depth * 50)} ft` : `down to ${String(now.depth * 50)} ft` },
             record_ && now.maxDepth % 5 === 0
           );
         }
         if (now.level > last.level) {
-          record3({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
+          record4({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
           drift("level-up");
         }
         const nearDeath = now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead;
@@ -8551,7 +8707,7 @@ function createJournal(initial, deps) {
           const swarm = swarmOf(view.monsters());
           const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
           const race = swarmed?.race ?? worstRace(view);
-          record3(
+          record4(
             { kind: "near-death", turn, depth: now.depth, text: race === void 0 ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...race === void 0 ? {} : { race } },
             true
           );
@@ -8564,9 +8720,9 @@ function createJournal(initial, deps) {
       last = now;
     },
     kill(race, unique, view) {
-      const depth = view?.player().depth ?? 0;
+      const depth2 = view?.player().depth ?? 0;
       const turn = view?.turn() ?? 0;
-      record3({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
+      record4({ kind: unique ? "unique-kill" : "kill", turn, depth: depth2, text: race, race }, unique);
       if (unique && view !== null) drift("unique-kill");
     },
     decided(record_, view) {
@@ -8600,15 +8756,15 @@ function createJournal(initial, deps) {
     lessons: () => lessons,
     async died(records, cause, view) {
       const turn = view?.turn() ?? 0;
-      const depth = view?.player().depth ?? 0;
+      const depth2 = view?.player().depth ?? 0;
       if (pending !== null) pending.bad = true;
-      record3({ kind: "death", turn, depth, text: cause }, true);
+      record4({ kind: "death", turn, depth: depth2, text: cause }, true);
       const recent = records.slice(-BLAME_WINDOW);
       let blamed = null;
       if (deps.send !== null && recent.length > 0) {
         const blameRecords = recent.map((r) => ({ id: r.id, plan: r.plan, summary: String(r.state["health"] ?? "") }));
         const result = await deps.send({
-          state: { death: cause, depth: `${String(depth * 50)} ft` },
+          state: { death: cause, depth: `${String(depth2 * 50)} ft` },
           questions: { blame: blameQuestion(blameRecords) }
         });
         const answer = result.ok ? result.answers["blame"] : void 0;
@@ -8622,7 +8778,7 @@ function createJournal(initial, deps) {
       persist();
       return blamed;
     },
-    event: record3,
+    event: record4,
     state: () => ({ runLog: runLog.toJson(), chronicle, lessons, calibration })
   };
 }
@@ -8877,15 +9033,15 @@ function createShadow(options) {
   }
   return {
     /** One teacher row is saved per known pilot, including when shadowing is off. */
-    record(record3, seq, enabled, url, fallbacks = []) {
-      if (record3.backend !== "Jev") return Promise.resolve();
+    record(record4, seq, enabled, url, fallbacks = []) {
+      if (record4.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks = [];
       for (const [questionId, pilot] of PILOTS) {
-        const question = record3.request.questions[questionId];
-        const answer = record3.answers[questionId];
+        const question = record4.request.questions[questionId];
+        const answer = record4.answers[questionId];
         if (question === void 0 || answer === void 0) continue;
-        const shouldSend = enabled && record3.backend === "Jev" && options.net !== null && !busy.has(pilot);
+        const shouldSend = enabled && record4.backend === "Jev" && options.net !== null && !busy.has(pilot);
         if (shouldSend) busy.add(pilot);
         let rowWritten = () => {
         };
@@ -8902,16 +9058,16 @@ function createShadow(options) {
               id,
               pilot,
               ts,
-              state: record3.request.state,
+              state: record4.request.state,
               questions,
-              jev: { model: record3.model ?? "jev-latest", answers: { [questionId]: answer } },
-              outcome: { plan: record3.outcome }
+              jev: { model: record4.model ?? "jev-latest", answers: { [questionId]: answer } },
+              outcome: { plan: record4.outcome }
             };
             await options.rows.append(row2, seq);
             rowWritten();
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
-            const request2 = { state: record3.request.state, questions };
+            const request2 = { state: record4.request.state, questions };
             const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => {
               adapter = value;
@@ -8970,7 +9126,8 @@ function readCharacter(stored) {
     kills,
     journal,
     lineage: typeof data["lineage"] === "string" ? data["lineage"] : null,
-    orders: readInstructions(data["orders"])
+    orders: readInstructions(data["orders"]),
+    flourishes: readWays(data["flourishes"])
   };
 }
 var current = null;
@@ -9006,8 +9163,10 @@ function createRuntime(host, options = {}) {
     lastView = view;
     journal.observe(view);
     observeFamily(view);
+    observeWays(view);
     channel.tick();
     const command = controller(view, act);
+    if (command !== null) rememberUse(command, view);
     if (command !== null) ownCommandAt = Date.now();
     return command;
   };
@@ -9041,7 +9200,7 @@ function createRuntime(host, options = {}) {
     persona: () => character.persona,
     setPersona: (persona) => self.saveCharacter({ ...character, persona }),
     kept: () => config.instructionsKept,
-    note: (text, notable, turn, depth) => journal.event({ kind: "instruction", turn, depth, text }, notable),
+    note: (text, notable, turn, depth2) => journal.event({ kind: "instruction", turn, depth: depth2, text }, notable),
     log: (message) => host.log(message),
     save: (state) => self.saveCharacter({ ...character, orders: state.items })
   });
@@ -9157,11 +9316,13 @@ function createRuntime(host, options = {}) {
         lastView = view;
         journal.observe(view);
         observeFamily(view);
+        observeWays(view);
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
         }
         const command = chosen(view, act);
+        if (command !== null) rememberUse(command, view);
         if (command !== null) ownCommandAt = Date.now();
         return command;
       };
@@ -9174,10 +9335,12 @@ function createRuntime(host, options = {}) {
     },
     recordKill(race, unique, view) {
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
-      self.saveCharacter({ ...character, kills });
+      const run = character.flourishes ?? emptyFlourishes();
+      self.saveCharacter({ ...character, kills, ...unique ? { flourishes: { ...run, uniqueKills: [.../* @__PURE__ */ new Set([...run.uniqueKills, race])] } } : {} });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
       if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
+      if (view !== null) observeWays(view);
     },
     grudgeLines: () => feelingsNow().map(feelingLine),
     familyMemoryLines() {
@@ -9188,10 +9351,13 @@ function createRuntime(host, options = {}) {
       const milestones = [...lineage.inheritedMilestones ?? [], ...(lineage.milestones ?? []).filter((m) => m.generation === lineage.generation)];
       return [...self.grudgeLines(), ...persona.toggles.epitaphs ? epitaphs.slice(-3).map((e) => e.line) : [], ...persona.toggles.milestones ? milestones.slice(-5).map(milestoneFact) : []];
     },
+    flourishLines: () => flourishLines(character.flourishes ?? emptyFlourishes(), character.persona),
+    recordCommand: rememberUse,
     observe(view) {
       lastView = view;
       journal.observe(view);
       observeFamily(view);
+      observeWays(view);
     },
     journal: () => journal,
     strategy: () => strategy,
@@ -9236,11 +9402,12 @@ function createRuntime(host, options = {}) {
       const born = heirFrom(config.lineages[heir.lineage], heir.parent, normalize({ ...template, ...heir.name === void 0 ? {} : { name: heir.name } }), Math.random);
       self.saveConfig({ ...config, pendingHeir: null, ...born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } } });
       if (born !== null) {
-        self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
+        self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage, flourishes: born.lineage.flourishes ?? emptyFlourishes() });
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
         strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         for (const feeling of born.lineage.feelings ?? []) host.log(feelingLog(born.persona.name, feeling));
+        for (const line of self.flourishLines()) host.log(line);
         return born.persona;
       }
     }
@@ -9260,11 +9427,11 @@ function createRuntime(host, options = {}) {
     if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: name });
     self.saveConfig({ ...config, lineages: { ...config.lineages, [name]: lineage } });
   }
-  function rememberMilestone(kind, depth, fact) {
+  function rememberMilestone(kind, depth2, fact) {
     const persona = character.persona;
     if (persona === null || !persona.toggles.milestones) return;
     const lineage = familyNow() ?? { name: persona.name, generation: 1, ancestors: [], lore: [], grudges: [] };
-    const milestone = addMilestone(lineage, persona, kind, depth, fact);
+    const milestone = addMilestone(lineage, persona, kind, depth2, fact);
     if (milestone === null) return;
     const kept = (lineage.milestones ?? []).filter((m) => kind !== "depth" || m.kind !== "depth");
     saveFamily({ ...lineage, milestones: [...kept, milestone] });
@@ -9289,6 +9456,37 @@ function createRuntime(host, options = {}) {
     const line = character.lineage?.trim();
     if (line === void 0 || line === "") return [];
     return config.lineages[line]?.feelings ?? [];
+  }
+  let seenInventory = null;
+  function observeWays(view) {
+    const run = character.flourishes ?? emptyFlourishes();
+    const handles = new Set(view.inventory().map((i) => i.handle));
+    const acquired = new Set([...handles].filter((h2) => seenInventory !== null && !seenInventory.has(h2)));
+    seenInventory = handles;
+    const before = flourishLines(run, character.persona);
+    const next = observeFlourishes(run, view, character.persona, run.uniqueKills, acquired);
+    if (JSON.stringify(next) !== JSON.stringify(run)) self.saveCharacter({ ...character, flourishes: next });
+    for (const line of flourishLines(next, character.persona)) if (!before.includes(line)) host.log(line);
+    const forgotten = run.superstitions.filter((s) => !next.superstitions.some((t) => t.key === s.key));
+    for (const s of forgotten) {
+      if (character.persona?.toggles.inheritedSuperstitions) host.log(`${character.persona.name} trusts the ${s.name} now.`);
+    }
+    const lineageName = character.lineage?.trim();
+    const lineage = lineageName === void 0 ? void 0 : config.lineages[lineageName];
+    if (lineageName !== void 0 && lineage?.flourishRecord !== void 0) {
+      const family = lineage.flourishRecord;
+      const learned = learnedSuperstitions(family.superstitions, view);
+      if (learned.length > 0) self.saveConfig({ ...config, lineages: { ...config.lineages, [lineageName]: {
+        ...lineage,
+        flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) }
+      } } });
+    }
+  }
+  function rememberUse(command, view) {
+    const run = character.flourishes ?? emptyFlourishes();
+    const lastUse = usedItem(command, view);
+    if (lastUse === null && run.lastUse === null) return;
+    self.saveCharacter({ ...character, flourishes: { ...run, lastUse } });
   }
   function settleGrudge(race) {
     const line = character.lineage?.trim();
@@ -9320,6 +9518,7 @@ function createRuntime(host, options = {}) {
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
+        flourishes: () => character.flourishes ?? emptyFlourishes(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
@@ -9331,9 +9530,9 @@ function createRuntime(host, options = {}) {
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
-      onDecision: (record3) => {
-        void logLoaded.then(() => logDecision(record3));
-        for (const listener of listeners) listener(record3, lastTurn);
+      onDecision: (record4) => {
+        void logLoaded.then(() => logDecision(record4));
+        for (const listener of listeners) listener(record4, lastTurn);
       },
       onPlanEnd: (end) => {
         void logLoaded.then(() => endDecision(end));
@@ -9350,28 +9549,28 @@ function createRuntime(host, options = {}) {
     openDecision = null;
     void log.flush();
   }
-  function logDecision(record3) {
-    const goal = record3.answers["goal"];
-    const trace = record3.context.trace;
+  function logDecision(record4) {
+    const goal = record4.answers["goal"];
+    const trace = record4.context.trace;
     const id = log.append({
       at: now(),
       turn: lastTurn,
-      trigger: record3.reflex === void 0 ? "decision" : "reflex",
-      backend: record3.backend,
+      trigger: record4.reflex === void 0 ? "decision" : "reflex",
+      backend: record4.backend,
       question: "goal",
       choice: trace?.pick ?? (goal?.type === "choice" ? goal.choice : ""),
       /* No model answered a reflex, so there is no confidence to log or calibrate. */
-      confidence: goal?.type === "choice" && record3.reflex === void 0 ? goal.confidence : null,
-      probs: goal?.type === "choice" && record3.reflex === void 0 ? goal.probabilities : null,
-      ...record3.reflex === void 0 ? {} : { reflex: record3.reflex },
-      state: record3.request.state,
-      options: record3.context.offers.map((o) => o.goal),
-      plan: record3.outcome,
-      latencyMs: record3.latencyMs,
-      ...record3.server === void 0 ? {} : { server: record3.server },
-      inputTokens: record3.usage.inputTokens,
-      outputTokens: record3.usage.outputTokens,
-      estimatedTokens: record3.usage.estimated,
+      confidence: goal?.type === "choice" && record4.reflex === void 0 ? goal.confidence : null,
+      probs: goal?.type === "choice" && record4.reflex === void 0 ? goal.probabilities : null,
+      ...record4.reflex === void 0 ? {} : { reflex: record4.reflex },
+      state: record4.request.state,
+      options: record4.context.offers.map((o) => o.goal),
+      plan: record4.outcome,
+      latencyMs: record4.latencyMs,
+      ...record4.server === void 0 ? {} : { server: record4.server },
+      inputTokens: record4.usage.inputTokens,
+      outputTokens: record4.usage.outputTokens,
+      estimatedTokens: record4.usage.estimated,
       ...trace === void 0 ? {} : {
         persona: {
           best: trace.advice,
@@ -9383,10 +9582,10 @@ function createRuntime(host, options = {}) {
       }
     });
     openDecision = id;
-    if (record3.reflex === void 0) void shadow.record(record3, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+    if (record4.reflex === void 0) void shadow.record(record4, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
-    if (record3.reflex === void 0) unsavedSpend += 1;
+    if (record4.reflex === void 0) unsavedSpend += 1;
     if (unsavedSpend >= 20) persistSpend();
     void log.flush();
   }
@@ -9437,7 +9636,15 @@ function createRuntime(host, options = {}) {
       const last = log.records().at(-1);
       const epitaph = epitaphFor(persona, { name: report.name.trim() || persona.name, generation: lineage?.generation ?? 1, cause: report.cause, depth: report.depth, level: report.level, action: last?.choice ?? "unknown" });
       if (epitaph !== null) host.log(epitaph.line);
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), deepest: report.maxDepth, turns: report.turn, epitaphs: [...lineage?.epitaphs ?? [], ...epitaph === null ? [] : [epitaph]].slice(-12), creeds, ...passable.length > 0 ? { aims: passable } : {} };
+      const next = {
+        ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []),
+        deepest: report.maxDepth,
+        turns: report.turn,
+        epitaphs: [...lineage?.epitaphs ?? [], ...epitaph === null ? [] : [epitaph]].slice(-12),
+        creeds,
+        ...passable.length > 0 ? { aims: passable } : {},
+        flourishRecord: familyAfterDeath(lineage?.flourishRecord ?? emptyFamilyFlourishes(), character.flourishes ?? emptyFlourishes(), lastView, persona)
+      };
       if (!character.lineage?.trim()) self.saveCharacter({ ...character, lineage: lineageName });
       self.saveConfig({
         ...config,
@@ -10273,7 +10480,7 @@ function mountDashboard(body2, rt) {
     const player = rt.decisionView()?.player();
     const lines2 = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
     fill(aimsBox, ...lines2.map((l) => h("div", { class: "entry" }, l)));
-    const grudges = rt.familyMemoryLines();
+    const grudges = [...rt.familyMemoryLines(), ...rt.flourishLines()];
     fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));
   }
   function drawAll() {
@@ -10289,9 +10496,9 @@ function mountDashboard(body2, rt) {
     rows.unshift(...earlier.slice(-500));
     drawAll();
   });
-  const offDecision = rt.onDecision((record3, turn) => {
-    const goal = record3.answers["goal"];
-    const trace = record3.context.trace;
+  const offDecision = rt.onDecision((record4, turn) => {
+    const goal = record4.answers["goal"];
+    const trace = record4.context.trace;
     rows.push({
       turn,
       pick: trace?.pick ?? (goal?.type === "choice" ? goal.choice : "?"),
@@ -10837,8 +11044,8 @@ function subscribeExam(rt, entries, result, onStart = () => {
 }) {
   let armed = false;
   let state = null;
-  const off = rt.onDecision((record3) => {
-    if (record3.reflex !== void 0) return;
+  const off = rt.onDecision((record4) => {
+    if (record4.reflex !== void 0) return;
     if (state === null) {
       if (!armed) return;
       armed = false;
@@ -10847,8 +11054,8 @@ function subscribeExam(rt, entries, result, onStart = () => {
     }
     const view = rt.decisionView();
     const expected = view === null ? null : styleGoal(entries(), signatureForView(view));
-    const answer = record3.context.trace?.pick ?? (record3.answers["goal"]?.type === "choice" ? record3.answers["goal"].choice : null);
-    const pick2 = record3.context.offers.find((offer) => offer.goal === answer)?.goal ?? null;
+    const answer = record4.context.trace?.pick ?? (record4.answers["goal"]?.type === "choice" ? record4.answers["goal"].choice : null);
+    const pick2 = record4.context.offers.find((offer) => offer.goal === answer)?.goal ?? null;
     state = scoreExam(state, pick2, expected);
     if (state.decisions >= 20) finish();
   });
@@ -10950,7 +11157,7 @@ function attachSquire(ctx, rt) {
   const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {
   }, ...ctx.core?.turnEnergy === void 0 ? {} : { speedEnergy: ctx.core.turnEnergy } });
-  function record3(squire, knight, view, dangerousNear, serial, confidence) {
+  function record4(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
     const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
@@ -10979,6 +11186,7 @@ function attachSquire(ctx, rt) {
     if (view === null) return;
     const serial = ++decisionSerial;
     rt.observe(view);
+    rt.recordCommand(payload, view);
     if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload, view);
     const evidence = commandEvidence(payload, knight, view);
@@ -11003,7 +11211,7 @@ function attachSquire(ctx, rt) {
     if ("reflex" in asked) {
       const answer = asked.answers["goal"];
       const goal = asked.context.offers.find((o) => answer?.type === "choice" && o.goal === answer.choice)?.goal;
-      if (goal !== void 0) record3(goal, knight, view, dangerousNear, serial);
+      if (goal !== void 0) record4(goal, knight, view, dangerousNear, serial);
       return;
     }
     const question = asked;
@@ -11012,7 +11220,7 @@ function attachSquire(ctx, rt) {
     const offline = proceduralPick(question.context.offers, share3);
     const backend = rt.backend();
     if (backend === null || asking) {
-      if (offline !== null) record3(offline, knight, view, dangerousNear, serial);
+      if (offline !== null) record4(offline, knight, view, dangerousNear, serial);
       return;
     }
     asking = true;
@@ -11023,7 +11231,7 @@ function attachSquire(ctx, rt) {
         const answer = result.answers["goal"];
         const pick2 = answer?.type === "choice" ? answer.choice : "none_of_these";
         const squire = question.context.offers.find((o) => o.goal === pick2)?.goal ?? offline;
-        if (squire !== null && squire !== void 0) record3(
+        if (squire !== null && squire !== void 0) record4(
           squire,
           knight,
           view,
@@ -11034,7 +11242,7 @@ function attachSquire(ctx, rt) {
         void rt.recordLesson(question.request, result.answers, result.model, apprentice.total, knight).catch(() => {
         });
       } else if (offline !== null) {
-        record3(offline, knight, view, dangerousNear, serial);
+        record4(offline, knight, view, dangerousNear, serial);
       }
     });
   });

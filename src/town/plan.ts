@@ -15,6 +15,7 @@ import { aimPurchase, aimStores } from "./aims-shop.js";
 import { supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
 import { saleFits, sellList, shoppingList, storesFor } from "./shop.js";
+import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
 
 export interface ShopEntrance extends Loc {
   readonly feat: number;
@@ -37,11 +38,11 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
 }
 
 /** Visible needs, affordable aims and mapped entrances determine where to walk, without stores(). */
-export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = []): ShopEntrance[] {
+export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = [], flourishes: Flourishes = emptyFlourishes()): ShopEntrance[] {
   if (view.player().depth !== 0) return [];
   const pack = readPack(view);
-  const needs = basketNeeds(view, supplyNeeds(view, pack, persona));
-  const sales = sellList(pack, view, persona);
+  const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson));
+  const sales = sellList(pack, view, persona, trophyHandles(flourishes, view, persona));
   const gold = view.player().gold;
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
@@ -55,7 +56,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 }
 
 /** Re-read the entered shop after each command; buying can move its stock slots. */
-export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = []): Plan {
+export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes): Plan {
   const progress = newProgress(0);
   /* An aim is bought for once per trip: its list was ranked before the trip,
    * so after one purchase it would still ask for more of the same. */
@@ -67,7 +68,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       if (view.player().depth !== 0) return null;
       const at = view.player().grid;
       const cell = view.cell(at.x, at.y);
-      const first = neededEntrances(view, terrain, persona, visited, aims)[0];
+      const first = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
       const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
       if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
@@ -86,12 +87,12 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return act.shopExit();
         }
         const pack = readPack(view);
-        const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
+        const sale = sellList(pack, view, persona, trophyHandles(flourishes(), view, persona)).find((item) => saleFits(item.name, store.featName));
         if (sale !== undefined) {
           log(`shop: selling ${sale.name} in the ${store.featName}`);
           return act.shopSell(sale.handle, sale.quantity);
         }
-        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona)), store, view.player().gold, persona)[0];
+        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson)), store, view.player().gold, persona)[0];
         if (purchase !== undefined) {
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
@@ -108,7 +109,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
         return act.shopExit();
       }
-      const next = neededEntrances(view, terrain, persona, visited, aims)[0];
+      const next = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
       if (next === undefined) {
         log("shop: no shop left with anything needed");
         return null;

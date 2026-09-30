@@ -18,6 +18,7 @@ import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
 import { readFeelings, readKillers } from "./learning/grudges.js";
 import { readFlourishes } from "./learning/flourishes.js";
+import { readFamilyFlourishes, readWays } from "./learning/family-ways.js";
 import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 
@@ -119,6 +120,8 @@ function lineagesOf(value: unknown): Record<string, Lineage> {
       ...(typeof l["race"] === "string" ? { race: l["race"] } : {}),
       ...(typeof l["cls"] === "string" ? { cls: l["cls"] } : {}),
       ...(rec(l["died"]) === null ? {} : { died: readDeath(l["died"]) }),
+      flourishRecord: readFamilyFlourishes(l["flourishRecord"]),
+      flourishes: readWays(l["flourishes"]),
     };
   }
   return out;

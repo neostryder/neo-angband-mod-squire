@@ -87,7 +87,7 @@ export function mightBeSpecial(name: string): boolean {
 }
 
 /** Sell only an extra, named piece of gear after keeping the first spare. */
-export function sellList(_pack: Pack, view: AgentView, persona: Persona | null): Sale[] {
+export function sellList(_pack: Pack, view: AgentView, persona: Persona | null, trophies: ReadonlySet<number> = new Set()): Sale[] {
   if (persona === null || persona.sliders.selling < 60) return [];
   const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
   const seen = new Set<string>();
@@ -96,13 +96,14 @@ export function sellList(_pack: Pack, view: AgentView, persona: Persona | null):
   for (const item of view.inventory()) {
     const name = shownName(item);
     if (name === null || worn.has(item.handle) || mightBeSpecial(name) || upgrades.has(item.handle)) continue;
-    const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
+    const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)s?\b/i.exec(name)?.[1];
     if (type === undefined) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
     if (seen.has(type.toLowerCase())) {
       const result = view.simulateLoadout?.({ release: [{ handle: item.handle, number: item.number }] });
       if (result !== undefined && result !== null && (!keepsCapacity(view, result) || result.after.player.speed < result.before.player.speed || result.after.player.maxSp < result.before.player.maxSp || (loadoutDamage(result.after) ?? 0) < (loadoutDamage(result.before) ?? 0) || (loadoutMissileDamage(result.after, view) ?? 0) < (loadoutMissileDamage(result.before, view) ?? 0))) continue;
-      out.push({ handle: item.handle, quantity: item.number, name });
+      const quantity = item.number - (trophies.has(item.handle) ? 1 : 0);
+      if (quantity > 0) out.push({ handle: item.handle, quantity, name });
     }
     seen.add(type.toLowerCase());
   }
@@ -111,6 +112,6 @@ export function sellList(_pack: Pack, view: AgentView, persona: Persona | null):
 
 /** The Armoury and Weapon Smiths buy only the corresponding surplus gear. */
 export function saleFits(name: string, storeName: string): boolean {
-  return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.test(name) :
-    storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)\b/i.test(name);
+  return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)s?\b/i.test(name) :
+    storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)s?\b/i.test(name);
 }

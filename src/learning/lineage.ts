@@ -7,6 +7,7 @@ import type { Instruction } from "../orders/types.js";
 import { inheritAims, type InheritedAim } from "../strategy/heirs.js";
 import { feelingKind, feelingsFor, remembered, type Feeling, type Killer } from "./grudges.js";
 import { inheritFlourishes, type Epitaph, type Milestone } from "./flourishes.js";
+import { emptyFamilyFlourishes, inheritWays, type FamilyFlourishes, type Flourishes } from "./family-ways.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -39,6 +40,8 @@ export interface Lineage {
   readonly mentionedMilestones?: readonly string[];
   readonly deepest?: number;
   readonly turns?: number;
+  readonly flourishRecord?: FamilyFlourishes;
+  readonly flourishes?: Flourishes;
   /** Current-character facts are optional until a run has supplied them. */
   readonly race?: string;
   readonly cls?: string;
@@ -104,6 +107,8 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
       killers, feelings,
       ...inheritFlourishes(parentLineage, parentPersona, shaped),
+      flourishRecord: parentLineage.flourishRecord ?? emptyFamilyFlourishes(),
+      flourishes: inheritWays(parentLineage.flourishRecord ?? emptyFamilyFlourishes(), parentPersona, shaped, rng),
     },
     persona: { ...heirPersona, sliders, lists },
   };

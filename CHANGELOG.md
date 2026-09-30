@@ -48,6 +48,10 @@ Fixed.
 - [Visible] **Epitaphs.** The log names the killer, depth and last choice when a character dies. Family memory keeps recent epitaphs for heirs.
 - [Visible] **Family milestones.** The family records depth records, first unique kills and its first artifact; heirs recall shared depths and uniques in the log.
 - [Visible] **Namesakes.** Heirs can take numbered ancestor names, favouring ancestors who reached deeper or lived longer.
+- [Visible] **Inherited superstitions.** Heirs avoid the scroll, potion or wand used just before an ancestor died; identifying its kind ends the fear.
+- [Visible] **Lessons of the dark.** A squire whose ancestor died without light can buy an extra Wooden Torch or Flask of Oil before leaving town.
+- [Visible] **Trophies.** Proud characters keep one item from each slain unique while the pack has room.
+- [Visible] **Favoured grounds.** Heirs favour exploring at the depth of an ancestor's most valuable find once their gear and supplies let them reach it.
 
 ### Changed
 - [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.

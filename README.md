@@ -72,6 +72,13 @@ Epitaphs gives each death a short line in the character's voice, naming the kill
 Family milestones remembers the first time the family slays each unique, its deepest level and its first known artifact. An heir recalls a milestone in the log when it reaches that depth or sees that unique. Family memory lists recent milestones. Turn Family milestones off to stop recording and recalling them; Inheritance sets how many an heir remembers.
 
 Namesakes lets an heir take an ancestor's name with a number, such as "Mira the Second". Ancestors who reached deeper or lived longer are more likely to lend their names. The log names the ancestor. Turn Namesakes off to keep the usual birth names. Inheritance lowers the chance, down to none when nothing passes, and a pinned name stays yours.
+Inherited superstitions makes an heir distrust an unknown scroll, potion or wand that an ancestor used just before dying. The heir avoids using that kind until the family sees it identified. Known healing and escape items remain available. Inheritance controls how many superstitions pass on, and Family memory lists them. The setting starts on; turning it off or setting Inheritance to nothing gives the heir none.
+
+Lessons of the dark makes an heir carry one extra torch or flask of lantern fuel after an ancestor died without light. Inheritance sets the chance of passing on the lesson. The extra fuel waits until the town survival reserve is filled, and lights that need no fuel keep their usual targets. Family memory and the log mention the lesson. The setting starts on and can be turned off.
+
+Trophies lets a character with Pride at 70 or above keep one carried item dropped by each unique it kills. The item's inspection must name the unique. Squire keeps useful gear available to wear and sells the rest of a trophy stack. A full pack ends the sale protection. Family memory lists the trophies, and the log records each one. The setting starts on; trophies belong to the character that earned them, so heirs start a fresh collection.
+
+Favoured grounds gives an heir a small preference for hunting at the depth of the family's most valuable dungeon find. Squire reads the item's value and inspection, or remembers where it was picked up. The heir favours descent toward that depth only once it meets the readiness requirements, then favours exploration there. Survival guards and the death-risk ceiling still decide what is safe. Inheritance sets the chance of passing on the preference. Family memory lists the depth, and the setting starts on and can be turned off.
 
 ## Knight's Lessons
 

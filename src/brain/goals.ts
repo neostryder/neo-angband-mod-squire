@@ -55,6 +55,7 @@ import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull } from "./items.js";
 import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
+import { distrusted, distrustedUse, emptyFlourishes, flourishLines, nudgeGrounds, type Flourishes } from "../learning/family-ways.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -231,6 +232,7 @@ export interface GoalPlannerOptions {
   readonly dreaded?: () => ReadonlySet<string>;
   /** The heir's hatred and fear toward the creatures that killed its ancestors. */
   readonly grudges?: () => readonly Feeling[];
+  readonly flourishes?: () => Flourishes;
   /** Rescale the best-move answer from past outcomes. Never applied to the in-character answer. */
   readonly calibrate?: (probs: Readonly<Record<string, number>>) => Record<string, number>;
   /** Random draws for persona volatility and quirks. */
@@ -619,7 +621,7 @@ export function recallPending(player: object, read: RecallRead | null, turn: num
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = []): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes()): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -642,7 +644,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add(goal, criteria + attackDescription(attack, view), attackRisk(s, attack), false, player.hp - remaining, attack.failure > 0 && attack.kill);
   };
 
-  const needs = supplyNeeds(view, s.pack, persona);
+  const needs = supplyNeeds(view, s.pack, persona, flourishes.darkLesson);
   /* A recall scroll cannot be read while blind or confused. */
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
@@ -664,7 +666,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
   if (player.depth === 0) {
-    const shops = neededEntrances(view, terrain, persona, visited, aims);
+    const shops = neededEntrances(view, terrain, persona, visited, aims, flourishes);
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
@@ -878,7 +880,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
-    (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims).length === 0)))) {
+    (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes).length === 0)))) {
     add("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
@@ -893,6 +895,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const journey = createJourney(terrain);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
+  const flourishesNow = () => options.flourishes?.() ?? emptyFlourishes();
+  function flourishView(view: AgentView): AgentView {
+    const run = flourishesNow();
+    const persona = personaOf();
+    if (!persona?.toggles.inheritedSuperstitions || run.superstitions.length === 0) return view;
+    return { ...view, inventory: () => view.inventory().map((item) => distrusted(item, run, persona) ? { ...item, activation: false } : item) };
+  }
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
@@ -910,6 +919,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let observed: { depth: number; hp: number; grid: Loc } | null = null;
   let unseenHit: { grid: Loc; damage: number; turn: number } | null = null;
   function situationNow(view: AgentView, update = false): Situation {
+    view = flourishView(view);
     const player = view.player();
     const turn = view.turn();
     if (observed !== null && observed.depth !== player.depth) {
@@ -1001,7 +1011,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const step: Plan["step"] = (v, act) => {
       startTurn ??= v.turn();
       settle(v);
-      const command = plan.step(v, act);
+      const proposed = plan.step(v, act);
+      const command = proposed !== null && distrustedUse(proposed, v, flourishesNow(), personaOf()) ? null : proposed;
       if (command !== null) issued += 1;
       /* A plan that ends with no game time passed changed nothing: either it
        * issued no command, or the game refused every one it issued (a spell
@@ -1058,7 +1069,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const fightCfg: SquireCfg = { ...cfg, wakeSleepers: true };
 
   function context(view: AgentView, act: AgentActions, progress: Progress, with_: SquireCfg = cfg): SquireContext {
-    return { view, act, terrain, cfg: with_, progress, log };
+    return { view: flourishView(view), act, terrain, cfg: with_, progress, log };
   }
 
   /* Creatures seen on this level. One that steps out of the light and back is
@@ -1248,6 +1259,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   }
 
   function build(goal: Goal, view: AgentView): Plan {
+    view = flourishView(view);
     const pack = readPack(view);
     switch (goal) {
       case "recall_town":
@@ -1258,7 +1270,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? []), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -1560,7 +1572,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
-    const nudged = holdDescent(felt, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
+    const nudged = holdDescent(grounded, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -1594,6 +1607,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   return {
     ask(view) {
+      view = flourishView(view);
       const persona = personaOf();
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
@@ -1624,7 +1638,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow());
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow());
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
@@ -1689,7 +1703,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         player.depth, healthBand(player.hp, player.maxHp), creatures, statusOf(view, canRead(view)), unexplored, stairs,
         player.hp, player.sp, player.speed, player.grid, s.threats.map((m) => [m.id, m.grid, m.speed, m.hp]), s.unseenDamage,
         hungry(view), offers.map((o) => [o.goal, o.risk, o.survival, o.uncertain]).sort(),
-        options.orders?.revision(view) ?? "", [...passes].sort(), persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on],
+        options.orders?.revision(view) ?? "", [...passes].sort(), persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on], flourishLines(flourishesNow(), persona),
       ]);
       const reflex = reflexFor(offers, persona, situation, turn, passes, s);
       if (reflex !== null) {
@@ -1723,7 +1737,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
             ...swarmNote(seen),
             ...lessonsFor(view),
-            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) } }),
+            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) } }),
           },
           questions:
             persona === null
@@ -1736,6 +1750,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     choose(answers: Readonly<Record<string, Answer>>, digest: GoalDigest, view: AgentView): Choice {
+      view = flourishView(view);
       const answer = answers["goal"];
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick = decide(answer, answers["in_character"], digest, answers, view);

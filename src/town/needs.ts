@@ -58,7 +58,7 @@ function scale(base: number, slider: number, minimum: number): number {
 }
 
 /** Targets change with level, equipped light and launcher, and persona habits. */
-export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null): SupplyNeed[] {
+export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null, darkLesson = false): SupplyNeed[] {
   const items = view.inventory();
   const worn = view.equipment().map((item) => item === null ? null : shownName(item));
   const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
@@ -74,6 +74,9 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
   };
   const healingBase = view.player().cls === "Warrior" ? 6 : pack.healSpell.length > 0 ? 3 : 5;
   const healing = Math.max(2, scale(healingBase, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  const spareFuel = darkLesson && persona?.toggles.darkLessons === true;
+  /* Lantern fuel shares the oil stack, so the spare must exceed its usual target. */
+  const lightTarget = Math.max(scale(2, consumables, 2), spareFuel && lantern && level < 20 ? scale(10, consumables, 1) : 0) + (spareFuel ? 1 : 0);
   /* Near the surface the stairs are close, and a recall scroll costs most of a
    * new character's gold, which healing potions need more. */
   const recall = destination >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
@@ -84,7 +87,7 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
     make("recall", recall),
     ...(level < 20 ? [make("oil", scale(10, consumables, 1))] : []),
     make("food", scale(5, consumables, 5), { hungry: hungry(view) }),
-    ...(!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", scale(2, consumables, 2))] : []),
+    ...(!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", lightTarget)] : []),
     ...(pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []),
   ];
 }
