@@ -18,6 +18,51 @@ function goals(w: ReturnType<typeof world>, journey = createJourney(w.terrain), 
 }
 
 describe("journey offer and execution guards", () => {
+  const breeders = [5, 6, 7].map((x, index) => ({ grid: { x, y: 1 }, race: index === 2 ? "giant white mouse" : "white worm mass", raceFlags: ["MULTIPLY"] }));
+
+  it("keeps the young Mage's aggregate breeder exit after sight and mana change", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { cls: "Mage", level: 2, hp: 16, maxHp: 16, sp: 0, maxSp: 4 }, monsters: breeders });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey)).not.toEqual(expect.arrayContaining(["fight", "rest", "explore", "descend"]));
+    expect(journey.breederExit(w.view)).toBe(true);
+    w.setMonsters([]);
+    w.setPlayer({ level: 6, sp: 4 });
+    expect(goals(w, journey)).toContain("leave_level");
+    expect(goals(w, journey)).not.toContain("rest");
+    const rest = journey.guarded("rest", { label: "rest", step: (_view, act) => act.rest() });
+    expect(rest.step(w.view, w.act)).toBeNull();
+    w.setPlayer({ depth: 2 });
+    expect(journey.breederExit(w.view)).toBe(false);
+  });
+
+  it("counts awake breeders and keeps the early threshold limited to levels 1 through 5", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 5 }, monsters: breeders.map((monster, index) => ({ ...monster, asleep: index === 2 })) });
+    const journey = createJourney(w.terrain);
+    expect(journey.breederExit(w.view)).toBe(false);
+    w.setPlayer({ level: 6 });
+    w.setMonsters(breeders);
+    expect(journey.breederExit(w.view)).toBe(false);
+    w.setPlayer({ level: 5 });
+    expect(journey.breederExit(w.view)).toBe(true);
+  });
+
+  it("stops an optional plan when the third breeder appears", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 2 }, monsters: breeders.slice(0, 2) });
+    const journey = createJourney(w.terrain);
+    goals(w, journey);
+    const plan = journey.guarded("fetch", { label: "fetch", step: (_view, act) => act.move(6) });
+    w.setMonsters(breeders);
+    expect(plan.step(w.view, w.act)).toBeNull();
+  });
+
+  it("retains attacks that clear adjacent contact while suppressing distant pursuit", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 2 }, monsters: [{ ...breeders[0]!, grid: { x: 3, y: 1 } }, ...breeders.slice(1)] });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey)).toContain("fight");
+    w.setMonsters(breeders);
+    expect(goals(w, journey)).not.toContain("fight");
+  });
+
   it("blocks both descent and dungeon Recall for the unsupplied town character", () => {
     const w = world({ map: ROOM, player: { depth: 0, maxDepth: 2, level: 1, maxLevel: 1, hp: 20, maxHp: 20 }, pack: ["a Scroll of Word of Recall"] });
     expect(goals(w, undefined, false, offers("descend", "recall_dungeon"))).toEqual([]);

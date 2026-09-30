@@ -23,6 +23,7 @@
  *   ` `  a grid the character has never seen
  *   `@`  the character, standing on floor
  *   `+`  a closed door the character remembers
+ *   `/`  an open door the character remembers
  *   `>`  a down staircase the character remembers
  *   `~`  ground that burns, which the character remembers
  *   `*`  floor with something lying on it
@@ -66,6 +67,7 @@ export const FEAT = {
   ARMOUR: 9,
   UP_STAIR: 10,
   RUBBLE: 11,
+  OPEN_DOOR: 12,
 } as const;
 
 /** The terrain classification matching FEAT. */
@@ -74,6 +76,7 @@ export function harnessTerrain(): Terrain {
     isDownStair: (feat) => feat === FEAT.DOWN_STAIR,
     isUpStair: (feat) => feat === FEAT.UP_STAIR,
     isClosedDoor: (feat) => feat === FEAT.DOOR_CLOSED,
+    isOpenDoor: (feat) => feat === FEAT.OPEN_DOOR,
     isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.ARMOUR,
     shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury" })[feat] ?? null,
     isHarmful: (feat) => feat === FEAT.LAVA,
@@ -97,6 +100,8 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.WALL, passable: false, known: false, objectCount: 0 };
     case "+":
       return { feat: FEAT.DOOR_CLOSED, passable: false, known: true, objectCount: 0 };
+    case "/":
+      return { feat: FEAT.OPEN_DOOR, passable: true, known: true, objectCount: 0 };
     case ">":
       return { feat: FEAT.DOWN_STAIR, passable: true, known: true, objectCount: 0 };
     case "<":

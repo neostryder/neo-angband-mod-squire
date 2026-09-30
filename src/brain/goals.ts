@@ -42,7 +42,7 @@ import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
-import { assessThreat, bestBallAim, clearShot, effectiveAttack, fastUniqueAtLowLevel, incomingDamage, inspecting, pickAttackSpell, spellInfoOf, threatIndex, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, incomingDamage, inspecting, threatIndex, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -50,7 +50,7 @@ import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/
 import { holdDescent } from "../strategy/hold.js";
 import { createJourney } from "../strategy/journey.js";
 import type { Aim } from "../strategy/aims.js";
-import { activationUse, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type CombatUse } from "./combat-kit.js";
+import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull } from "./items.js";
 import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
@@ -83,6 +83,7 @@ export type Goal =
   | "explore"
   | "descend"
   | "leave_level"
+  | "close_door"
   | "study"
   | "wear"
   | "detect"
@@ -262,6 +263,7 @@ interface Situation {
   readonly swarming: boolean;
   readonly hpShare: number;
   readonly threats: readonly MonsterView[];
+  readonly breederExit?: boolean;
   readonly unseenDamage: number;
   readonly lastSeen: ReadonlyMap<number, number>;
   readonly terrain?: Terrain;
@@ -290,7 +292,7 @@ function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), 
     dreaded,
     stationary,
     swarm,
-    swarming: swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
+    swarming: player.level <= 5 && awake.filter((monster) => monster.raceFlags.includes("MULTIPLY")).length >= 3 || swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
     view,
     pack: readPack(view),
     awake,
@@ -394,11 +396,10 @@ function fightRisk(s: Situation): number {
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
 
-function attackRisk(s: Situation, spell?: Pack["attackSpell"][number]): number {
+function attackRisk(s: Situation, attack: AttackOutcome): number {
   const standing = Math.max(fightRisk(s), exposure(s));
   if (s.target === null || s.target.hp <= 0) return standing;
-  const attack = effectiveAttack(s.view, s.target, spell);
-  if (attack.damage < s.target.hp) return standing;
+  if (!attack.kill) return standing;
   const rest = damageFor({ ...s, threats: s.threats.filter((m) => m.id !== s.target!.id) }).damage;
   return Math.max(0.05, damageRisk(rest, s.view.player().hp), standing * attack.failure);
 }
@@ -421,6 +422,14 @@ function damageFor(s: Situation, at: Loc = s.view.player().grid, actions = 1, te
   return incomingDamage(s.view, at, actions, terrain ?? s.terrain, { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }), ...(openedDoor === undefined ? {} : { openedDoor }) });
 }
 
+function combatContext(s: Situation): AttackContext {
+  return { ...(s.terrain === undefined ? {} : { terrain: s.terrain }), facts: { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }) } };
+}
+
+function combatOptions(s: Situation, kind: AttackOutcome["kind"]): AttackOutcome[] {
+  return s.target === null ? [] : attackOptions(s.view, s.target, kind, combatContext(s));
+}
+
 function safeRecovery(s: Situation, terrain: Terrain): boolean {
   const player = s.view.player();
   if (player.status.poisoned > 0 || player.status.cut > 0 || hungry(s.view) || standingOnHarm(s.view, terrain, player.grid)) return false;
@@ -429,6 +438,25 @@ function safeRecovery(s: Situation, terrain: Terrain): boolean {
     const away = steps(player.grid, m.grid);
     return away <= (m.raceFlags.includes("MULTIPLY") ? 10 : m.asleep ? 8 : 5) || m.raceFlags.includes("PASS_WALL") && away <= 10;
   });
+}
+
+function closeDoorStep(s: Situation, terrain: Terrain): Loc | null {
+  const view = s.view;
+  const player = view.player();
+  const incoming = damageFor(s, player.grid, 1, terrain);
+  if (player.status.blind > 0 || player.status.confused > 0 || incoming.damage >= player.hp || incoming.status > 0) return null;
+  const before = damageFor(s, player.grid, 2, terrain);
+  for (const at of neighbours(player.grid)) {
+    const cell = view.cell(at.x, at.y);
+    if (cell === null || !cell.known || !cell.passable || !terrain.isOpenDoor?.(cell.feat) || cell.monster > 0 || cell.trap || view.monsters().some((monster) => key(monster.grid) === key(at))) continue;
+    /* The synthetic closed cell retains opening costs and wall-passing abilities. */
+    const closedView: AgentView = { ...view, cell: (x, y) => x === at.x && y === at.y ? { ...cell, feat: -2, passable: false } : view.cell(x, y) };
+    const closedTerrain: Terrain = { ...terrain, isClosedDoor: (feat) => feat === -2 || terrain.isClosedDoor(feat) };
+    const after = damageFor({ ...s, view: closedView }, player.grid, 2, closedTerrain);
+    const field = flowFrom({ goals: knownStairs(closedView, closedTerrain), canEnter: (grid) => key(grid) !== key(at) && isRoutable(closedView, closedTerrain, grid) });
+    if (after.damage < before.damage && after.status <= before.status && Number.isFinite(field.distance(player.grid)) && leaveStep({ ...s, view: closedView }, closedTerrain) !== null) return at;
+  }
+  return null;
 }
 
 interface EscapeStep {
@@ -605,6 +633,14 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const addLeave = (criteria: string, _risk: number) => { if (exit !== null && !out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage); };
   const nearDeath = s.hpShare < 0.35;
   const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
+  if (s.breederExit === true || player.level <= 5 && s.swarming) {
+    const door = closeDoorStep(s, terrain);
+    if (door !== null) add("close_door", "Close the adjacent open door to separate the breeders from the exit route. The closing action is survivable and the door reduces incoming damage over two actions.", damageRisk(incoming.damage, player.hp));
+  }
+  const addAttack = (goal: AttackOutcome["kind"], criteria: string, attack: AttackOutcome) => {
+    const remaining = attack.kill && s.target !== null ? damageFor({ ...s, threats: s.threats.filter((monster) => monster.id !== s.target!.id) }, at, 1, terrain).damage : incoming.damage;
+    add(goal, criteria + attackDescription(attack, view), attackRisk(s, attack), false, player.hp - remaining, attack.failure > 0 && attack.kill);
+  };
 
   const needs = supplyNeeds(view, s.pack, persona);
   /* A recall scroll cannot be read while blind or confused. */
@@ -643,30 +679,35 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     const adjacent = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     /* The game refuses every blow from an afraid character without spending a turn. */
-    if ((adjacent || walkUp) && player.status.afraid === 0) {
+    const melee = combatOptions(s, "fight")[0];
+    if ((adjacent || walkUp) && player.status.afraid === 0 && melee !== undefined) {
       const away = steps(at, s.target.grid);
-      add("fight", adjacent
+      addAttack("fight", adjacent
         ? `Fight the ${s.target.race} in melee until it dies or something changes.`
-        : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, attackRisk(s));
+        : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, melee);
     }
     const ranged = within(s, MISSILE_RANGE);
     const clear = clearShot(view, s.target);
     /* A ranged attack keeps the character where it stands, so it is never safer
      * than standing there: rating it lower once had Squire cast at an adjacent
      * deadly creature when the model and the persona both said to retreat. */
-    const standing = exposure(s);
-    if (ranged && clear && s.pack.launcher && s.pack.ammo[0] !== undefined) {
-      add("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${s.pack.ammo[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
+    const missile = combatOptions(s, "shoot")[0];
+    if (ranged && clear && s.pack.launcher && missile !== undefined) {
+      addAttack("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${missile.source?.name ?? "ammunition"}).`, missile);
     }
-    if (ranged && clear && s.pack.oil[0] !== undefined) {
-      add("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game (carrying ${s.pack.oil[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
+    const oil = combatOptions(s, "throw_oil")[0];
+    if (ranged && clear && oil !== undefined) {
+      addAttack("throw_oil", `Throw ${oil.source?.name ?? "a flask of oil"} at the ${s.target.race}.`, oil);
     }
-    if (ranged && clear && s.pack.attackWand[0] !== undefined) {
-      add("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, Math.max(fightRisk(s) * 0.65, standing));
+    const wand = combatOptions(s, "aim_wand")[0];
+    if (ranged && clear && wand !== undefined) {
+      addAttack("aim_wand", `Aim ${wand.source?.name ?? "a wand"} at the ${s.target.race}.`, wand);
     }
-    const spell = pickAttackSpell(s.pack.attackSpell, spellInfoOf(view));
+    const cast = combatOptions(s, "cast_attack")[0];
+    const spell = cast?.source !== null && cast?.source !== undefined && "sidx" in cast.source ? cast.source : undefined;
     if (ranged && spell !== undefined && (clear || /(?:ball|orb|cloud|storm)/i.test(spell.name) && bestBallAim(view, s.awake, s.target) !== null)) {
-      add("cast_attack", `Cast ${spell.name} at the ${s.target.race}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, attackRisk(s, spell));
+      const aim = /(?:ball|orb|cloud|storm)/i.test(spell.name) ? "at the best visible blast position" : `at the ${s.target.race}`;
+      addAttack("cast_attack", `Cast ${spell.name} ${aim}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, cast!);
     }
   }
   /* A bad cut does not close by itself, and a character bleeding out dies of it
@@ -734,7 +775,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (nearDeath || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
-      add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
+      const short = s.pack.phase[0] !== undefined || /^(Phase Door|Blink|Shadow Shift)$/i.test(how);
+      add("phase", `Use ${how}: a ${short ? "short" : "long"} random teleport that breaks contact${short ? " for a moment" : ""}.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
     }
     if (s.pack.teleport[0] !== undefined) {
       const teleport = s.pack.teleport[0];
@@ -766,9 +808,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Walking in the dark shows nothing, so while a light sits unused in the pack
    * lighting it comes before exploring or the stairs. */
   const unlit = gear !== undefined && gear.criteria.includes("has no light");
-  if (!bleeding && gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+  if (!bleeding && incoming.damage < player.hp && gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     /* Changing gear spends a turn, which is as risky as any other turn not spent fighting. */
-    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && s.awake.length === 0);
+    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && gear.safeUpgrade !== false && s.awake.length === 0);
   }
   if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -884,7 +926,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const unseenDamage = unseenHit !== null && turn - unseenHit.turn <= 50 && turn >= unseenHit.turn && steps(player.grid, unseenHit.grid) <= 5
       ? Math.ceil(unseenHit.damage * (1 - (turn - unseenHit.turn) / 60)) : 0;
     const situation = situationOf(view, dreadedNow(), stationaryNow(view, update), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy);
-    return { ...situation, lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
+    return { ...situation, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
@@ -1053,7 +1095,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
-      routine: routineBreeder,
+      routine: (monster) => routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...(options.speedEnergy === undefined ? {} : { energy: options.speedEnergy }) }).damage === 0,
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;
@@ -1146,7 +1188,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   }
 
   /** One command aimed at the current target: set the target, then issue it. */
-  function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand, ball = false): WatchedPlan {
+  function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand | null, ball = false): WatchedPlan {
     return once(label, view, (ctx) => {
       const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
@@ -1168,7 +1210,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   function volleyPlan(goal: RangedGoal, label: string, view: AgentView, spellSidx?: number): WatchedPlan {
     const target = situationOf(view, dreadedNow(), stationaryNow(view, false)).target;
     if (target === null) return once("no target", view, () => null);
-    const next = volleySteps(goal, target.id, spellSidx);
+    const next = volleySteps(goal, target.id, spellSidx, (v) => combatContext(situationNow(v)));
     return stepsPlan(label, view, (ctx) => next(ctx));
   }
 
@@ -1207,27 +1249,35 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
         if (volleyAvailable(view)) return volleyPlan("shoot", "shoot", view);
-        const ammo = pack.ammo[0];
-        return atTarget("shoot", view, (ctx) => ctx.act.fire(ammo?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("shoot", target.id, undefined, (v) => combatContext(situationNow(v)));
+        return once("shoot", view, next);
       }
       case "throw_oil": {
         if (volleyAvailable(view)) return volleyPlan("throw_oil", "throw oil", view);
-        const oil = pack.oil[0];
-        return atTarget("throw oil", view, (ctx) => ctx.act.throw(oil?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("throw_oil", target.id, undefined, (v) => combatContext(situationNow(v)));
+        return once("throw oil", view, next);
       }
       case "aim_wand": {
         const wand = pack.attackWand[0];
         if (volleyAvailable(view)) return volleyPlan("aim_wand", `aim ${wand?.name ?? "a wand"}`, view);
-        return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("aim_wand", target.id, undefined, (v) => combatContext(situationNow(v)));
+        return once(`aim ${wand?.name ?? "a wand"}`, view, next);
       }
       case "cast_attack": {
-        const spell = pickAttackSpell(pack.attackSpell, spellInfoOf(view));
+        const cast = combatOptions(situationNow(view), "cast_attack")[0];
+        const spell = cast?.source !== null && cast?.source !== undefined && "sidx" in cast.source ? cast.source : undefined;
         const label = `cast ${spell?.name ?? "a spell"}`;
         const ball = spell !== undefined && /(?:ball|orb|cloud|storm)/i.test(spell.name);
         /* A ball is aimed afresh every cast to keep the blast off the
          * character, so only bolts volley. */
         if (!ball && spell !== undefined && volleyAvailable(view)) return volleyPlan("cast_attack", label, view, spell.sidx);
-        return atTarget(label, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), ball);
+        return atTarget(label, view, (ctx) => {
+          const usable = spell !== undefined && combatOptions(situationNow(ctx.view), "cast_attack").some((attack) => attack.source !== null && "sidx" in attack.source && attack.source.sidx === spell.sidx);
+          return usable ? ctx.act.cast(spell!.sidx) : null;
+        }, ball);
       }
       case "heal": {
         const potion = healingPotion(view, damageFor(situationNow(view)).damage);
@@ -1302,7 +1352,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       case "wear": {
         const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
-        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined ? null : ctx.act.wear(candidate.handle));
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
       }
       case "detect": {
         const source = detectionSource(view);
@@ -1393,6 +1443,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           return isClosedDoor(ctx.view, terrain, checked.at) ? ctx.act.open(dir) : ctx.act.move(dir);
         });
       }
+      case "close_door":
+        return once("close a door", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          if (s.breederExit !== true) return null;
+          const at = closeDoorStep(s, terrain);
+          const dir = at === null ? null : directionToward(ctx.view.player().grid, at);
+          return dir === null ? null : ctx.act.close(dir);
+        });
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx, i) => {
           const at = ctx.view.player().grid;
@@ -1715,6 +1773,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     trigger(view, plan) {
+      const exiting = journey.breederExit(view);
+      if (exiting && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
       const watched = plan as Partial<WatchedPlan> & { settle?: (v: AgentView) => void };
       watched.settle?.(view);
       const stopped = watched.watcher?.check(view) ?? null;

@@ -4,6 +4,7 @@ import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
 import type { Pack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import { matchesSupplyName, shownName, type SupplyKind, type SupplyNeed } from "./needs.js";
+import { gearCandidates, keepsCapacity, loadoutDamage, loadoutMissileDamage } from "../gear/compare.js";
 
 export interface Purchase {
   readonly index: number;
@@ -91,13 +92,18 @@ export function sellList(_pack: Pack, view: AgentView, persona: Persona | null):
   const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
   const seen = new Set<string>();
   const out: Sale[] = [];
+  const upgrades = new Set(gearCandidates(view).filter((candidate) => !candidate.unknown).map((candidate) => candidate.handle));
   for (const item of view.inventory()) {
     const name = shownName(item);
-    if (name === null || worn.has(item.handle) || mightBeSpecial(name)) continue;
+    if (name === null || worn.has(item.handle) || mightBeSpecial(name) || upgrades.has(item.handle)) continue;
     const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
     if (type === undefined) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
-    if (seen.has(type.toLowerCase())) out.push({ handle: item.handle, quantity: item.number, name });
+    if (seen.has(type.toLowerCase())) {
+      const result = view.simulateLoadout?.({ release: [{ handle: item.handle, number: item.number }] });
+      if (result !== undefined && result !== null && (!keepsCapacity(view, result) || result.after.player.speed < result.before.player.speed || result.after.player.maxSp < result.before.player.maxSp || (loadoutDamage(result.after) ?? 0) < (loadoutDamage(result.before) ?? 0) || (loadoutMissileDamage(result.after, view) ?? 0) < (loadoutMissileDamage(result.before, view) ?? 0))) continue;
+      out.push({ handle: item.handle, quantity: item.number, name });
+    }
     seen.add(type.toLowerCase());
   }
   return out;

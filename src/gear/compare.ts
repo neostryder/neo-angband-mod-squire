@@ -1,6 +1,9 @@
 /** Gear choices use item types and shown names; hidden item fields are not player knowledge. */
 
-import type { AgentView, ItemView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, LoadoutSimulation, LoadoutView } from "@rpgm-tools/neo-angband-core";
+import { escapeMana, weaponDamage } from "../brain/combat-kit.js";
+import { readPack } from "../brain/pack.js";
+import { missingPreparation } from "../strategy/readiness.js";
 
 /**
  * The item kinds (tvals) this file sorts gear by, as Angband 4.2 numbers them.
@@ -21,6 +24,7 @@ export interface GearCandidate {
   readonly score: number;
   readonly unknown: boolean;
   readonly criteria: string;
+  readonly safeUpgrade?: boolean;
 }
 
 /** The units are a rough turn value, with a small margin against trivial swaps. */
@@ -56,7 +60,7 @@ function slot(tval: number): string | null {
 export function fullyKnown(name: string): boolean {
   const marks = [...name.matchAll(/\{([^}]*)\}/g)].flatMap((match) => (match[1] ?? "").toLowerCase().split(/,\s*/));
   return marks.every((mark) => mark === "cursed" || mark === "ignore") &&
-    (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name));
+    (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name) || /^(?:an?|the|\d+)\s+(?:Rings?|Amulets?) of (?:Free Action|See Invisible|Telepathy)$/i.test(name));
 }
 
 /**
@@ -120,19 +124,99 @@ function visibleValue(name: string, tval: number, base: number): number {
   return base;
 }
 
-function simulated(name: string, handle: number, result: LoadoutSimulation): GearCandidate | null {
-  if (result.unresolved.length > 0 || result.placements.length === 0) return null;
+export function loadoutDamage(loadout: LoadoutView): number | null {
+  const weapon = loadout.equipment.find((item) => item !== null && WEAPONS.includes(item.tval));
+  if (weapon === undefined || weapon === null) return null;
+  return weaponDamage(shownName(weapon) ?? "", loadout.player.toDam, loadout.player.blows / 100);
+}
+
+export function loadoutMissileDamage(loadout: LoadoutView, view?: AgentView): number | null {
+  const bow = loadout.equipment.find((item) => item?.tval === TV.BOW);
+  if (bow === undefined || bow === null) return null;
+  const name = shownName(bow) ?? "";
+  const kind = /Crossbow/i.test(name) ? TV.BOLT : /Sling/i.test(name) ? TV.SHOT : /Bow/i.test(name) ? TV.ARROW : -1;
+  const quiver = (view as { quiver?: () => ItemView[] } | undefined)?.quiver?.() ?? [];
+  const ammo = [...(loadout.inventory ?? []), ...quiver].filter((item) => item.tval === kind);
+  const mult = loadout.stats.ammoMult > 0 ? loadout.stats.ammoMult : Number(/\(x(\d+)\)/.exec(name)?.[1] ?? 0);
+  const bonus = Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0);
+  const damages = ammo.flatMap((item) => {
+    const damage = weaponDamage(shownName(item) ?? "", bonus, loadout.player.shots / 10);
+    return damage === null || mult <= 0 ? [] : [damage * mult];
+  });
+  return damages.length === 0 ? null : Math.max(...damages);
+}
+
+function loadoutView(view: AgentView, loadout: LoadoutView): AgentView {
+  return { ...view, player: () => ({ ...loadout.player, sp: Math.min(view.player().sp, loadout.player.maxSp) }),
+    equipment: () => [...loadout.equipment], inventory: () => [...(loadout.inventory ?? view.inventory())],
+    inspectItem: () => ({ text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") }) } as AgentView;
+}
+
+/** The same readiness guard covers wearing, acquisition weight and removal. */
+export function keepsCapacity(view: AgentView, result: LoadoutSimulation): boolean {
+  if (result.unresolved.length > 0) return false;
+  const before = result.before.player;
+  const after = result.after.player;
+  if (result.before.equipment.some((item) => item?.tval === TV.BOW) && !result.after.equipment.some((item) => item?.tval === TV.BOW)) return false;
+  if (["FREE_ACT", "SEE_INVIS", "TELEPATHY"].some((flag) => before.objectFlags.includes(flag) && !after.objectFlags.includes(flag))) return false;
+  if (before.light > 0 && after.light <= 0 && !after.classFlags.includes("UNLIGHT")) return false;
+  if (!result.before.stats.heavyWield && result.after.stats.heavyWield || !result.before.stats.heavyShoot && result.after.stats.heavyShoot) return false;
+  const oldDamage = loadoutDamage(result.before);
+  const newDamage = loadoutDamage(result.after);
+  if (oldDamage !== null && (newDamage === null || oldDamage > 0 && newDamage <= 0)) return false;
+  const oldMissile = loadoutMissileDamage(result.before, view);
+  const newMissile = loadoutMissileDamage(result.after, view);
+  if (oldMissile !== null && (newMissile === null || oldMissile > 0 && newMissile <= 0)) return false;
+  const reserve = escapeMana(view);
+  const attacks = readPack({ ...view, player: () => ({ ...before, sp: before.maxSp }) }).attackSpell.filter((spell) => spell.fail <= 25);
+  const manaFloor = attacks.length === 0 ? reserve : reserve + Math.min(...attacks.map((spell) => spell.mana));
+  if (before.maxSp > 0 && (after.maxSp <= 0 || before.maxSp >= manaFloor && after.maxSp < manaFloor)) return false;
+  const depth = Math.max(view.player().depth + 1, view.player().maxDepth);
+  const has = (loadout: LoadoutView, element: string) => {
+    const index = loadout.stats.resistElements.findIndex((name) => name.toUpperCase() === element);
+    return index >= 0 && (loadout.stats.resists[index] ?? 0) > 0;
+  };
+  if (depth > 20) {
+    const basics = ["ACID", "ELEC", "FIRE", "COLD"];
+    if (has(result.before, "FIRE") && !has(result.after, "FIRE")) return false;
+    const required = depth > 25 ? 4 : 3;
+    if (depth > 25 && basics.some((element) => has(result.before, element) && !has(result.after, element))) return false;
+    if (basics.filter((element) => has(result.before, element)).length >= required && basics.filter((element) => has(result.after, element)).length < required) return false;
+    if (depth >= 40 && ["POIS", "CONFU"].some((element) => has(result.before, element) && !has(result.after, element))) return false;
+  }
+  const missingBefore = new Set(missingPreparation(loadoutView(view, result.before), depth).map((need) => need.reason));
+  return !missingPreparation(loadoutView(view, result.after), depth).some((need) => !missingBefore.has(need.reason));
+}
+
+/** Displayed capacity takes precedence over the item's price and preferred name. */
+export function equipmentValue(result: LoadoutSimulation, view?: AgentView): number {
+  const damageBefore = loadoutDamage(result.before);
+  const damageAfter = loadoutDamage(result.after);
+  const damage = damageBefore === null || damageAfter === null ? 0 : damageAfter - damageBefore;
+  const missileBefore = loadoutMissileDamage(result.before, view);
+  const missileAfter = loadoutMissileDamage(result.after, view);
+  const missile = missileBefore === null || missileAfter === null ? 0 : missileAfter - missileBefore;
   const d = result.delta;
-  const w = GEAR_WEIGHTS;
-  const resistValue = d.resists.reduce((sum, change) => sum + change, 0);
-  const score = d.ac * w.ac + d.toH * w.toHit + d.toD * w.toDam + d.blows * w.blows +
-    d.shots * w.shots + d.speed * w.speed + d.maxHp * w.maxHp + d.maxSp * w.maxSp +
-    d.light * w.light + resistValue * w.resist;
-  if (score <= w.threshold) return null;
+  return (damage + missile) * 4 + d.speed * 5 + d.maxSp * 2 + d.ac * 0.5 + d.toH + d.maxHp * 0.2 + d.light * 3 + d.resists.reduce((sum, value) => sum + value, 0) * 6 +
+    result.after.player.objectFlags.filter((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag) && !result.before.player.objectFlags.includes(flag)).length * 20;
+}
+
+function simulated(view: AgentView, name: string, handle: number, result: LoadoutSimulation): GearCandidate | null {
+  if (result.unresolved.length > 0 || result.placements.length === 0) return null;
+  if (!keepsCapacity(view, result)) return null;
+  const score = equipmentValue(result, view);
+  if (score <= GEAR_WEIGHTS.threshold) return null;
   const before = result.before.player;
   const after = result.after.player;
   const changes: string[] = [];
   const note = (label: string, a: number, b: number) => { if (a !== b) changes.push(`${label} ${String(b)} instead of ${String(a)}`); };
+  const oldDamage = loadoutDamage(result.before);
+  const newDamage = loadoutDamage(result.after);
+  if (oldDamage !== null && newDamage !== null) note("melee damage per action", oldDamage, newDamage);
+  else changes.push("melee damage per action is unknown");
+  const oldMissile = loadoutMissileDamage(result.before, view);
+  const newMissile = loadoutMissileDamage(result.after, view);
+  if (oldMissile !== null && newMissile !== null) note("missile damage per action", oldMissile, newMissile);
   note("armour class", before.ac, after.ac);
   note("to-hit", before.toHit, after.toHit);
   note("to-damage", before.toDam, after.toDam);
@@ -147,7 +231,13 @@ function simulated(name: string, handle: number, result: LoadoutSimulation): Gea
     const now = result.after.stats.resists[i] ?? 0;
     if (old !== now) changes.push(`${element} resistance ${String(now)} instead of ${String(old)}`);
   });
-  return { handle, name, score, unknown: false, criteria: `Wear ${name}: ${changes.join(", ")}.` };
+  const lostFlags = before.objectFlags.filter((flag) => !after.objectFlags.includes(flag));
+  const gainedFlags = after.objectFlags.filter((flag) => !before.objectFlags.includes(flag));
+  const flagName = (flag: string) => ({ FREE_ACT: "Free Action", SEE_INVIS: "See Invisible", TELEPATHY: "telepathy" } as Record<string, string>)[flag] ?? flag.toLowerCase().replaceAll("_", " ");
+  if (gainedFlags.length > 0) changes.push(`gains ${gainedFlags.map(flagName).join(", ")}`);
+  if (lostFlags.length > 0) changes.push(`loses ${lostFlags.map(flagName).join(", ")}`);
+  const safeUpgrade = lostFlags.length === 0 && result.delta.resists.every((change) => change >= 0) && after.speed >= before.speed && after.maxSp >= before.maxSp && after.maxHp >= before.maxHp && after.ac >= before.ac && after.toHit >= before.toHit && after.shots >= before.shots && (oldDamage === null && newDamage === null || oldDamage !== null && newDamage !== null && newDamage >= oldDamage) && (oldMissile === null && newMissile === null || oldMissile !== null && newMissile !== null && newMissile >= oldMissile);
+  return { handle, name, score, unknown: false, safeUpgrade, criteria: `Wear ${name}: ${changes.join(", ")}.` };
 }
 
 /** Find wearable upgrades without reading an unfamiliar item's hidden bonuses. */
@@ -168,12 +258,19 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
     if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
       const oldLight = replaced === null ? null : shownName(replaced) ?? "";
       const fuel = (shown: string) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
+      const safeLight = () => {
+        const result = view.simulateLoadout?.({ wield: [{ from: "gear", handle: item.handle }] });
+        if (result !== undefined && result !== null) return keepsCapacity(view, result);
+        return replaced === null || !view.player().objectFlags.some((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag));
+      };
       if (oldLight === null || fuel(oldLight) === 0) {
+        if (!safeLight()) continue;
         out.push({ handle: item.handle, name, score: 100, unknown: false,
           criteria: `Wield ${name}. The character has no light, so it cannot see new ground or creatures.` });
         continue;
       }
       if (sameKind(oldLight, name) && fuel(oldLight) < LOW_FUEL_TURNS && fuel(name) > fuel(oldLight)) {
+        if (!safeLight()) continue;
         out.push({ handle: item.handle, name, score: 50, unknown: false,
           criteria: `Wield ${name}. The light in use is nearly out of fuel.` });
         continue;
@@ -184,13 +281,15 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
       if (result !== null) {
         if (!keepsLauncher(equipment, result.after.equipment, hasAmmo)) continue;
         if (result.placements.some((place) => place.displaced !== null && cursed(shownName(place.displaced) ?? ""))) continue;
-        const candidate = simulated(name, item.handle, result);
+        const candidate = simulated(view, name, item.handle, result);
         if (candidate !== null) out.push(candidate);
         continue;
       }
     }
     /* Standard 4.2 melee and bow slots do not displace one another. */
     const base = visibleBase(name, item.tval);
+    /* Without a verified substitution, a trial cannot certify a required protection. */
+    if (replaced !== null && (view.player().objectFlags.some((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag)) || Math.max(view.player().depth, view.player().maxDepth) >= 20)) continue;
     const oldName = replaced === null ? null : shownName(replaced);
     const oldBase = oldName === null || replaced === null ? null : visibleBase(oldName, replaced.tval);
     const visible = base === null ? null : visibleValue(name, item.tval, base);

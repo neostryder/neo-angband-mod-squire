@@ -1487,10 +1487,6 @@ var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 function inspecting(view) {
   return view;
 }
-function spellInfoOf(view) {
-  const v = inspecting(view);
-  return v.spellInfo?.bind(v);
-}
 function roundEstimate(level) {
   return 8 + 3 * level;
 }
@@ -1659,8 +1655,8 @@ function incomingDamage(view, at = view.player().grid, actions = 1, terrain, fac
       const reachable = attackPositions(view, monster, at, count2, terrain, monsters, facts.openedDoor, true, prior);
       for (const [position, remaining] of reachable) {
         const [x, y] = position.split(",").map(Number);
-        const shot2 = rangedPath(view, { x, y }, at, read.bolt, monsters, facts.openedDoor);
-        if (shot2.clear) {
+        const shot = rangedPath(view, { x, y }, at, read.bolt, monsters, facts.openedDoor);
+        if (shot.clear) {
           spellDamage = Math.max(spellDamage, remaining * read.ranged);
           rangedStatus = true;
         }
@@ -1698,24 +1694,6 @@ function incomingDamage(view, at = view.player().grid, actions = 1, terrain, fac
 function threatWindow(view, at = view.player().grid, terrain, facts = {}) {
   return { one: incomingDamage(view, at, 1, terrain, facts), two: incomingDamage(view, at, 2, terrain, facts) };
 }
-function effectiveAttack(view, target, spell) {
-  const player = view.player();
-  if (spell !== void 0) {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
-    if (info === void 0 || info === null || !info.canCastNow) return { damage: 0, failure: 1 };
-    const summary = /\baverage of (.+?) damage\b/i.exec(info.description);
-    if (summary === null) return { damage: 0, failure: 1 };
-    const immune = ELEMENTS.some(([pattern, code]) => pattern.test(summary[1]) && target.raceFlags.includes(`IM_${code}`));
-    const damage2 = immune ? 0 : [...summary[1].matchAll(/\d+(?:\.\d+)?/g)].reduce((sum, match) => sum + Number(match[0]), 0);
-    return { damage: damage2, failure: Math.max(0.05, info.failChance / 100) };
-  }
-  if (steps(player.grid, target.grid) > 1 || player.status.afraid > 0) return { damage: 0, failure: 1 };
-  const weapon = view.equipment().find((item) => item !== null && /\((\d+)d(\d+)\)/.test(shownName2(item) ?? ""));
-  const dice = weapon === void 0 || weapon === null ? null : /\((\d+)d(\d+)\)/.exec(shownName2(weapon) ?? "");
-  if (dice === null) return { damage: 0, failure: 1 };
-  const damage = Math.max(0, Number(dice[1]) * (Number(dice[2]) + 1) / 2 + player.toDam) * Math.max(1, player.blows / 100);
-  return { damage, failure: 0.25 };
-}
 function assessThreat(monster, player, awake, view, dreaded = /* @__PURE__ */ new Set(), terrain, energy) {
   const town = townsperson(monster, player.depth);
   const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
@@ -1735,30 +1713,6 @@ function assessThreat(monster, player, awake, view, dreaded = /* @__PURE__ */ ne
   const band = Math.max(capability, lethality);
   const description = known.knownBlows ? `${known.round >= 16 ? "hits hard" : "known blows"} for a level ${String(player.level)} ${player.cls.toLowerCase()} (up to ${String(known.round)} a round)` : known.spell > 0 ? `known magic up to ${String(known.spell)} damage` : knownMagic ? "known spells or breaths" : known.breeds ? "breeds explosively" : "attacks not yet known";
   return { capability, lethality, band, round: known.round, description, enhanced: true };
-}
-function pickAttackSpell(spells, info) {
-  if (info === void 0) return spells[0];
-  let best;
-  let fallback;
-  let bestScore = -1;
-  for (const spell of spells) {
-    const detail = info(spell.sidx);
-    if (detail === null) {
-      fallback ??= spell;
-      continue;
-    }
-    if (!detail.canCastNow) continue;
-    fallback ??= spell;
-    const summary = /\baverage of (.+?) damage\b/i.exec(detail.description);
-    if (summary === null) continue;
-    const damage = [...summary[1].matchAll(/\d+(?:\.\d+)?/g)].reduce((sum, match) => sum + Number(match[0]), 0);
-    const score = damage * (1 - detail.failChance / 100) / Math.max(1, detail.mana);
-    if (score > bestScore) {
-      best = spell;
-      bestScore = score;
-    }
-  }
-  return best ?? fallback;
 }
 function same(a, b) {
   return a.x === b.x && a.y === b.y;
@@ -1783,6 +1737,7 @@ function bestBallAim(view, monsters, target, radius = 2) {
     const at = monster.grid;
     if (!clearShot(view, monster)) continue;
     const grids = blastArea.call(view, at, radius, 0).grids;
+    if (grids.some((grid) => same(grid, view.player().grid))) continue;
     const caught = monsters.filter((m) => m.visible && grids.some((grid) => same(grid, m.grid))).length;
     if (caught > count2 && caught > 0) {
       best = at;
@@ -1790,6 +1745,259 @@ function bestBallAim(view, monsters, target, radius = 2) {
     }
   }
   return best;
+}
+
+// src/brain/combat-kit.ts
+var ATTACK_ELEMENTS = [
+  [/\bacid\b/i, "ACID"],
+  [/\b(?:lightning|electricity)\b/i, "ELEC"],
+  [/\b(?:fire|flame)\b/i, "FIRE"],
+  [/\b(?:cold|frost)\b/i, "COLD"],
+  [/\b(?:poison|stinking)\b/i, "POIS"]
+];
+function describedDamage(text, target) {
+  const summary = /\baverage of (.+?) damage\b/i.exec(text)?.[1];
+  if (summary === void 0) {
+    const dice = /\b(?:for\s+)?(?:(\d+)\+)?(\d+)d(\d+)\s+([a-z ]*?)damage\b/i.exec(text);
+    if (dice === null) return null;
+    if (ATTACK_ELEMENTS.some(([pattern, code]) => pattern.test(dice[4] ?? "") && target.raceFlags.includes(`IM_${code}`))) return 0;
+    return Number(dice[1] ?? 0) + Number(dice[2]) * (Number(dice[3]) + 1) / 2;
+  }
+  const parts = [...summary.matchAll(/(\d+(?:\.\d+)?)\s*([a-z ]*?)(?=\s+and\s+|$)/gi)];
+  if (parts.length === 0) return null;
+  return parts.reduce((sum, part) => {
+    const immune = ATTACK_ELEMENTS.some(([pattern, code]) => pattern.test(part[2] ?? "") && target.raceFlags.includes(`IM_${code}`));
+    return sum + (immune ? 0 : Number(part[1]));
+  }, 0);
+}
+function weaponDamage(name, bonus, attacks) {
+  const dice = /\((\d+)d(\d+)\)/.exec(name);
+  if (dice === null || !Number.isFinite(attacks) || attacks <= 0) return null;
+  const plus = Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0);
+  return Math.max(0, Number(dice[1]) * (Number(dice[2]) + 1) / 2 + bonus + plus) * attacks;
+}
+function escapeMana(view) {
+  const pack = readPack(view);
+  if (view.player().depth === 0 || pack.phase.length > 0 || pack.teleport.length > 0) return 0;
+  const costs = pack.escapeSpell.flatMap((spell) => {
+    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const fail = info?.failChance ?? spell.fail;
+    const mana = info?.mana ?? spell.mana;
+    if (/^(Shadow Shift|Warp)$/i.test(spell.name) || info?.canCastNow === false || fail > 15 || mana > view.player().sp) return [];
+    return [mana];
+  });
+  return costs.length === 0 ? 0 : Math.min(...costs);
+}
+function attackOutcome(view, target, kind, source = null) {
+  const player = view.player();
+  let damage = null;
+  let minimum = null;
+  let failure = 0.5;
+  let accuracyKnown = false;
+  const text = source === null ? "" : "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? "" : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  if (kind === "fight") {
+    const weapon = view.equipment().find((item) => item !== null && [6, 7, 8, 9].includes(item.tval));
+    if (steps(player.grid, target.grid) <= 1 && player.status.afraid === 0 && weapon !== void 0 && weapon !== null) {
+      const name = shownName2(weapon) ?? "";
+      damage = weaponDamage(name, player.toDam, player.blows / 100);
+      const dice = /\((\d+)d\d+\)/.exec(name);
+      if (dice !== null && player.blows > 0) minimum = Math.max(0, Number(dice[1]) + player.toDam + Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0)) * Math.floor(player.blows / 100);
+    }
+  } else if (kind === "cast_attack" && source !== null && "sidx" in source) {
+    const info = inspecting(view).spellInfo?.(source.sidx);
+    failure = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
+    accuracyKnown = true;
+    if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure = 1;
+    damage = describedDamage(text, target);
+    const element = ATTACK_ELEMENTS.find(([pattern]) => pattern.test(source.name));
+    if (element !== void 0 && !ATTACK_ELEMENTS.some(([pattern]) => pattern.test(text)) && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
+    const dice = /\b(\d+)d(\d+)\b/.exec(text);
+    if (dice !== null && damage !== null) minimum = Math.min(damage, Number(dice[1]));
+    if (/(?:ball|orb|cloud|storm)/i.test(source.name) && inspecting(view).blastArea !== void 0 && inspecting(view).projectionPath !== void 0) {
+      const aim = bestBallAim(view, view.monsters().filter((monster) => monster.visible && !monster.asleep), target);
+      if (aim === null) failure = 1;
+      else if (!inspecting(view).blastArea(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
+    }
+  } else if (source !== null && "handle" in source) {
+    damage = describedDamage(text, target);
+    if (kind === "shoot" && damage === null) {
+      const bow = view.equipment().find((item) => item !== null && item.tval === 5);
+      const name = bow === void 0 || bow === null ? "" : shownName2(bow) ?? "";
+      const mult = /\(x(\d+)\)/.exec(name);
+      const bowBonus = Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0);
+      const base = weaponDamage(source.name, bowBonus, player.shots / 10);
+      damage = mult === null || base === null ? null : base * Number(mult[1]);
+    }
+    if (kind === "throw_oil") {
+      if (damage === null) {
+        damage = 7.5;
+        minimum = 3;
+      }
+    }
+    const chance = /(?:chance of (?:hitting|success)|(?:hit|success) (?:chance|rate))[^\d]*([\d.]+)%/i.exec(text);
+    if (chance !== null) {
+      failure = 1 - Number(chance[1]) / 100;
+      accuracyKnown = true;
+    }
+    const element = ATTACK_ELEMENTS.find(([pattern]) => pattern.test(source.name));
+    if (element !== void 0 && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
+  }
+  const killingDamage = kind === "shoot" && damage !== null ? player.shots > 0 ? damage * 10 / player.shots : null : damage;
+  return {
+    kind,
+    source,
+    damage,
+    minimum,
+    failure,
+    accuracyKnown,
+    kill: killingDamage !== null && target.hp > 0 && killingDamage >= target.hp,
+    manaReserve: escapeMana(view),
+    fuelReserve: !player.objectFlags.includes("NO_FUEL") && !player.classFlags.includes("UNLIGHT") && view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName2(item) ?? "")) ? 1 : 0
+  };
+}
+function attackAllowed(view, target, outcome, context = {}) {
+  if (outcome.failure >= 1 || outcome.damage === 0) return false;
+  const source = outcome.source;
+  const removesDanger = outcome.minimum !== null && target.hp > 0 && outcome.minimum >= target.hp && outcome.failure <= 0.25 && incomingDamage(view, view.player().grid, 1, context.terrain, { ...context.facts, monsters: (context.facts?.monsters ?? view.monsters().filter((monster) => monster.visible)).filter((monster) => monster.id !== target.id) }).damage < view.player().hp;
+  if (removesDanger) return true;
+  if (outcome.kind === "cast_attack" && source !== null && "sidx" in source) {
+    const mana = inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana;
+    return view.player().sp - mana >= outcome.manaReserve;
+  }
+  if (outcome.kind === "throw_oil" && outcome.fuelReserve > 0) {
+    return oilCount(view) > outcome.fuelReserve;
+  }
+  if (outcome.kind === "aim_wand" && source !== null && "handle" in source) {
+    const text = inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+    const charges = /\((\d+) charges?\)/i.exec(source.name);
+    if (/\bteleport(?:s|ation)?\s+(?:you|the player)\b/i.test(text) && (charges === null || Number(charges[1]) <= 1)) return false;
+  }
+  return true;
+}
+function oilCount(view) {
+  const quiver = view.quiver?.() ?? [];
+  return [...view.inventory(), ...quiver].reduce((sum, item) => sum + (/\bFlasks? of Oil\b/i.test(shownName2(item) ?? "") ? item.number : 0), 0);
+}
+function attackOptions(view, target, kind, context = {}) {
+  const pack = readPack(view);
+  const sources = kind === "fight" ? [null] : kind === "shoot" ? pack.ammo : kind === "throw_oil" ? pack.oil : kind === "aim_wand" ? pack.attackWand : pack.attackSpell.map((spell) => {
+    const info = inspecting(view).spellInfo?.(spell.sidx);
+    return info === void 0 || info === null ? spell : { ...spell, mana: info.mana, fail: info.failChance };
+  });
+  return sources.map((source) => attackOutcome(view, target, kind, source)).filter((outcome) => attackAllowed(view, target, outcome, context)).sort((a, b) => Number(b.kill) - Number(a.kill) || (b.damage === null ? -1 : b.damage * (1 - b.failure)) - (a.damage === null ? -1 : a.damage * (1 - a.failure)) || a.failure - b.failure);
+}
+function attackDescription(outcome, view) {
+  const damage = outcome.damage === null ? "Damage per action is unknown" : `Estimated damage per action is ${String(Math.round(outcome.damage * (1 - outcome.failure) * 10) / 10)}`;
+  const accuracy = outcome.accuracyKnown ? `${String(Math.round(outcome.failure * 100))}% failure or miss chance` : "accuracy is unknown; the estimate discounts damage by half";
+  const source = outcome.source;
+  const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
+  const spendsFuel = outcome.kind === "throw_oil" && outcome.fuelReserve > 0 && oilCount(view) <= outcome.fuelReserve;
+  return ` ${damage}; ${accuracy}. ${outcome.kill ? "A hit could kill the target now." : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana and ${String(outcome.fuelReserve)} fuel units.${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
+}
+function healingAmount(view, source) {
+  const text = "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? "" : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  const fixed = /\b(?:heal\w*|restor\w*)\s+(?:you\s+for\s+|at least\s+)?((?:\d+\+)?\d+d\d+|\d+)\s+(?:hit\s?points|HP)\b(?:\s+\(or\s+(\d+)%, whichever is greater\))?/i.exec(text);
+  const fraction2 = /\b(\d+)%\s+of\s+(?:your\s+)?(?:missing hit points|wounds)\b/i.exec(text);
+  const missing = Math.max(0, view.player().maxHp - view.player().hp);
+  const dice = fixed === null ? null : /^(?:(\d+)\+)?(\d+)d\d+$/.exec(fixed[1]);
+  const minimum = dice === null ? Number(fixed?.[1] ?? 0) : Number(dice[1] ?? 0) + Number(dice[2]);
+  if (fixed !== null || fraction2 !== null) return Math.min(missing, Math.max(minimum, Math.floor(missing * Number(fraction2?.[1] ?? fixed?.[2] ?? 0) / 100)));
+  if ("sidx" in source || !/\bPotions? of\b/i.test(source.name)) return 0;
+  const fallback = /\bLife\b|\*Healing\*/i.test(source.name) ? [1200, 0] : /\bHealing\b/i.test(source.name) ? [300, 35] : /\bCritical\b/i.test(source.name) ? [30, 25] : /\bSerious\b/i.test(source.name) ? [25, 20] : [15, 15];
+  return Math.min(missing, Math.max(fallback[0], Math.floor(missing * fallback[1] / 100)));
+}
+function healingPotion(view, incoming) {
+  const potions = [...readPack(view).heal].sort((a, b) => a.power - b.power);
+  const hp = view.player().hp;
+  return potions.find((potion) => {
+    const amount = healingAmount(view, potion);
+    return hp + amount > incoming && (amount >= incoming || incoming >= hp && amount > incoming / 3);
+  }) ?? potions.at(-1);
+}
+function healingSpell(view, incoming) {
+  const spells = readPack(view).healSpell.flatMap((spell) => {
+    const info = inspecting(view).spellInfo?.(spell.sidx);
+    if (info !== void 0 && info !== null && (!info.canCastNow || info.mana > view.player().sp)) return [];
+    const known = info === void 0 || info === null ? spell : { ...spell, fail: info.failChance, mana: info.mana };
+    return known.fail <= 15 ? [known] : [];
+  });
+  return spells.find((spell) => {
+    const amount = healingAmount(view, spell);
+    return view.player().hp + amount > incoming && (amount >= incoming || incoming >= view.player().hp && amount > incoming / 3);
+  }) ?? spells[0];
+}
+var BUFF_ITEMS = [
+  [/\bPotions? of (Heroism|Berserk Strength|Speed)\b/i, "quaff"],
+  [/\bScrolls? of (Blessing|Heroism)\b/i, "read"]
+];
+var BUFF_SPELLS = [/^(Heroism|Blessing|Berserk Strength|Haste Self)$/i];
+var CURING = [
+  [/\bStaffs? of Curing\b/i, "staff"],
+  [/\bRods? of Curing\b/i, "rod"]
+];
+function held(view) {
+  return view.inventory().flatMap((item) => {
+    const name = shownName2(item);
+    return name === null ? [] : [{ item, name }];
+  });
+}
+function castable2(view) {
+  const sp = view.player().sp;
+  const out = [];
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (spell.learned && !spell.forgotten && spell.mana <= sp && spell.fail <= 50) out.push({ sidx: spell.sidx, name: spell.name });
+    }
+  }
+  return out;
+}
+function alreadyBuffed(view) {
+  const s = view.player().status;
+  return s.hero > 0 || s.shero > 0 || s.blessed > 0 || s.fast > 0 || s.sprint > 0;
+}
+function buffUse(view) {
+  if (alreadyBuffed(view)) return null;
+  for (const { item, name } of held(view)) {
+    const found = BUFF_ITEMS.find(([pattern]) => pattern.test(name));
+    if (found !== void 0) return { how: found[1], handle: item.handle, name };
+  }
+  for (const spell of castable2(view)) {
+    if (BUFF_SPELLS.some((pattern) => pattern.test(spell.name))) return { how: "cast", sidx: spell.sidx, name: spell.name };
+  }
+  return null;
+}
+function resistUse(view) {
+  for (const { item, name } of held(view)) {
+    if (/\bPotions? of Resist/i.test(name)) return { how: "quaff", handle: item.handle, name };
+    if (/\bScrolls? of Resist/i.test(name)) return { how: "read", handle: item.handle, name };
+  }
+  return null;
+}
+function deviceHealUse(view) {
+  for (const { item, name } of held(view)) {
+    if (item.timeout > 0 || /\(0 charges?\)/i.test(name)) continue;
+    const found = CURING.find(([pattern]) => pattern.test(name));
+    if (found !== void 0) return { how: found[1], handle: item.handle, name };
+  }
+  return null;
+}
+function activationUse(view) {
+  for (const { item, name } of held(view)) {
+    if (item.activation && item.timeout <= 0) return { how: "activate", handle: item.handle, name };
+  }
+  return null;
+}
+function breatherInSight(view, monsters) {
+  const recall = inspecting(view).monsterRecall;
+  if (recall === void 0) return null;
+  for (const monster of monsters) {
+    if (!monster.visible || monster.asleep) continue;
+    const info = recall.call(view, monster.raceIndex);
+    if (info === null || info === void 0 || !/\bbreathe/i.test(info.text)) continue;
+    const element = /\bbreathe[s]?\s+([a-z]+)/i.exec(info.text)?.[1] ?? null;
+    return { race: monster.race, element };
+  }
+  return null;
 }
 
 // src/brain/volley.ts
@@ -1803,37 +2011,132 @@ function lineOfFire(view, target) {
   const last = grids[grids.length - 1];
   return last !== void 0 && last.x === target.x && last.y === target.y;
 }
-function volleySteps(goal, targetId, spellSidx) {
+function volleySteps(goal, targetId, spellSidx, safety) {
   return (ctx) => {
     const view = ctx.view;
     const target = view.monsters().find((monster) => monster.id === targetId && monster.visible);
     if (target === void 0) return null;
     if (!lineOfFire(view, target.grid)) return null;
-    const command = shot(goal, ctx, readPack(view), spellSidx);
-    if (command === null) return null;
+    const outcome = attackOptions(view, target, goal, safety?.(view)).find((attack) => spellSidx === void 0 || attack.source !== null && "sidx" in attack.source && attack.source.sidx === spellSidx);
+    const source = outcome?.source;
+    if (source === null || source === void 0) return null;
     if (!ctx.act.setTargetMonster(target.id)) return null;
-    return command;
+    if ("sidx" in source) return ctx.act.cast(source.sidx);
+    if (goal === "shoot") return readLauncher(view) ? ctx.act.fire(source.handle) : null;
+    return goal === "throw_oil" ? ctx.act.throw(source.handle) : ctx.act.aimWand(source.handle);
   };
 }
-function shot(goal, ctx, pack, spellSidx) {
-  switch (goal) {
-    case "shoot": {
-      const ammo = pack.ammo[0];
-      return pack.launcher && ammo !== void 0 ? ctx.act.fire(ammo.handle) : null;
-    }
-    case "throw_oil": {
-      const oil = pack.oil[0];
-      return oil === void 0 ? null : ctx.act.throw(oil.handle);
-    }
-    case "aim_wand": {
-      const wand = pack.attackWand[0];
-      return wand === void 0 ? null : ctx.act.aimWand(wand.handle);
-    }
-    case "cast_attack": {
-      const spell = spellSidx === void 0 ? pack.attackSpell[0] : pack.attackSpell.find((s) => s.sidx === spellSidx);
-      return spell === void 0 ? null : ctx.act.cast(spell.sidx);
-    }
+function readLauncher(view) {
+  return view.equipment().some((item) => item?.tval === 5);
+}
+
+// src/strategy/readiness.ts
+function namedCount(view, pattern) {
+  return view.inventory().reduce((sum, item) => sum + (pattern.test(shownName2(item) ?? "") ? item.number : 0), 0);
+}
+function supplies(view) {
+  const player = view.player();
+  const lantern = view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName2(item) ?? ""));
+  const pack = readPack(view);
+  const reliable = pack.escapeSpell.filter((spell) => spell.fail <= 15);
+  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL");
+  return {
+    cures: namedCount(view, /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i),
+    critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
+    serious: namedCount(view, /\bPotions? of Cure (Serious|Critical) Wounds\b/i),
+    phase: namedCount(view, /\bScrolls? of Phase Door\b/i) + (reliable.some((spell) => /^(Phase Door|Blink|Shadow Shift)$/i.test(spell.name)) ? 2 : 0),
+    escapes: namedCount(view, /\bScrolls? of (Teleportation|Teleport Level)\b/i) + view.inventory().reduce((sum, item) => {
+      const name = shownName2(item) ?? "";
+      const charges = /\((\d+) charges?\)/i.exec(name);
+      return sum + (/\bStaff of Teleportation\b/i.test(name) && charges !== null ? Number(charges[1]) : 0);
+    }, 0) + (reliable.some((spell) => /^(Teleport Self|Portal|Warp)$/i.test(spell.name)) ? 2 : 0),
+    recall: namedCount(view, /\bScrolls? of Word of Recall\b/i),
+    food: view.inventory().reduce((sum, item) => sum + (pack.food.some((food) => food.handle === item.handle) ? item.number : 0), 0),
+    fuel: view.inventory().reduce((sum, item) => {
+      const name = shownName2(item) ?? "";
+      const matches = lantern ? /\bFlasks? of Oil\b/i.test(name) : /\bWooden (Torch|Torches)\b/i.test(name) && !/\(0 turns\)/i.test(name);
+      return sum + (matches ? item.number : 0);
+    }, 0),
+    lastingLight
+  };
+}
+function classFloor(cls, depth) {
+  if (depth < 5) {
+    if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
+    if (cls === "Rogue") return [50, 8];
+    if (["Priest", "Druid"].includes(cls)) return [40, 9];
+    return [60, 11];
   }
+  if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
+  if (cls === "Rogue") return [60, 10];
+  if (["Priest", "Druid"].includes(cls)) return [60, 15];
+  return [80, 15];
+}
+function missingPreparation(view, depth) {
+  if (depth <= 1) return [];
+  const player = view.player();
+  const stock = supplies(view);
+  const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
+  const out = [];
+  const need = (kind, enough, reason) => {
+    if (!enough) out.push({ kind, reason });
+  };
+  const [hpFloor, classLevel] = depth >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth) : [30, 2];
+  const caster = ["Mage", "Necromancer"].includes(player.cls);
+  const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
+  need("light", player.light >= (depth >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
+  need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
+  if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
+  if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
+  if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
+  if (depth >= 10) {
+    need("phase", stock.escapes >= (depth > 25 ? 6 : 2) && canRead(view), depth > 25 ? "six long escapes" : "two long escapes");
+    if (level < 30) need("healing", depth > 25 ? stock.serious >= 10 : stock.critical >= 3, depth > 25 ? "ten Cure Serious or Critical Wounds potions" : "three Cure Critical Wounds potions");
+    const detectsInvisible = detectionSources(view).some((source) => {
+      if (!/^(Detection|Reveal Monsters)$|Rods? of Detection/i.test(source.name) || /charging/i.test(source.name)) return false;
+      return source.kind !== "cast" || view.spellbooks().some((book) => book.spells.some((spell) => spell.sidx === source.sidx && spell.fail <= 15));
+    });
+    need("protection", player.objectFlags.includes("SEE_INVIS") || player.objectFlags.includes("TELEPATHY") || detectsInvisible, "See Invisible, telepathy or usable detection of invisible creatures");
+  }
+  if (depth >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
+  if (depth > 20) {
+    const inspect = view;
+    const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
+    const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:resistance|immunity) to ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
+    const basics = ["acid", "lightning", "fire", "cold"].filter(has);
+    need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
+    need("protection", player.stats.length >= 5 && [0, 3, 4, ...caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : []].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
+    if (depth >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
+  }
+  if (depth >= 46) {
+    need("hp", player.maxHp >= 500, "500 maximum hit points");
+    need("protection", player.speed >= 115, "+5 speed");
+    need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
+    need("protection", depth === 46, "readiness information for depths beyond 46");
+  }
+  return out;
+}
+function missingEssentials(view) {
+  const stock = supplies(view);
+  const out = [];
+  if (stock.cures < 2) out.push({ kind: "healing", reason: "two healing potions" });
+  if (stock.phase < 2 || !canRead(view)) out.push({ kind: "phase", reason: "two usable Phase Doors" });
+  if (stock.food < 2) out.push({ kind: "food", reason: "two food units" });
+  if (!stock.lastingLight && (view.player().light <= 0 || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
+  return out;
+}
+function supplyMargin(view) {
+  const player = view.player();
+  if (player.depth === 0) return null;
+  const stock = supplies(view);
+  if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
+  if (!stock.lastingLight && (player.light <= 0 || stock.fuel <= 1)) return "light and fuel";
+  if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
+  if (stock.phase <= 1) return "Phase Door";
+  if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
+  return null;
 }
 
 // src/gear/compare.ts
@@ -1885,7 +2188,7 @@ function slot(tval) {
 }
 function fullyKnown(name) {
   const marks = [...name.matchAll(/\{([^}]*)\}/g)].flatMap((match) => (match[1] ?? "").toLowerCase().split(/,\s*/));
-  return marks.every((mark) => mark === "cursed" || mark === "ignore") && (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name));
+  return marks.every((mark) => mark === "cursed" || mark === "ignore") && (/\([+-]?\d+,[+-]?\d+\)/.test(name) || /\[\d+,[+-]?\d+\]/.test(name) || /^(?:an?|the|\d+)\s+(?:Rings?|Amulets?) of (?:Free Action|See Invisible|Telepathy)$/i.test(name));
 }
 function sameKind(a, b) {
   const plain = (name) => name.toLowerCase().replace(/\(\d+ turns\)/g, "").replace(/^(an?|the|\d+)\s+/, "").replace(/(?:es|s)(?=\s|$)/g, "").replace(/\s+/g, " ").trim();
@@ -1932,19 +2235,97 @@ function visibleValue(name, tval, base) {
   }
   return base;
 }
-function simulated(name, handle, result) {
-  if (result.unresolved.length > 0 || result.placements.length === 0) return null;
+function loadoutDamage(loadout) {
+  const weapon = loadout.equipment.find((item) => item !== null && WEAPONS.includes(item.tval));
+  if (weapon === void 0 || weapon === null) return null;
+  return weaponDamage(shownName2(weapon) ?? "", loadout.player.toDam, loadout.player.blows / 100);
+}
+function loadoutMissileDamage(loadout, view) {
+  const bow = loadout.equipment.find((item) => item?.tval === TV.BOW);
+  if (bow === void 0 || bow === null) return null;
+  const name = shownName2(bow) ?? "";
+  const kind = /Crossbow/i.test(name) ? TV.BOLT : /Sling/i.test(name) ? TV.SHOT : /Bow/i.test(name) ? TV.ARROW : -1;
+  const quiver = view?.quiver?.() ?? [];
+  const ammo = [...loadout.inventory ?? [], ...quiver].filter((item) => item.tval === kind);
+  const mult = loadout.stats.ammoMult > 0 ? loadout.stats.ammoMult : Number(/\(x(\d+)\)/.exec(name)?.[1] ?? 0);
+  const bonus = Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0);
+  const damages = ammo.flatMap((item) => {
+    const damage = weaponDamage(shownName2(item) ?? "", bonus, loadout.player.shots / 10);
+    return damage === null || mult <= 0 ? [] : [damage * mult];
+  });
+  return damages.length === 0 ? null : Math.max(...damages);
+}
+function loadoutView(view, loadout) {
+  return {
+    ...view,
+    player: () => ({ ...loadout.player, sp: Math.min(view.player().sp, loadout.player.maxSp) }),
+    equipment: () => [...loadout.equipment],
+    inventory: () => [...loadout.inventory ?? view.inventory()],
+    inspectItem: () => ({ text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") })
+  };
+}
+function keepsCapacity(view, result) {
+  if (result.unresolved.length > 0) return false;
+  const before = result.before.player;
+  const after = result.after.player;
+  if (result.before.equipment.some((item) => item?.tval === TV.BOW) && !result.after.equipment.some((item) => item?.tval === TV.BOW)) return false;
+  if (["FREE_ACT", "SEE_INVIS", "TELEPATHY"].some((flag) => before.objectFlags.includes(flag) && !after.objectFlags.includes(flag))) return false;
+  if (before.light > 0 && after.light <= 0 && !after.classFlags.includes("UNLIGHT")) return false;
+  if (!result.before.stats.heavyWield && result.after.stats.heavyWield || !result.before.stats.heavyShoot && result.after.stats.heavyShoot) return false;
+  const oldDamage = loadoutDamage(result.before);
+  const newDamage = loadoutDamage(result.after);
+  if (oldDamage !== null && (newDamage === null || oldDamage > 0 && newDamage <= 0)) return false;
+  const oldMissile = loadoutMissileDamage(result.before, view);
+  const newMissile = loadoutMissileDamage(result.after, view);
+  if (oldMissile !== null && (newMissile === null || oldMissile > 0 && newMissile <= 0)) return false;
+  const reserve = escapeMana(view);
+  const attacks = readPack({ ...view, player: () => ({ ...before, sp: before.maxSp }) }).attackSpell.filter((spell) => spell.fail <= 25);
+  const manaFloor = attacks.length === 0 ? reserve : reserve + Math.min(...attacks.map((spell) => spell.mana));
+  if (before.maxSp > 0 && (after.maxSp <= 0 || before.maxSp >= manaFloor && after.maxSp < manaFloor)) return false;
+  const depth = Math.max(view.player().depth + 1, view.player().maxDepth);
+  const has = (loadout, element) => {
+    const index = loadout.stats.resistElements.findIndex((name) => name.toUpperCase() === element);
+    return index >= 0 && (loadout.stats.resists[index] ?? 0) > 0;
+  };
+  if (depth > 20) {
+    const basics = ["ACID", "ELEC", "FIRE", "COLD"];
+    if (has(result.before, "FIRE") && !has(result.after, "FIRE")) return false;
+    const required = depth > 25 ? 4 : 3;
+    if (depth > 25 && basics.some((element) => has(result.before, element) && !has(result.after, element))) return false;
+    if (basics.filter((element) => has(result.before, element)).length >= required && basics.filter((element) => has(result.after, element)).length < required) return false;
+    if (depth >= 40 && ["POIS", "CONFU"].some((element) => has(result.before, element) && !has(result.after, element))) return false;
+  }
+  const missingBefore = new Set(missingPreparation(loadoutView(view, result.before), depth).map((need) => need.reason));
+  return !missingPreparation(loadoutView(view, result.after), depth).some((need) => !missingBefore.has(need.reason));
+}
+function equipmentValue(result, view) {
+  const damageBefore = loadoutDamage(result.before);
+  const damageAfter = loadoutDamage(result.after);
+  const damage = damageBefore === null || damageAfter === null ? 0 : damageAfter - damageBefore;
+  const missileBefore = loadoutMissileDamage(result.before, view);
+  const missileAfter = loadoutMissileDamage(result.after, view);
+  const missile = missileBefore === null || missileAfter === null ? 0 : missileAfter - missileBefore;
   const d = result.delta;
-  const w = GEAR_WEIGHTS;
-  const resistValue = d.resists.reduce((sum, change) => sum + change, 0);
-  const score = d.ac * w.ac + d.toH * w.toHit + d.toD * w.toDam + d.blows * w.blows + d.shots * w.shots + d.speed * w.speed + d.maxHp * w.maxHp + d.maxSp * w.maxSp + d.light * w.light + resistValue * w.resist;
-  if (score <= w.threshold) return null;
+  return (damage + missile) * 4 + d.speed * 5 + d.maxSp * 2 + d.ac * 0.5 + d.toH + d.maxHp * 0.2 + d.light * 3 + d.resists.reduce((sum, value) => sum + value, 0) * 6 + result.after.player.objectFlags.filter((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag) && !result.before.player.objectFlags.includes(flag)).length * 20;
+}
+function simulated(view, name, handle, result) {
+  if (result.unresolved.length > 0 || result.placements.length === 0) return null;
+  if (!keepsCapacity(view, result)) return null;
+  const score = equipmentValue(result, view);
+  if (score <= GEAR_WEIGHTS.threshold) return null;
   const before = result.before.player;
   const after = result.after.player;
   const changes = [];
   const note2 = (label, a, b) => {
     if (a !== b) changes.push(`${label} ${String(b)} instead of ${String(a)}`);
   };
+  const oldDamage = loadoutDamage(result.before);
+  const newDamage = loadoutDamage(result.after);
+  if (oldDamage !== null && newDamage !== null) note2("melee damage per action", oldDamage, newDamage);
+  else changes.push("melee damage per action is unknown");
+  const oldMissile = loadoutMissileDamage(result.before, view);
+  const newMissile = loadoutMissileDamage(result.after, view);
+  if (oldMissile !== null && newMissile !== null) note2("missile damage per action", oldMissile, newMissile);
   note2("armour class", before.ac, after.ac);
   note2("to-hit", before.toHit, after.toHit);
   note2("to-damage", before.toDam, after.toDam);
@@ -1959,7 +2340,13 @@ function simulated(name, handle, result) {
     const now = result.after.stats.resists[i] ?? 0;
     if (old !== now) changes.push(`${element} resistance ${String(now)} instead of ${String(old)}`);
   });
-  return { handle, name, score, unknown: false, criteria: `Wear ${name}: ${changes.join(", ")}.` };
+  const lostFlags = before.objectFlags.filter((flag) => !after.objectFlags.includes(flag));
+  const gainedFlags = after.objectFlags.filter((flag) => !before.objectFlags.includes(flag));
+  const flagName = (flag) => ({ FREE_ACT: "Free Action", SEE_INVIS: "See Invisible", TELEPATHY: "telepathy" })[flag] ?? flag.toLowerCase().replaceAll("_", " ");
+  if (gainedFlags.length > 0) changes.push(`gains ${gainedFlags.map(flagName).join(", ")}`);
+  if (lostFlags.length > 0) changes.push(`loses ${lostFlags.map(flagName).join(", ")}`);
+  const safeUpgrade = lostFlags.length === 0 && result.delta.resists.every((change) => change >= 0) && after.speed >= before.speed && after.maxSp >= before.maxSp && after.maxHp >= before.maxHp && after.ac >= before.ac && after.toHit >= before.toHit && after.shots >= before.shots && (oldDamage === null && newDamage === null || oldDamage !== null && newDamage !== null && newDamage >= oldDamage) && (oldMissile === null && newMissile === null || oldMissile !== null && newMissile !== null && newMissile >= oldMissile);
+  return { handle, name, score, unknown: false, safeUpgrade, criteria: `Wear ${name}: ${changes.join(", ")}.` };
 }
 function gearCandidates(view) {
   const equipment = view.equipment();
@@ -1975,7 +2362,13 @@ function gearCandidates(view) {
     if (item.tval === TV.LIGHT && !/\{\?\?\}/.test(name)) {
       const oldLight = replaced === null ? null : shownName2(replaced) ?? "";
       const fuel = (shown) => Number(/\((\d+) turns\)/i.exec(shown)?.[1] ?? Infinity);
+      const safeLight = () => {
+        const result = view.simulateLoadout?.({ wield: [{ from: "gear", handle: item.handle }] });
+        if (result !== void 0 && result !== null) return keepsCapacity(view, result);
+        return replaced === null || !view.player().objectFlags.some((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag));
+      };
       if (oldLight === null || fuel(oldLight) === 0) {
+        if (!safeLight()) continue;
         out.push({
           handle: item.handle,
           name,
@@ -1986,6 +2379,7 @@ function gearCandidates(view) {
         continue;
       }
       if (sameKind(oldLight, name) && fuel(oldLight) < LOW_FUEL_TURNS && fuel(name) > fuel(oldLight)) {
+        if (!safeLight()) continue;
         out.push({
           handle: item.handle,
           name,
@@ -2001,12 +2395,13 @@ function gearCandidates(view) {
       if (result !== null) {
         if (!keepsLauncher(equipment, result.after.equipment, hasAmmo)) continue;
         if (result.placements.some((place) => place.displaced !== null && cursed(shownName2(place.displaced) ?? ""))) continue;
-        const candidate = simulated(name, item.handle, result);
+        const candidate = simulated(view, name, item.handle, result);
         if (candidate !== null) out.push(candidate);
         continue;
       }
     }
     const base = visibleBase(name, item.tval);
+    if (replaced !== null && (view.player().objectFlags.some((flag) => ["FREE_ACT", "SEE_INVIS", "TELEPATHY"].includes(flag)) || Math.max(view.player().depth, view.player().maxDepth) >= 20)) continue;
     const oldName = replaced === null ? null : shownName2(replaced);
     const oldBase = oldName === null || replaced === null ? null : visibleBase(oldName, replaced.tval);
     const visible = base === null ? null : visibleValue(name, item.tval, base);
@@ -2318,128 +2713,24 @@ function sellList(_pack, view, persona) {
   const worn = new Set(view.equipment().filter((item) => item !== null).map((item) => item.handle));
   const seen = /* @__PURE__ */ new Set();
   const out = [];
+  const upgrades = new Set(gearCandidates(view).filter((candidate) => !candidate.unknown).map((candidate) => candidate.handle));
   for (const item of view.inventory()) {
     const name = shownName2(item);
-    if (name === null || worn.has(item.handle) || mightBeSpecial(name)) continue;
+    if (name === null || worn.has(item.handle) || mightBeSpecial(name) || upgrades.has(item.handle)) continue;
     const type = /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling|Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.exec(name)?.[1];
     if (type === void 0) continue;
     if (persona.lists.weapons.some((favoured) => name.toLowerCase().includes(favoured.toLowerCase()))) continue;
-    if (seen.has(type.toLowerCase())) out.push({ handle: item.handle, quantity: item.number, name });
+    if (seen.has(type.toLowerCase())) {
+      const result = view.simulateLoadout?.({ release: [{ handle: item.handle, number: item.number }] });
+      if (result !== void 0 && result !== null && (!keepsCapacity(view, result) || result.after.player.speed < result.before.player.speed || result.after.player.maxSp < result.before.player.maxSp || (loadoutDamage(result.after) ?? 0) < (loadoutDamage(result.before) ?? 0) || (loadoutMissileDamage(result.after, view) ?? 0) < (loadoutMissileDamage(result.before, view) ?? 0))) continue;
+      out.push({ handle: item.handle, quantity: item.number, name });
+    }
     seen.add(type.toLowerCase());
   }
   return out;
 }
 function saleFits(name, storeName) {
   return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.test(name) : storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)\b/i.test(name);
-}
-
-// src/strategy/readiness.ts
-function namedCount(view, pattern) {
-  return view.inventory().reduce((sum, item) => sum + (pattern.test(shownName2(item) ?? "") ? item.number : 0), 0);
-}
-function supplies(view) {
-  const player = view.player();
-  const lantern = view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName2(item) ?? ""));
-  const pack = readPack(view);
-  const reliable = pack.escapeSpell.filter((spell) => spell.fail <= 15);
-  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL");
-  return {
-    cures: namedCount(view, /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i),
-    critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
-    serious: namedCount(view, /\bPotions? of Cure (Serious|Critical) Wounds\b/i),
-    phase: namedCount(view, /\bScrolls? of Phase Door\b/i) + (reliable.some((spell) => /^(Phase Door|Blink|Shadow Shift)$/i.test(spell.name)) ? 2 : 0),
-    escapes: namedCount(view, /\bScrolls? of (Teleportation|Teleport Level)\b/i) + view.inventory().reduce((sum, item) => {
-      const name = shownName2(item) ?? "";
-      const charges = /\((\d+) charges?\)/i.exec(name);
-      return sum + (/\bStaff of Teleportation\b/i.test(name) && charges !== null ? Number(charges[1]) : 0);
-    }, 0) + (reliable.some((spell) => /^(Teleport Self|Portal|Warp)$/i.test(spell.name)) ? 2 : 0),
-    recall: namedCount(view, /\bScrolls? of Word of Recall\b/i),
-    food: view.inventory().reduce((sum, item) => sum + (pack.food.some((food) => food.handle === item.handle) ? item.number : 0), 0),
-    fuel: view.inventory().reduce((sum, item) => {
-      const name = shownName2(item) ?? "";
-      const matches = lantern ? /\bFlasks? of Oil\b/i.test(name) : /\bWooden (Torch|Torches)\b/i.test(name) && !/\(0 turns\)/i.test(name);
-      return sum + (matches ? item.number : 0);
-    }, 0),
-    lastingLight
-  };
-}
-function classFloor(cls, depth) {
-  if (depth < 5) {
-    if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
-    if (cls === "Rogue") return [50, 8];
-    if (["Priest", "Druid"].includes(cls)) return [40, 9];
-    return [60, 11];
-  }
-  if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
-  if (cls === "Rogue") return [60, 10];
-  if (["Priest", "Druid"].includes(cls)) return [60, 15];
-  return [80, 15];
-}
-function missingPreparation(view, depth) {
-  if (depth <= 1) return [];
-  const player = view.player();
-  const stock = supplies(view);
-  const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
-  const out = [];
-  const need = (kind, enough, reason) => {
-    if (!enough) out.push({ kind, reason });
-  };
-  const [hpFloor, classLevel] = depth >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth) : [30, 2];
-  const caster = ["Mage", "Necromancer"].includes(player.cls);
-  const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
-  need("light", player.light >= (depth >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
-  need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
-  if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
-  if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
-  if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
-  if (depth >= 10) {
-    need("phase", stock.escapes >= (depth > 25 ? 6 : 2) && canRead(view), depth > 25 ? "six long escapes" : "two long escapes");
-    if (level < 30) need("healing", depth > 25 ? stock.serious >= 10 : stock.critical >= 3, depth > 25 ? "ten Cure Serious or Critical Wounds potions" : "three Cure Critical Wounds potions");
-    const detectsInvisible = detectionSources(view).some((source) => {
-      if (!/^(Detection|Reveal Monsters)$|Rods? of Detection/i.test(source.name) || /charging/i.test(source.name)) return false;
-      return source.kind !== "cast" || view.spellbooks().some((book) => book.spells.some((spell) => spell.sidx === source.sidx && spell.fail <= 15));
-    });
-    need("protection", player.objectFlags.includes("SEE_INVIS") || player.objectFlags.includes("TELEPATHY") || detectsInvisible, "See Invisible, telepathy or usable detection of invisible creatures");
-  }
-  if (depth >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
-  if (depth > 20) {
-    const inspect = view;
-    const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
-    const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:resistance|immunity) to ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
-    const basics = ["acid", "lightning", "fire", "cold"].filter(has);
-    need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
-    need("protection", player.stats.length >= 5 && [0, 3, 4, ...caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : []].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
-    if (depth >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
-  }
-  if (depth >= 46) {
-    need("hp", player.maxHp >= 500, "500 maximum hit points");
-    need("protection", player.speed >= 115, "+5 speed");
-    need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
-    need("protection", depth === 46, "readiness information for depths beyond 46");
-  }
-  return out;
-}
-function missingEssentials(view) {
-  const stock = supplies(view);
-  const out = [];
-  if (stock.cures < 2) out.push({ kind: "healing", reason: "two healing potions" });
-  if (stock.phase < 2 || !canRead(view)) out.push({ kind: "phase", reason: "two usable Phase Doors" });
-  if (stock.food < 2) out.push({ kind: "food", reason: "two food units" });
-  if (!stock.lastingLight && (view.player().light <= 0 || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
-  return out;
-}
-function supplyMargin(view) {
-  const player = view.player();
-  if (player.depth === 0) return null;
-  const stock = supplies(view);
-  if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
-  if (!stock.lastingLight && (player.light <= 0 || stock.fuel <= 1)) return "light and fuel";
-  if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (stock.phase <= 1) return "Phase Door";
-  if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
-  return null;
 }
 
 // src/strategy/aims.ts
@@ -2641,15 +2932,30 @@ function matchesAim(aim, name, tval) {
       return false;
   }
 }
-function aimPurchase(aims, store, gold) {
+function aimPurchase(aims, store, gold, view) {
   if (store.isHome) return null;
   for (const aim of aims) {
     const protection = (aim.kind === "free-action" || aim.kind === "see-invisible") && aim.how === "hunt";
     if (!protection && (aim.price === null || !affordable(aim, gold))) continue;
-    const ware = store.stock.find((item) => {
+    const candidates = store.stock.filter((item) => {
       const name = shownName2(item);
-      return name !== null && item.price !== void 0 && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
-    });
+      return name !== null && item.number > 0 && item.price !== void 0 && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
+    }).flatMap((item) => {
+      if (view === void 0 || aim.kind === "spellbook") return [{ item, value: 0 }];
+      const name = shownName2(item) ?? "";
+      if (/\{\?\?\}/.test(name)) return [];
+      const known = fullyKnown(name) || aim.kind === "lantern" || /\b(?:Free Action|See Invisible|Seeing)\b/i.test(name);
+      if (!known) return [];
+      const index = view.stores().findIndex((entry) => entry.feat === store.feat);
+      const result = index < 0 ? null : view.simulateLoadout?.({ wield: [{ from: "store", store: index, index: item.index }] });
+      if (result !== null && result !== void 0) {
+        const value = equipmentValue(result, view);
+        return keepsCapacity(view, result) && result.placements.length > 0 && value > 2 ? [{ item, value }] : [];
+      }
+      const trial = gearCandidates({ ...view, inventory: () => [item] })[0];
+      return trial !== void 0 && !view.equipment().some((worn) => worn !== null && worn.tval === item.tval) ? [{ item, value: trial.score }] : [];
+    }).sort((a, b) => b.value - a.value || (a.item.price ?? Infinity) - (b.item.price ?? Infinity));
+    const ware = candidates[0]?.item;
     if (ware === void 0) continue;
     return { index: ware.index, quantity: 1, name: shownName2(ware) ?? aim.label, aim: aim.label };
   }
@@ -2816,7 +3122,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
-        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
+        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
@@ -3175,10 +3481,25 @@ function createJourney(terrain) {
   let recallActive = false;
   let anchor = { x: 0, y: 0 };
   let leashField = null;
+  let breederLevel = false;
+  let breederDepth = -1;
+  let breederTurn = -1;
+  let breederArrival = null;
+  function breederExit(view) {
+    const player = view.player();
+    const arrival = view.messages().find((message) => arrivalFeeling([message])) ?? null;
+    if (breederDepth !== player.depth || view.turn() < breederTurn || arrival !== null && arrival !== breederArrival) breederLevel = false;
+    breederDepth = player.depth;
+    breederTurn = view.turn();
+    breederArrival = arrival;
+    if (player.depth > 0 && player.level <= 5 && view.monsters().filter((monster) => monster.visible && !monster.asleep && monster.raceFlags.includes("MULTIPLY")).length >= 3) breederLevel = true;
+    return breederLevel;
+  }
   function observe(view) {
     const player = view.player();
     const turn = view.turn();
     const state = pacing2.observe(view, terrain);
+    breederExit(view);
     leashField = null;
     if (state.fresh) {
       if (player.depth === 0 || turn < lastTurn) returnReason = null;
@@ -3256,7 +3577,10 @@ function createJourney(terrain) {
     const player = view.player();
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
+    const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     let out = offers.filter((offer) => {
+      if (breederLevel && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
+      if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
@@ -3282,6 +3606,11 @@ function createJourney(terrain) {
         out.push({ goal: "leave_level", criteria: home ? `Take the checked route to the up stairs and continue toward town. ${reason}` : `Take a checked staircase to a fresh or safer level. ${reason}`, risk: 0.02, survival: player.hp });
       }
     }
+    if (breederLevel && !out.some((offer) => offer.goal === "leave_level") && checkedRoute(view, exitTargets(view)) !== null) {
+      footOffered = true;
+      out.push({ goal: "leave_level", criteria: "Leave this breeder level by the checked staircase. The exit objective lasts until the level changes.", risk: 0.02, survival: player.hp });
+    }
+    if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1)[0];
       if (missing !== void 0) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
@@ -3294,6 +3623,11 @@ function createJourney(terrain) {
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
+      if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
+      if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
+        const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
+        if (target === null || steps(target.grid, player.grid) > 1) return null;
+      }
       if (goal === "wait" && !safeDelay(view)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
       if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
@@ -3305,13 +3639,13 @@ function createJourney(terrain) {
       if (goal === null) {
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
+        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === void 0 ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };
-          return at !== null && !expired && returnReason === null && leashed(view, at) && !view.monsters().some((monster) => monster.visible && !monster.asleep && steps(monster.grid, at) <= 1) ? command : null;
+          return at !== null && !breederLevel && !expired && returnReason === null && leashed(view, at) && !view.monsters().some((monster) => monster.visible && !monster.asleep && steps(monster.grid, at) <= 1) ? command : null;
         }
-        return command.code === "pickup" && leashed(view, player.grid) && !expired && returnReason === null ? command : null;
+        return command.code === "pickup" && !breederLevel && leashed(view, player.grid) && !expired && returnReason === null ? command : null;
       }
       if (OPTIONAL.has(goal) && (expired || returnReason !== null || departure.finished(view))) return null;
       if (goal === "fetch") {
@@ -3357,119 +3691,13 @@ function createJourney(terrain) {
     return direction === void 0 ? null : ctx.act.move(direction.key);
   }
   function blocked(view) {
+    if (breederLevel) return "Squire must leave this breeder level, but it has no checked exit or safe Recall wait.";
     if (view.player().depth === 0 && !town.ready) return `Squire cannot leave town ready: it still needs ${town.reason}, and no bounded earning trip is safe.`;
     if (returnReason !== null) return `Squire needs town for ${returnReason}, but it has no checked return or safe Recall wait.`;
     const missing = missingPreparation(view, view.player().depth + 1)[0];
     return missing === void 0 ? null : `Squire cannot descend yet: it needs ${missing.reason}.`;
   }
-  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked };
-}
-
-// src/brain/combat-kit.ts
-function healingAmount(view, source) {
-  const text = "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? "" : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
-  const fixed = /\b(?:heal\w*|restor\w*)\s+(?:you\s+for\s+|at least\s+)?((?:\d+\+)?\d+d\d+|\d+)\s+(?:hit\s?points|HP)\b(?:\s+\(or\s+(\d+)%, whichever is greater\))?/i.exec(text);
-  const fraction2 = /\b(\d+)%\s+of\s+(?:your\s+)?(?:missing hit points|wounds)\b/i.exec(text);
-  const missing = Math.max(0, view.player().maxHp - view.player().hp);
-  const dice = fixed === null ? null : /^(?:(\d+)\+)?(\d+)d\d+$/.exec(fixed[1]);
-  const minimum = dice === null ? Number(fixed?.[1] ?? 0) : Number(dice[1] ?? 0) + Number(dice[2]);
-  if (fixed !== null || fraction2 !== null) return Math.min(missing, Math.max(minimum, Math.floor(missing * Number(fraction2?.[1] ?? fixed?.[2] ?? 0) / 100)));
-  if ("sidx" in source || !/\bPotions? of\b/i.test(source.name)) return 0;
-  const fallback = /\bLife\b|\*Healing\*/i.test(source.name) ? [1200, 0] : /\bHealing\b/i.test(source.name) ? [300, 35] : /\bCritical\b/i.test(source.name) ? [30, 25] : /\bSerious\b/i.test(source.name) ? [25, 20] : [15, 15];
-  return Math.min(missing, Math.max(fallback[0], Math.floor(missing * fallback[1] / 100)));
-}
-function healingPotion(view, incoming) {
-  const potions = [...readPack(view).heal].sort((a, b) => a.power - b.power);
-  const hp = view.player().hp;
-  return potions.find((potion) => {
-    const amount = healingAmount(view, potion);
-    return hp + amount > incoming && (amount >= incoming || incoming >= hp && amount > incoming / 3);
-  }) ?? potions.at(-1);
-}
-function healingSpell(view, incoming) {
-  const spells = readPack(view).healSpell.flatMap((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
-    if (info !== void 0 && info !== null && (!info.canCastNow || info.mana > view.player().sp)) return [];
-    const known = info === void 0 || info === null ? spell : { ...spell, fail: info.failChance, mana: info.mana };
-    return known.fail <= 15 ? [known] : [];
-  });
-  return spells.find((spell) => {
-    const amount = healingAmount(view, spell);
-    return view.player().hp + amount > incoming && (amount >= incoming || incoming >= view.player().hp && amount > incoming / 3);
-  }) ?? spells[0];
-}
-var BUFF_ITEMS = [
-  [/\bPotions? of (Heroism|Berserk Strength|Speed)\b/i, "quaff"],
-  [/\bScrolls? of (Blessing|Heroism)\b/i, "read"]
-];
-var BUFF_SPELLS = [/^(Heroism|Blessing|Berserk Strength|Haste Self)$/i];
-var CURING = [
-  [/\bStaffs? of Curing\b/i, "staff"],
-  [/\bRods? of Curing\b/i, "rod"]
-];
-function held(view) {
-  return view.inventory().flatMap((item) => {
-    const name = shownName2(item);
-    return name === null ? [] : [{ item, name }];
-  });
-}
-function castable2(view) {
-  const sp = view.player().sp;
-  const out = [];
-  for (const book of view.spellbooks()) {
-    for (const spell of book.spells) {
-      if (spell.learned && !spell.forgotten && spell.mana <= sp && spell.fail <= 50) out.push({ sidx: spell.sidx, name: spell.name });
-    }
-  }
-  return out;
-}
-function alreadyBuffed(view) {
-  const s = view.player().status;
-  return s.hero > 0 || s.shero > 0 || s.blessed > 0 || s.fast > 0 || s.sprint > 0;
-}
-function buffUse(view) {
-  if (alreadyBuffed(view)) return null;
-  for (const { item, name } of held(view)) {
-    const found = BUFF_ITEMS.find(([pattern]) => pattern.test(name));
-    if (found !== void 0) return { how: found[1], handle: item.handle, name };
-  }
-  for (const spell of castable2(view)) {
-    if (BUFF_SPELLS.some((pattern) => pattern.test(spell.name))) return { how: "cast", sidx: spell.sidx, name: spell.name };
-  }
-  return null;
-}
-function resistUse(view) {
-  for (const { item, name } of held(view)) {
-    if (/\bPotions? of Resist/i.test(name)) return { how: "quaff", handle: item.handle, name };
-    if (/\bScrolls? of Resist/i.test(name)) return { how: "read", handle: item.handle, name };
-  }
-  return null;
-}
-function deviceHealUse(view) {
-  for (const { item, name } of held(view)) {
-    if (item.timeout > 0 || /\(0 charges?\)/i.test(name)) continue;
-    const found = CURING.find(([pattern]) => pattern.test(name));
-    if (found !== void 0) return { how: found[1], handle: item.handle, name };
-  }
-  return null;
-}
-function activationUse(view) {
-  for (const { item, name } of held(view)) {
-    if (item.activation && item.timeout <= 0) return { how: "activate", handle: item.handle, name };
-  }
-  return null;
-}
-function breatherInSight(view, monsters) {
-  const recall = inspecting(view).monsterRecall;
-  if (recall === void 0) return null;
-  for (const monster of monsters) {
-    if (!monster.visible || monster.asleep) continue;
-    const info = recall.call(view, monster.raceIndex);
-    if (info === null || info === void 0 || !/\bbreathe/i.test(info.text)) continue;
-    const element = /\bbreathe[s]?\s+([a-z]+)/i.exec(info.text)?.[1] ?? null;
-    return { race: monster.race, element };
-  }
-  return null;
+  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit };
 }
 
 // src/brain/hazards.ts
@@ -3708,7 +3936,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
     dreaded,
     stationary,
     swarm,
-    swarming: swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
+    swarming: player.level <= 5 && awake.filter((monster) => monster.raceFlags.includes("MULTIPLY")).length >= 3 || swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
     view,
     pack: readPack(view),
     awake,
@@ -3772,11 +4000,10 @@ function fightRisk(s) {
   const band = Math.max(target, s.worst);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
-function attackRisk(s, spell) {
+function attackRisk(s, attack) {
   const standing = Math.max(fightRisk(s), exposure(s));
   if (s.target === null || s.target.hp <= 0) return standing;
-  const attack = effectiveAttack(s.view, s.target, spell);
-  if (attack.damage < s.target.hp) return standing;
+  if (!attack.kill) return standing;
   const rest = damageFor({ ...s, threats: s.threats.filter((m) => m.id !== s.target.id) }).damage;
   return Math.max(0.05, damageRisk(rest, s.view.player().hp), standing * attack.failure);
 }
@@ -3790,6 +4017,12 @@ function damageRisk(damage, hp) {
 function damageFor(s, at = s.view.player().grid, actions = 1, terrain, openedDoor) {
   return incomingDamage(s.view, at, actions, terrain ?? s.terrain, { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...s.speedEnergy === void 0 ? {} : { energy: s.speedEnergy }, ...openedDoor === void 0 ? {} : { openedDoor } });
 }
+function combatContext(s) {
+  return { ...s.terrain === void 0 ? {} : { terrain: s.terrain }, facts: { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...s.speedEnergy === void 0 ? {} : { energy: s.speedEnergy } } };
+}
+function combatOptions(s, kind) {
+  return s.target === null ? [] : attackOptions(s.view, s.target, kind, combatContext(s));
+}
 function safeRecovery(s, terrain) {
   const player = s.view.player();
   if (player.status.poisoned > 0 || player.status.cut > 0 || hungry(s.view) || standingOnHarm(s.view, terrain, player.grid)) return false;
@@ -3798,6 +4031,23 @@ function safeRecovery(s, terrain) {
     const away = steps(player.grid, m.grid);
     return away <= (m.raceFlags.includes("MULTIPLY") ? 10 : m.asleep ? 8 : 5) || m.raceFlags.includes("PASS_WALL") && away <= 10;
   });
+}
+function closeDoorStep(s, terrain) {
+  const view = s.view;
+  const player = view.player();
+  const incoming = damageFor(s, player.grid, 1, terrain);
+  if (player.status.blind > 0 || player.status.confused > 0 || incoming.damage >= player.hp || incoming.status > 0) return null;
+  const before = damageFor(s, player.grid, 2, terrain);
+  for (const at of neighbours(player.grid)) {
+    const cell2 = view.cell(at.x, at.y);
+    if (cell2 === null || !cell2.known || !cell2.passable || !terrain.isOpenDoor?.(cell2.feat) || cell2.monster > 0 || cell2.trap || view.monsters().some((monster) => key(monster.grid) === key(at))) continue;
+    const closedView = { ...view, cell: (x, y) => x === at.x && y === at.y ? { ...cell2, feat: -2, passable: false } : view.cell(x, y) };
+    const closedTerrain = { ...terrain, isClosedDoor: (feat) => feat === -2 || terrain.isClosedDoor(feat) };
+    const after = damageFor({ ...s, view: closedView }, player.grid, 2, closedTerrain);
+    const field = flowFrom({ goals: knownStairs(closedView, closedTerrain), canEnter: (grid) => key(grid) !== key(at) && isRoutable(closedView, closedTerrain, grid) });
+    if (after.damage < before.damage && after.status <= before.status && Number.isFinite(field.distance(player.grid)) && leaveStep({ ...s, view: closedView }, closedTerrain) !== null) return at;
+  }
+  return null;
 }
 function escapeRoute(s, terrain, goals) {
   const player = s.view.player();
@@ -3922,6 +4172,14 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   };
   const nearDeath = s.hpShare < 0.35;
   const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
+  if (s.breederExit === true || player.level <= 5 && s.swarming) {
+    const door = closeDoorStep(s, terrain);
+    if (door !== null) add2("close_door", "Close the adjacent open door to separate the breeders from the exit route. The closing action is survivable and the door reduces incoming damage over two actions.", damageRisk(incoming.damage, player.hp));
+  }
+  const addAttack = (goal, criteria, attack) => {
+    const remaining = attack.kill && s.target !== null ? damageFor({ ...s, threats: s.threats.filter((monster) => monster.id !== s.target.id) }, at, 1, terrain).damage : incoming.damage;
+    add2(goal, criteria + attackDescription(attack, view), attackRisk(s, attack), false, player.hp - remaining, attack.failure > 0 && attack.kill);
+  };
   const needs = supplyNeeds(view, s.pack, persona);
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
@@ -3949,25 +4207,30 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (s.target !== null) {
     const adjacent2 = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent2 && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
-    if ((adjacent2 || walkUp) && player.status.afraid === 0) {
+    const melee = combatOptions(s, "fight")[0];
+    if ((adjacent2 || walkUp) && player.status.afraid === 0 && melee !== void 0) {
       const away = steps(at, s.target.grid);
-      add2("fight", adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, attackRisk(s));
+      addAttack("fight", adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, melee);
     }
     const ranged = within(s, MISSILE_RANGE);
     const clear = clearShot(view, s.target);
-    const standing = exposure(s);
-    if (ranged && clear && s.pack.launcher && s.pack.ammo[0] !== void 0) {
-      add2("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${s.pack.ammo[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
+    const missile = combatOptions(s, "shoot")[0];
+    if (ranged && clear && s.pack.launcher && missile !== void 0) {
+      addAttack("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${missile.source?.name ?? "ammunition"}).`, missile);
     }
-    if (ranged && clear && s.pack.oil[0] !== void 0) {
-      add2("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game (carrying ${s.pack.oil[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
+    const oil = combatOptions(s, "throw_oil")[0];
+    if (ranged && clear && oil !== void 0) {
+      addAttack("throw_oil", `Throw ${oil.source?.name ?? "a flask of oil"} at the ${s.target.race}.`, oil);
     }
-    if (ranged && clear && s.pack.attackWand[0] !== void 0) {
-      add2("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, Math.max(fightRisk(s) * 0.65, standing));
+    const wand = combatOptions(s, "aim_wand")[0];
+    if (ranged && clear && wand !== void 0) {
+      addAttack("aim_wand", `Aim ${wand.source?.name ?? "a wand"} at the ${s.target.race}.`, wand);
     }
-    const spell = pickAttackSpell(s.pack.attackSpell, spellInfoOf(view));
+    const cast = combatOptions(s, "cast_attack")[0];
+    const spell = cast?.source !== null && cast?.source !== void 0 && "sidx" in cast.source ? cast.source : void 0;
     if (ranged && spell !== void 0 && (clear || /(?:ball|orb|cloud|storm)/i.test(spell.name) && bestBallAim(view, s.awake, s.target) !== null)) {
-      add2("cast_attack", `Cast ${spell.name} at the ${s.target.race}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, attackRisk(s, spell));
+      const aim = /(?:ball|orb|cloud|storm)/i.test(spell.name) ? "at the best visible blast position" : `at the ${s.target.race}`;
+      addAttack("cast_attack", `Cast ${spell.name} ${aim}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, cast);
     }
   }
   const cutBad = player.status.cut > BAD_CUT && s.pack.heal[0] !== void 0;
@@ -4019,7 +4282,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (nearDeath || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
       const how2 = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
-      add2("phase", `Use ${how2}: a short random teleport that breaks contact for a moment.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
+      const short2 = s.pack.phase[0] !== void 0 || /^(Phase Door|Blink|Shadow Shift)$/i.test(how2);
+      add2("phase", `Use ${how2}: a ${short2 ? "short" : "long"} random teleport that breaks contact${short2 ? " for a moment" : ""}.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
     }
     if (s.pack.teleport[0] !== void 0) {
       const teleport = s.pack.teleport[0];
@@ -4041,8 +4305,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   const unlit = gear !== void 0 && gear.criteria.includes("has no light");
-  if (!bleeding && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
-    add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && s.awake.length === 0);
+  if (!bleeding && incoming.damage < player.hp && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
+    add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && gear.safeUpgrade !== false && s.awake.length === 0);
   }
   if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
     const source = detectionSource(view);
@@ -4139,7 +4403,7 @@ function createGoalPlanner(options) {
     for (const [id, memory] of rememberedThreats) if (turn - memory.turn > 50 || turn < memory.turn) rememberedThreats.delete(id);
     const unseenDamage = unseenHit !== null && turn - unseenHit.turn <= 50 && turn >= unseenHit.turn && steps(player.grid, unseenHit.grid) <= 5 ? Math.ceil(unseenHit.damage * (1 - (turn - unseenHit.turn) / 60)) : 0;
     const situation = situationOf(view, dreadedNow(), stationaryNow(view, update2), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy);
-    return { ...situation, lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
+    return { ...situation, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   const stalled = /* @__PURE__ */ new Map();
   const sameTurn = /* @__PURE__ */ new Map();
@@ -4259,7 +4523,7 @@ function createGoalPlanner(options) {
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
-      routine: routineBreeder
+      routine: (monster) => routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...options.speedEnergy === void 0 ? {} : { energy: options.speedEnergy } }).damage === 0
     });
     for (const id of seenOnLevel) watcher.acknowledge(id);
     return watcher;
@@ -4346,7 +4610,7 @@ function createGoalPlanner(options) {
   function volleyPlan(goal, label, view, spellSidx) {
     const target = situationOf(view, dreadedNow(), stationaryNow(view, false)).target;
     if (target === null) return once("no target", view, () => null);
-    const next = volleySteps(goal, target.id, spellSidx);
+    const next = volleySteps(goal, target.id, spellSidx, (v) => combatContext(situationNow(v)));
     return stepsPlan(label, view, (ctx) => next(ctx));
   }
   function useCommand(ctx, use) {
@@ -4386,25 +4650,33 @@ function createGoalPlanner(options) {
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
         if (volleyAvailable(view)) return volleyPlan("shoot", "shoot", view);
-        const ammo = pack.ammo[0];
-        return atTarget("shoot", view, (ctx) => ctx.act.fire(ammo?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("shoot", target.id, void 0, (v) => combatContext(situationNow(v)));
+        return once("shoot", view, next);
       }
       case "throw_oil": {
         if (volleyAvailable(view)) return volleyPlan("throw_oil", "throw oil", view);
-        const oil = pack.oil[0];
-        return atTarget("throw oil", view, (ctx) => ctx.act.throw(oil?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("throw_oil", target.id, void 0, (v) => combatContext(situationNow(v)));
+        return once("throw oil", view, next);
       }
       case "aim_wand": {
         const wand = pack.attackWand[0];
         if (volleyAvailable(view)) return volleyPlan("aim_wand", `aim ${wand?.name ?? "a wand"}`, view);
-        return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
+        const target = situationNow(view).target;
+        const next = target === null ? () => null : volleySteps("aim_wand", target.id, void 0, (v) => combatContext(situationNow(v)));
+        return once(`aim ${wand?.name ?? "a wand"}`, view, next);
       }
       case "cast_attack": {
-        const spell = pickAttackSpell(pack.attackSpell, spellInfoOf(view));
+        const cast = combatOptions(situationNow(view), "cast_attack")[0];
+        const spell = cast?.source !== null && cast?.source !== void 0 && "sidx" in cast.source ? cast.source : void 0;
         const label = `cast ${spell?.name ?? "a spell"}`;
         const ball = spell !== void 0 && /(?:ball|orb|cloud|storm)/i.test(spell.name);
         if (!ball && spell !== void 0 && volleyAvailable(view)) return volleyPlan("cast_attack", label, view, spell.sidx);
-        return atTarget(label, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), ball);
+        return atTarget(label, view, (ctx) => {
+          const usable = spell !== void 0 && combatOptions(situationNow(ctx.view), "cast_attack").some((attack) => attack.source !== null && "sidx" in attack.source && attack.source.sidx === spell.sidx);
+          return usable ? ctx.act.cast(spell.sidx) : null;
+        }, ball);
       }
       case "heal": {
         const potion = healingPotion(view, damageFor(situationNow(view)).damage);
@@ -4477,7 +4749,7 @@ function createGoalPlanner(options) {
       }
       case "wear": {
         const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
-        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 ? null : ctx.act.wear(candidate.handle));
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
       }
       case "detect": {
         const source = detectionSource(view);
@@ -4565,6 +4837,14 @@ function createGoalPlanner(options) {
           return isClosedDoor(ctx.view, terrain, checked.at) ? ctx.act.open(dir) : ctx.act.move(dir);
         });
       }
+      case "close_door":
+        return once("close a door", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          if (s.breederExit !== true) return null;
+          const at = closeDoorStep(s, terrain);
+          const dir = at === null ? null : directionToward(ctx.view.player().grid, at);
+          return dir === null ? null : ctx.act.close(dir);
+        });
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx, i) => {
           const at = ctx.view.player().grid;
@@ -4861,6 +5141,8 @@ function createGoalPlanner(options) {
       return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
     },
     trigger(view, plan) {
+      const exiting = journey.breederExit(view);
+      if (exiting && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
       const watched2 = plan;
       watched2.settle?.(view);
       const stopped = watched2.watcher?.check(view) ?? null;
@@ -8030,6 +8312,8 @@ function goalOfCommand(command, view) {
     }
     case "descend":
       return "descend";
+    case "close":
+      return "close_door";
     case "rest":
       return "rest";
     case "pickup":
@@ -8120,6 +8404,7 @@ var LABEL = {
   explore: "explore",
   descend: "take the stairs",
   leave_level: "leave the level",
+  close_door: "close a door",
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",
@@ -8985,6 +9270,7 @@ function readTerrain(features, tf) {
   const down = /* @__PURE__ */ new Set();
   const up = /* @__PURE__ */ new Set();
   const closed = /* @__PURE__ */ new Set();
+  const open = /* @__PURE__ */ new Set();
   const shops = /* @__PURE__ */ new Set();
   const shopNames = /* @__PURE__ */ new Map();
   const harmful = /* @__PURE__ */ new Set();
@@ -8994,6 +9280,7 @@ function readTerrain(features, tf) {
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
     if (has(tf.UPSTAIR)) up.add(feature.fidx);
     if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
+    if (tf.CLOSABLE !== void 0 && has(tf.CLOSABLE)) open.add(feature.fidx);
     if (has(tf.SHOP)) {
       shops.add(feature.fidx);
       const name = SHOP_NAMES[feature.code];
@@ -9006,6 +9293,7 @@ function readTerrain(features, tf) {
     isDownStair: (feat) => down.has(feat),
     isUpStair: (feat) => up.has(feat),
     isClosedDoor: (feat) => closed.has(feat),
+    isOpenDoor: (feat) => open.has(feat),
     isShopEntrance: (feat) => shops.has(feat),
     shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),

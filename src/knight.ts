@@ -61,6 +61,8 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
     }
     case "descend":
       return "descend";
+    case "close":
+      return "close_door";
     case "rest":
       return "rest";
     case "pickup":
@@ -173,6 +175,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   explore: "explore",
   descend: "take the stairs",
   leave_level: "leave the level",
+  close_door: "close a door",
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",

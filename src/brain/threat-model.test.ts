@@ -205,7 +205,7 @@ describe("incoming damage windows", () => {
 });
 
 describe("combat sense", () => {
-  it("chooses the most damage per mana among castable spells", () => {
+  it("chooses the most damage per action among castable spells", () => {
     const w = world({ map: MAP, spells: [{ name: "Fire Ball", sidx: 1, mana: 8 }, { name: "Magic Missile", sidx: 0, mana: 2 }] });
     const spells = [
       { name: "Fire Ball", sidx: 1, mana: 8, fail: 10, power: 3 },
@@ -216,7 +216,7 @@ describe("combat sense", () => {
       description: `Inflicts an average of ${index === 1 ? "16" : "7.5"} damage.`,
       mana: index === 1 ? 8 : 2, failChance: 10, canCastNow: true,
     });
-    expect(pickAttackSpell(spells, info)?.sidx).toBe(0);
+    expect(pickAttackSpell(spells, info)?.sidx).toBe(1);
     expect(pickAttackSpell(spells)?.sidx).toBe(1);
     expect(inspecting(w.view).spellInfo).toBeUndefined();
   });

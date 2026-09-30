@@ -398,7 +398,7 @@ export function pickAttackSpell(spells: readonly CastableSpell[], info?: Inspect
     const summary = /\baverage of (.+?) damage\b/i.exec(detail.description);
     if (summary === null) continue;
     const damage = [...summary[1]!.matchAll(/\d+(?:\.\d+)?/g)].reduce((sum, match) => sum + Number(match[0]), 0);
-    const score = damage * (1 - detail.failChance / 100) / Math.max(1, detail.mana);
+    const score = damage * (1 - detail.failChance / 100);
     if (score > bestScore) {
       best = spell;
       bestScore = score;
@@ -432,6 +432,7 @@ export function bestBallAim(view: AgentView, monsters: readonly MonsterView[], t
     const at = monster.grid;
     if (!clearShot(view, monster)) continue;
     const grids = blastArea.call(view, at, radius, 0).grids;
+    if (grids.some((grid) => same(grid, view.player().grid))) continue;
     const caught = monsters.filter((m) => m.visible && grids.some((grid) => same(grid, m.grid))).length;
     if (caught > count && caught > 0) {
       best = at;

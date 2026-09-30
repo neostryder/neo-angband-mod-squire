@@ -7,8 +7,8 @@
  * rather than only restocking.
  */
 
-import type { StoreView } from "@rpgm-tools/neo-angband-core";
-import { TV } from "../gear/compare.js";
+import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
+import { equipmentValue, fullyKnown, gearCandidates, keepsCapacity, TV } from "../gear/compare.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { shownName } from "./needs.js";
 import { mightBeSpecial } from "./shop.js";
@@ -39,15 +39,31 @@ function matchesAim(aim: Aim, name: string, tval: number): boolean {
 }
 
 /** The top affordable aim this store's own stock satisfies, or null. */
-export function aimPurchase(aims: readonly Aim[], store: StoreView, gold: number): AimPurchase | null {
+export function aimPurchase(aims: readonly Aim[], store: StoreView, gold: number, view?: AgentView): AimPurchase | null {
   if (store.isHome) return null;
   for (const aim of aims) {
     const protection = (aim.kind === "free-action" || aim.kind === "see-invisible") && aim.how === "hunt";
     if (!protection && (aim.price === null || !affordable(aim, gold))) continue;
-    const ware = store.stock.find((item) => {
+    const candidates = store.stock.filter((item) => {
       const name = shownName(item);
-      return name !== null && item.price !== undefined && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
-    });
+      return name !== null && item.number > 0 && item.price !== undefined && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);
+    }).flatMap((item) => {
+      if (view === undefined || aim.kind === "spellbook") return [{ item, value: 0 }];
+      const name = shownName(item) ?? "";
+      if (/\{\?\?\}/.test(name)) return [];
+      const known = fullyKnown(name) || aim.kind === "lantern" || /\b(?:Free Action|See Invisible|Seeing)\b/i.test(name);
+      if (!known) return [];
+      const index = view.stores().findIndex((entry) => entry.feat === store.feat);
+      const result = index < 0 ? null : view.simulateLoadout?.({ wield: [{ from: "store", store: index, index: item.index }] });
+      if (result !== null && result !== undefined) {
+        const value = equipmentValue(result, view);
+        return keepsCapacity(view, result) && result.placements.length > 0 && value > 2 ? [{ item, value }] : [];
+      }
+      /* A missing derive permits only a visible empty-slot trial, with no existing ability at risk. */
+      const trial = gearCandidates({ ...view, inventory: () => [item] })[0];
+      return trial !== undefined && !view.equipment().some((worn) => worn !== null && worn.tval === item.tval) ? [{ item, value: trial.score }] : [];
+    }).sort((a, b) => b.value - a.value || (a.item.price ?? Infinity) - (b.item.price ?? Infinity));
+    const ware = candidates[0]?.item;
     if (ware === undefined) continue;
     return { index: ware.index, quantity: 1, name: shownName(ware) ?? aim.label, aim: aim.label };
   }

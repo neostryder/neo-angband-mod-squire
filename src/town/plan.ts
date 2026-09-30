@@ -97,7 +97,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         /* With the supplies settled, the gold on hand can fund the top aim. */
-        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
+        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);

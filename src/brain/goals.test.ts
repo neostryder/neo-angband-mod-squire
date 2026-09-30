@@ -1067,8 +1067,8 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("offers to leave the level once breeders fill the room", () => {
-    expect(goals(world({ map: ROOM, player: { depth: 2 }, monsters: worms(5) }))).not.toContain("leave_level");
-    expect(goals(world({ map: ROOM, player: { depth: 2 }, monsters: worms(6) }))).toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(5) }))).not.toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(6) }))).toContain("leave_level");
   });
 
   it("leaves sooner when a breeder of that kind has hurt the line before", () => {
@@ -1084,7 +1084,7 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("does not stop a plan for one more of a breeder already seen, but does for anything else", () => {
-    const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2 }, monsters: worms(2) });
+    const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2, level: 6 }, monsters: worms(2) });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
@@ -1112,6 +1112,43 @@ describe("fear, swarms and refused commands", () => {
 });
 
 describe("soak findings", () => {
+  const BREEDER_DOOR = ["##########", "#<.@/....#", "##########"];
+  const doorBreeders = [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
+
+  it("offers and rechecks a door that delays the breeders while leaving the exit open", () => {
+    const w = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2, hp: 16, maxHp: 16 }, monsters: doorBreeders });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("close_door");
+    expect(offered(q)).not.toContain("fight");
+    const choice = p.choose(pick("close_door"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "close", dir: 6 });
+    expect(goalOfCommand({ code: "close", dir: 6 }, w.view)).toBe("close_door");
+    expect(goalLabel("close_door")).toBe("close a door");
+  });
+
+  it("does not close a door when the action is lethal, occupied or cannot slow a breeder", () => {
+    const lethal = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2, hp: 1, maxHp: 16 }, monsters: [{ ...doorBreeders[0]!, grid: { x: 2, y: 1 } }, ...doorBreeders.slice(1)] });
+    expect(offered(planner(lethal).p.ask(lethal.view))).not.toContain("close_door");
+    const occupied = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2 }, monsters: [{ ...doorBreeders[0]!, grid: { x: 4, y: 1 } }, ...doorBreeders.slice(1)] });
+    expect(offered(planner(occupied).p.ask(occupied.view))).not.toContain("close_door");
+    const passing = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2 }, monsters: doorBreeders.map((monster) => ({ ...monster, raceFlags: ["MULTIPLY", "PASS_WALL"] })) });
+    expect(offered(planner(passing).p.ask(passing.view))).not.toContain("close_door");
+    const blockedExit = suppliedWorld({ map: ["##########", "###@/.>..#", "##########"], player: { level: 2 }, monsters: doorBreeders });
+    expect(planner(blockedExit).p.ask(blockedExit.view)).toMatchObject({ handBack: expect.stringContaining("no checked exit") });
+  });
+
+  it("rechecks door safety before executing an already chosen closure", () => {
+    const w = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2, hp: 16, maxHp: 16 }, monsters: doorBreeders });
+    const { p } = planner(w);
+    const choice = p.choose(pick("close_door"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setPlayer({ hp: 1 });
+    w.setMonsters([{ ...doorBreeders[0]!, grid: { x: 2, y: 1 } }, ...doorBreeders.slice(1)]);
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+  });
+
   const TWO_STAIRS = ["##########", "#<@.....>#", "#........#", "#........#", "##########"];
   const planOf = (p: ReturnType<typeof planner>["p"], w: ReturnType<typeof world>, goal: string) => {
     const choice = p.choose(pick(goal), asked(p.ask(w.view)).context, w.view);
@@ -1178,14 +1215,14 @@ describe("soak findings", () => {
     expect(offered(p.ask(w.view))).toContain("retreat");
   });
 
-  it("does not stop a plan when one more worm of a known mass comes up beside the character", () => {
+  it("rechecks a plan when one more worm of a known mass can reach the character", () => {
     const worm = (x: number, y: number) => ({ grid: { x, y }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"], asleep: true });
     const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 1 }, monsters: [worm(6, 3)] });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
     w.setMonsters([worm(6, 3), worm(3, 2)]);
-    expect(p.trigger(w.view, choice.plan)).toBeNull();
+    expect(p.trigger(w.view, choice.plan)).not.toBeNull();
   });
 
   it("rests rather than waits while a recall is pending, hurt and out of mana", () => {

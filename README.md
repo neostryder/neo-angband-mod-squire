@@ -35,6 +35,8 @@ Squire only knows what the character knows:
 - It plans routes only over ground the character remembers, and picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
+Squire judges gear by what it lets the character do: the damage it can deal each action, how well it can cast, and its speed, ahead of price or a favourite name. It never trades away the last source of Free Action, See Invisible or telepathy, or a resistance the next depth calls for. A swap that gives something up for something else stays a choice; only a straight upgrade is automatic.
+
 In town, Squire first makes sure the character has a small reserve: two healing potions, two Phase Doors, some food, and a working light with spare fuel. These come before anything optional, and they can use money the savings setting would otherwise hold back. It won't head back down while one of them is missing and affordable. When there isn't the gold for them, a healthy character can go and earn some on the first dungeon level, staying close to the stairs.
 
 Before going deeper on purpose, Squire checks that the character is ready for that depth: enough levels and hit points for its class, and the supplies and protections the depth calls for, such as Word of Recall from 250 ft, Phase Door from 300 ft and Free Action by 1000 ft. Whatever is missing becomes an aim, so the next trip to town shops for it. Fleeing down the stairs in an emergency doesn't wait for this check.
@@ -44,6 +46,10 @@ It heads home while it still has enough to get there, not when the last potion i
 While the character is young, it explores and picks up loot only within a leash of the up stairs that grows with its level. When a level stops paying off in experience, gold or new ground, Squire reconsiders: a fresh level, a deeper one if it is ready, or a trip to town.
 
 In a fight, Squire works out how much damage the character could take over its next action or two, from each creature's speed, the blows it has been seen to use, its ranged attacks and the character's resistances. When it doesn't know a creature's attacks, it assumes some danger rather than none. An escape has to leave the character safer: stepping away from an adjacent creature that is as fast as it is doesn't count, and each step of a walk to the stairs is checked again before it is taken. When one blow could finish an enemy, attacking can beat stepping away.
+
+In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley, and only spends it on a kill it can be sure of.
+
+A young character, up to level 5, treats three awake breeders as the sign to leave the level. It stops chasing, exploring and resting there, clears whatever is next to it, and may shut a door on them on the way out.
 
 It heals when the cure outpaces the damage coming in, using the smallest potion that is enough, and stops drinking when the character is losing ground anyway. When only one cure or escape keeps the character alive, Squire takes it straight away without asking the model. Out of combat it rests instead of drinking, but not while poisoned or cut, near breeders, or soon after a hit from something it can't see, and it waits for Recall only where nothing can reach it.
 

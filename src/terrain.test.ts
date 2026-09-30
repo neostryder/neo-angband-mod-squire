@@ -9,6 +9,7 @@ const TF: TerrainFlagIndex = {
   DOWNSTAIR: 28,
   UPSTAIR: 27,
   DOOR_CLOSED: 20,
+  CLOSABLE: 12,
   SHOP: 21,
   FIERY: 31,
   ROCK,
@@ -25,6 +26,7 @@ describe("readTerrain", () => {
     feature(1, "FLOOR", [TF.PASSABLE]),
     feature(2, "GRANITE", []),
     feature(3, "CLOSED", [TF.DOOR_CLOSED]),
+    feature(22, "OPEN", [TF.PASSABLE, TF.CLOSABLE!]),
     feature(4, "MORE", [TF.PASSABLE, TF.DOWNSTAIR]),
     feature(5, "LESS", [TF.PASSABLE, TF.UPSTAIR]),
     feature(6, "LAVA", [TF.PASSABLE, TF.FIERY]),
@@ -38,6 +40,8 @@ describe("readTerrain", () => {
     expect(terrain.isDownStair(4)).toBe(true);
     expect(terrain.isUpStair(5)).toBe(true);
     expect(terrain.isClosedDoor(3)).toBe(true);
+    expect(terrain.isOpenDoor?.(22)).toBe(true);
+    expect(terrain.isOpenDoor?.(1)).toBe(false);
     expect(terrain.isShopEntrance(7)).toBe(true);
     expect(terrain.shopName(7)).toBe("General Store");
   });

@@ -35,6 +35,7 @@ export interface TerrainFlagIndex {
   readonly DOWNSTAIR: number;
   readonly UPSTAIR: number;
   readonly DOOR_CLOSED: number;
+  readonly CLOSABLE?: number;
   readonly SHOP: number;
   readonly FIERY: number;
   /** ROCK and PERMANENT, when the host numbers them, tell diggable rubble from a permanent wall. */
@@ -55,6 +56,7 @@ export interface Terrain {
   isDownStair(feat: number): boolean;
   isUpStair(feat: number): boolean;
   isClosedDoor(feat: number): boolean;
+  isOpenDoor?(feat: number): boolean;
   isShopEntrance(feat: number): boolean;
   /** The mapped town shop, without reading any store stock. */
   shopName(feat: number): string | null;
@@ -87,6 +89,7 @@ export function readTerrain(
   const down = new Set<number>();
   const up = new Set<number>();
   const closed = new Set<number>();
+  const open = new Set<number>();
   const shops = new Set<number>();
   const shopNames = new Map<number, string>();
   const harmful = new Set<number>();
@@ -97,6 +100,7 @@ export function readTerrain(
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
     if (has(tf.UPSTAIR)) up.add(feature.fidx);
     if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
+    if (tf.CLOSABLE !== undefined && has(tf.CLOSABLE)) open.add(feature.fidx);
     if (has(tf.SHOP)) {
       shops.add(feature.fidx);
       const name = SHOP_NAMES[feature.code];
@@ -116,6 +120,7 @@ export function readTerrain(
     isDownStair: (feat) => down.has(feat),
     isUpStair: (feat) => up.has(feat),
     isClosedDoor: (feat) => closed.has(feat),
+    isOpenDoor: (feat) => open.has(feat),
     isShopEntrance: (feat) => shops.has(feat),
     shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),

@@ -23,8 +23,8 @@
 import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import type { SquireContext } from "../context.js";
 import type { Loc } from "../grid.js";
-import { readPack, type Pack } from "./pack.js";
 import { inspecting } from "./threat-model.js";
+import { attackOptions, type AttackContext } from "./combat-kit.js";
 
 /** A ranged attack that can be repeated. */
 export type RangedGoal = "shoot" | "throw_oil" | "aim_wand" | "cast_attack";
@@ -51,38 +51,22 @@ export function lineOfFire(view: AgentView, target: Loc): boolean {
  * the volley is over. The target id is held from the decision, so a different
  * creature wandering into range is not fired at without being weighed.
  */
-export function volleySteps(goal: RangedGoal, targetId: number, spellSidx?: number): (ctx: SquireContext) => AgentCommand | null {
+export function volleySteps(goal: RangedGoal, targetId: number, spellSidx?: number, safety?: (view: AgentView) => AttackContext): (ctx: SquireContext) => AgentCommand | null {
   return (ctx) => {
     const view = ctx.view;
     const target = view.monsters().find((monster) => monster.id === targetId && monster.visible);
     if (target === undefined) return null;
     if (!lineOfFire(view, target.grid)) return null;
-    const command = shot(goal, ctx, readPack(view), spellSidx);
-    if (command === null) return null;
+    const outcome = attackOptions(view, target, goal, safety?.(view)).find((attack) => spellSidx === undefined || attack.source !== null && "sidx" in attack.source && attack.source.sidx === spellSidx);
+    const source = outcome?.source;
+    if (source === null || source === undefined) return null;
     if (!ctx.act.setTargetMonster(target.id)) return null;
-    return command;
+    if ("sidx" in source) return ctx.act.cast(source.sidx);
+    if (goal === "shoot") return readLauncher(view) ? ctx.act.fire(source.handle) : null;
+    return goal === "throw_oil" ? ctx.act.throw(source.handle) : ctx.act.aimWand(source.handle);
   };
 }
 
-/** One shot with the current ammunition, or null when that resource is gone. */
-function shot(goal: RangedGoal, ctx: SquireContext, pack: Pack, spellSidx?: number): AgentCommand | null {
-  switch (goal) {
-    case "shoot": {
-      const ammo = pack.ammo[0];
-      return pack.launcher && ammo !== undefined ? ctx.act.fire(ammo.handle) : null;
-    }
-    case "throw_oil": {
-      const oil = pack.oil[0];
-      return oil === undefined ? null : ctx.act.throw(oil.handle);
-    }
-    case "aim_wand": {
-      const wand = pack.attackWand[0];
-      return wand === undefined ? null : ctx.act.aimWand(wand.handle);
-    }
-    case "cast_attack": {
-      /* The spell the decision picked, while it is still castable. */
-      const spell = spellSidx === undefined ? pack.attackSpell[0] : pack.attackSpell.find((s) => s.sidx === spellSidx);
-      return spell === undefined ? null : ctx.act.cast(spell.sidx);
-    }
-  }
+function readLauncher(view: AgentView): boolean {
+  return view.equipment().some((item) => item?.tval === 5);
 }

@@ -6,6 +6,9 @@ import type { Goal, Offer } from "../brain/goals.js";
 import type { Plan } from "../brain/brain.js";
 import { floorTarget } from "../brain/items.js";
 import { canRead } from "../brain/pack.js";
+import { arrivalFeeling } from "../brain/level-feel.js";
+import { pickTarget } from "../threat.js";
+import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
 import { flowFrom, stepDown, type FlowField } from "../flow.js";
 import { frontiers, hasFloorObject, isRoutable, isWalkable, knownStairs, standingOnHarm } from "../map.js";
@@ -32,11 +35,27 @@ export function createJourney(terrain: Terrain) {
   let recallActive = false;
   let anchor: Loc = { x: 0, y: 0 };
   let leashField: FlowField | null = null;
+  let breederLevel = false;
+  let breederDepth = -1;
+  let breederTurn = -1;
+  let breederArrival: string | null = null;
+
+  function breederExit(view: AgentView): boolean {
+    const player = view.player();
+    const arrival = view.messages().find((message) => arrivalFeeling([message])) ?? null;
+    if (breederDepth !== player.depth || view.turn() < breederTurn || arrival !== null && arrival !== breederArrival) breederLevel = false;
+    breederDepth = player.depth;
+    breederTurn = view.turn();
+    breederArrival = arrival;
+    if (player.depth > 0 && player.level <= 5 && view.monsters().filter((monster) => monster.visible && !monster.asleep && monster.raceFlags.includes("MULTIPLY")).length >= 3) breederLevel = true;
+    return breederLevel;
+  }
 
   function observe(view: AgentView): void {
     const player = view.player();
     const turn = view.turn();
     const state = pacing.observe(view, terrain);
+    breederExit(view);
     leashField = null;
     if (state.fresh) {
       if (player.depth === 0 || turn < lastTurn) returnReason = null;
@@ -122,7 +141,10 @@ export function createJourney(terrain: Terrain) {
     const player = view.player();
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
+    const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     let out = offers.filter((offer) => {
+      if (breederLevel && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
+      if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
@@ -148,6 +170,11 @@ export function createJourney(terrain: Terrain) {
         out.push({ goal: "leave_level", criteria: home ? `Take the checked route to the up stairs and continue toward town. ${reason}` : `Take a checked staircase to a fresh or safer level. ${reason}`, risk: 0.02, survival: player.hp });
       }
     }
+    if (breederLevel && !out.some((offer) => offer.goal === "leave_level") && checkedRoute(view, exitTargets(view)) !== null) {
+      footOffered = true;
+      out.push({ goal: "leave_level", criteria: "Leave this breeder level by the checked staircase. The exit objective lasts until the level changes.", risk: 0.02, survival: player.hp });
+    }
+    if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1)[0];
       if (missing !== undefined) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
@@ -161,6 +188,11 @@ export function createJourney(terrain: Terrain) {
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
+      if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
+      if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
+        const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
+        if (target === null || steps(target.grid, player.grid) > 1) return null;
+      }
       if (goal === "wait" && !safeDelay(view)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
       if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
@@ -173,13 +205,13 @@ export function createJourney(terrain: Terrain) {
         /* A rejected judgment cannot let the errand ladder bypass the guards. */
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
+        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === undefined ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };
-          return at !== null && !expired && returnReason === null && leashed(view, at) && !view.monsters().some((monster) => monster.visible && !monster.asleep && steps(monster.grid, at) <= 1) ? command : null;
+          return at !== null && !breederLevel && !expired && returnReason === null && leashed(view, at) && !view.monsters().some((monster) => monster.visible && !monster.asleep && steps(monster.grid, at) <= 1) ? command : null;
         }
-        return command.code === "pickup" && leashed(view, player.grid) && !expired && returnReason === null ? command : null;
+        return command.code === "pickup" && !breederLevel && leashed(view, player.grid) && !expired && returnReason === null ? command : null;
       }
       if (OPTIONAL.has(goal) && (expired || returnReason !== null || departure.finished(view))) return null;
       if (goal === "fetch") {
@@ -229,11 +261,12 @@ export function createJourney(terrain: Terrain) {
   }
 
   function blocked(view: AgentView): string | null {
+    if (breederLevel) return "Squire must leave this breeder level, but it has no checked exit or safe Recall wait.";
     if (view.player().depth === 0 && !town.ready) return `Squire cannot leave town ready: it still needs ${town.reason}, and no bounded earning trip is safe.`;
     if (returnReason !== null) return `Squire needs town for ${returnReason}, but it has no checked return or safe Recall wait.`;
     const missing = missingPreparation(view, view.player().depth + 1)[0];
     return missing === undefined ? null : `Squire cannot descend yet: it needs ${missing.reason}.`;
   }
 
-  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked };
+  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit };
 }
