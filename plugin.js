@@ -2154,6 +2154,231 @@ function recallPlan(item) {
   };
 }
 
+// src/strategy/aims.ts
+var FIXED_ORDER = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth"];
+var BOOK_LOOKAHEAD = 5;
+var FREE_ACTION_DEPTH = 20;
+var SEE_INVISIBLE_DEPTH = 15;
+var PROTECTION_LEAD = 5;
+var WEAPONS2 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
+var ARMOUR_SLOTS = [
+  { name: "body", tvals: [TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR] },
+  { name: "cloak", tvals: [TV.CLOAK] },
+  { name: "shield", tvals: [TV.SHIELD] },
+  { name: "head", tvals: [TV.HELM, TV.CROWN] },
+  { name: "hands", tvals: [TV.GLOVES] },
+  { name: "feet", tvals: [TV.BOOTS] }
+];
+function shelves(view) {
+  let stores = [];
+  try {
+    stores = view.stores();
+  } catch {
+  }
+  const shops = stores.filter((store) => !store.isHome);
+  const wares = shops.flatMap((store) => store.stock.flatMap((item) => {
+    const name = shownName2(item);
+    return name !== null && item.price !== void 0 && item.price > 0 ? [{ name, tval: item.tval, price: item.price }] : [];
+  }));
+  return { wares };
+}
+function cheapest(wares, match) {
+  let best = null;
+  for (const ware of wares) if (match(ware) && (best === null || ware.price < best.price)) best = ware;
+  return best;
+}
+function sourced(ware) {
+  return ware === null ? { how: "hunt", price: null } : { how: "save", price: ware.price };
+}
+function namesOf(items) {
+  return items.flatMap((item) => {
+    const name = shownName2(item);
+    return name === null ? [] : [name];
+  });
+}
+function depthTarget(level, maxHp) {
+  return Math.max(1, Math.min(Math.floor(level / 2), Math.floor(maxHp / 12)));
+}
+function bookAim(view, shelf, pack) {
+  const level = view.player().level;
+  for (const book of view.spellbooks()) {
+    if (book.spells.length === 0 || book.name.length === 0) continue;
+    if (pack.some((name) => name.includes(book.name))) continue;
+    const first = Math.min(...book.spells.map((spell) => spell.level));
+    if (first > level + BOOK_LOOKAHEAD) return null;
+    const source = sourced(cheapest(shelf.wares, (ware) => ware.name.includes(book.name)));
+    return {
+      kind: "spellbook",
+      label: "next spellbook",
+      detail: `Get the next spellbook, ${book.name}, whose first spell is level ${String(first)}. ${source.how === "save" ? `The stores sell it for ${String(source.price)} gold, so save that much.` : "The stores do not sell it, so hunt for it in the dungeon."}`,
+      ...source,
+      depth: null
+    };
+  }
+  return null;
+}
+function lanternAim(shelf, pack, worn) {
+  const light = worn.find((item) => item.tval === TV.LIGHT);
+  const name = light === void 0 ? null : shownName2(light);
+  if (name === null || !/\bTorch/i.test(name) || /\bLantern/i.test(name)) return null;
+  const carried = pack.some((n) => /\bLantern/i.test(n));
+  const source = carried ? { how: "try", price: null } : sourced(cheapest(shelf.wares, (ware) => /\bLantern/i.test(ware.name)));
+  return {
+    kind: "lantern",
+    label: "lantern over torch",
+    detail: `Use a Lantern instead of a wooden torch: it lights farther and refills from flasks of oil. ${source.how === "try" ? "One is in the pack." : source.how === "save" ? `The stores sell one for ${String(source.price)} gold.` : "None is for sale, so look for one in the dungeon."}`,
+    ...source,
+    depth: null
+  };
+}
+function armourAim(view, shelf, packItems, worn) {
+  const casts = view.spellbooks().some((book) => /arcane|necromantic/i.test(book.realm));
+  const wornTvals = worn.map((item) => item.tval);
+  const empty2 = ARMOUR_SLOTS.filter((slot2) => !slot2.tvals.some((t) => wornTvals.includes(t)) && !(casts && slot2.name === "hands"));
+  if (empty2.length === 0) return null;
+  const wanted = empty2.flatMap((slot2) => slot2.tvals);
+  const carried = packItems.some((item) => wanted.includes(item.tval));
+  const source = carried ? { how: "try", price: null } : sourced(cheapest(shelf.wares, (ware) => wanted.includes(ware.tval)));
+  return {
+    kind: "armour",
+    label: "armour for empty slots",
+    detail: `Nothing is worn on the ${empty2.map((slot2) => slot2.name).join(", ")}. ${source.how === "try" ? "Armour for it is in the pack." : source.how === "save" ? `The cheapest piece in the stores costs ${String(source.price)} gold.` : "None is for sale, so look for some in the dungeon."}`,
+    ...source,
+    depth: null
+  };
+}
+function weaponAim(shelf, packItems, worn) {
+  const special = (item) => {
+    const name = shownName2(item);
+    return name !== null && WEAPONS2.includes(item.tval) && mightBeSpecial(name);
+  };
+  if (worn.some(special)) return null;
+  if (packItems.some(special)) {
+    return { kind: "weapon", label: "magic weapon", detail: "Try the unknown or magical weapon in the pack to see whether it beats the one wielded.", how: "try", price: null, depth: null };
+  }
+  const ware = cheapest(shelf.wares, (w) => WEAPONS2.includes(w.tval) && mightBeSpecial(w.name));
+  if (ware === null) return null;
+  return { kind: "weapon", label: "magic weapon", detail: `Buy a magical or ego weapon: the stores have ${ware.name} for ${String(ware.price)} gold.`, how: "save", price: ware.price, depth: null };
+}
+function protectionAim(view, kind, pack) {
+  const player = view.player();
+  const flag = kind === "free-action" ? "FREE_ACT" : "SEE_INVIS";
+  const from = kind === "free-action" ? FREE_ACTION_DEPTH : SEE_INVISIBLE_DEPTH;
+  if (player.objectFlags.includes(flag)) return null;
+  if (Math.max(player.depth, player.maxDepth) < from - PROTECTION_LEAD) return null;
+  const words = kind === "free-action" ? "free action" : "see invisible";
+  const carried = pack.some((name) => (kind === "free-action" ? /Free Action/i : /See Invisible|Seeing/i).test(name));
+  return {
+    kind,
+    label: words,
+    detail: `Get ${words} before dungeon level ${String(from)} (${String(from * 50)} ft), where ${kind === "free-action" ? "paralysis kills characters without it" : "invisible creatures strike unseen"}. ${carried ? "An item that may grant it is in the pack." : "Look for it in the dungeon."}`,
+    how: carried ? "try" : "hunt",
+    price: null,
+    depth: null
+  };
+}
+function candidateAims(view) {
+  const player = view.player();
+  const shelf = shelves(view);
+  const packItems = view.inventory();
+  const pack = namesOf(packItems);
+  const worn = view.equipment().flatMap((item) => item === null ? [] : [item]);
+  const target = depthTarget(player.level, player.maxHp);
+  const depth = {
+    kind: "depth",
+    label: "depth target",
+    detail: `Reach dungeon level ${String(target)} (${String(target * 50)} ft), which suits a level ${String(player.level)} character with ${String(player.maxHp)} hit points.`,
+    how: "dive",
+    price: null,
+    depth: target
+  };
+  const found = [
+    bookAim(view, shelf, pack),
+    lanternAim(shelf, pack, worn),
+    armourAim(view, shelf, packItems, worn),
+    weaponAim(shelf, packItems, worn),
+    protectionAim(view, "free-action", pack),
+    protectionAim(view, "see-invisible", pack),
+    depth
+  ];
+  return found.filter((aim) => aim !== null);
+}
+function inFixedOrder(aims) {
+  return [...aims].sort((a, b) => FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
+}
+function affordable(aim, gold) {
+  return aim.price !== null && gold >= aim.price;
+}
+
+// src/strategy/steer.ts
+var MAX_NUDGE = 0.2;
+var ARMOUR = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
+var WEAPONS3 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
+function wornKind(view, criteria) {
+  const candidate = gearCandidates(view).find((c) => c.criteria === criteria);
+  const item = candidate === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate.handle);
+  if (item === void 0) return null;
+  const name = shownName2(item) ?? "";
+  if (/Free Action/i.test(name)) return "free-action";
+  if (/See Invisible|Seeing/i.test(name)) return "see-invisible";
+  if (item.tval === TV.LIGHT && /Lantern/i.test(name)) return "lantern";
+  if (WEAPONS3.includes(item.tval)) return "weapon";
+  if (ARMOUR.includes(item.tval)) return "armour";
+  return null;
+}
+function servedBy(offer, view, aims, gold) {
+  const depth = view.player().depth;
+  const wear = offer.goal === "wear" ? wornKind(view, offer.criteria) : null;
+  for (const [rank2, aim] of aims.entries()) {
+    let serves = false;
+    switch (offer.goal) {
+      case "recall_town":
+        serves = affordable(aim, gold);
+        break;
+      case "pick_up":
+        serves = aim.how === "save" && !affordable(aim, gold);
+        break;
+      case "wear":
+        serves = wear === aim.kind;
+        break;
+      case "descend":
+        serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth;
+        break;
+      case "explore":
+        serves = depth > 0 && (aim.kind === "depth" && aim.depth !== null && aim.depth <= depth || aim.how === "hunt");
+        break;
+    }
+    if (serves) return { aim, rank: rank2 };
+  }
+  return null;
+}
+function steerOffers(offers, view, steering, context, make) {
+  if (steering.aims.length === 0) return [...offers];
+  const player = view.player();
+  const out = [...offers];
+  const wanted = steering.aims.find((aim) => affordable(aim, player.gold));
+  if (wanted !== void 0 && player.depth > 0 && !context.recallActive && !out.some((o) => o.goal === "recall_town") && steering.tripAllowed(player.gold) && canRead(view) && recallItem(view) !== null) {
+    out.push(make("recall_town", `Read Word of Recall to return to town with ${String(player.gold)} gold, enough to buy the aim: ${wanted.label}.`, context.tripRisk));
+  }
+  return out.map((offer) => {
+    const served = servedBy(offer, view, steering.aims, player.gold);
+    if (served === null) return offer;
+    const text = `${offer.criteria.replace(/\.$/, "")}, which serves the aim: ${served.aim.label}.`;
+    return { ...offer, criteria: text, aim: { kind: served.aim.kind, rank: served.rank } };
+  });
+}
+function nudgeAims(dist, offers, ambition, ceiling) {
+  const out = { ...dist };
+  const scale2 = Math.max(0, Math.min(100, ambition)) / 100;
+  for (const offer of offers) {
+    if (offer.aim === void 0 || offer.risk > ceiling) continue;
+    const weight = offer.goal === "pick_up" ? 1 : Math.max(0.2, 1 - 0.25 * offer.aim.rank);
+    const current2 = out[offer.goal];
+    if (current2 !== void 0) out[offer.goal] = current2 * (1 + MAX_NUDGE * scale2 * weight);
+  }
+  return out;
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE2 = "None of the listed options suits this moment.";
 var FALLBACK_STEPS = 8;
@@ -2385,8 +2610,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
-      const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
-      add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
+      const how2 = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
+      add2("phase", `Use ${how2}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
     }
     if (s.pack.teleport[0] !== void 0) {
       const teleport = s.pack.teleport[0];
@@ -2806,7 +3031,8 @@ function createGoalPlanner(options) {
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const floor = applySafetyFloor(blended, risk, riskCeiling(persona), persona.quirks.deathwish.on);
+    const nudged = nudgeAims(blended, digest.offers, persona.sliders.ambition, riskCeiling(persona));
+    const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
     return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
@@ -2841,7 +3067,8 @@ function createGoalPlanner(options) {
       widenNext = false;
       const recalling = recallPending(player, recallRead, turn);
       const usable = (offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
-      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      const offered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       let offers = offered.filter(usable);
       const listed = new Set(offers.map((o) => o.goal));
       const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true).filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
@@ -2852,6 +3079,8 @@ function createGoalPlanner(options) {
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
+      const aimList = options.strategy?.().aims ?? [];
+      const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
       const criteria = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
       criteria["none_of_these"] = NONE_OF_THESE2;
@@ -2909,6 +3138,7 @@ function createGoalPlanner(options) {
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             status: statusOf(view, canRead(view)),
             ...lastOutcome === null ? {} : { last: lastOutcome },
+            ...aimNote === null ? {} : { aims: aimNote },
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
             ...swarmNote(seen),
             ...lessonsFor(view),
@@ -3031,6 +3261,120 @@ function createTally(caps, earlierToday) {
       }
       return null;
     }
+  };
+}
+
+// src/strategy/review.ts
+var REVIEW_TURNS = 2e3;
+var TRIGGER_TEXT = {
+  arrival: "on reaching a new level",
+  town: "after the town trip",
+  level: "after gaining a level",
+  periodic: "after 2,000 game turns"
+};
+function reviewDue(memory, now) {
+  if (memory === null) return "arrival";
+  if (memory.depth === 0 && now.depth > 0) return "town";
+  if (now.level > memory.level) return "level";
+  if (now.depth !== memory.depth) return "arrival";
+  if (now.turn - memory.reviewTurn >= REVIEW_TURNS) return "periodic";
+  return null;
+}
+var WORTH = [
+  "not worth pursuing now",
+  "worth pursuing later",
+  "worth pursuing soon",
+  "worth pursuing first"
+];
+function scoreRequest(view, aims) {
+  const player = view.player();
+  const questions = {};
+  const described = {};
+  for (const aim of aims) {
+    questions[aim.kind] = {
+      type: "score",
+      instructions: `How worth pursuing right now is this aim: ${aim.label}? Judge it against the character's other aims and its chance of surviving.`,
+      criteria: WORTH
+    };
+    described[aim.kind] = aim.detail;
+  }
+  return {
+    state: {
+      rules: "An aim is something worth working toward over the next few dungeon levels. Dying early ends every aim, so a safe gain outranks a risky one.",
+      character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
+      aims: described
+    },
+    questions
+  };
+}
+function rankByScore(aims, answers) {
+  const scoreOf = (aim) => {
+    const answer = answers[aim.kind];
+    return answer?.type === "score" ? answer.score : 0;
+  };
+  return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
+}
+var TRIP_GOLD_GROWTH = 1.5;
+function createStrategy(deps) {
+  let memory = null;
+  let aims = [];
+  let last = null;
+  let tripGold = null;
+  let generation = 0;
+  let inFlight = Promise.resolve();
+  function reset() {
+    memory = null;
+    aims = [];
+    last = null;
+    tripGold = null;
+    generation += 1;
+  }
+  async function rank2(view, candidates) {
+    const fixed = inFixedOrder(candidates);
+    if (candidates.length < 2) return { ranked: fixed, source: "fixed", by: "" };
+    const backend = deps.backend();
+    if (backend === null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because no model server is set up." };
+    const capped = deps.tally.overCap(backend, deps.now());
+    if (capped !== null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the spend limit is reached." };
+    let result;
+    try {
+      result = await deps.send(scoreRequest(view, candidates));
+    } catch {
+      return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the request failed." };
+    }
+    if (!result.ok) return { ranked: fixed, source: "fixed", by: ` It kept the usual order, because ${backend.label} answered with ${result.failure.kind}.` };
+    deps.tally.record(backend, result.usage, deps.now());
+    return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.` };
+  }
+  async function review(view, trigger, turn, mine) {
+    const candidates = candidateAims(view);
+    aims = inFixedOrder(candidates);
+    const done = await rank2(view, candidates);
+    if (mine !== generation) return;
+    aims = done.ranked;
+    last = { trigger, turn, source: done.source };
+    const names = done.ranked.map((aim) => aim.label).join(", ");
+    deps.log(`Squire looked over its aims ${TRIGGER_TEXT[trigger]}: ${names === "" ? "none apply" : names}.${done.by}`);
+  }
+  return {
+    observe(view) {
+      const player = view.player();
+      if (player.dead) return;
+      const turn = view.turn();
+      if (memory !== null && turn < memory.reviewTurn) reset();
+      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn });
+      memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? memory?.reviewTurn ?? turn : turn };
+      if (trigger === null) return;
+      if (trigger === "town") tripGold = player.gold;
+      inFlight = review(view, trigger, turn, generation).catch((error) => {
+        deps.log(`Squire couldn't look over its aims: ${String(error)}`);
+      });
+    },
+    ranked: () => aims,
+    last: () => last,
+    tripAllowed: (gold) => tripGold === null || gold >= tripGold * TRIP_GOLD_GROWTH,
+    reset,
+    settled: () => inFlight
   };
 }
 
@@ -3798,9 +4142,9 @@ function sentence(event, decision2, vars) {
       return `${Foe} brought ${who}${low} ${place}${chose}; next time leave or escape sooner against it.`;
     }
     case "big-hit": {
-      const how = vars.melee === true ? vars.closing === true ? " while it closed to melee" : " in melee" : " from range";
+      const how2 = vars.melee === true ? vars.closing === true ? " while it closed to melee" : " in melee" : " from range";
       const advice = vars.melee === true ? `prefer range or avoid it below ${String(damage * 2)} HP` : `keep out of its line of sight below ${String(damage * 2)} HP`;
-      return `${Foe} hit ${who} for ${String(damage)}${how}${hp}; ${advice}.`;
+      return `${Foe} hit ${who} for ${String(damage)}${how2}${hp}; ${advice}.`;
     }
     case "disabled": {
       const verbs = { paralyzed: "paralyzed", confused: "confused", blind: "blinded", afraid: "frightened" };
@@ -5154,6 +5498,13 @@ function createRuntime(host, options = {}) {
       for (const l of chronicleListeners) l(line);
     }
   });
+  const strategy = createStrategy({
+    backend: () => backendFor(config),
+    send: (request2) => self.send(request2),
+    tally,
+    now,
+    log: (message) => host.log(message)
+  });
   const self = {
     config: () => config,
     saveConfig(next) {
@@ -5252,6 +5603,7 @@ function createRuntime(host, options = {}) {
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
+        if (brain !== null) strategy.observe(view);
         const command = chosen(view, act);
         if (command !== null) ownCommandAt = Date.now();
         return command;
@@ -5273,6 +5625,7 @@ function createRuntime(host, options = {}) {
       journal.observe(view);
     },
     journal: () => journal,
+    strategy: () => strategy,
     async lastSummary() {
       if (summary !== null) return summary;
       const stored = await store.get(`squire/reports/${character.runId}`);
@@ -5341,7 +5694,8 @@ function createRuntime(host, options = {}) {
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
-        calibrate: (probs) => journal.calibrate(probs)
+        calibrate: (probs) => journal.calibrate(probs),
+        strategy: () => ({ aims: strategy.ranked(), tripAllowed: (gold) => strategy.tripAllowed(gold) })
       }),
       tally,
       send: (request2) => self.send(request2),
@@ -5419,6 +5773,7 @@ function createRuntime(host, options = {}) {
     void finishRun(report);
   });
   async function finishRun(report) {
+    strategy.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
@@ -6125,12 +6480,36 @@ function entryRow(entry, lessons) {
   );
 }
 
+// src/strategy/panel.ts
+var AIMS_HEADING = "Aims";
+var AIMS_EMPTY = "No aims yet. Squire reviews them at each new level.";
+function feet(level) {
+  return `${String(level * 50)} ft`;
+}
+function how(aim, state) {
+  switch (aim.how) {
+    case "save":
+      return affordable(aim, state.gold) ? `buy for ${String(aim.price)} gold` : `save ${String(aim.price)} gold (have ${String(state.gold)})`;
+    case "hunt":
+      return "hunt in the dungeon";
+    case "try":
+      return "try what is in the pack";
+    case "dive":
+      return `reach ${feet(aim.depth ?? 0)} (now ${feet(state.depth)})`;
+  }
+}
+function aimLines(aims, state) {
+  if (aims.length === 0) return [AIMS_EMPTY];
+  return aims.map((aim, i) => `${String(i + 1)}. ${aim.label.charAt(0).toUpperCase()}${aim.label.slice(1)}: ${how(aim, state)}`);
+}
+
 // src/ui/dashboard.ts
 function mountDashboard(body2, rt) {
   const stats = h("div");
   const chart = h("canvas", { width: "600", height: "140" });
   const recent = h("div");
   const chronicle = h("div");
+  const aimsBox = h("div");
   const rows = [];
   function drawStats() {
     const t = rt.tally().session();
@@ -6193,8 +6572,14 @@ function mountDashboard(body2, rt) {
     const lines2 = rt.journal().chronicle();
     fill(chronicle, lines2.length === 0 ? h("p", { class: "muted" }, "Notable moments land here.") : null, ...lines2.slice(-15).reverse().map((l) => h("div", { class: "entry" }, l)));
   }
+  function drawAims() {
+    const player = rt.decisionView()?.player();
+    const lines2 = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
+    fill(aimsBox, ...lines2.map((l) => h("div", { class: "entry" }, l)));
+  }
   function drawAll() {
     drawStats();
+    drawAims();
     drawChart();
     drawRecent();
     drawChronicle();
@@ -6218,8 +6603,11 @@ function mountDashboard(body2, rt) {
     drawAll();
   });
   const offChronicle = rt.onChronicle(() => drawChronicle());
-  const timer = setInterval(drawStats, 1e3);
-  body2.append(h("h3", {}, "Now"), stats, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
+  const timer = setInterval(() => {
+    drawStats();
+    drawAims();
+  }, 1e3);
+  body2.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
   drawAll();
   return () => {
     offDecision();

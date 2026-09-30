@@ -45,6 +45,7 @@ import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 import { assessThreat, bestBallAim, clearShot, inspecting, pickAttackSpell, spellInfoOf, threatIndex, THREAT_BANDS, BAND_RISK, type ThreatBand } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
+import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -152,6 +153,8 @@ export interface Offer {
   readonly risk: number;
   /** Upkeep that is safe to do without asking the model. */
   readonly routine?: true;
+  /** The ranked aim this offer serves, if any. */
+  readonly aim?: AimTag;
 }
 
 /** How the persona bent one decision, kept for the decision log. */
@@ -189,6 +192,8 @@ export interface GoalDigest {
 
 export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
+  /** The ranked aims and town-trip gate. Without it no aim steers anything. */
+  readonly strategy?: () => Steering;
   readonly terrain: Terrain;
   readonly log: (message: string) => void;
   /**
@@ -1052,7 +1057,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk: Record<string, number> = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const floor = applySafetyFloor(blended, risk, riskCeiling(persona), persona.quirks.deathwish.on);
+    const nudged = nudgeAims(blended, digest.offers, persona.sliders.ambition, riskCeiling(persona));
+    const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
@@ -1094,7 +1100,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       widenNext = false;
       const recalling = recallPending(player, recallRead, turn);
       const usable = (offer: Offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
-      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      const offered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       let offers = offered.filter(usable);
       const listed = new Set(offers.map((o) => o.goal));
       const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true)
@@ -1110,6 +1117,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
 
+      const aimList = options.strategy?.().aims ?? [];
+      const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`
       const criteria: Record<string, string | null> = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
       criteria["none_of_these"] = NONE_OF_THESE;
@@ -1169,6 +1178,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
             status: statusOf(view, canRead(view)),
             ...(lastOutcome === null ? {} : { last: lastOutcome }),
+            ...(aimNote === null ? {} : { aims: aimNote }),
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
             ...swarmNote(seen),
             ...lessonsFor(view),

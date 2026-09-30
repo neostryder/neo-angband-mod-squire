@@ -7,6 +7,7 @@
 
 import type { Runtime } from "../runtime.js";
 import { fill, h } from "./dom.js";
+import { AIMS_HEADING, aimLines } from "../strategy/panel.js";
 
 interface Row {
   readonly turn: number;
@@ -20,6 +21,7 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
   const chart = h("canvas", { width: "600", height: "140" });
   const recent = h("div");
   const chronicle = h("div");
+  const aimsBox = h("div");
   const rows: Row[] = [];
 
   function drawStats(): void {
@@ -90,8 +92,15 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
     fill(chronicle, lines.length === 0 ? h("p", { class: "muted" }, "Notable moments land here.") : null, ...lines.slice(-15).reverse().map((l) => h("div", { class: "entry" }, l)));
   }
 
+  function drawAims(): void {
+    const player = rt.decisionView()?.player();
+    const lines = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
+    fill(aimsBox, ...lines.map((l) => h("div", { class: "entry" }, l)));
+  }
+
   function drawAll(): void {
     drawStats();
+    drawAims();
     drawChart();
     drawRecent();
     drawChronicle();
@@ -121,9 +130,12 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
   });
   const offChronicle = rt.onChronicle(() => drawChronicle());
   /* The brain's state changes between decisions too: waiting, stopped. */
-  const timer = setInterval(drawStats, 1000);
+  const timer = setInterval(() => {
+    drawStats();
+    drawAims();
+  }, 1000);
 
-  body.append(h("h3", {}, "Now"), stats, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
+  body.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
   drawAll();
   return () => {
     offDecision();

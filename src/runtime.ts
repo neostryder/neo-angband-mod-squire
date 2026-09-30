@@ -14,6 +14,7 @@ import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
+import { createStrategy, type Strategy } from "./strategy/review.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
 import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
@@ -151,6 +152,8 @@ export interface Runtime {
   /** Record what changed since the last look at the game. */
   observe(view: AgentView): void;
   journal(): Journal;
+  /** The aims Squire reviews above its errands. Empty until the first review. */
+  strategy(): Strategy;
   /** The report for the run that ended on this page, or the last one stored. */
   lastSummary(): Promise<RunSummary | null>;
   onChronicle(listener: (line: string) => void): () => void;
@@ -227,6 +230,14 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     onChronicle: (line) => {
       for (const l of chronicleListeners) l(line);
     },
+  });
+
+  const strategy = createStrategy({
+    backend: () => backendFor(config),
+    send: (request) => self.send(request),
+    tally,
+    now,
+    log: (message) => host.log(message),
   });
 
   const self: Runtime = {
@@ -333,6 +344,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
+        if (brain !== null) strategy.observe(view);
         const command = chosen(view, act);
         if (command !== null) ownCommandAt = Date.now();
         return command;
@@ -354,6 +366,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       journal.observe(view);
     },
     journal: () => journal,
+    strategy: () => strategy,
     async lastSummary() {
       if (summary !== null) return summary;
       const stored = await store.get(`squire/reports/${character.runId}`);
@@ -418,6 +431,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lessons: (view) => journal.lessonLines(view),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
+        strategy: () => ({ aims: strategy.ranked(), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
       }),
       tally,
       send: (request) => self.send(request),
@@ -504,6 +518,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   });
 
   async function finishRun(report: RunReportLike): Promise<void> {
+    strategy.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
