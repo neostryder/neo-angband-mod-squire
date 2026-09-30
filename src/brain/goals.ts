@@ -870,7 +870,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   if (hasFloorObject(view, at) && !full) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
-  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && (reachableFrontier(view, terrain) || townNeedsStairs)) {
+  /* Town explore only looks for the way down, so with a reachable staircase it has nothing to walk to. */
+  const townStairsReached = player.depth === 0 && !townNeedsStairs && reachableStairs(view, terrain);
+  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (reachableFrontier(view, terrain) || townNeedsStairs)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
@@ -1020,6 +1022,18 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       return command;
     };
     return { ...plan, step, settle } as Plan;
+  }
+
+  /** The dashboard reason for handing back with nothing to offer. */
+  function nothingToDo(v: AgentView, tried: readonly Goal[]): string {
+    if (tried.length > 0) {
+      const wait = refused.has("wait") ? "the game refused to let it wait a turn here" : stalled.has("wait") ? "waiting a turn passed no game time" : "waiting a turn is not safe here";
+      return `Squire has nothing left to try here: ${tried.join(", ")} came to nothing this turn, and ${wait}.`;
+    }
+    if (knownDownStairs(v, terrain).length > 0 && !reachableStairs(v, terrain)) {
+      return "Squire can see nothing to do here: a down staircase is known, but no remembered ground leads to it, and nothing unexplored can be reached.";
+    }
+    return "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down.";
   }
 
   /** The cause of a refusal, when the view shows one. */
@@ -1342,7 +1356,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "wait":
         return once("wait a turn", view, (ctx) => {
           const incoming = damageFor(situationNow(ctx.view), ctx.view.player().grid, 2, terrain);
-          return incoming.damage === 0 && incoming.status === 0 ? ctx.act.hold() : null;
+          if (incoming.damage !== 0 || incoming.status !== 0) return null;
+          /* Holding on a shop entrance opens the shop instead of passing a turn, and a
+           * rest of one turn repeats the last rest count, which may be none. */
+          const here = ctx.view.player().grid;
+          return terrain.isShopEntrance(ctx.view.cell(here.x, here.y)?.feat ?? -1) ? ctx.act.rest(2) : ctx.act.hold();
         });
       case "study": {
         const study = studyable(view, triedStudies);
@@ -1613,12 +1631,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
-      if (offers.length === 0 && offered.length > 0 && (!recalling || journey.safeDelay(view)) && damageFor(s, player.grid, 2, terrain).damage === 0 && damageFor(s).status === 0 && !stalled.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
+      if (offers.length === 0 && offered.length > 0 && (!recalling || journey.safeDelay(view)) && damageFor(s, player.grid, 2, terrain).damage === 0 && damageFor(s).status === 0 && !stalled.has("wait") && !refused.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
-        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
-        return { handBack: journey.blocked(view) ?? "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
+        const tried = offered.map((o) => o.goal);
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
+        const handBack = journey.blocked(view) ?? nothingToDo(view, tried);
+        return { handBack, context: { depth: player.depth, offers: [], newCreatures: 0, reflex: "nothing to offer" } };
       }
 
       const aimList = options.strategy?.().aims ?? [];

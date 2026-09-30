@@ -21,6 +21,7 @@
  *   `#`  wall the character remembers
  *   `.`  floor the character remembers
  *   ` `  a grid the character has never seen
+ *   `,`  floor the character has never seen, which `reveal` turns into remembered floor
  *   `@`  the character, standing on floor
  *   `+`  a closed door the character remembers
  *   `/`  an open door the character remembers
@@ -98,6 +99,8 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.WALL, passable: false, known: true, objectCount: 0 };
     case " ":
       return { feat: FEAT.WALL, passable: false, known: false, objectCount: 0 };
+    case ",":
+      return { feat: FEAT.FLOOR, passable: true, known: false, objectCount: 0 };
     case "+":
       return { feat: FEAT.DOOR_CLOSED, passable: false, known: true, objectCount: 0 };
     case "/":

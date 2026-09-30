@@ -69,8 +69,8 @@ export interface Reflex<C> {
 
 /** The game-specific half of the brain: what to ask, and what an answer means. */
 export interface Planner<C> {
-  /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back. */
-  ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string };
+  /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back, with the context to log it under when the planner has one. */
+  ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string; readonly context?: C };
   /** Turn the answers into a plan. */
   choose(answers: Readonly<Record<string, Answer>>, context: C, view: AgentView): Choice;
   /** A reason to drop the running plan and decide again, or null to keep going. */
@@ -250,7 +250,26 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
 
     const question = planner.ask(view);
-    if ("handBack" in question) return stopWith(question.handBack);
+    if ("handBack" in question) {
+      /* A hand-back with no decision record looks, in the log, like Squire still holding the keyboard with nothing to do. */
+      if (question.context !== undefined) {
+        deps.onDecision?.({
+          token: deps.token(),
+          backend: backend.label,
+          request: { state: {}, questions: {} },
+          context: question.context,
+          answers: {},
+          usage: { inputTokens: 0, outputTokens: 0, estimated: false },
+          model: null,
+          latencyMs: 0,
+          outcome: `hand back: ${question.handBack}`,
+          reflex: "nothing to offer",
+        });
+        const hp = deps.gauge?.(view).hp ?? null;
+        deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+      }
+      return stopWith(question.handBack);
+    }
     if ("reflex" in question) {
       deps.onDecision?.({
         token: deps.token(),

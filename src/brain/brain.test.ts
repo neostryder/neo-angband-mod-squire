@@ -256,6 +256,28 @@ describe("brain", () => {
     expect(r.tick()).toBeNull();
     expect(r.brain.stoppedBecause()).toBe("Nothing to do here.");
   });
+
+  it("logs a hand-back with nothing to offer as a decision, so the stop shows in the decision log", () => {
+    const outcomes: string[] = [];
+    const ends: PlanEnd[] = [];
+    const brain = createBrain<null>({
+      backend: JEV,
+      planner: { ask: () => ({ handBack: "Squire has nothing left to try here.", context: null }), choose: () => ({ handBack: "" }), trigger: () => null },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => { throw new Error("a hand-back sends nothing"); },
+      token: () => ({ epoch: 1, revision: 1 }),
+      now: () => 0,
+      log: () => {},
+      status: () => {},
+      onDecision: (record) => outcomes.push(`${record.reflex ?? "asked"}: ${record.outcome}`),
+      onPlanEnd: (end) => ends.push(end),
+    });
+    expect(brain.controller(view, act)).toBeNull();
+    expect(brain.state()).toBe("stopped");
+    expect(brain.stoppedBecause()).toBe("Squire has nothing left to try here.");
+    expect(outcomes).toEqual(["nothing to offer: hand back: Squire has nothing left to try here."]);
+    expect(ends).toMatchObject([{ stop: "handed back", reason: "Squire has nothing left to try here." }]);
+  });
 });
 
 describe("reflexes", () => {

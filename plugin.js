@@ -530,6 +530,14 @@ function inCorridor(ctx) {
 }
 
 // src/missions/autoexplore.ts
+function downStairsReachable(ctx) {
+  const stairs = knownDownStairs(ctx.view, ctx.terrain);
+  const at = ctx.view.player().grid;
+  if (stairs.some((grid) => key(grid) === key(at))) return true;
+  if (stairs.length === 0) return false;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(ctx.view, ctx.terrain, grid) });
+  return Number.isFinite(field.distance(at));
+}
 function autoexplore(options = {}) {
   let watcher = null;
   let engineTurn = null;
@@ -578,7 +586,7 @@ function autoexplore(options = {}) {
       if (ctx.progress.idle >= ctx.cfg.idleSteps) {
         return stop("blocked", "The character has stopped making progress.");
       }
-      if (options.findTownStairs === true && knownDownStairs(ctx.view, ctx.terrain).length > 0) {
+      if (options.findTownStairs === true && downStairsReachable(ctx)) {
         return stop("done", "This floor is walked out.");
       }
       let goals = frontiers(ctx.view, ctx.terrain);
@@ -1081,7 +1089,25 @@ function createBrain(deps) {
     const capped = tally.overCap(backend, deps.now());
     if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
     const question = planner.ask(view);
-    if ("handBack" in question) return stopWith(question.handBack);
+    if ("handBack" in question) {
+      if (question.context !== void 0) {
+        deps.onDecision?.({
+          token: deps.token(),
+          backend: backend.label,
+          request: { state: {}, questions: {} },
+          context: question.context,
+          answers: {},
+          usage: { inputTokens: 0, outputTokens: 0, estimated: false },
+          model: null,
+          latencyMs: 0,
+          outcome: `hand back: ${question.handBack}`,
+          reflex: "nothing to offer"
+        });
+        const hp = deps.gauge?.(view).hp ?? null;
+        deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+      }
+      return stopWith(question.handBack);
+    }
     if ("reflex" in question) {
       deps.onDecision?.({
         token: deps.token(),
@@ -4354,7 +4380,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if (hasFloorObject(view, at) && !full) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
-  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && (reachableFrontier(view, terrain) || townNeedsStairs)) {
+  const townStairsReached = player.depth === 0 && !townNeedsStairs && reachableStairs(view, terrain);
+  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (reachableFrontier(view, terrain) || townNeedsStairs)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
@@ -4469,6 +4496,16 @@ function createGoalPlanner(options) {
       return command;
     };
     return { ...plan, step, settle: settle2 };
+  }
+  function nothingToDo(v, tried) {
+    if (tried.length > 0) {
+      const wait = refused.has("wait") ? "the game refused to let it wait a turn here" : stalled.has("wait") ? "waiting a turn passed no game time" : "waiting a turn is not safe here";
+      return `Squire has nothing left to try here: ${tried.join(", ")} came to nothing this turn, and ${wait}.`;
+    }
+    if (knownDownStairs(v, terrain).length > 0 && !reachableStairs(v, terrain)) {
+      return "Squire can see nothing to do here: a down staircase is known, but no remembered ground leads to it, and nothing unexplored can be reached.";
+    }
+    return "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down.";
   }
   function refusalOf(goal, v) {
     const p = v.player();
@@ -4739,7 +4776,9 @@ function createGoalPlanner(options) {
       case "wait":
         return once("wait a turn", view, (ctx) => {
           const incoming = damageFor(situationNow(ctx.view), ctx.view.player().grid, 2, terrain);
-          return incoming.damage === 0 && incoming.status === 0 ? ctx.act.hold() : null;
+          if (incoming.damage !== 0 || incoming.status !== 0) return null;
+          const here = ctx.view.player().grid;
+          return terrain.isShopEntrance(ctx.view.cell(here.x, here.y)?.feat ?? -1) ? ctx.act.rest(2) : ctx.act.hold();
         });
       case "study": {
         const study = studyable(view, triedStudies);
@@ -4979,12 +5018,14 @@ function createGoalPlanner(options) {
       const steered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
-      if (offers.length === 0 && offered.length > 0 && (!recalling || journey.safeDelay(view)) && damageFor(s, player.grid, 2, terrain).damage === 0 && damageFor(s).status === 0 && !stalled.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
+      if (offers.length === 0 && offered.length > 0 && (!recalling || journey.safeDelay(view)) && damageFor(s, player.grid, 2, terrain).damage === 0 && damageFor(s).status === 0 && !stalled.has("wait") && !refused.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
-        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
-        return { handBack: journey.blocked(view) ?? "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
+        const tried = offered.map((o) => o.goal);
+        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
+        const handBack = journey.blocked(view) ?? nothingToDo(view, tried);
+        return { handBack, context: { depth: player.depth, offers: [], newCreatures: 0, reflex: "nothing to offer" } };
       }
       const aimList = options.strategy?.().aims ?? [];
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;

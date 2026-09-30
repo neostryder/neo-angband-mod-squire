@@ -386,6 +386,43 @@ describe("goal planner", () => {
     expect(p.ask(w.view)).toHaveProperty("handBack");
   });
 
+  it("waits a turn when nothing offered can act, then hands back with the reason and a record once the wait is refused too", () => {
+    const w = suppliedWorld({ map: ["#####", "#.@.#", "#####"], player: { hp: 20, maxHp: 40, level: 5, maxLevel: 5 } });
+    const { p, logged } = planner(w);
+    const run = (goal: string) => {
+      const q = asked(p.ask(w.view));
+      expect(q.context.offers.map((o) => o.goal)).toEqual([goal]);
+      const choice = p.choose(pick(goal), q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected a plan");
+      expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+      expect(choice.plan.step(w.view, w.act)).toBeNull();
+    };
+    run("rest");
+    run("wait");
+    const last = p.ask(w.view);
+    expect(last).toMatchObject({
+      handBack: "Squire has nothing left to try here: rest came to nothing this turn, and the game refused to let it wait a turn here.",
+      context: { offers: [], reflex: "nothing to offer" },
+    });
+    expect(logged.at(-1)).toContain("offered: rest");
+  });
+
+  it("names a known staircase that no remembered ground reaches when it hands back", () => {
+    const w = suppliedWorld({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 0, maxDepth: 0, gold: 0 } });
+    expect(planner(w).p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("a down staircase is known, but no remembered ground leads to it") });
+  });
+
+  it("waits on a shop entrance by resting, since holding there opens the shop", () => {
+    const w = world({ map: ["#####", "#G..#", "#####"], player: { depth: 0, maxDepth: 0, gold: 0, recall: 12 } as never });
+    w.moveTo({ x: 1, y: 1 });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((o) => o.goal)).toContain("wait");
+    const choice = p.choose(pick("wait"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "rest", args: { count: 2 } });
+  });
+
   it("turns an explore answer into a plan that walks", () => {
     const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);

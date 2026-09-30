@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
-import { suppliedWorld, world } from "../harness.js";
+import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
+import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { newProgress } from "../progress.js";
 import { createGoalPlanner, type Goal, type Offer } from "../brain/goals.js";
+import { candidateAims } from "./aims.js";
 import { createJourney } from "./journey.js";
 
 const ROOM = ["########", "#<@...>#", "########"];
@@ -260,5 +261,84 @@ describe("bounded exploration and earning", () => {
     const journey = createJourney(w.terrain);
     goals(w, journey);
     expect(journey.guarded(null, { label: "fallback", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+  });
+});
+
+/* The soak's town: a known down staircase across ground the character has not seen yet, as the town is at night. */
+const DARK_TOWN = ["############", "#G.A.,,,...#", "#..@.,,,.>.#", "#U.W.,,,...#", "############"];
+/* A lit town with the staircase in reach but unexplored ground left elsewhere. */
+const LIT_TOWN = ["############", "#G.A.....>.#", "#..@.......#", "#U.W.......#", "#,,,,......#", "############"];
+const WARRIOR = { cls: "Warrior", depth: 0, maxDepth: 0, level: 1, maxLevel: 1, hp: 20, maxHp: 20, exp: 0 };
+const WARRIOR_PACK = ["2 Rations of Food", "2 Potions of Cure Light Wounds", "a Potion of Berserk Strength", "2 Scrolls of Phase Door", "a Scroll of Word of Recall", "2 Wooden Torches (5000 turns)"];
+const WORN = ["a Wooden Torch (5000 turns)", "a Tulwar (2d4)", "Soft Leather Armour [8]"];
+const KEYPAD: Readonly<Record<number, readonly [number, number]>> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
+
+function aimedPlanner(w: ReturnType<typeof world>) {
+  return createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, strategy: () => ({ aims: candidateAims(w.view), tripAllowed: () => true }) });
+}
+
+/** Play the town the way the soak did: shop while a shop is offered, otherwise take the first offer, and light the grids around each step. */
+function leaveTown(w: ReturnType<typeof world>, limit = 30): { readonly descend: Offer | null; readonly trail: string[]; readonly handBack: string | null } {
+  const p = aimedPlanner(w);
+  const trail: string[] = [];
+  for (let decision = 0; decision < limit; decision += 1) {
+    const q = p.ask(w.view);
+    if ("handBack" in q) return { descend: null, trail, handBack: q.handBack };
+    const goals = q.context.offers.map((offer) => offer.goal);
+    trail.push(goals.join(","));
+    const descend = q.context.offers.find((offer) => offer.goal === "descend");
+    if (descend !== undefined) return { descend, trail, handBack: null };
+    const pick = goals.includes("shop") ? "shop" : goals[0]!;
+    const choice = p.choose({ goal: { type: "choice", choice: pick, confidence: 1, probabilities: { [pick]: 1 } } }, q.context, w.view);
+    if (!("plan" in choice)) return { descend: null, trail, handBack: choice.handBack };
+    for (let step = 0; step < 60; step += 1) {
+      const command = choice.plan.step(w.view, w.act);
+      if (command === null) break;
+      const dir = command.code === "walk" ? KEYPAD[(command as { dir?: number }).dir ?? 0] : undefined;
+      if (dir !== undefined) {
+        const at = { x: w.view.player().grid.x + dir[0], y: w.view.player().grid.y + dir[1] };
+        w.moveTo(at);
+        for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) w.reveal({ x: at.x + dx, y: at.y + dy });
+      }
+      w.advance(10);
+    }
+  }
+  return { descend: null, trail, handBack: null };
+}
+
+describe("leaving town ready", () => {
+  it("walks the recorded level 1 Warrior across dark town ground to the known staircase and offers the descent", () => {
+    const w = world({ map: DARK_TOWN, player: { ...WARRIOR, gold: 0 }, pack: WARRIOR_PACK, worn: WORN });
+    const out = leaveTown(w);
+    expect(out.handBack).toBeNull();
+    expect(out.trail[0]).toBe("explore");
+    expect(out.descend?.criteria).not.toContain("Earn gold");
+    expect(out.trail.some((goals) => goals.includes("wait"))).toBe(false);
+  });
+
+  it("offers the recorded Warrior the stairs, not a town walk that stops at once, after shopping with gold left", () => {
+    const w = world({ map: LIT_TOWN, player: { ...WARRIOR, gold: 30 }, pack: WARRIOR_PACK, worn: WORN });
+    const out = leaveTown(w);
+    expect(out.trail[0]).toContain("shop");
+    expect(out.descend).not.toBeNull();
+    expect(out.trail.at(-1)?.split(",")).not.toContain("explore");
+  });
+
+  it("takes the recorded Rogue down after it bought Cure Light Wounds and Phase Door", () => {
+    const w = world({ map: DARK_TOWN, player: { cls: "Rogue", depth: 0, maxDepth: 0, level: 1, maxLevel: 1, hp: 14, maxHp: 14, exp: 0, gold: 20 }, pack: ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door", "3 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: WORN });
+    const out = leaveTown(w);
+    expect(out.handBack).toBeNull();
+    expect(out.trail[0]).toContain("shop");
+    expect(out.descend?.criteria).not.toContain("Earn gold");
+  });
+
+  it("still goes down to earn when the town cannot sell it the missing healing it wants", () => {
+    const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 8 },
+    ] };
+    const w = world({ map: DARK_TOWN, player: { ...WARRIOR, gold: 5 }, pack: ["2 Rations of Food", "2 Scrolls of Phase Door", "2 Wooden Torches (5000 turns)"], worn: WORN, stores: [alchemy] });
+    const out = leaveTown(w);
+    expect(out.handBack).toBeNull();
+    expect(out.descend?.criteria).toContain("Earn gold on dungeon level 1 for the missing two healing potions");
   });
 });

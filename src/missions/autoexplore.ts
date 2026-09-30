@@ -31,6 +31,17 @@ import { frontiers, isRoutable, knownDownStairs, standingOnHarm } from "../map.j
 import { retreatFrom, stepIntoDark, travelTo } from "../travel.js";
 import { engineTravel } from "../travel-engine.js";
 import { key } from "../grid.js";
+import { flowFrom } from "../flow.js";
+
+/** Whether a remembered down staircase can be walked to over remembered ground. */
+function downStairsReachable(ctx: SquireContext): boolean {
+  const stairs = knownDownStairs(ctx.view, ctx.terrain);
+  const at = ctx.view.player().grid;
+  if (stairs.some((grid) => key(grid) === key(at))) return true;
+  if (stairs.length === 0) return false;
+  const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(ctx.view, ctx.terrain, grid) });
+  return Number.isFinite(field.distance(at));
+}
 
 /** How the exploring errand starts. */
 export interface AutoexploreOptions {
@@ -120,7 +131,9 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
         return stop("blocked", "The character has stopped making progress.");
       }
 
-      if (options.findTownStairs === true && knownDownStairs(ctx.view, ctx.terrain).length > 0) {
+      /* A staircase seen across dark town ground is not yet a way down: the
+       * ground between has to be walked before any route to it exists. */
+      if (options.findTownStairs === true && downStairsReachable(ctx)) {
         return stop("done", "This floor is walked out.");
       }
 
