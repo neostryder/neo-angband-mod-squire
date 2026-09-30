@@ -5,7 +5,7 @@
  * copied into a fresh value with its own bounds.
  */
 
-import { MAX_TEXT, SOURCES, type Frequency, type Instruction, type InstructionKind, type InstructionSource, type InstructionState, type OrderAim, type ResponseKind, type Sorted, type TriggerKind } from "./types.js";
+import { MAX_TEXT, MAX_VIEWER, SOURCES, type Frequency, type Instruction, type InstructionKind, type InstructionSource, type InstructionState, type OrderAim, type ResponseKind, type Sorted, type TriggerKind } from "./types.js";
 
 const STATES: readonly InstructionState[] = ["following", "grudgingly", "ignoring", "forgotten", "done", "abandoned"];
 const AIMS: readonly string[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth", "item", "gold"];
@@ -63,6 +63,7 @@ export function readInstruction(value: unknown): Instruction | null {
     text: r["text"].slice(0, MAX_TEXT),
     kind,
     source: oneOf<InstructionSource>(r["source"], SOURCES, "panel"),
+    ...(typeof r["viewer"] === "string" && r["viewer"].trim() !== "" ? { viewer: r["viewer"].trim().slice(0, MAX_VIEWER) } : {}),
     sorted: readSorted(r["sorted"]),
     state: oneOf<InstructionState>(r["state"], STATES, "following"),
     memory: num(r["memory"], 0, 1, 1),

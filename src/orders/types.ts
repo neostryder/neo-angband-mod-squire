@@ -61,6 +61,8 @@ export interface Instruction {
   readonly text: string;
   readonly kind: InstructionKind;
   readonly source: InstructionSource;
+  /** The chat viewer who gave it, for an instruction from a channel. */
+  readonly viewer?: string;
   readonly sorted: Sorted;
   readonly state: InstructionState;
   /** 0 to 1: how firmly the instruction is remembered. */
@@ -82,6 +84,9 @@ export interface Instruction {
 
 /** Longest instruction kept, in characters. Longer text is cut, not refused. */
 export const MAX_TEXT = 2000;
+
+/** Longest viewer name kept, in characters. */
+export const MAX_VIEWER = 40;
 
 /** The words a state is shown with. */
 export const STATE_LABELS: Readonly<Record<InstructionState, string>> = {

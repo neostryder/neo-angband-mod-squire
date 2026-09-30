@@ -4329,6 +4329,7 @@ async function sortInstruction(text, deps) {
 var SOURCES = ["panel", "hotkey", "creed", "channel"];
 var LIVE_STATES = ["following", "grudgingly", "ignoring"];
 var MAX_TEXT = 2e3;
+var MAX_VIEWER = 40;
 var STATE_LABELS = {
   following: "following",
   grudgingly: "grudgingly",
@@ -4555,6 +4556,7 @@ function createOrders(deps) {
       }
       const code = sortByCode(trimmed);
       const kind = options.kind ?? code.kind;
+      const viewer = options.viewer?.trim().slice(0, MAX_VIEWER) ?? "";
       counter += 1;
       const id = `i${String(counter)}`;
       if (options.kind !== void 0) explicit.add(id);
@@ -4563,6 +4565,7 @@ function createOrders(deps) {
         text: trimmed,
         kind,
         source,
+        ...viewer === "" ? {} : { viewer },
         sorted: code.sorted,
         state: "following",
         memory: 1,
@@ -4575,7 +4578,7 @@ function createOrders(deps) {
         disliked: false
       }, null);
       items = [...items, { ...made, disliked: made.state !== "following" }];
-      say(`New ${noun(kind)}: ${short(trimmed)}`, false);
+      say(`New ${noun(kind)}${viewer === "" ? "" : ` from viewer ${viewer}`}: ${short(trimmed)}`, false);
       persist();
       chain((mine) => refine(id, trimmed, mine));
       chain((mine) => prune(mine));
@@ -4746,6 +4749,76 @@ function routeHint(i, p, gold) {
   return parts.length === 0 ? "" : ` ${parts.join(" ")}`;
 }
 
+// src/orders/channel.ts
+var CHANNEL_POLL_MS = 5e3;
+var CHANNEL_RETRY_MS = 3e4;
+var CHANNEL_MAX_TEXT = 300;
+var MAX_PER_POLL = 20;
+var TIMEOUT_MS = 4e3;
+function clean(value, max) {
+  if (typeof value !== "string") return "";
+  return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
+}
+function readChannelOrders(body2) {
+  let parsed;
+  try {
+    parsed = JSON.parse(body2);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out = [];
+  for (const raw of parsed.slice(0, MAX_PER_POLL)) {
+    if (raw === null || typeof raw !== "object") continue;
+    const r = raw;
+    const text = clean(r["text"], CHANNEL_MAX_TEXT);
+    if (text === "") continue;
+    out.push({ text, viewer: clean(r["user"], MAX_VIEWER), platform: clean(r["platform"], 20) });
+  }
+  return out;
+}
+function createChannelPoller(deps) {
+  let dueAt = 0;
+  let inFlight = null;
+  let failing = false;
+  function failed(url, problem) {
+    dueAt = deps.now() + CHANNEL_RETRY_MS;
+    if (failing) return;
+    failing = true;
+    deps.log(`Squire couldn't collect viewer orders from ${url}: ${problem}. It will try again in ${String(CHANNEL_RETRY_MS / 1e3)} seconds.`);
+  }
+  async function collect(net, url) {
+    const reply = await net.request({ url, method: "GET", timeoutMs: TIMEOUT_MS });
+    if (!reply.ok) return failed(url, reply.problem);
+    if (reply.status !== 200) return failed(url, `HTTP ${String(reply.status)}`);
+    const orders = readChannelOrders(reply.body);
+    if (orders === null) return failed(url, "the reply is not a list of orders");
+    if (failing) deps.log("Squire is collecting viewer orders again.");
+    failing = false;
+    for (const order of orders) deps.queue(order);
+  }
+  return {
+    tick() {
+      const url = deps.url().trim();
+      if (url === "" || inFlight !== null || deps.now() < dueAt) return;
+      const net = deps.net();
+      if (net === null) return;
+      dueAt = deps.now() + CHANNEL_POLL_MS;
+      inFlight = collect(net, url).catch((error) => failed(url, error instanceof Error ? error.message : String(error))).finally(() => {
+        inFlight = null;
+      });
+    },
+    settled: () => inFlight ?? Promise.resolve()
+  };
+}
+
+// src/orders/input.ts
+function queueInstruction(orders, text, source, options) {
+  if (!SOURCES.includes(source)) return { ok: false, problem: "Instructions can only come from the panel, the hotkey, a creed file or a channel." };
+  if (typeof text !== "string") return { ok: false, problem: "Write the instruction first." };
+  return orders.give(text, source, options);
+}
+
 // src/orders/read.ts
 var STATES = ["following", "grudgingly", "ignoring", "forgotten", "done", "abandoned"];
 var AIMS = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth", "item", "gold"];
@@ -4794,6 +4867,7 @@ function readInstruction(value) {
     text: r["text"].slice(0, MAX_TEXT),
     kind,
     source: oneOf(r["source"], SOURCES, "panel"),
+    ...typeof r["viewer"] === "string" && r["viewer"].trim() !== "" ? { viewer: r["viewer"].trim().slice(0, MAX_VIEWER) } : {},
     sorted: readSorted(r["sorted"]),
     state: oneOf(r["state"], STATES, "following"),
     memory: num2(r["memory"], 0, 1, 1),
@@ -4998,6 +5072,7 @@ function defaultConfig() {
     setupDone: false,
     spend: { day: "", usd: 0 },
     instructionsKept: DEFAULT_INSTRUCTIONS_KEPT,
+    channelUrl: "",
     lineages: {},
     pendingHeir: null
   };
@@ -5088,6 +5163,7 @@ function readConfig(stored) {
     setupDone: bool(data["setupDone"], false),
     spend: { day: str(spend["day"], "", 10), usd: numberIn(spend["usd"], 0, 1e6, 0) },
     instructionsKept: Math.round(numberIn(data["instructionsKept"], MIN_INSTRUCTIONS_KEPT, MAX_INSTRUCTIONS_KEPT, DEFAULT_INSTRUCTIONS_KEPT)),
+    channelUrl: str(data["channelUrl"], "", 300).trim(),
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
       const heir = rec2(data["pendingHeir"]);
@@ -5750,13 +5826,6 @@ function update(book, key2, sample) {
 }
 function refit(book) {
   return Object.fromEntries(Object.entries(book).map(([key2, entry]) => [key2, entry.kind === "noul" ? { ...entry, fit: fitPlatt(entry.samples) } : { ...entry, temperature: fitTemperature(entry.samples) }]));
-}
-
-// src/orders/input.ts
-function queueInstruction(orders, text, source, options) {
-  if (!SOURCES.includes(source)) return { ok: false, problem: "Instructions can only come from the panel, the hotkey, a creed file or a channel." };
-  if (typeof text !== "string") return { ok: false, problem: "Write the instruction first." };
-  return orders.give(text, source, options);
 }
 
 // src/orders/creed.ts
@@ -6852,6 +6921,7 @@ function createRuntime(host, options = {}) {
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
+    channel.tick();
     const command = controller(view, act);
     if (command !== null) ownCommandAt = Date.now();
     return command;
@@ -6890,6 +6960,16 @@ function createRuntime(host, options = {}) {
     save: (state) => self.saveCharacter({ ...character, orders: state.items })
   });
   orders.load({ items: character.orders });
+  const channel = createChannelPoller({
+    url: () => config.channelUrl,
+    net: () => host.net ?? null,
+    queue: (order) => {
+      const result = queueInstruction(orders, order.text, "channel", order.viewer === "" ? {} : { viewer: order.viewer });
+      if (!result.ok) host.log(`Squire didn't take a viewer's order: ${result.problem}`);
+    },
+    log: (message) => host.log(message),
+    now
+  });
   const self = {
     config: () => config,
     saveConfig(next) {
@@ -6981,6 +7061,7 @@ function createRuntime(host, options = {}) {
         () => picked2 = false
       );
       return (view, act) => {
+        channel.tick();
         if (chosen === null) {
           if (picked2 === null) return null;
           chosen = picked2 ? startBrain(backend, cfg, terrain) ?? errands() : errands();
@@ -7322,8 +7403,14 @@ var RETIRE_LABEL = "Retire";
 var LOAD_CREED_LABEL = "Load creed";
 var SAVE_CREED_LABEL = "Save creed";
 var AUTO_KIND_LABEL = "Let the squire tell";
+var CHANNEL_LABEL = "Viewer orders address";
+var CHANNEL_PLACEHOLDER = "For example: http://127.0.0.1:8765/v1/orders";
+var CHANNEL_HELP = "Squire Link can collect orders your viewers give in Twitch or Discord chat. Enter its orders address here and Squire checks it every few seconds while it plays. Leave it empty to take no orders from chat.";
 function kindLabel(kind) {
   return kind === "order" ? "Order" : "Standing";
+}
+function viewerLabel(i) {
+  return i.viewer === void 0 ? "" : ` from viewer ${i.viewer}`;
 }
 function sortedLine(sorted) {
   const parts = [];
@@ -7551,6 +7638,8 @@ function mountSetup(body2, rt, done) {
   rollOn.addEventListener("change", () => update2({ rollOn: rollOn.value }));
   const knights = h("input", { type: "checkbox", checked: config.knightsLessons.enabled });
   knights.addEventListener("change", () => update2({ knightsLessons: { ...config.knightsLessons, enabled: knights.checked } }));
+  const channelInput = h("input", { type: "text", value: config.channelUrl, placeholder: CHANNEL_PLACEHOLDER });
+  channelInput.addEventListener("change", () => update2({ channelUrl: channelInput.value.trim() }));
   body2.append(
     h("h3", {}, "Pick a brain"),
     brainBox,
@@ -7566,6 +7655,8 @@ function mountSetup(body2, rt, done) {
     h("h3", {}, ORDERS_HEADING),
     h("label", {}, KEPT_LABEL, keptInput(config.instructionsKept, (v) => update2({ instructionsKept: v }))),
     h("p", { class: "muted" }, KEPT_HELP),
+    h("label", {}, CHANNEL_LABEL, channelInput),
+    h("p", { class: "muted" }, CHANNEL_HELP),
     telemetry,
     h("div", {}, h("button", { class: "act", onclick: () => {
       update2({ setupDone: true });
@@ -8342,7 +8433,7 @@ function mountOrders(body2, rt, source = "panel") {
       return h(
         "div",
         { class: "entry" },
-        h("p", {}, h("b", {}, STATE_LABELS[i.state]), ` - ${kindLabel(i.kind)}${i.familyCreed ? " (family creed)" : ""}: ${i.text}`),
+        h("p", {}, h("b", {}, STATE_LABELS[i.state]), ` - ${kindLabel(i.kind)}${viewerLabel(i)}${i.familyCreed ? " (family creed)" : ""}: ${i.text}`),
         h("p", { class: "muted" }, sortedLine(i.sorted)),
         live ? h("button", { class: "act", onclick: () => {
           orders.retire(i.id);

@@ -10,7 +10,7 @@ import { loadCreed, exportCreed } from "../orders/creed.js";
 import { queueInstruction } from "../orders/input.js";
 import {
   AUTO_KIND_LABEL, FAMILY_LABEL, GIVE_LABEL, KIND_ORDER_LABEL, KIND_STANDING_LABEL, LOAD_CREED_LABEL, ORDERS_EMPTY, ORDERS_HEADING, ORDER_PLACEHOLDER, ORDER_PROMPT,
-  RETIRE_LABEL, SAVE_CREED_LABEL, sortedLine, kindLabel,
+  RETIRE_LABEL, SAVE_CREED_LABEL, sortedLine, kindLabel, viewerLabel,
 } from "../orders/panel.js";
 import { isLive, STATE_LABELS, type InstructionKind, type InstructionSource } from "../orders/types.js";
 import { download, fill, h, pickFile } from "./dom.js";
@@ -38,7 +38,7 @@ export function mountOrders(body: HTMLElement, rt: Runtime, source: InstructionS
       return h(
         "div",
         { class: "entry" },
-        h("p", {}, h("b", {}, STATE_LABELS[i.state]), ` - ${kindLabel(i.kind)}${i.familyCreed ? " (family creed)" : ""}: ${i.text}`),
+        h("p", {}, h("b", {}, STATE_LABELS[i.state]), ` - ${kindLabel(i.kind)}${viewerLabel(i)}${i.familyCreed ? " (family creed)" : ""}: ${i.text}`),
         h("p", { class: "muted" }, sortedLine(i.sorted)),
         live ? h("button", { class: "act", onclick: () => { orders.retire(i.id); draw(); } }, RETIRE_LABEL) : null,
       );

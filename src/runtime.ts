@@ -17,6 +17,8 @@ import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
 import { passableAims } from "./strategy/heirs.js";
 import { createOrders, type Orders } from "./orders/book.js";
+import { createChannelPoller } from "./orders/channel.js";
+import { queueInstruction } from "./orders/input.js";
 import { readInstructions } from "./orders/read.js";
 import type { Instruction } from "./orders/types.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
@@ -223,6 +225,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
+    channel.tick();
     const command = controller(view, act);
     if (command !== null) ownCommandAt = Date.now();
     return command;
@@ -263,6 +266,17 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     save: (state) => self.saveCharacter({ ...character, orders: state.items }),
   });
   orders.load({ items: character.orders });
+
+  const channel = createChannelPoller({
+    url: () => config.channelUrl,
+    net: () => host.net ?? null,
+    queue: (order) => {
+      const result = queueInstruction(orders, order.text, "channel", order.viewer === "" ? {} : { viewer: order.viewer });
+      if (!result.ok) host.log(`Squire didn't take a viewer's order: ${result.problem}`);
+    },
+    log: (message) => host.log(message),
+    now,
+  });
 
   const self: Runtime = {
     config: () => config,
@@ -361,6 +375,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         () => (picked = false),
       );
       return (view, act) => {
+        channel.tick();
         if (chosen === null) {
           if (picked === null) return null;
           chosen = picked ? startBrain(backend, cfg, terrain) ?? errands() : errands();

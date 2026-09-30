@@ -3,9 +3,10 @@
  *
  * The panel's Orders box, the command key, a creed file and a chat channel all
  * call this, so an instruction from any of them is sorted, weighed and
- * remembered the same way. A channel adapter, such as the one in the separate
- * squire-link project, calls `queueInstruction(orders, text, "channel")` with a
- * viewer's words. Nothing here reaches the network.
+ * remembered the same way. Viewers' orders, collected from the separate
+ * squire-link project by `channel.ts`, arrive through
+ * `queueInstruction(orders, text, "channel", { viewer })`. Nothing here reaches
+ * the network.
  */
 
 import type { GiveOptions, GiveResult, Orders } from "./book.js";

@@ -17,10 +17,18 @@ export const RETIRE_LABEL = "Retire";
 export const LOAD_CREED_LABEL = "Load creed";
 export const SAVE_CREED_LABEL = "Save creed";
 export const AUTO_KIND_LABEL = "Let the squire tell";
+export const CHANNEL_LABEL = "Viewer orders address";
+export const CHANNEL_PLACEHOLDER = "For example: http://127.0.0.1:8765/v1/orders";
+export const CHANNEL_HELP = "Squire Link can collect orders your viewers give in Twitch or Discord chat. Enter its orders address here and Squire checks it every few seconds while it plays. Leave it empty to take no orders from chat.";
 
 /** What the panel shows in place of a kind. */
 export function kindLabel(kind: Instruction["kind"]): string {
   return kind === "order" ? "Order" : "Standing";
+}
+
+/** Who gave an instruction, when a chat viewer did, as the panel shows it after the kind. */
+export function viewerLabel(i: Pick<Instruction, "viewer">): string {
+  return i.viewer === undefined ? "" : ` from viewer ${i.viewer}`;
 }
 
 /** The sorted form on one line, for the player to check and correct. */
@@ -43,5 +51,5 @@ export function sortedLine(sorted: Sorted): string {
 /** One line per instruction: its state, its words, and what it was sorted into. */
 export function orderLines(items: readonly Instruction[]): string[] {
   if (items.length === 0) return [ORDERS_EMPTY];
-  return items.map((i) => `${STATE_LABELS[i.state]} - ${kindLabel(i.kind)}${i.familyCreed ? " (family creed)" : ""}: ${i.text} [${sortedLine(i.sorted)}]`);
+  return items.map((i) => `${STATE_LABELS[i.state]} - ${kindLabel(i.kind)}${viewerLabel(i)}${i.familyCreed ? " (family creed)" : ""}: ${i.text} [${sortedLine(i.sorted)}]`);
 }

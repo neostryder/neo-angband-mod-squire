@@ -6,7 +6,7 @@
 import type { Runtime } from "../runtime.js";
 import type { BackendChoice, RollOn, SquireConfig } from "../config.js";
 import { LAYA_DEFAULT_URL, MAX_INSTRUCTIONS_KEPT, MIN_INSTRUCTIONS_KEPT, parseAddresses } from "../config.js";
-import { KEPT_HELP, KEPT_LABEL, ORDERS_HEADING } from "../orders/panel.js";
+import { CHANNEL_HELP, CHANNEL_LABEL, CHANNEL_PLACEHOLDER, KEPT_HELP, KEPT_LABEL, ORDERS_HEADING } from "../orders/panel.js";
 import { describeLevel, type ConsentLevel } from "../telemetry/consent.js";
 import { DEFAULT_ENDPOINT, createSender } from "../telemetry/sender.js";
 import { installId } from "../memory/install.js";
@@ -141,6 +141,9 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
   const knights = h("input", { type: "checkbox", checked: config.knightsLessons.enabled });
   knights.addEventListener("change", () => update({ knightsLessons: { ...config.knightsLessons, enabled: knights.checked } }));
 
+  const channelInput = h("input", { type: "text", value: config.channelUrl, placeholder: CHANNEL_PLACEHOLDER });
+  channelInput.addEventListener("change", () => update({ channelUrl: channelInput.value.trim() }));
+
   body.append(
     h("h3", {}, "Pick a brain"),
     brainBox,
@@ -156,6 +159,8 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     h("h3", {}, ORDERS_HEADING),
     h("label", {}, KEPT_LABEL, keptInput(config.instructionsKept, (v) => update({ instructionsKept: v }))),
     h("p", { class: "muted" }, KEPT_HELP),
+    h("label", {}, CHANNEL_LABEL, channelInput),
+    h("p", { class: "muted" }, CHANNEL_HELP),
     telemetry,
     h("div", {}, h("button", { class: "act", onclick: () => { update({ setupDone: true }); done(); } }, "Next: choose a persona")),
   );

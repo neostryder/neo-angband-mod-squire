@@ -58,6 +58,8 @@ export interface SquireConfig {
   readonly spend: { readonly day: string; readonly usd: number };
   /** How many orders and standing instructions the squire holds before it drops one. */
   readonly instructionsKept: number;
+  /** Where to collect viewers' orders from chat, such as Squire Link's /v1/orders. Empty collects none. */
+  readonly channelUrl: string;
   /** Family lines, by name, so an heir inherits across characters. */
   readonly lineages: Readonly<Record<string, Lineage>>;
   /** Set when a Squire character died and roll-on is starting its heir. */
@@ -88,6 +90,7 @@ export function defaultConfig(): SquireConfig {
     setupDone: false,
     spend: { day: "", usd: 0 },
     instructionsKept: DEFAULT_INSTRUCTIONS_KEPT,
+    channelUrl: "",
     lineages: {},
     pendingHeir: null,
   };
@@ -191,6 +194,7 @@ export function readConfig(stored: unknown): SquireConfig {
     setupDone: bool(data["setupDone"], false),
     spend: { day: str(spend["day"], "", 10), usd: numberIn(spend["usd"], 0, 1_000_000, 0) },
     instructionsKept: Math.round(numberIn(data["instructionsKept"], MIN_INSTRUCTIONS_KEPT, MAX_INSTRUCTIONS_KEPT, DEFAULT_INSTRUCTIONS_KEPT)),
+    channelUrl: str(data["channelUrl"], "", 300).trim(),
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
       const heir = rec(data["pendingHeir"]);

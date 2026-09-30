@@ -75,6 +75,10 @@ When a character Squire played dies, wins or retires, the Report tab shows how t
 
 The desktop app is the easiest way to use Squire, because the app sends Squire's requests itself. A game page in a browser can reach Laya on the same computer, but Jev doesn't yet accept requests from web pages, and a page can't reach a server on another computer. [Squire Link](https://github.com/neostryder/squire-link) is a small program that runs on your computer and passes those requests on.
 
+## Orders from viewers
+
+If you stream your game, Squire Link can also read your Twitch chat or a Discord channel and keep the orders viewers give there, such as `!squire run from uniques`. Enter its orders address, `http://127.0.0.1:8765/v1/orders`, as the "Viewer orders address" under Orders on the Setup tab. While Squire plays, it checks that address every 5 seconds and takes each order as if you had typed it in the Orders tab. The Orders tab and the journal name the viewer, as in "New order from viewer Grip: run from uniques". If the address can't be reached, Squire notes it once in the log and tries again 30 seconds later. With the field empty, Squire asks nothing. Squire Link's own README explains how to turn chat on and how to keep a busy chat from flooding the squire.
+
 ## Without a model: errands
 
 With no model set up, or with "Let a model choose what to do" switched off, a handover runs one short errand and then waits for you. Which errand runs depends on what the character sees.

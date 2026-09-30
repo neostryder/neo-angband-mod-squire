@@ -19,7 +19,7 @@ import { reviewDue, type ReviewMemory } from "../strategy/review.js";
 import { GIVE_UP_REVIEWS, PASS_ADHERENCE, goalsOf, nextAdherence, stanceOf, weigh } from "./adherence.js";
 import { FAINT, FORGET_BELOW, REMEMBERED_AT, comesBack, fade, isForgotten, refreshed } from "./memory.js";
 import { NONE, sortByCode, sortInstruction, type SortDeps } from "./sort.js";
-import { MAX_TEXT, isLive, type Instruction, type InstructionKind, type InstructionSource, type Sorted } from "./types.js";
+import { MAX_TEXT, MAX_VIEWER, isLive, type Instruction, type InstructionKind, type InstructionSource, type Sorted } from "./types.js";
 
 /** What the book keeps between sessions. */
 export interface OrdersState {
@@ -45,6 +45,8 @@ export type GiveResult =
 export interface GiveOptions {
   readonly kind?: InstructionKind;
   readonly familyCreed?: boolean;
+  /** The chat viewer who gave it, kept so the Orders tab and journal can name them. */
+  readonly viewer?: string;
 }
 
 export interface Correction {
@@ -327,16 +329,17 @@ export function createOrders(deps: OrdersDeps): Orders {
       }
       const code = sortByCode(trimmed);
       const kind = options.kind ?? code.kind;
+      const viewer = options.viewer?.trim().slice(0, MAX_VIEWER) ?? "";
       counter += 1;
       const id = `i${String(counter)}`;
       if (options.kind !== undefined) explicit.add(id);
       const made = restance({
-        id, text: trimmed, kind, source, sorted: code.sorted, state: "following", memory: 1, adherence: 0.5,
+        id, text: trimmed, kind, source, ...(viewer === "" ? {} : { viewer }), sorted: code.sorted, state: "following", memory: 1, adherence: 0.5,
         familyCreed: kind === "standing" && options.familyCreed === true, createdTurn: lastTurn, seenTurn: lastTurn,
         acted: 0, lowReviews: 0, disliked: false,
       }, null);
       items = [...items, { ...made, disliked: made.state !== "following" }];
-      say(`New ${noun(kind)}: ${short(trimmed)}`, false);
+      say(`New ${noun(kind)}${viewer === "" ? "" : ` from viewer ${viewer}`}: ${short(trimmed)}`, false);
       persist();
       chain((mine) => refine(id, trimmed, mine));
       chain((mine) => prune(mine));
