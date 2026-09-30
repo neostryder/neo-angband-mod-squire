@@ -30,7 +30,9 @@
     "saves:manage",
     "network:local",
     "network:squire.rpgm.tools",
-    "ui:birth.replace"
+    "ui:birth.replace",
+    "registry:command",
+    "keymap:write"
   ],
   "author": "neostryder",
   "license": "GPL-2.0-only",

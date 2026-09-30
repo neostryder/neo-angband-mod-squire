@@ -211,6 +211,33 @@ describe("a new character", () => {
   });
 });
 
+describe("an heir's first review", () => {
+  it("ranks an inherited depth target and weapon with the code's own aims, once", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"] });
+    const { strategy } = rig(never, null);
+    const own = candidateAims(w.view).find((a) => a.kind === "depth")?.depth;
+    strategy.inherit([{ kind: "depth", depth: 8 }, { kind: "weapon", depth: null }]);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(8);
+    expect(strategy.ranked().map((a) => a.kind)).toContain("weapon");
+    w.advance(REVIEW_TURNS + 1);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(own);
+  });
+
+  it("carries nothing after a reset", async () => {
+    const w = world({ map: ROOM });
+    const { strategy } = rig(never, null);
+    const own = candidateAims(w.view).find((a) => a.kind === "depth")?.depth;
+    strategy.inherit([{ kind: "depth", depth: 8 }]);
+    strategy.reset();
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(own);
+  });
+});
 describe("town trip gate", () => {
   it("allows a trip at first, and again only after the gold grows by half", async () => {
     const w = world({ map: ROOM, player: { depth: 0, gold: 200 } });

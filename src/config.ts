@@ -16,6 +16,7 @@ import type { ConsentLevel } from "./telemetry/consent.js";
 import { DEFAULT_ENDPOINT } from "./telemetry/sender.js";
 import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
+import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
@@ -106,9 +107,20 @@ function lineagesOf(value: unknown): Record<string, Lineage> {
       lore: Array.isArray(l["lore"]) ? (l["lore"] as Lineage["lore"]).slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? (l["grudges"] as Lineage["grudges"]).slice(-30) : [],
       creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
+      aims: readAims(l["aims"]),
     };
   }
   return out;
+}
+
+function readAims(value: unknown): InheritedAim[] {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 2).flatMap((raw): InheritedAim[] => {
+    const a = rec(raw);
+    if (a === null) return [];
+    if (a["kind"] === "weapon") return [{ kind: "weapon", depth: null }];
+    return a["kind"] === "depth" && typeof a["depth"] === "number" && Number.isFinite(a["depth"]) ? [{ kind: "depth", depth: Math.max(1, Math.min(127, Math.round(a["depth"]))) }] : [];
+  });
 }
 
 function rec(value: unknown): Record<string, unknown> | null {

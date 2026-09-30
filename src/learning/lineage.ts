@@ -4,6 +4,7 @@ import { familyOf } from "./signature.js";
 import type { Lesson } from "./lessons.js";
 import { inheritCreeds } from "../orders/creed.js";
 import type { Instruction } from "../orders/types.js";
+import { inheritAims, type InheritedAim } from "../strategy/heirs.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -21,6 +22,8 @@ export interface Lineage {
   readonly grudges: readonly { readonly race: string; readonly family: string; readonly generation: number }[];
   /** Standing instructions the family holds as creeds. Orders are never kept here. */
   readonly creeds?: readonly Instruction[];
+  /** Aims the last character held that can pass on: at death they are the parent's, then the heir's inherited set. */
+  readonly aims?: readonly InheritedAim[];
   /** Current-character facts are optional until a run has supplied them. */
   readonly race?: string;
   readonly cls?: string;
@@ -75,6 +78,7 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       name: heirPersona.name, generation: parentLineage.generation + 1,
       ancestors: [...parentLineage.ancestors, parent], lore, grudges,
       creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
+      aims: inheritAims(parentLineage.aims ?? [], parentPersona, { ...heirPersona, sliders }),
     },
     persona: { ...heirPersona, sliders, lists },
   };

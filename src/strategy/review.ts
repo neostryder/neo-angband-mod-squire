@@ -14,6 +14,7 @@ import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ScoreQuestion, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";
 import { candidateAims, FIXED_ORDER, inFixedOrder, type Aim } from "./aims.js";
+import { withInherited, type InheritedAim } from "./heirs.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
@@ -115,6 +116,8 @@ export interface Strategy {
    * same gold would only send Squire home again, so it takes more gold first.
    */
   tripAllowed(gold: number): boolean;
+  /** Aims an heir inherits, folded into its first review and then spent. */
+  inherit(aims: readonly InheritedAim[]): void;
   /** Forget everything, for a new character. */
   reset(): void;
   /** Resolves when no review is in flight. */
@@ -130,14 +133,20 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let last: ReviewSummary | null = null;
   let tripGold: number | null = null;
   let generation = 0;
+  let inherited: readonly InheritedAim[] = [];
   let inFlight: Promise<void> = Promise.resolve();
 
-  function reset(): void {
+  function clear(): void {
     memory = null;
     aims = [];
     last = null;
     tripGold = null;
     generation += 1;
+  }
+
+  function reset(): void {
+    clear();
+    inherited = [];
   }
 
   async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string }> {
@@ -159,7 +168,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   }
 
   async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
-    const candidates = candidateAims(view);
+    const candidates = withInherited(candidateAims(view), inherited);
+    inherited = [];
     aims = inFixedOrder(candidates);
     const done = await rank(view, candidates);
     if (mine !== generation) return;
@@ -174,7 +184,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       const player = view.player();
       if (player.dead) return;
       const turn = view.turn();
-      if (memory !== null && turn < memory.reviewTurn) reset();
+      if (memory !== null && turn < memory.reviewTurn) clear();
       const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn });
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
       if (trigger === null) return;
@@ -186,6 +196,9 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     ranked: () => aims,
     last: () => last,
     tripAllowed: (gold) => tripGold === null || gold >= tripGold * TRIP_GOLD_GROWTH,
+    inherit(list) {
+      inherited = list;
+    },
     reset,
     settled: () => inFlight,
   };

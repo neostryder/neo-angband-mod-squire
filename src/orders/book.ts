@@ -96,6 +96,9 @@ const ASKED = 3;
 const NOTE_GAP = 500;
 /** Resentment a disliked order leaves behind when it is done. */
 const RESENT_STEP = 5;
+/** Gratitude a liked order leaves behind when it is done, and a followed disliked one. */
+const THANKS = 3;
+const GRUDGING_THANKS = 2;
 const HALF_HP = 0.5;
 
 const STANCE_WORDS: Readonly<Record<string, string>> = {
@@ -192,17 +195,24 @@ export function createOrders(deps: OrdersDeps): Orders {
     persist();
   }
 
-  /** Resentment builds when a disliked order is done; a followed one counts as a blessing and builds Devotion. */
+  /**
+   * A disliked order that is done builds Resentment, and Gratitude too when the
+   * squire followed it after all, for the patron's thanks. A liked order that
+   * is done counts as a blessing: it builds Devotion and Gratitude.
+   */
   function answerPatron(i: Instruction): void {
     const p = deps.persona();
     if (p === null) return;
+    const grateful = (persona: Persona, step: number): Persona => ({ ...persona, sliders: { ...persona.sliders, gratitude: Math.min(100, persona.sliders.gratitude + step) } });
     if (i.disliked) {
-      const resentment = Math.min(100, p.sliders.resentment + RESENT_STEP);
-      if (resentment !== p.sliders.resentment) deps.setPersona({ ...p, sliders: { ...p.sliders, resentment } });
+      let next: Persona = { ...p, sliders: { ...p.sliders, resentment: Math.min(100, p.sliders.resentment + RESENT_STEP) } };
+      if (i.state === "grudgingly") next = grateful(next, GRUDGING_THANKS);
+      if (next.sliders.resentment !== p.sliders.resentment || next.sliders.gratitude !== p.sliders.gratitude) deps.setPersona(next);
       return;
     }
     const drift = applyDrift(p, "patron-blessing", rng);
-    if (drift.changes.length > 0) deps.setPersona(drift.persona);
+    const next = grateful(drift.persona, THANKS);
+    if (drift.changes.length > 0 || next.sliders.gratitude !== p.sliders.gratitude) deps.setPersona(next);
   }
 
   function complete(view: AgentView, i: Instruction): string | null {

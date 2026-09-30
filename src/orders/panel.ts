@@ -4,7 +4,7 @@ import type { Instruction, Sorted } from "./types.js";
 import { STATE_LABELS } from "./types.js";
 
 export const ORDERS_HEADING = "Orders";
-export const ORDERS_EMPTY = "No orders. Give one below, or press Ctrl+Shift+O in the game.";
+export const ORDERS_EMPTY = "No orders. Give one below, or press Squire's order key (O unless that key is taken) while you play.";
 export const ORDER_PROMPT = "What does your patron order?";
 export const ORDER_PLACEHOLDER = "For example: suit up at the armour shop";
 export const KEPT_LABEL = "Instructions kept";

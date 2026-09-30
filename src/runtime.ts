@@ -15,6 +15,7 @@ import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
+import { passableAims } from "./strategy/heirs.js";
 import { createOrders, type Orders } from "./orders/book.js";
 import { readInstructions } from "./orders/read.js";
 import type { Instruction } from "./orders/types.js";
@@ -428,6 +429,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
+        strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
@@ -547,6 +549,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   });
 
   async function finishRun(report: RunReportLike): Promise<void> {
+    const passable = passableAims(strategy.ranked());
     strategy.reset();
     const creeds = orders.creeds();
     orders.reset();
@@ -580,7 +583,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds };
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },

@@ -47,6 +47,7 @@ import type { AgentController } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
+import { registerOrderCommand, type OrderCommandCtx } from "./src/ui/order-command.js";
 import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
@@ -143,8 +144,11 @@ export default {
 
   /* The panel, Knight's Lessons and run bookkeeping, for every character with
    * Squire enabled, whether or not it has been handed over. */
-  register(_host: unknown, ctx: ControllerCtx & AttachHost): void {
-    attachSquire(ctx, runtime(ctx));
+  register(host: unknown, ctx: ControllerCtx & AttachHost & OrderCommandCtx): void {
+    const rt = runtime(ctx);
+    attachSquire(ctx, rt);
+    /* The in-game order key needs registry:command and keymap:write; without them the panel's own key still works. */
+    registerOrderCommand(host, ctx, rt);
   },
 
   /* Roll-on: accepts the one creation Squire asked for after a death, and

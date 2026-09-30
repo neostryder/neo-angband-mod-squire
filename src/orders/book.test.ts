@@ -548,3 +548,35 @@ describe("persistence", () => {
     expect(only(k).state).toBe("done");
   });
 });
+
+describe("Gratitude", () => {
+  it("rises by 3 with the blessing when a liked order is done", async () => {
+    const glad = kit({ persona: devout });
+    glad.persona.current.sliders.devotion = 60;
+    glad.persona.current.sliders.gratitude = 80;
+    glad.orders.give("Reach 500 ft", "panel");
+    await glad.orders.settled();
+    glad.orders.observe(world({ map: ROOM, player: { depth: 10, maxDepth: 10 } }).view);
+    expect(glad.persona.current.sliders.gratitude).toBe(83);
+    expect(glad.persona.current.sliders.devotion).toBeGreaterThan(60);
+  });
+
+  it("rises by 2 with the Resentment when a disliked order was followed grudgingly", async () => {
+    const grudge = kit({ persona: (p) => { p.sliders.devotion = 45; p.sliders.resentment = 70; p.sliders.gratitude = 40; p.sliders.stubbornness = 0; } });
+    grudge.orders.give("Reach 500 ft", "panel");
+    await grudge.orders.settled();
+    expect(only(grudge).state).toBe("grudgingly");
+    grudge.orders.observe(world({ map: ROOM, player: { depth: 10, maxDepth: 10 } }).view);
+    expect(grudge.persona.current.sliders.resentment).toBe(75);
+    expect(grudge.persona.current.sliders.gratitude).toBe(42);
+  });
+
+  it("stops at 100", async () => {
+    const glad = kit({ persona: devout });
+    glad.persona.current.sliders.gratitude = 99;
+    glad.orders.give("Reach 500 ft", "panel");
+    await glad.orders.settled();
+    glad.orders.observe(world({ map: ROOM, player: { depth: 10, maxDepth: 10 } }).view);
+    expect(glad.persona.current.sliders.gratitude).toBe(100);
+  });
+});

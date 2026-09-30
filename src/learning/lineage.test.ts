@@ -44,3 +44,25 @@ describe("lineage", () => {
     expect(heir.lists.feared).toEqual(["orc"]);
   });
 });
+
+describe("inherited aims", () => {
+  const base: Lineage = { name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [], aims: [{ kind: "depth", depth: 20 }, { kind: "weapon", depth: null }] };
+
+  it("carries them by the parent's Inheritance slider and the heir's ambition", () => {
+    const parent = defaultPersona("Ada");
+    parent.sliders.inheritance = 100;
+    const bold = defaultPersona("Bea");
+    bold.sliders.ambition = 100;
+    expect(inherit(base, parent, bold, () => 0.5).lineage.aims).toEqual(base.aims);
+    const meek = defaultPersona("Cia");
+    meek.sliders.ambition = 10;
+    expect(inherit(base, parent, meek, () => 0.5).lineage.aims).toEqual([{ kind: "weapon", depth: null }]);
+    parent.sliders.inheritance = 0;
+    expect(inherit(base, parent, bold, () => 0.5).lineage.aims).toEqual([]);
+  });
+
+  it("starts an heir of an old line with none", () => {
+    const { lineage } = inherit({ name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [] }, defaultPersona("Ada"), defaultPersona("Bea"), () => 0.5);
+    expect(lineage.aims).toEqual([]);
+  });
+});

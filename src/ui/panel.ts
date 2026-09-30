@@ -108,7 +108,7 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
     h("button", { title: "Larger text", "aria-label": "Larger text", onclick: () => step(1) }, "A+"),
   );
   show(current);
-  /* A mod cannot bind a game key, so the key works while the panel is mounted. Capture phase, so the game does not take it first. */
+  /* The game's own order key (order-command.ts) works everywhere; this one works while the panel is mounted. Capture phase, so the game does not take it first. */
   const onKey = (e: KeyboardEvent): void => {
     if (!isOrderHotkey(e)) return;
     e.preventDefault();

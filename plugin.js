@@ -170,8 +170,8 @@ function createWatcher(view, options) {
           detail: `Hit points are down to ${String(hp)} of ${String(p.maxHp)}.`
         };
       }
-      const share = options.stopOnDamageShare;
-      if (share !== void 0 && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share || startHp - hp >= p.maxHp * share * 2)) {
+      const share2 = options.stopOnDamageShare;
+      if (share2 !== void 0 && p.maxHp > 0 && lost > 0 && (lost >= p.maxHp * share2 || startHp - hp >= p.maxHp * share2 * 2)) {
         return {
           reason: "hurt",
           detail: `The character took ${String(lost)} damage.`
@@ -2659,10 +2659,10 @@ var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
 function healthBand(hp, maxHp) {
   if (maxHp <= 0) return "unknown";
-  const share = hp / maxHp;
-  if (share >= 0.9) return "full";
-  if (share >= 0.6) return "lightly hurt";
-  if (share >= 0.35) return "badly hurt";
+  const share2 = hp / maxHp;
+  if (share2 >= 0.9) return "full";
+  if (share2 >= 0.6) return "lightly hurt";
+  if (share2 >= 0.35) return "badly hurt";
   return "near death";
 }
 var RECALL_MIN_GOLD = 50;
@@ -3676,6 +3676,66 @@ function createTally(caps, earlierToday) {
   };
 }
 
+// src/strategy/heirs.ts
+var INHERITABLE = ["depth", "weapon"];
+var MAX_INHERITED_AIMS = INHERITABLE.length;
+function depthCeiling(ambition) {
+  return 5 + Math.floor(Math.max(0, Math.min(100, ambition)) / 4);
+}
+function share(persona) {
+  return Math.max(0, Math.min(1, persona.sliders.inheritance / 100));
+}
+function passableAims(aims) {
+  return aims.flatMap((aim) => aim.kind === "depth" ? [{ kind: "depth", depth: aim.depth }] : aim.kind === "weapon" ? [{ kind: "weapon", depth: null }] : []);
+}
+function inheritAims(aims, parent, heir) {
+  const s = share(parent);
+  const ceiling = depthCeiling(heir.sliders.ambition);
+  const kept = [];
+  for (const aim of aims) {
+    if (!INHERITABLE.includes(aim.kind) || kept.some((k) => k.kind === aim.kind)) continue;
+    if (aim.kind === "depth") {
+      const depth = aim.depth === null ? 0 : Math.max(1, Math.round(aim.depth * s));
+      if (depth < 1 || depth > ceiling) continue;
+      kept.push({ kind: "depth", depth });
+    } else {
+      kept.push({ kind: "weapon", depth: null });
+    }
+  }
+  return kept.slice(0, Math.floor(MAX_INHERITED_AIMS * s));
+}
+function withInherited(candidates, inherited) {
+  const out = [...candidates];
+  for (const aim of inherited) {
+    const at = out.findIndex((c) => c.kind === aim.kind);
+    if (aim.kind === "depth" && aim.depth !== null) {
+      const target = aim.depth;
+      const own = at === -1 ? null : out[at];
+      if (own !== null && (own.depth ?? 0) >= target) continue;
+      const made = {
+        kind: "depth",
+        label: "depth target",
+        detail: `Reach dungeon level ${String(target)} (${String(target * 50)} ft), the depth the family line was aiming for.`,
+        how: "dive",
+        price: null,
+        depth: target
+      };
+      if (at === -1) out.push(made);
+      else out[at] = made;
+    } else if (aim.kind === "weapon" && at === -1) {
+      out.push({
+        kind: "weapon",
+        label: "magic weapon",
+        detail: "The family line was hunting a magical or ego weapon. Look for one in the dungeon.",
+        how: "hunt",
+        price: null,
+        depth: null
+      });
+    }
+  }
+  return out;
+}
+
 // src/strategy/review.ts
 var REVIEW_TURNS = 2e3;
 var TRIGGER_TEXT = {
@@ -3733,13 +3793,18 @@ function createStrategy(deps) {
   let last = null;
   let tripGold = null;
   let generation = 0;
+  let inherited = [];
   let inFlight = Promise.resolve();
-  function reset() {
+  function clear() {
     memory = null;
     aims = [];
     last = null;
     tripGold = null;
     generation += 1;
+  }
+  function reset() {
+    clear();
+    inherited = [];
   }
   async function rank2(view, candidates) {
     const fixed = inFixedOrder(candidates);
@@ -3759,7 +3824,8 @@ function createStrategy(deps) {
     return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.` };
   }
   async function review(view, trigger, turn, mine) {
-    const candidates = candidateAims(view);
+    const candidates = withInherited(candidateAims(view), inherited);
+    inherited = [];
     aims = inFixedOrder(candidates);
     const done = await rank2(view, candidates);
     if (mine !== generation) return;
@@ -3773,7 +3839,7 @@ function createStrategy(deps) {
       const player = view.player();
       if (player.dead) return;
       const turn = view.turn();
-      if (memory !== null && turn < memory.reviewTurn) reset();
+      if (memory !== null && turn < memory.reviewTurn) clear();
       const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn });
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? memory?.reviewTurn ?? turn : turn };
       if (trigger === null) return;
@@ -3785,6 +3851,9 @@ function createStrategy(deps) {
     ranked: () => aims,
     last: () => last,
     tripAllowed: (gold) => tripGold === null || gold >= tripGold * TRIP_GOLD_GROWTH,
+    inherit(list) {
+      inherited = list;
+    },
     reset,
     settled: () => inFlight
   };
@@ -4277,6 +4346,8 @@ var KEEP_ENDED = 20;
 var ASKED = 3;
 var NOTE_GAP = 500;
 var RESENT_STEP = 5;
+var THANKS = 3;
+var GRUDGING_THANKS = 2;
 var HALF_HP = 0.5;
 var STANCE_WORDS = {
   following: "You intend to follow it.",
@@ -4366,13 +4437,16 @@ function createOrders(deps) {
   function answerPatron(i) {
     const p = deps.persona();
     if (p === null) return;
+    const grateful = (persona2, step) => ({ ...persona2, sliders: { ...persona2.sliders, gratitude: Math.min(100, persona2.sliders.gratitude + step) } });
     if (i.disliked) {
-      const resentment = Math.min(100, p.sliders.resentment + RESENT_STEP);
-      if (resentment !== p.sliders.resentment) deps.setPersona({ ...p, sliders: { ...p.sliders, resentment } });
+      let next2 = { ...p, sliders: { ...p.sliders, resentment: Math.min(100, p.sliders.resentment + RESENT_STEP) } };
+      if (i.state === "grudgingly") next2 = grateful(next2, GRUDGING_THANKS);
+      if (next2.sliders.resentment !== p.sliders.resentment || next2.sliders.gratitude !== p.sliders.gratitude) deps.setPersona(next2);
       return;
     }
     const drift = applyDrift(p, "patron-blessing", rng);
-    if (drift.changes.length > 0) deps.setPersona(drift.persona);
+    const next = grateful(drift.persona, THANKS);
+    if (drift.changes.length > 0 || next.sliders.gratitude !== p.sliders.gratitude) deps.setPersona(next);
   }
   function complete(view, i) {
     const s = i.sorted;
@@ -4941,10 +5015,20 @@ function lineagesOf(value) {
       ancestors: Array.isArray(l["ancestors"]) ? l["ancestors"].slice(-50) : [],
       lore: Array.isArray(l["lore"]) ? l["lore"].slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : [],
-      creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed)
+      creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
+      aims: readAims(l["aims"])
     };
   }
   return out;
+}
+function readAims(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 2).flatMap((raw) => {
+    const a = rec2(raw);
+    if (a === null) return [];
+    if (a["kind"] === "weapon") return [{ kind: "weapon", depth: null }];
+    return a["kind"] === "depth" && typeof a["depth"] === "number" && Number.isFinite(a["depth"]) ? [{ kind: "depth", depth: Math.max(1, Math.min(127, Math.round(a["depth"]))) }] : [];
+  });
 }
 function rec2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
@@ -5337,8 +5421,8 @@ function familyOf(race) {
   return "other";
 }
 function signatureOf(input) {
-  const share = input.maxHp > 0 ? input.hp / input.maxHp : 1;
-  const hpBand = share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3;
+  const share2 = input.maxHp > 0 ? input.hp / input.maxHp : 1;
+  const hpBand = share2 >= 0.9 ? 0 : share2 >= 0.6 ? 1 : share2 >= 0.35 ? 2 : 3;
   return {
     depthBand: Math.floor(Math.max(0, input.depth) / 5),
     classId: input.classId,
@@ -5715,8 +5799,8 @@ function loadCreed(orders, text) {
   return { ok: true, taken };
 }
 function inheritCreeds(creeds, parent) {
-  const share = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
-  const count2 = Math.min(12, Math.floor(12 * share));
+  const share2 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
+  const count2 = Math.min(12, Math.floor(12 * share2));
   return creeds.filter((i) => i.kind === "standing" && i.familyCreed).sort((a, b) => b.memory - a.memory || a.createdTurn - b.createdTurn).slice(0, count2).map((i) => ({ ...i, memory: i.memory / 2 }));
 }
 
@@ -5768,7 +5852,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       ancestors: [...parentLineage.ancestors, parent],
       lore,
       grudges,
-      creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona)
+      creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
+      aims: inheritAims(parentLineage.aims ?? [], parentPersona, { ...heirPersona, sliders })
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -6387,9 +6472,9 @@ function rankOf(apprentice) {
 }
 function momentOf(view) {
   const p = view.player();
-  const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+  const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
   const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
-  return { awake, hpBand: share >= 0.9 ? 0 : share >= 0.6 ? 1 : share >= 0.35 ? 2 : 3, depth: p.depth };
+  return { awake, hpBand: share2 >= 0.9 ? 0 : share2 >= 0.6 ? 1 : share2 >= 0.35 ? 2 : 3, depth: p.depth };
 }
 function isDecisionPoint(previous, now, goal) {
   if (goal === null) return false;
@@ -6971,6 +7056,7 @@ function createRuntime(host, options = {}) {
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
+        strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
@@ -7079,6 +7165,7 @@ function createRuntime(host, options = {}) {
     void finishRun(report);
   });
   async function finishRun(report) {
+    const passable = passableAims(strategy.ranked());
     strategy.reset();
     const creeds = orders.creeds();
     orders.reset();
@@ -7110,7 +7197,7 @@ function createRuntime(host, options = {}) {
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds };
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds, ...passable.length > 0 ? { aims: passable } : {} };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },
@@ -7222,7 +7309,7 @@ function noTerrain() {
 
 // src/orders/panel.ts
 var ORDERS_HEADING = "Orders";
-var ORDERS_EMPTY = "No orders. Give one below, or press Ctrl+Shift+O in the game.";
+var ORDERS_EMPTY = "No orders. Give one below, or press Squire's order key (O unless that key is taken) while you play.";
 var ORDER_PROMPT = "What does your patron order?";
 var ORDER_PLACEHOLDER = "For example: suit up at the armour shop";
 var KEPT_LABEL = "Instructions kept";
@@ -7758,10 +7845,10 @@ function mountLessons(body2, lessons) {
   const ghostCheck = h("input", { type: "checkbox", checked: lessons.ghostEnabled() });
   ghostCheck.addEventListener("change", () => lessons.setGhost(ghostCheck.checked));
   function draw(a) {
-    const share = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
+    const share2 = a.total === 0 ? 0 : Math.round(a.agreed / a.total * 100);
     fill(
       head,
-      h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
+      h("p", {}, h("span", { class: "stat" }, "Rank ", h("b", {}, rankOf(a))), h("span", { class: "stat" }, "Agreement ", h("b", {}, `${String(share2)}%`)), h("span", { class: "stat" }, "Lessons ", h("b", {}, String(a.total))))
     );
     ghost.textContent = lessons.ghostEnabled() ? a.ghostHint ?? "" : "";
     const inferred = lessons.inferred();
@@ -8608,7 +8695,7 @@ function attachSquire(ctx, rt) {
   } });
   function record2(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
-    const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
     if (demonstration) demonstrations -= 1;
     save(
@@ -8617,7 +8704,7 @@ function attachSquire(ctx, rt) {
         squire,
         knight,
         agreed: squire === knight,
-        line: noteLine(squire, knight, share),
+        line: noteLine(squire, knight, share2),
         demonstration,
         signature: signatureForView(view),
         dangerousNear,
@@ -8664,8 +8751,8 @@ function attachSquire(ctx, rt) {
     }
     const question = asked;
     const p = view.player();
-    const share = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-    const offline = proceduralPick(question.context.offers, share);
+    const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+    const offline = proceduralPick(question.context.offers, share2);
     const backend = rt.backend();
     if (backend === null || asking) {
       if (offline !== null) record2(offline, knight, view, dangerousNear, serial);
@@ -8752,6 +8839,52 @@ function attachSquire(ctx, rt) {
   return lessons;
 }
 
+// src/ui/order-command.ts
+var ORDER_COMMAND = "squire:order";
+var ORDER_VERB = "give an order";
+var ORDER_KEYS = ["O", "N"];
+var ORDER_PANEL_LABEL = "Give Squire an order";
+function registerOrderCommand(host, ctx, rt) {
+  const commands = host?.commands;
+  const openPanel = ctx.ui?.openPanel;
+  if (commands === void 0 || openPanel === void 0) return null;
+  let shown = null;
+  function prompt() {
+    if (shown?.open === true) return;
+    const panel = openPanel.call(ctx.ui, { id: "order", modal: true, label: ORDER_PANEL_LABEL });
+    const body2 = h("div", { class: "body" });
+    panel.root.append(h("style", {}, STYLE), h("div", { class: "squire" }, body2));
+    const cleanup = mountOrders(body2, rt, "hotkey");
+    shown = panel;
+    void panel.closed.then(() => {
+      cleanup();
+      if (shown === panel) shown = null;
+    });
+  }
+  commands.register(ORDER_COMMAND, () => {
+    try {
+      prompt();
+    } catch (error) {
+      ctx.log?.(`Squire couldn't open the order prompt: ${String(error)}`);
+    }
+    return 0;
+  });
+  commands.setVerb(ORDER_COMMAND, ORDER_VERB);
+  const keymaps = ctx.keymaps;
+  if (keymaps === void 0) {
+    ctx.log?.("Squire's order key isn't bound, because this game doesn't let mods bind keys.");
+    return null;
+  }
+  for (const key2 of ORDER_KEYS) {
+    if (keymaps.isBindableTriggerKey(key2) && keymaps.bind(key2, ORDER_COMMAND)) {
+      ctx.log?.(`Squire's order key is ${key2}.`);
+      return key2;
+    }
+  }
+  ctx.log?.("Squire's order key isn't bound, because every key it tried is taken.");
+  return null;
+}
+
 // plugin.ts
 var NOSCORE_BORG = 32;
 function characterAlreadyAutoplayed(ctx) {
@@ -8768,8 +8901,10 @@ var plugin_default = {
   api: 1,
   /* The panel, Knight's Lessons and run bookkeeping, for every character with
    * Squire enabled, whether or not it has been handed over. */
-  register(_host, ctx) {
-    attachSquire(ctx, runtime(ctx));
+  register(host, ctx) {
+    const rt = runtime(ctx);
+    attachSquire(ctx, rt);
+    registerOrderCommand(host, ctx, rt);
   },
   /* Roll-on: accepts the one creation Squire asked for after a death, and
    * declines every other, so the game shows its own birth screens. */

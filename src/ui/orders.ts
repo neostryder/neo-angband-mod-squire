@@ -1,7 +1,8 @@
 /**
  * The Orders tab: give an order or a standing instruction, see each with its
- * state, retire one, and load or save a creed file. Ctrl+Shift+O anywhere in
- * the game opens this tab with the box ready to type in.
+ * state, retire one, and load or save a creed file. Squire's order key during
+ * play, or Ctrl+Shift+O while the panel has the keyboard, opens this tab with
+ * the box ready to type in.
  */
 
 import type { Runtime } from "../runtime.js";

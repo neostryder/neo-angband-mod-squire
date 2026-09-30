@@ -130,7 +130,7 @@ function hostsUsed(): Set<string> {
 /**
  * The grants that are not state reads or hosts, each tied to the source that
  * needs it: the panel, each event subscribed to, the roster call that starts
- * an heir, and the player-typed server address on the local network.
+ * an heir, the order command and its key, and the player-typed server address on the local network.
  */
 function otherGrantsUsed(): Set<string> {
   const grants = new Set<string>();
@@ -141,6 +141,8 @@ function otherGrantsUsed(): Set<string> {
     if (/saves\?\.create\b/u.test(text)) grants.add("saves:manage");
     if (/\brollOnPresenter\(/u.test(text)) grants.add("ui:birth.replace");
     if (/\bserverUrl\b/u.test(text)) grants.add("network:local");
+    if (/\.setVerb\(/u.test(text)) grants.add("registry:command");
+    if (/\.isBindableTriggerKey\(/u.test(text)) grants.add("keymap:write");
   }
   return grants;
 }
