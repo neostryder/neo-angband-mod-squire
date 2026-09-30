@@ -493,7 +493,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       onPlanEnd: (end) => {
         void logLoaded.then(() => endDecision(end));
       },
-      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp }),
+      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }),
     });
     host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;

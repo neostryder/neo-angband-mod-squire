@@ -113,6 +113,8 @@ export interface PlanEnd {
 export interface Gauge {
   readonly turn: number;
   readonly hp: number;
+  /** The dungeon level. Taking a staircase passes no game turn, so a change of depth is how the brain tells it from a refusal. */
+  readonly depth?: number;
 }
 
 /** The ending in one line for the log's outcome field. Telemetry takes at most 64 characters there. */
@@ -168,6 +170,8 @@ interface PlanRun {
   refused: number;
   /* The game turn at the last command, kept until the next call checks whether time passed. */
   issuedAt: number | null;
+  /* The depth at the last command, since a staircase changes it without passing a turn. */
+  issuedDepth: number | null;
 }
 
 type State<C> =
@@ -192,6 +196,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   let landed: { readonly result: AskResult; readonly question: Question<C>; readonly token: Token | null } | null = null;
   let attempt = 0;
   let emptyDecisions = 0;
+  /* Labels of the plans that ended with no command since the last command. */
+  const emptyLabels = new Set<string>();
 
   function stopWith(message: string): null {
     state = { kind: "stopped", message };
@@ -233,7 +239,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         outcome: question.plan.label,
         reflex: question.reflex,
       });
-      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null } };
+      state = { kind: "running", plan: question.plan, run: { hpBefore: deps.gauge?.(view).hp ?? null, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
       deps.status(question.plan.label);
       return null;
     }
@@ -300,7 +306,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       stopWith(choice.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null } };
+    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null, issuedDepth: null } };
     deps.status(choice.plan.label);
     return "planned";
   }
@@ -320,15 +326,19 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     if (state.kind === "running") {
       const { plan, run } = state;
       const gauge = deps.gauge?.(view) ?? null;
-      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt) run.refused += 1;
+      const moved = gauge?.depth !== undefined && run.issuedDepth !== null && gauge.depth !== run.issuedDepth;
+      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt && !moved) run.refused += 1;
       run.issuedAt = null;
+      run.issuedDepth = null;
       const reason = planner.trigger(view, plan);
       if (reason === null) {
         const command = plan.step(view, act);
         if (command !== null) {
           emptyDecisions = 0;
+          emptyLabels.clear();
           run.commands += 1;
           run.issuedAt = gauge?.turn ?? null;
+          run.issuedDepth = gauge?.depth ?? null;
           return command;
         }
         deps.log(`finished: ${plan.label}`);
@@ -343,8 +353,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         hpBefore: run.hpBefore,
         hpAfter: gauge?.hp ?? null,
       });
-      emptyDecisions += 1;
-      if (emptyDecisions > MAX_EMPTY_DECISIONS) {
+      /* A planner trying one different plan after another is still working
+       * through its options; only the same empty plan coming back counts. */
+      if (run.commands === 0) {
+        if (emptyLabels.has(plan.label)) emptyDecisions += 1;
+        else emptyLabels.add(plan.label);
+      }
+      if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
         return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);
       }
       state = { kind: "idle" };

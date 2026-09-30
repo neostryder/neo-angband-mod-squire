@@ -153,4 +153,25 @@ describe("autoexplore", () => {
     errand.begin();
     expect(commandOf(errand.step()).code).toBe("walk");
   });
+
+  it("keeps its route when a creature beside the short way drops in and out of sight", () => {
+    /* The soak's warrior paced between the same grids 138 times while a white
+     * worm mass at the edge of the light came and went. */
+    const w = world({ map: ["#############", " .......@.. #", "#########.###", "#############"] });
+    const worm = (visible: boolean) => [{ grid: { x: 9, y: 2 }, race: "white worm mass", asleep: true, visible }];
+    w.setMonsters(worm(true));
+    const errand = run(w, autoexplore());
+    errand.begin();
+    const delta: Record<number, number> = { 4: -1, 6: 1 };
+    const xs: number[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      const decision = errand.step();
+      if (isStop(decision)) break;
+      const at = w.view.player().grid;
+      w.moveTo({ x: at.x + (delta[decision.command.dir ?? 0] ?? 0), y: at.y });
+      xs.push(w.view.player().grid.x);
+      w.setMonsters(worm(i % 2 === 1));
+    }
+    expect(xs.slice(0, 7)).toEqual([7, 6, 5, 4, 3, 2, 1]);
+  });
 });

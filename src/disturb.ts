@@ -49,7 +49,7 @@ export interface WatchOptions {
   /**
    * Creatures that are not news even when new to view, such as one more worm
    * from a mass already seen breeding. Asked again on every check, so one that
-   * stops being routine, by coming adjacent, still ends the errand.
+   * stops being routine still ends the errand.
    */
   readonly routine?: (monster: MonsterView, view: AgentView) => boolean;
 }

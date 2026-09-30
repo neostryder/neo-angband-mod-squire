@@ -233,6 +233,21 @@ describe("brain", () => {
     expect(r.brain.state()).toBe("stopped");
   });
 
+  it("keeps going while each empty plan is a different goal", async () => {
+    /* The soak's Rogue, Ranger and Mage stopped for good after retreat,
+     * leave_level, descend, fetch and explore each ended with no command. */
+    const labels = ["retreat", "leave_level", "descend", "fetch", "explore", "wait"];
+    let next = 0;
+    const results = [...labels, "again"].map(() => answered());
+    const r = rig({ planner: planner(() => ({ label: labels[next++]!, step: () => null })), results });
+    for (let i = 0; i < labels.length; i += 1) {
+      r.tick();
+      await flush();
+      r.tick();
+    }
+    expect(r.brain.state()).not.toBe("stopped");
+  });
+
   it("hands back when the planner has nothing to ask", () => {
     const r = rig({
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
@@ -298,6 +313,18 @@ describe("plan outcomes", () => {
     r.tick();
     expect(r.ends[0]).toMatchObject({ stop: "finished", commands: 3, refused: 1 });
     expect(outcomeLine(r.ends[0]!)).toBe("finished, 3 commands, 1 refused, hp 0");
+  });
+
+  it("does not count a staircase as refused, though it passes no game turn", async () => {
+    /* The soak's Priest: every stair taken at turn 3011 was logged as refused. */
+    const game = { turn: 3011, hp: 7, depth: 0 };
+    const r = rig({ planner: planner(() => walks(1)), results: [answered(), answered()], gauge: () => ({ ...game }) });
+    r.tick();
+    await flush();
+    r.tick();
+    game.depth = 1;
+    r.tick();
+    expect(r.ends[0]).toMatchObject({ stop: "finished", commands: 1, refused: 0 });
   });
 
   it("reports the trigger that dropped a plan", async () => {

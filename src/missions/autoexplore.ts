@@ -49,6 +49,11 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
    * falls back to its own steps. */
   let engineTurn: number | null = null;
   let engineBlocked = false;
+  /* Where each creature seen during this errand was last seen. A worm at the
+   * edge of the light drops out of sight and back every few turns, and routing
+   * around only the ones in sight switched between two routes each time, so
+   * the character walked back and forth until the errand gave up as pacing. */
+  const lastSeen = new Map<number, { readonly x: number; readonly y: number }>();
 
   return {
     id: "autoexplore",
@@ -120,7 +125,8 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
       /* Walking past a creature in view is how a mushroom patch confuses a
        * character that was only exploring, so the route keeps a step away from
        * every one it can when there is another way. */
-      const seen = ctx.view.monsters().filter((m) => m.visible).map((m) => m.grid);
+      for (const m of ctx.view.monsters()) if (m.visible) lastSeen.set(m.id, m.grid);
+      const seen = [...lastSeen.values()];
       const nearCreature = (grid: { x: number; y: number }) => seen.some((m) => Math.max(Math.abs(m.x - grid.x), Math.abs(m.y - grid.y)) <= 1);
       if (!engineBlocked) {
         const engine = engineTravel(ctx, goals, { run: true });

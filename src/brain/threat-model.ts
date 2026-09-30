@@ -66,19 +66,32 @@ export function roundEstimate(level: number): number {
 }
 
 /**
+ * The same ceiling for a townsperson whose blows are unseen. The town's worst
+ * ordinary blow is a mercenary's or a battle-scarred veteran's 1d10 or so, and
+ * most townspeople beg, touch or steal, so the dungeon's level 0 figure made a
+ * beggar look dangerous to a hurt priest.
+ */
+export const TOWN_ROUND = 6;
+
+/** A level 0 creature met in town, which cannot follow the character far and cannot hit hard. */
+export function townsperson(monster: Creature, depth: number): boolean {
+  return depth === 0 && monster.level === 0 && !monster.raceFlags.includes("UNIQUE");
+}
+
+/**
  * How a creature compares with the character, from their levels. Uniques count
  * one band worse than their level suggests, hit points the creature could take
  * in a round or two outrank levels, and a kind of creature that killed or nearly
  * killed one of this line is treated as dangerous at least.
  */
-export function threatIndex(monster: Creature, characterLevel: number, characterHp = Infinity, dreaded: ReadonlySet<string> = new Set()): number {
+export function threatIndex(monster: Creature, characterLevel: number, characterHp = Infinity, dreaded: ReadonlySet<string> = new Set(), town = false): number {
   let band: number;
   if (monster.level * 2 <= characterLevel) band = 0;
   else if (monster.level <= characterLevel) band = 1;
   else if (monster.level <= characterLevel + 5) band = 2;
   else band = 3;
   if (monster.raceFlags.includes("UNIQUE")) band = Math.min(3, band + 1);
-  const round = roundEstimate(monster.level);
+  const round = town ? TOWN_ROUND : roundEstimate(monster.level);
   if (characterHp <= round / 2) band = 3;
   else if (characterHp <= round) band = Math.max(band, 2);
   if (monster.race !== undefined && dreaded.has(monster.race)) band = Math.max(band, 2);
@@ -109,26 +122,29 @@ export function knownCapability(text: string, level: number): { round: number; s
 }
 
 export function assessThreat(monster: MonsterView, player: PlayerView, awake: readonly MonsterView[], view: AgentView, dreaded: ReadonlySet<string> = new Set()): ThreatAssessment {
-  const old = threatIndex(monster, player.level, player.hp, dreaded);
+  const town = townsperson(monster, player.depth);
+  const old = threatIndex(monster, player.level, player.hp, dreaded, town);
   const recall = inspecting(view).monsterRecall?.(monster.raceIndex);
   if (recall === undefined || recall === null) {
-    return { capability: threatIndex(monster, player.level, Infinity, dreaded), lethality: old, band: old, round: roundEstimate(monster.level), description: null, enhanced: false };
+    return { capability: threatIndex(monster, player.level, Infinity, dreaded), lethality: old, band: old, round: town ? TOWN_ROUND : roundEstimate(monster.level), description: null, enhanced: false };
   }
-  const known = knownCapability(recall.text, monster.level);
+  const read = knownCapability(recall.text, monster.level);
+  const known = town && !read.knownBlows ? { ...read, round: TOWN_ROUND } : read;
   let capability = threatIndex(monster, player.level, Infinity, dreaded);
   const knownMagic = /\bmay (?:breathe|cast spells)\b/i.test(recall.text);
   if (known.breeds || known.round >= 16 || knownMagic) capability = Math.max(capability, 1);
   if (known.round >= 32 || known.spell >= 24) capability = Math.max(capability, 2);
   const incoming = Math.max(known.round, known.spell);
   const nearby = awake.filter((other) => steps(player.grid, other.grid) <= 5).length;
-  const closing = Math.max(0, steps(player.grid, monster.grid) - 1);
-  const speed = monster.speed > player.speed ? Math.min(2, Math.ceil((monster.speed - player.speed) / 10)) : 0;
+  /* A townsperson walks up at no special pace and the character can always step away from one. */
+  const closing = town ? 0 : Math.max(0, steps(player.grid, monster.grid) - 1);
+  const speed = town || monster.speed <= player.speed ? 0 : Math.min(2, Math.ceil((monster.speed - player.speed) / 10));
   const exposure = incoming * (1 + speed * 0.5) * (1 + Math.min(2, closing) * 0.5);
   let lethality = 0;
   if (player.hp <= exposure / 2) lethality = 3;
   else if (player.hp <= exposure || (player.maxHp > 0 && incoming >= player.maxHp)) lethality = 2;
   else if (player.hp <= exposure * 2) lethality = 1;
-  if (nearby >= 2) lethality = Math.min(3, lethality + (nearby >= 4 ? 2 : 1));
+  if (nearby >= 2) lethality = Math.min(3, lethality + (nearby >= 4 && !town ? 2 : 1));
   const band = Math.max(capability, lethality);
   const description = known.knownBlows
     ? `${known.round >= 16 ? "hits hard" : "known blows"} for a level ${String(player.level)} ${player.cls.toLowerCase()} (up to ${String(known.round)} a round)`

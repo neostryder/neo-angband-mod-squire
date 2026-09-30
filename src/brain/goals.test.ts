@@ -806,3 +806,94 @@ describe("fear, swarms and refused commands", () => {
     expect(goals(w)).toContain("shoot");
   });
 });
+
+describe("soak findings", () => {
+  const TWO_STAIRS = ["##########", "#<@.....>#", "#........#", "#........#", "##########"];
+  const planOf = (p: ReturnType<typeof planner>["p"], w: ReturnType<typeof world>, goal: string) => {
+    const choice = p.choose(pick(goal), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    return choice.plan;
+  };
+
+  it("leaves a level by a known down staircase rather than the nearer up one", () => {
+    const worms = Array.from({ length: 6 }, (_, i) => ({ grid: { x: 2 + i, y: 3 }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
+    const w = world({ map: TWO_STAIRS, player: { depth: 1 }, monsters: worms });
+    const { p } = planner(w);
+    expect(asked(p.ask(w.view)).context.offers.find((o) => o.goal === "leave_level")?.criteria).toContain("down staircase");
+    expect(planOf(planner(w).p, w, "leave_level").step(w.view, w.act)).toMatchObject({ dir: 6 });
+  });
+
+  it("retreats at full health from a fair fight only down the stairs, never back up to town", () => {
+    /* The soak's warrior at full health on level 1, beside the up staircase, with a worm mass awake. */
+    const worm = [{ grid: { x: 4, y: 3 }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"] }];
+    const w = world({ map: TWO_STAIRS, player: { level: 1, depth: 1 }, monsters: worm });
+    w.moveTo({ x: 1, y: 1 });
+    const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
+    expect(offer?.criteria).toContain("down staircase");
+    const step = planOf(planner(w).p, w, "retreat").step(w.view, w.act);
+    expect(step?.code).toBe("walk");
+    const upOnly = world({ map: ["##########", "#<@......#", "#........#", "#........#", "##########"], player: { level: 1, depth: 1 }, monsters: worm });
+    upOnly.moveTo({ x: 1, y: 1 });
+    expect(planOf(planner(upOnly).p, upOnly, "retreat").step(upOnly.view, upOnly.act)?.code).not.toBe("ascend");
+  });
+
+  it("still takes the nearest staircase when the danger is pressing", () => {
+    const mouse = [{ grid: { x: 2, y: 2 }, race: "giant white mouse", level: 1, raceFlags: ["MULTIPLY"] }];
+    const w = world({ map: TWO_STAIRS, player: { level: 1, depth: 1, hp: 7, maxHp: 13 }, monsters: mouse });
+    w.moveTo({ x: 1, y: 1 });
+    expect(planOf(planner(w).p, w, "retreat").step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it("never takes the town's down staircase as an escape", () => {
+    /* The soak's priest in town at 7 of 13 hit points, standing on the staircase with a townsperson beside it. */
+    const w = world({
+      map: ["##########", "#........#", "#...>@...#", "#........#", "##########"],
+      player: { level: 1, cls: "Priest", depth: 0, maxDepth: 1, hp: 7, maxHp: 13 },
+      monsters: [{ grid: { x: 5, y: 2 }, race: "mean-looking mercenary", level: 0 }],
+    });
+    w.moveTo({ x: 4, y: 2 });
+    const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
+    expect(offer?.criteria).toContain("four steps");
+    const step = planOf(planner(w).p, w, "retreat").step(w.view, w.act);
+    expect(step?.code).toBe("walk");
+  });
+
+  it("leaves a goal out once it has started three times on one game turn", () => {
+    /* The soak's priest chose retreat about 1,500 times at game turn 3011. */
+    const w = world({ map: TWO_STAIRS, player: { level: 1, cls: "Priest", depth: 1, hp: 7, maxHp: 13 }, monsters: [{ grid: { x: 2, y: 2 }, race: "giant white mouse", level: 1 }] });
+    w.moveTo({ x: 1, y: 1 });
+    const { p, logged } = planner(w);
+    for (let i = 0; i < 3; i += 1) {
+      const q = asked(p.ask(w.view));
+      expect(offered(q)).toContain("retreat");
+      p.choose(pick("retreat"), q.context, w.view);
+    }
+    expect(offered(p.ask(w.view))).not.toContain("retreat");
+    expect(logged.join("\n")).toContain("retreat is left out until game time passes");
+    w.advance(1);
+    expect(offered(p.ask(w.view))).toContain("retreat");
+  });
+
+  it("does not stop a plan when one more worm of a known mass comes up beside the character", () => {
+    const worm = (x: number, y: number) => ({ grid: { x, y }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"], asleep: true });
+    const w = world({ map: ["###########", "#.@....... ", "#........##", "#........#", "##########"], player: { depth: 1 }, monsters: [worm(6, 3)] });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([worm(6, 3), worm(3, 2)]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("rests rather than waits while a recall is pending, hurt and out of mana", () => {
+    /* The soak's mage waited 32 times in a row at 5 of 10 hit points and no mana. */
+    const w = world({ map: CORRIDOR, player: { cls: "Mage", level: 1, depth: 1, hp: 5, maxHp: 10, sp: 0, maxSp: 2, recall: 12 } as never });
+    const q = reflexed(planner(w, true).p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "rest" });
+    expect(q.reflex).toBe("routine upkeep");
+  });
+
+  it("offers to leave a walked-out floor with no way down known", () => {
+    const w = world({ map: ["########", "#<@....#", "########"], player: { depth: 1 } });
+    expect(offered(planner(w).p.ask(w.view))).toContain("leave_level");
+  });
+});

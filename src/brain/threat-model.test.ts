@@ -49,6 +49,29 @@ describe("threat model", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
     expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
   });
+
+  it("does not call a townsperson with unseen blows dangerous to a lightly hurt priest", () => {
+    /* The soak's Priest in town: a beggar beside it at 7 of 13 hit points, and a mercenary 4 steps off at full health. */
+    const w = world({
+      map: ["##########", "#.@......#", "##########"],
+      player: { level: 1, cls: "Priest", hp: 7, maxHp: 13, depth: 0, maxDepth: 1 },
+      monsters: [{ grid: { x: 3, y: 1 }, race: "pitiful-looking wretch", level: 0 }],
+    });
+    recall(w.view, "Nothing is known about his attack.");
+    const rate = () => assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band;
+    expect(rate()).toBe(1);
+    w.setPlayer({ hp: 13 });
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "mean-looking mercenary", level: 0 }]);
+    expect(rate()).toBe(0);
+    w.setPlayer({ hp: 3 });
+    expect(rate()).toBeGreaterThanOrEqual(2);
+  });
+
+  it("keeps the dungeon's estimate for a level 0 creature below town", () => {
+    const w = world({ map: MAP, player: { level: 1, hp: 7, maxHp: 13 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
+    recall(w.view, "Nothing is known about his attack.");
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(2);
+  });
 });
 
 describe("combat sense", () => {

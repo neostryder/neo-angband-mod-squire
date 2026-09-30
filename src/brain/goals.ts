@@ -137,11 +137,13 @@ const SAME_SITUATION_TURNS = 50;
 /** The most risk a lone option can carry for Squire to take it without asking, when there is no persona to set a ceiling. */
 const FORCED_RISK = 0.3;
 /** Upkeep Squire does on its own when nothing awake is in sight, first to last. */
-const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "wait"];
+const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
 const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
 const REFUSAL_HOLD_TURNS = 200;
+/** Plans for one goal that may start on the same game turn before the goal is left out until time passes. */
+export const SAME_TURN_PLANS = 3;
 
 /**
  * Rules of the game the model needs for this decision, in a few plain lines.
@@ -424,6 +426,21 @@ function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
   return Number.isFinite(field.distance(me));
 }
 
+/**
+ * Which stairs a retreat may take. In town the only staircase leads down into
+ * the dungeon, which is no escape, so a retreat there only steps away. Below,
+ * any staircase will do when the danger is pressing; otherwise only a down
+ * staircase, because backing up the stairs from the first level at good health
+ * is a trip to town and back that never gets deeper.
+ */
+function retreatStairs(s: Situation, terrain: Terrain, widen: boolean): "any" | "down" | "none" {
+  const player = s.view.player();
+  if (player.depth === 0) return "none";
+  const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
+  if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
+  return reachableStairs(s.view, terrain) ? "down" : "none";
+}
+
 function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
   const goals = frontiers(view, terrain);
   if (goals.length === 0) return false;
@@ -538,13 +555,15 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hurt && healSpell !== undefined) {
     add("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
+  /* Leaving goes down when it can, since going up from the first level is a trip to town and back. */
+  const leaveBy = reachableStairs(view, terrain) ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
   /* Breeders are easy one at a time, so the escapes below would not be offered
    * for them; leaving is offered for their numbers instead. */
   if (widen && !(s.swarming && s.swarm !== null) && s.awake.length > 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
-    addLeave("Walk to the nearest staircase, up or down, and take it to leave every creature on this level behind.", exposure(s) * 0.4);
+    addLeave(`${leaveBy} to leave every creature on this level behind.`, exposure(s) * 0.4);
   }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
-    addLeave(`Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+    addLeave(`${leaveBy}. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
   }
   /* A caster out of mana cannot kill a breeder at range, and meleeing one only
    * makes more of them. Leaving the level is the way out. */
@@ -557,6 +576,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const feeling = rememberedFeeling ?? badLevelFeeling(view.messages());
   if (feeling !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     addLeave(`Leave the level: the game says "${feeling}"`, exposure(s) * 0.3);
+  }
+  /* A floor walked out with no way down found has nothing left to stay for, and a new level by any staircase has its own way down. */
+  if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
+    addLeave("Take the nearest staircase to a new level: nothing unexplored can be reached here and no way down is known.", exposure(s) + 0.02);
   }
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
@@ -575,12 +598,16 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
         ? `Use ${teleport.name} to leave this level entirely, going one level up or down.`
         : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
-    add("retreat", reachableAnyStairs(view, terrain)
+    const flight = retreatStairs(s, terrain, widen);
+    add("retreat", flight === "any"
       ? "Head for the nearest known staircase and take it, leaving the awake creatures behind."
-      : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", exposure(s) * 0.8);
+      : flight === "down"
+        ? "Head for a known down staircase and take it, leaving the awake creatures behind."
+        : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", exposure(s) * 0.8);
   }
   if (!bleeding && s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
-    add("rest", "Rest until hit points and mana recover.", 0.01);
+    /* Resting passes the turns a pending recall needs as well as waiting does, and heals besides. */
+    add("rest", "Rest until hit points and mana recover.", 0.01, recallActive);
   }
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
@@ -677,6 +704,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * ended on. Offering one again before time moves would repeat the same empty
    * plan, so it is left out until the turn changes. */
   const stalled = new Map<Goal, number>();
+  /* Plans started for each goal on the game turn in `sameTurnAt`. A plan whose
+   * commands are refused or pass no time leaves the turn where it was, so the
+   * same choice would otherwise come back on every decision for good. */
+  const sameTurn = new Map<Goal, number>();
+  let sameTurnAt: number | null = null;
+  /* Whether the last question offered the escapes held back at first, which the retreat build needs to pick its stairs as the offer did. */
+  let offeredWiden = false;
 
   /* The game refused these goals where the character stood. Fear, blindness,
    * confusion, darkness and low mana are already filtered out of the offers, so
@@ -717,7 +751,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     outcomeVersion += 1;
   }
 
-  function noteStalls(goal: Goal | null, plan: Plan): Plan {
+  function noteStalls(goal: Goal | null, plan: Plan, turn: number): Plan {
+    if (goal !== null) {
+      if (sameTurnAt !== turn) {
+        sameTurnAt = turn;
+        sameTurn.clear();
+      }
+      sameTurn.set(goal, (sameTurn.get(goal) ?? 0) + 1);
+    }
     let issued = 0;
     let startTurn: number | null = null;
     let credited = false;
@@ -804,10 +845,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   }
 
   /* Kinds of breeder already seen on this level. One more of them coming into
-   * view is how breeding looks, not news: a worm mass ended a plan every turn. */
+   * view is how breeding looks, not news, even beside the character: a worm
+   * mass ended a plan every turn. Damage from one still stops the plan by the
+   * hit point rules. */
   const breedersOnLevel = new Set<string>();
-  function routineBreeder(m: MonsterView, now: AgentView): boolean {
-    return m.raceFlags.includes("MULTIPLY") && breedersOnLevel.has(m.race) && steps(now.player().grid, m.grid) > 1;
+  function routineBreeder(m: MonsterView): boolean {
+    return m.raceFlags.includes("MULTIPLY") && breedersOnLevel.has(m.race);
   }
 
   function watch(view: AgentView): Watcher {
@@ -1025,16 +1068,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           return /Staff/i.test(item.name) ? ctx.act.useStaff(item.handle) : ctx.act.read(item.handle);
         });
       }
-      case "retreat":
-        /* Fleeing heads for the way out of the level when one is known, and
-         * only backs up a few steps when it is not. */
+      case "retreat": {
+        /* Fleeing heads for the way out of the level when one is known and
+         * leads somewhere safer, and only backs up a few steps when not. */
+        const flight = retreatStairs(situationOf(view, dreadedNow()), terrain, offeredWiden);
+        const depth = view.player().depth;
         return stepsPlan("back away", view, (ctx, i) => {
-          const stairs = knownStairs(ctx.view, terrain);
-          if (stairs.length > 0 && reachableAnyStairs(ctx.view, terrain)) {
+          if (ctx.view.player().depth !== depth) return null;
+          const stairs = flight === "down" ? knownDownStairs(ctx.view, terrain) : knownStairs(ctx.view, terrain);
+          if (flight !== "none" && stairs.length > 0) {
             const here = ctx.view.player().grid;
             const cell = ctx.view.cell(here.x, here.y);
             if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
-            if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+            if (cell !== null && flight === "any" && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
             if (i === 0) {
               const engine = engineTravel(ctx, stairs, { run: true });
               if (engine !== null) return engine;
@@ -1046,6 +1092,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
           return away.kind === "step" ? away.command : null;
         });
+      }
       case "rest":
         return once("rest", view, (ctx) => ctx.act.rest());
       case "wait":
@@ -1132,20 +1179,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "explore":
         /* The model saw every awake creature before choosing to explore. */
         return missionPlan("explore", autoexplore({ allowAwake: true }), view);
-      case "leave_level":
-        return stepsPlan("take the nearest stairs", view, (ctx, i) => {
+      case "leave_level": {
+        const down = reachableStairs(view, terrain);
+        const targets = (v: AgentView) => (down ? knownDownStairs(v, terrain) : knownStairs(v, terrain));
+        return stepsPlan(down ? "take the stairs down" : "take the nearest stairs", view, (ctx, i) => {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
           if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
-          if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+          if (cell !== null && !down && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
           if (i === 0) {
-            const engine = engineTravel(ctx, knownStairs(ctx.view, terrain), { run: true });
+            const engine = engineTravel(ctx, targets(ctx.view), down ? { stairs: "down" } : { run: true });
             if (engine !== null) return engine;
           }
-          const travel = travelTo(ctx, knownStairs(ctx.view, terrain));
+          const travel = travelTo(ctx, targets(ctx.view));
           return travel.kind === "step" ? travel.command : null;
         });
+      }
       case "descend":
         return stepsPlan("take the stairs down", view, (ctx, i) => {
           const at = ctx.view.player().grid;
@@ -1229,7 +1279,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const weighted = options.orders === undefined ? blended : options.orders.weigh(blended, answers, view, digest.offers);
     /* An order at high adherence carries its options past the ceiling, as Death wish does for every option. */
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
-    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null);
+    /* A level with nothing left to explore has nothing safe and useful left, and the depth target no longer holds the character on it. */
+    const spent = !digest.offers.some((o) => o.goal === "explore");
+    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -1274,10 +1326,21 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       decisionDepth = player.depth;
       const widen = widenNext;
       widenNext = false;
+      offeredWiden = widen;
+      if (sameTurnAt !== turn) {
+        sameTurnAt = turn;
+        sameTurn.clear();
+      }
+      for (const [goal, count] of sameTurn) {
+        if (count === SAME_TURN_PLANS) {
+          log(`goal: ${goal} is left out until game time passes; it has started ${String(count)} times on this turn`);
+          sameTurn.set(goal, count + 1);
+        }
+      }
       const recalling = recallPending(player, recallRead, turn);
       const saving = savingFor(view);
       const aims = options.strategy?.().aims ?? [];
-      const usable = (offer: Offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
+      const usable = (offer: Offer) => !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
       const offered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       let offers = offered.filter(usable);
@@ -1287,7 +1350,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
-      if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
+      if (offers.length === 0 && offered.length > 0 && !stalled.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
@@ -1341,7 +1404,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         options.orders?.decided(reflex.goal, view);
         const decided: Reflex<GoalDigest> = {
           reflex: reflex.why,
-          plan: noteStalls(reflex.goal, build(reflex.goal, view)),
+          plan: noteStalls(reflex.goal, build(reflex.goal, view), turn),
           context: { depth: player.depth, offers, newCreatures, situation, reflex: reflex.why },
           answers: { goal: { type: "choice", choice: reflex.goal, confidence: 1, probabilities: { [reflex.goal]: 1 } } },
         };
@@ -1405,17 +1468,17 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         }
         if (likeliest !== undefined && danger) {
           log(`goal: none fit in danger, taking the likeliest listed option (${likeliest.goal})`);
-          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
+          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view), view.turn()) };
         }
         /* On a cleared floor the errand order has nothing to do either, and
          * repeating it only stops Squire. The model's likeliest offer stands in. */
         if (likeliest !== undefined && fallbackStalled === view.turn()) {
           log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
-          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
+          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view), view.turn()) };
         }
         const rated = digest.offers.map((o) => `${o.goal} ${String(Math.round((answer.probabilities[o.goal] ?? 0) * 100))}%`).join(", ");
         log(`goal: none fit (${rated}), following the fixed errand order`);
-        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS)) };
+        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS), view.turn()) };
       }
       const offer = digest.offers.find((o) => o.goal === pick);
       if (offer === undefined) {
@@ -1429,7 +1492,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       } else {
         log(`goal: ${pick} (${String(Math.round((answer.probabilities[pick] ?? 0) * 100))}%)`);
       }
-      return { plan: noteStalls(offer.goal, build(offer.goal, view)) };
+      return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
     },
 
     trigger(view, plan) {

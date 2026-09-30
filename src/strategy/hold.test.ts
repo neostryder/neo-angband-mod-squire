@@ -52,4 +52,19 @@ describe("holding back past the depth target", () => {
     expect(choose([dive(10)])).toBe("take the stairs down");
     expect(choose([dive(5)])).toBe("explore");
   });
+
+  it("does not hold the character on a floor with nothing left to explore", () => {
+    const w = world({ map: ROOM, player: { depth: 6, maxDepth: 6 } });
+    expect(holdDescent(dist, [dive(5)], w.view, false, true)).toEqual(dist);
+    const persona = defaultPersona("Steady");
+    persona.sliders.strength = 100;
+    persona.sliders.volatility = 0;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, persona, rng: () => 0.5, strategy: () => ({ aims: [dive(5)], tripAllowed: () => false }) });
+    const q = p.ask(w.view);
+    if (!("request" in q)) throw new Error("expected a question");
+    expect(q.context.offers.map((o) => o.goal as string)).not.toContain("explore");
+    const answer: Answer = { type: "choice", choice: "descend", confidence: 0.55, probabilities: { descend: 0.55, none_of_these: 0.45 } };
+    const choice = p.choose({ goal: answer, in_character: answer }, q.context, w.view);
+    expect("plan" in choice ? choice.plan.label : undefined).toBe("take the stairs down");
+  });
 });
