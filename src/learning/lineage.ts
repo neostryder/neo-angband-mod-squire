@@ -5,6 +5,7 @@ import type { Lesson } from "./lessons.js";
 import { inheritCreeds } from "../orders/creed.js";
 import type { Instruction } from "../orders/types.js";
 import { inheritAims, type InheritedAim } from "../strategy/heirs.js";
+import { feelingKind, feelingsFor, remembered, type Feeling, type Killer } from "./grudges.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -24,6 +25,10 @@ export interface Lineage {
   readonly creeds?: readonly Instruction[];
   /** Aims the last character held that can pass on: at death they are the parent's, then the heir's inherited set. */
   readonly aims?: readonly InheritedAim[];
+  /** The family's record of the creatures that killed its characters, kept across every generation. */
+  readonly killers?: readonly Killer[];
+  /** The current heir's hatred or fear toward those killers, set when it is born. */
+  readonly feelings?: readonly Feeling[];
   /** Current-character facts are optional until a run has supplied them. */
   readonly race?: string;
   readonly cls?: string;
@@ -55,15 +60,21 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
   const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key, values]) => [key, [...values]])) as Persona["lists"];
   const grudges = [...parentLineage.grudges];
   const death = parentLineage.died ?? null;
+  const killers = parentLineage.killers ?? [];
+  const heirGeneration = parentLineage.generation + 1;
+  const shaped = { ...heirPersona, sliders };
   if (parentPersona.toggles.grudges && death !== null) {
     const race = killerRace(death.cause);
     const family = familyOf(race);
     if (family !== "other") {
       grudges.push({ race, family, generation: parentLineage.generation });
-      const target = sliders.boldness >= 50 ? lists.hated : lists.feared;
+      const known = killers.find((k) => k.name.toLowerCase() === race.toLowerCase());
+      const count = known === undefined ? 1 : Math.max(1, remembered(known, heirGeneration));
+      const target = feelingKind(shaped, count) === "hatred" ? lists.hated : lists.feared;
       if (!target.includes(family) && target.length < 12) target.push(family);
     }
   }
+  const feelings = parentPersona.toggles.grudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
 
   const count = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
   const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit(rng) }))
@@ -75,10 +86,11 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
   };
   return {
     lineage: {
-      name: heirPersona.name, generation: parentLineage.generation + 1,
+      name: heirPersona.name, generation: heirGeneration,
       ancestors: [...parentLineage.ancestors, parent], lore, grudges,
       creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
-      aims: inheritAims(parentLineage.aims ?? [], parentPersona, { ...heirPersona, sliders }),
+      aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
+      killers, feelings,
     },
     persona: { ...heirPersona, sliders, lists },
   };

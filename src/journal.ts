@@ -20,6 +20,7 @@ import { applyTemperature, bestMoveKey, refit, update, type CalibrationBook } fr
 import { applyBlame, blameQuestion, fade, lessonFrom, retrieve, type AbilityKind, type DisablingStatus, type Lesson, type LessonOutcome, type LessonTemplateVars } from "./learning/lessons.js";
 import { steps } from "./grid.js";
 import { inherit, type Lineage } from "./learning/lineage.js";
+import { killerOf, recordDeath } from "./learning/grudges.js";
 import { signatureOf, type SituationSignature } from "./learning/signature.js";
 import { chronicleLine, isNotable, notorietyQuestion, notorietyState } from "./report/chronicle.js";
 import { createRunLog, fromJson, type RunEvent, type RunLog } from "./report/events.js";
@@ -397,7 +398,9 @@ export function withAncestor(
   cls: string,
   died: { readonly depth: number; readonly cause: string; readonly turn: number } | null,
   lessons: readonly Lesson[],
+  seen: readonly { readonly race: string; readonly raceFlags: readonly string[] }[] = [],
 ): Lineage {
   const base: Lineage = lineage ?? { name, generation: 1, ancestors: [], lore: [], grudges: [] };
-  return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60) };
+  const killers = died === null ? base.killers ?? [] : recordDeath(base.killers ?? [], killerOf(died.cause, seen), { generation: base.generation, depth: died.depth, turn: died.turn });
+  return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60), ...(killers.length === 0 ? {} : { killers }) };
 }

@@ -14,7 +14,7 @@ import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
 import { missingPreparation } from "./readiness.js";
 
-export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth";
+export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth" | "avenge";
 
 /** How an aim is pursued: gold to save, something to find, something already carried, or a depth to reach. */
 export type AimHow = "save" | "hunt" | "try" | "dive";
@@ -30,10 +30,12 @@ export interface Aim {
   readonly price: number | null;
   /** Dungeon level to reach, for the depth aim. */
   readonly depth: number | null;
+  /** The unique to kill, for the avenge aim. */
+  readonly target?: string;
 }
 
 /** The order aims come in when the model cannot rank them. */
-export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth"];
+export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth", "avenge"];
 
 /** A book counts as next when its first spell is at most this many levels above the character. */
 export const BOOK_LOOKAHEAD = 5;

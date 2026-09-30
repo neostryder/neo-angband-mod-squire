@@ -14,7 +14,8 @@ import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ScoreQuestion, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";
 import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim } from "./aims.js";
-import { stillInherited, withInherited, type InheritedAim } from "./heirs.js";
+import { stillInherited, withAvenge, withInherited, type InheritedAim } from "./heirs.js";
+import type { Feeling } from "../learning/grudges.js";
 import { createLevelPacing } from "./pacing.js";
 
 /** Game turns between reviews when nothing else prompts one. */
@@ -99,6 +100,8 @@ export interface StrategyDeps {
   readonly tally: Tally;
   now(): number;
   log(message: string): void;
+  /** The heir's hatred and fear toward its ancestors' killers. Without it no avenge aim is offered. */
+  feelings?(): readonly Feeling[];
 }
 
 export interface ReviewSummary {
@@ -176,7 +179,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     const seq = ++latest;
     const own = candidateAims(view);
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
-    const candidates = withInherited(own, inherited);
+    const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
     aims = inFixedOrder(candidates);
     const done = await rank(view, candidates);
     /* A slow answer for an older review must not overwrite the aims of a newer one. */

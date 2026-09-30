@@ -59,6 +59,8 @@ The Persona tab starts from Default or a random persona, or from an archetype: c
 
 When a character dies, Setup can have Squire start the next one for you, either like the last one or with a random race and class. The new character inherits a little of what its ancestors learned.
 
+The family also remembers what killed its characters. A bold or proud heir hates that creature and a cautious or craven one fears it, more strongly with each ancestor it killed. Hatred adds weight to fighting it, and a hated unique can become an aim to avenge the family. Fear makes the heir believe the creature more dangerous and offers to leave the level when it appears. Neither overrides the safety floor. Killing a hated unique settles the grudge for the whole family, and a feeling toward an ordinary monster fades over later generations unless it kills again. The Squire panel lists these under Family memory. With Inheritance at nothing, or Blood grudges off, an heir starts with no grudges.
+
 ## Knight's Lessons
 
 When you have the keyboard, you are the knight and Squire is your apprentice. It issues no commands, so your character stays yours. At each moment that matters it forms its own choice, compares it with yours, and writes a line in its notebook on the Lessons tab.

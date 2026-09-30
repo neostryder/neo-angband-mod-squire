@@ -22,6 +22,7 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
   const recent = h("div");
   const chronicle = h("div");
   const aimsBox = h("div");
+  const grudgesBox = h("div");
   const rows: Row[] = [];
 
   function drawStats(): void {
@@ -96,6 +97,8 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
     const player = rt.decisionView()?.player();
     const lines = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
     fill(aimsBox, ...lines.map((l) => h("div", { class: "entry" }, l)));
+    const grudges = rt.grudgeLines();
+    fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));
   }
 
   function drawAll(): void {
@@ -135,7 +138,7 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
     drawAims();
   }, 1000);
 
-  body.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
+  body.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, grudgesBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
   drawAll();
   return () => {
     offDecision();

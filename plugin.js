@@ -421,9 +421,9 @@ function autofight() {
       });
       const at = ctx.view.player().grid;
       const options = { wakeSleepers: cfg.wakeSleepers, reach: REACH };
-      const named2 = ctx.view.target();
-      if (named2 !== null && named2.midx > 0) {
-        const monster = liveTarget(ctx, named2.midx);
+      const named3 = ctx.view.target();
+      if (named3 !== null && named3.midx > 0) {
+        const monster = liveTarget(ctx, named3.midx);
         if (monster !== void 0 && monster.visible) {
           targetId = monster.id;
           return null;
@@ -2165,7 +2165,7 @@ var PARAMETERS = [
   { id: "deathwish", group: "quirks", name: "Death wish", kind: "quirk", scale: "on or off", description: "Allows options above the safety ceiling." },
   { id: "cowardice", group: "quirks", name: "Craven", kind: "quirk", scale: "on or off", description: "Flees from anything new, then circles back." },
   { id: "inheritance", group: "lineage", name: "Inheritance", kind: "slider", scale: "nothing passes to everything passes", description: "How much ancestral lore an heir starts with." },
-  { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An ancestor's killer joins the heir's hated or feared list.", default: true },
+  { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An heir hates or fears whatever killed its ancestors, and the feeling grows with each one it killed.", default: true },
   { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
   { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
   { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
@@ -2443,7 +2443,7 @@ function supplyMargin(view) {
 }
 
 // src/strategy/aims.ts
-var FIXED_ORDER = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth"];
+var FIXED_ORDER = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth", "avenge"];
 var BOOK_LOOKAHEAD = 5;
 var FREE_ACTION_DEPTH = 20;
 var SEE_INVISIBLE_DEPTH = 10;
@@ -2636,6 +2636,8 @@ function matchesAim(aim, name, tval) {
     case "preparation":
       return false;
     case "depth":
+      return false;
+    case "avenge":
       return false;
   }
 }
@@ -2867,6 +2869,10 @@ function wornKind(view, criteria) {
   if (ARMOUR2.includes(item.tval)) return "armour";
   return null;
 }
+function inSight2(view, name) {
+  const wanted = name.toLowerCase();
+  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted);
+}
 function servedBy(offer, view, aims, gold) {
   const depth = view.player().depth;
   const wear = offer.goal === "wear" ? wornKind(view, offer.criteria) : null;
@@ -2888,6 +2894,13 @@ function servedBy(offer, view, aims, gold) {
         break;
       case "explore":
         serves = depth > 0 && (aim.kind === "depth" && aim.depth !== null && aim.depth <= depth || aim.how === "hunt");
+        break;
+      case "fight":
+      case "shoot":
+      case "throw_oil":
+      case "aim_wand":
+      case "cast_attack":
+        serves = aim.kind === "avenge" && aim.target !== void 0 && inSight2(view, aim.target);
         break;
     }
     if (serves) return { aim, rank: rank2 };
@@ -3155,7 +3168,7 @@ function createJourney(terrain) {
   let previousHp = null;
   let unseenUntil = -1;
   let lastTurn = -1;
-  const remembered = /* @__PURE__ */ new Map();
+  const remembered2 = /* @__PURE__ */ new Map();
   let town = { ready: true, earning: false, reason: "", target: null };
   let expired = false;
   let footOffered = false;
@@ -3171,11 +3184,11 @@ function createJourney(terrain) {
       if (player.depth === 0 || turn < lastTurn) returnReason = null;
       previousHp = null;
       unseenUntil = -1;
-      remembered.clear();
+      remembered2.clear();
     }
-    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
+    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered2.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
-    for (const [id, entry] of remembered) if (!live.has(id) || entry.until < turn) remembered.delete(id);
+    for (const [id, entry] of remembered2) if (!live.has(id) || entry.until < turn) remembered2.delete(id);
     if (previousHp !== null && player.hp < previousHp && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
@@ -3192,13 +3205,13 @@ function createJourney(terrain) {
     if (standingOnHarm(view, terrain, player.grid)) return false;
     if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || view.turn() <= unseenUntil) return false;
     if (view.monsters().some((monster) => monster.visible && (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, player.grid) <= 10 || !monster.asleep || steps(monster.grid, player.grid) <= 8))) return false;
-    return ![...remembered.values()].some((entry) => entry.until >= view.turn());
+    return ![...remembered2.values()].some((entry) => entry.until >= view.turn());
   }
   function checkedRoute(view, goals) {
     const player = view.player();
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || view.turn() <= unseenUntil) return null;
-    const threats = [...remembered.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
+    const threats = [...remembered2.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
     const enter2 = (grid) => isRoutable(view, terrain, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap;
     const field = flowFrom({ goals, canEnter: enter2 });
     if (!Number.isFinite(field.distance(player.grid))) return null;
@@ -3486,6 +3499,156 @@ function rubbleDirection(view, terrain) {
   return null;
 }
 
+// src/learning/grudges.ts
+var MAX_FEELINGS = 6;
+var MAX_KILLERS = 30;
+var GRUDGE_NUDGE = { mild: 0.15, strong: 0.3, lasting: 0.45 };
+var FEAR_SHIFT = { mild: 1, strong: 1, lasting: 2 };
+var ATTACK_GOALS = ["fight", "shoot", "throw_oil", "aim_wand", "cast_attack"];
+var AVOID_GOALS = ["leave_level", "retreat", "phase", "teleport"];
+var NOT_A_CREATURE = /^(?:trap|bug|monster|starvation|hunger|poison|a fall|fall|drowning|lava|cuts?|bleeding|retiring|ripe old age|winning|quitting|suicide)$/i;
+function same2(a, b) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+function killerOf(cause, seen = []) {
+  const bare = cause.replace(/^killed by\s+/i, "").trim();
+  const article2 = /^(?:an?|the)\s+/i.test(bare);
+  const name = bare.replace(/^(?:an?|the)\s+/i, "").trim();
+  if (name === "" || NOT_A_CREATURE.test(name)) return null;
+  const match = seen.find((m) => same2(m.race, name));
+  if (match !== void 0) return { name: match.race, unique: match.raceFlags.includes("UNIQUE") };
+  return { name, unique: !article2 && /^[A-Z]/.test(name) };
+}
+function recordDeath(killers, killer, death) {
+  if (killer === null) return [...killers];
+  const at = killers.findIndex((k) => same2(k.name, killer.name));
+  if (at === -1) return [...killers, { name: killer.name, unique: killer.unique, deaths: [death] }].slice(-MAX_KILLERS);
+  return killers.map((k, i) => i === at ? { ...k, deaths: [...k.deaths, death] } : k);
+}
+function settle(killers, name, generation) {
+  const at = killers.findIndex((k) => k.unique && same2(k.name, name) && active(k).length > 0);
+  if (at === -1) return null;
+  return killers.map((k, i) => i === at ? { ...k, settled: generation } : k);
+}
+function active(killer) {
+  const since = killer.settled;
+  return since === void 0 ? killer.deaths : killer.deaths.filter((d) => d.generation > since);
+}
+function intensityOf(count2) {
+  if (count2 <= 0) return null;
+  return count2 === 1 ? "mild" : count2 === 2 ? "strong" : "lasting";
+}
+function remembered(killer, heirGeneration) {
+  const deaths = active(killer);
+  if (deaths.length === 0) return 0;
+  if (killer.unique || deaths.length >= 3) return deaths.length;
+  const last = Math.max(...deaths.map((d) => d.generation));
+  const age = Math.max(0, heirGeneration - last - 1);
+  return Math.max(0, deaths.length - age);
+}
+function feelingKind(persona, count2) {
+  const { boldness, pride, paranoia } = persona.sliders;
+  if (persona.quirks.cowardice.on) return "fear";
+  if (persona.quirks.deathwish.on) return "hatred";
+  if (boldness >= 70 || pride >= 70) return "hatred";
+  if (boldness <= 30 || paranoia >= 70) return "fear";
+  const lean = boldness - 50 + (pride - 50) / 2 - (paranoia - 50) / 2;
+  return lean >= 10 * (Math.min(3, count2) - 1) ? "hatred" : "fear";
+}
+function feelingsFor(killers, heirGeneration, heir, inheritance) {
+  const share2 = Math.max(0, Math.min(1, inheritance / 100));
+  const limit = Math.ceil(MAX_FEELINGS * share2);
+  if (limit === 0) return [];
+  const out = [];
+  for (const killer of killers) {
+    const count2 = remembered(killer, heirGeneration);
+    const intensity = intensityOf(count2);
+    if (intensity === null) continue;
+    out.push({ name: killer.name, unique: killer.unique, kind: feelingKind(heir, count2), intensity, count: count2 });
+  }
+  return out.sort((a, b) => b.count - a.count || Number(b.unique) - Number(a.unique)).slice(0, limit);
+}
+function feelingToward(feelings, race) {
+  return feelings.find((f) => same2(f.name, race));
+}
+function nudgeGrudges(dist, offers, feelings, inSight3, ceiling) {
+  const out = { ...dist };
+  let hate = 0;
+  let fear = 0;
+  for (const race of inSight3) {
+    const feeling = feelingToward(feelings, race);
+    if (feeling === void 0) continue;
+    if (feeling.kind === "hatred") hate = Math.max(hate, GRUDGE_NUDGE[feeling.intensity]);
+    else fear = Math.max(fear, GRUDGE_NUDGE[feeling.intensity]);
+  }
+  for (const offer of offers) {
+    if (offer.risk > ceiling) continue;
+    const boost = ATTACK_GOALS.includes(offer.goal) ? hate : AVOID_GOALS.includes(offer.goal) ? fear : 0;
+    const current2 = out[offer.goal];
+    if (boost > 0 && current2 !== void 0) out[offer.goal] = current2 * (1 + boost);
+  }
+  return out;
+}
+function fearedBand(band, bands, feeling) {
+  if (feeling?.kind !== "fear") return band;
+  return Math.max(0, Math.min(bands - 1, band + FEAR_SHIFT[feeling.intensity]));
+}
+var NUMBERS = ["no one", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"];
+function killedWhom(count2) {
+  return `${NUMBERS[count2] ?? String(count2)} of the family`;
+}
+function named(feeling) {
+  return feeling.unique ? feeling.name : `the ${feeling.name}`;
+}
+function feelingLine(feeling) {
+  const how2 = feeling.kind === "hatred" ? "hates" : "fears";
+  return `Remembers that ${named(feeling)} killed ${killedWhom(feeling.count)}, and ${how2} it (${feeling.intensity}).`;
+}
+function feelingLog(who, feeling) {
+  const line = feelingLine(feeling);
+  return `${who} ${line.charAt(0).toLowerCase()}${line.slice(1)}`;
+}
+function feelingBelief(feeling) {
+  return `${named(feeling)} killed ${killedWhom(feeling.count)}, and the character ${feeling.kind === "hatred" ? "hates" : "fears"} it`;
+}
+function settledLine(who, name, _count) {
+  return `${who} has slain ${name}. The family's grudge is settled.`;
+}
+function readKillers(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(-MAX_KILLERS).flatMap((raw) => {
+    const k = record(raw);
+    if (k === null || typeof k["name"] !== "string" || k["name"].trim() === "") return [];
+    const deaths = Array.isArray(k["deaths"]) ? k["deaths"].slice(-50).flatMap((d) => {
+      const r = record(d);
+      if (r === null) return [];
+      const generation = num2(r["generation"]);
+      return generation === null ? [] : [{ generation, depth: num2(r["depth"]) ?? 0, turn: num2(r["turn"]) ?? 0 }];
+    }) : [];
+    if (deaths.length === 0) return [];
+    const settled = num2(k["settled"]);
+    return [{ name: k["name"].slice(0, 80), unique: k["unique"] === true, deaths, ...settled === null ? {} : { settled } }];
+  });
+}
+function readFeelings(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, MAX_FEELINGS).flatMap((raw) => {
+    const f = record(raw);
+    if (f === null || typeof f["name"] !== "string" || f["name"].trim() === "") return [];
+    const count2 = num2(f["count"]);
+    const kind = f["kind"] === "hatred" || f["kind"] === "fear" ? f["kind"] : null;
+    const intensity = count2 === null ? null : intensityOf(count2);
+    if (count2 === null || kind === null || intensity === null) return [];
+    return [{ name: f["name"].slice(0, 80), unique: f["unique"] === true, kind, intensity, count: count2 }];
+  });
+}
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function num2(value) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE2 = "None of the listed options suits this moment.";
 var FALLBACK_STEPS = 8;
@@ -3534,7 +3697,7 @@ function swarmOf(monsters) {
   for (const [race, count2] of counts) if (best === null || count2 > best.count) best = { race, count: count2 };
   return best;
 }
-function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered = [], unseenDamage = 0, terrain, speedEnergy) {
+function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered2 = [], unseenDamage = 0, terrain, speedEnergy) {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
@@ -3552,7 +3715,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
     target,
     worst,
     hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1,
-    threats: [...monsters.filter((m) => m.visible), ...remembered.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
+    threats: [...monsters.filter((m) => m.visible), ...remembered2.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
     unseenDamage,
     lastSeen: /* @__PURE__ */ new Map(),
     ...terrain === void 0 ? {} : { terrain },
@@ -3744,7 +3907,7 @@ function recallPending(player, read, turn) {
   const depth = player.depth;
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = []) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = []) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -3836,6 +3999,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     addLeave(`${leaveBy}. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+  }
+  const feared = feelings.length === 0 ? void 0 : inSight(view.monsters()).find((m) => feelingToward(feelings, m.race)?.kind === "fear");
+  if (feared !== void 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    const who = feared.raceFlags.includes("UNIQUE") ? feared.race : `the ${feared.race}`;
+    addLeave(`${leaveBy}. The character fears ${who}, which killed some of its family, and a new level leaves it behind.`, exposure(s) * 0.3);
   }
   const outOfMana = player.maxSp > 0 && player.sp === 0;
   if (outOfMana && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
@@ -3944,6 +4112,7 @@ function createGoalPlanner(options) {
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   let lastAwake = /* @__PURE__ */ new Set();
+  const grudgeNoticed = /* @__PURE__ */ new Set();
   const visitedShops = /* @__PURE__ */ new Set();
   const triedStudies = /* @__PURE__ */ new Set();
   let decisionDepth = null;
@@ -4010,14 +4179,14 @@ function createGoalPlanner(options) {
     let startTurn = null;
     let credited = false;
     const version = outcomeVersion;
-    const settle = (v) => {
+    const settle2 = (v) => {
       if (credited || goal === null || issued === 0 || startTurn === null || v.turn() === startTurn) return;
       credited = true;
       options.orders?.carried(goal, v);
     };
     const step = (v, act) => {
       startTurn ??= v.turn();
-      settle(v);
+      settle2(v);
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
       else if (issued === 0 || v.turn() === startTurn) {
@@ -4035,7 +4204,7 @@ function createGoalPlanner(options) {
       }
       return command;
     };
-    return { ...plan, step, settle };
+    return { ...plan, step, settle: settle2 };
   }
   function refusalOf(goal, v) {
     const p = v.player();
@@ -4434,6 +4603,9 @@ function createGoalPlanner(options) {
   function dreadedNow() {
     return options.dreaded?.() ?? /* @__PURE__ */ new Set();
   }
+  function grudgesNow() {
+    return options.grudges?.() ?? [];
+  }
   function lessonsFor(view) {
     const persona = personaOf();
     let lines2 = options.lessons?.(view) ?? [];
@@ -4448,15 +4620,15 @@ function createGoalPlanner(options) {
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal));
     const advice = best.choice;
-    const record2 = (pick3, extra) => {
+    const record3 = (pick3, extra) => {
       digest.trace = { advice, pick: pick3, ...extra };
       return pick3;
     };
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
-    if (mustPickUp(persona) && offered.has("pick_up")) return record2("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (mustPickUp(persona) && offered.has("pick_up")) return record3("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
-      if (away !== void 0) return record2(away, { ...blank, quirk: "craven" });
+      if (away !== void 0) return record3(away, { ...blank, quirk: "craven" });
     }
     const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
     const strength = jitteredStrength(persona, rng);
@@ -4466,10 +4638,12 @@ function createGoalPlanner(options) {
     const weighted = options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view, digest.offers);
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
     const spent = !digest.offers.some((o) => o.goal === "explore");
-    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
+    const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
+    const nudged = holdDescent(felt, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
-    return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+    return record3(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
   function reflexFor(offers, persona, situation, turn, passes, s) {
     if (options.reflex === false) return null;
@@ -4521,7 +4695,7 @@ function createGoalPlanner(options) {
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow());
       const steered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
@@ -4549,11 +4723,20 @@ function createGoalPlanner(options) {
       const unexplored = reachableFrontier(view, terrain);
       const stairs = knownDownStairs(view, terrain).length > 0;
       const believed = [];
+      const feelings = persona === null ? [] : grudgesNow();
       const creatureLines = seen.map((m) => {
         const rating = assessThreat(m, player, s.awake, view, s.dreaded, terrain, options.speedEnergy);
         const real = rating.band;
-        const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
+        const feeling = feelingToward(feelings, m.race);
+        const seenAs = persona === null ? real : fearedBand(shiftThreat(real, THREAT_BANDS.length, persona, rng), THREAT_BANDS.length, feeling);
         if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
+        if (feeling !== void 0) {
+          believed.push(feelingBelief(feeling));
+          if (persona !== null && !grudgeNoticed.has(m.id)) {
+            grudgeNoticed.add(m.id);
+            log(feelingLog(persona.name, feeling));
+          }
+        }
         const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : "", m.speed > player.speed ? "faster than the character" : ""].filter((t) => t !== "").join(", ");
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...rating.description === null ? {} : { capability: rating.description }, away: steps(player.grid, m.grid), tags };
       });
@@ -4818,6 +5001,23 @@ function stillInherited(inherited, own, maxDepth, wieldsMagic) {
     return !wieldsMagic && !own.some((c) => c.kind === "weapon");
   });
 }
+function avengeAim(feelings) {
+  const hated = feelings.filter((f) => f.unique && f.kind === "hatred").sort((a, b) => b.count - a.count)[0];
+  if (hated === void 0) return null;
+  return {
+    kind: "avenge",
+    label: `avenge the family on ${hated.name}`,
+    detail: `${hated.name} killed ${hated.count === 1 ? "one" : String(hated.count)} of the family line. Kill it when it can be fought without too much risk.`,
+    how: "hunt",
+    price: null,
+    depth: null,
+    target: hated.name
+  };
+}
+function withAvenge(candidates, feelings) {
+  const aim = avengeAim(feelings);
+  return aim === null ? [...candidates] : [...candidates, aim];
+}
 
 // src/strategy/review.ts
 var REVIEW_TURNS = 2e3;
@@ -4914,7 +5114,7 @@ function createStrategy(deps) {
     const seq = ++latest;
     const own = candidateAims(view);
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
-    const candidates = withInherited(own, inherited);
+    const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
     aims = inFixedOrder(candidates);
     const done = await rank2(view, candidates);
     if (mine !== generation || seq !== latest) return;
@@ -4950,7 +5150,7 @@ function createStrategy(deps) {
 }
 
 // src/persona/persona.ts
-function record(value) {
+function record2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function bounded(value, fallback, high = 100) {
@@ -4983,12 +5183,12 @@ function defaultPersona(name = "Squire") {
 }
 function normalize(input) {
   try {
-    const raw = record(input);
+    const raw = record2(input);
     const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
-    const sliders = record(raw["sliders"]);
-    const lists = record(raw["lists"]);
-    const quirks = record(raw["quirks"]);
-    const toggles = record(raw["toggles"]);
+    const sliders = record2(raw["sliders"]);
+    const lists = record2(raw["lists"]);
+    const quirks = record2(raw["quirks"]);
+    const toggles = record2(raw["toggles"]);
     for (const parameter of PARAMETERS) {
       switch (parameter.kind) {
         case "slider":
@@ -5000,7 +5200,7 @@ function normalize(input) {
           break;
         }
         case "quirk": {
-          const value = record(quirks[parameter.id]);
+          const value = record2(quirks[parameter.id]);
           result.quirks[parameter.id] = {
             on: typeof value["on"] === "boolean" ? value["on"] : false,
             strength: bounded(value["strength"], 50)
@@ -5310,8 +5510,8 @@ function readBans(text) {
       const after = words.slice(at + 1);
       if (item === null && after[0] === "of" && after.length > 1) item = after.slice(1).join(" ");
     } else if (item === null) {
-      const named2 = words.filter((w) => !FILLER.test(w)).join(" ");
-      item = named2 === "" ? null : named2;
+      const named3 = words.filter((w) => !FILLER.test(w)).join(" ");
+      item = named3 === "" ? null : named3;
     }
     out.push({ verb, item, when });
   }
@@ -5341,8 +5541,8 @@ function bannedGoals(bans, offers, fighting2) {
       const uses = GOAL_USES[offer.goal];
       if (uses === void 0 || ban.verb !== "use" && !uses.includes(ban.verb)) continue;
       const words = offer.criteria;
-      const named2 = ban.item === null || (ban.item === "unknown" ? /\b(?:unknown|unidentified|untried)\b/i.test(words) : stem(words).includes(stem(ban.item)));
-      if (named2) out.add(offer.goal);
+      const named3 = ban.item === null || (ban.item === "unknown" ? /\b(?:unknown|unidentified|untried)\b/i.test(words) : stem(words).includes(stem(ban.item)));
+      if (named3) out.add(offer.goal);
     }
   }
   return [...out];
@@ -5822,8 +6022,8 @@ function createOrders(deps) {
         if (result !== null && result.ok) {
           deps.tally.record(backend, result.usage, deps.now());
           const answer = result.answers["drop"];
-          const named2 = answer?.type === "choice" ? live.find((i) => i.id === answer.choice) : void 0;
-          if (named2 !== void 0) target = named2;
+          const named3 = answer?.type === "choice" ? live.find((i) => i.id === answer.choice) : void 0;
+          if (named3 !== void 0) target = named3;
         }
       }
       const still = items.find((i) => i.id === target.id);
@@ -5861,11 +6061,11 @@ function createOrders(deps) {
     give(text, source, options = {}) {
       const trimmed = text.trim().slice(0, MAX_TEXT);
       if (trimmed === "") return { ok: false, problem: "Write the instruction first." };
-      const same2 = items.find((i) => normal(i.text) === normal(trimmed) && (isLive(i.state) || i.state === "forgotten" && i.kind === "standing"));
-      if (same2 !== void 0) {
-        const again = replace(same2.id, { memory: 1, seenTurn: lastTurn, state: isLive(same2.state) ? same2.state : "following" });
+      const same3 = items.find((i) => normal(i.text) === normal(trimmed) && (isLive(i.state) || i.state === "forgotten" && i.kind === "standing"));
+      if (same3 !== void 0) {
+        const again = replace(same3.id, { memory: 1, seenTurn: lastTurn, state: isLive(same3.state) ? same3.state : "following" });
         persist();
-        return { ok: true, instruction: again ?? same2, repeated: true };
+        return { ok: true, instruction: again ?? same3, repeated: true };
       }
       const code = sortByCode(trimmed);
       const kind = options.kind ?? code.kind;
@@ -6046,10 +6246,10 @@ function createOrders(deps) {
       return out;
     },
     promote(aims) {
-      const named2 = /* @__PURE__ */ new Set();
-      for (const i of items) if (isLive(i.state) && i.kind === "order" && i.sorted.aim !== null && i.state !== "ignoring") named2.add(i.sorted.aim);
-      if (named2.size === 0) return aims;
-      return [...aims.filter((a) => named2.has(a.kind)), ...aims.filter((a) => !named2.has(a.kind))];
+      const named3 = /* @__PURE__ */ new Set();
+      for (const i of items) if (isLive(i.state) && i.kind === "order" && i.sorted.aim !== null && i.state !== "ignoring") named3.add(i.sorted.aim);
+      if (named3.size === 0) return aims;
+      return [...aims.filter((a) => named3.has(a.kind)), ...aims.filter((a) => !named3.has(a.kind))];
     },
     state: () => ({ items }),
     load(state) {
@@ -6206,7 +6406,7 @@ var MAX_STORED = 60;
 function rec(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
-function num2(value, min, max, fallback) {
+function num3(value, min, max, fallback) {
   return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
 }
 function oneOf(value, allowed, fallback) {
@@ -6219,7 +6419,7 @@ function readSorted(value) {
   const r = rec(value) ?? {};
   const f = rec(r["frequency"]) ?? {};
   const mode = oneOf(f["mode"], ["always", "once", "until-level"], "always");
-  const frequency = mode === "until-level" ? { mode, level: Math.round(num2(f["level"], 1, 50, 50)) } : { mode };
+  const frequency = mode === "until-level" ? { mode, level: Math.round(num3(f["level"], 1, 50, 50)) } : { mode };
   const aim = typeof r["aim"] === "string" && AIMS.includes(r["aim"]) ? r["aim"] : null;
   const response = typeof r["response"] === "string" && RESPONSES2.includes(r["response"]) ? r["response"] : null;
   return {
@@ -6231,7 +6431,7 @@ function readSorted(value) {
     depth: optional(r["depth"], 1, 127),
     deadlineLevel: optional(r["deadlineLevel"], 1, 50),
     item: typeof r["item"] === "string" ? r["item"].slice(0, 80) : null,
-    count: Math.round(num2(r["count"], 1, 99, 1)),
+    count: Math.round(num3(r["count"], 1, 99, 1)),
     gold: optional(r["gold"], 0, 1e8),
     frequency,
     ...readHpBelow(r["hpBelow"]),
@@ -6241,8 +6441,8 @@ function readSorted(value) {
 function readHpBelow(value) {
   const r = rec(value);
   if (r === null || typeof r["value"] !== "number" || !Number.isFinite(r["value"])) return {};
-  if (r["kind"] === "hp") return { hpBelow: { kind: "hp", value: Math.round(num2(r["value"], 1, 1e5, 1)) } };
-  if (r["kind"] === "share") return { hpBelow: { kind: "share", value: num2(r["value"], 0.01, 1, 0.5) } };
+  if (r["kind"] === "hp") return { hpBelow: { kind: "hp", value: Math.round(num3(r["value"], 1, 1e5, 1)) } };
+  if (r["kind"] === "share") return { hpBelow: { kind: "share", value: num3(r["value"], 0.01, 1, 0.5) } };
   return {};
 }
 function readBansField(value) {
@@ -6271,13 +6471,13 @@ function readInstruction(value) {
     ...typeof r["viewer"] === "string" && r["viewer"].trim() !== "" ? { viewer: r["viewer"].trim().slice(0, MAX_VIEWER) } : {},
     sorted: readSorted(r["sorted"]),
     state: oneOf(r["state"], STATES, "following"),
-    memory: num2(r["memory"], 0, 1, 1),
-    adherence: num2(r["adherence"], 0, 1, 0.5),
+    memory: num3(r["memory"], 0, 1, 1),
+    adherence: num3(r["adherence"], 0, 1, 0.5),
     familyCreed: kind === "standing" && r["familyCreed"] === true,
-    createdTurn: num2(r["createdTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
-    seenTurn: num2(r["seenTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
-    acted: Math.round(num2(r["acted"], 0, 1e6, 0)),
-    lowReviews: Math.round(num2(r["lowReviews"], 0, 1e3, 0)),
+    createdTurn: num3(r["createdTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
+    seenTurn: num3(r["seenTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
+    acted: Math.round(num3(r["acted"], 0, 1e6, 0)),
+    lowReviews: Math.round(num3(r["lowReviews"], 0, 1e3, 0)),
     disliked: r["disliked"] === true
   };
 }
@@ -6492,7 +6692,9 @@ function lineagesOf(value) {
       lore: Array.isArray(l["lore"]) ? l["lore"].slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : [],
       creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
-      aims: readAims(l["aims"])
+      aims: readAims(l["aims"]),
+      killers: readKillers(l["killers"]),
+      feelings: readFeelings(l["feelings"])
     };
   }
   return out;
@@ -6797,8 +6999,8 @@ function rollOnBirth(session, mode, random, log) {
     const previous = cat.previous;
     steps2.push(() => session.usePrevious());
     if (!cat.namePinned && previous.name.trim() !== "") steps2.push(() => {
-      const named2 = session.setName(previous.name);
-      return named2.ok ? named2 : session.randomName();
+      const named3 = session.setName(previous.name);
+      return named3.ok ? named3 : session.randomName();
     });
   } else {
     const race = cat.races[Math.floor(random() * cat.races.length)];
@@ -6815,9 +7017,9 @@ function rollOnBirth(session, mode, random, log) {
     }
   }
   if (!cat.namePinned && session.draft().name.trim() === "") {
-    const named2 = session.randomName();
-    if (!named2.ok) {
-      log(`Squire left the next character to you: ${named2.reason ?? "the game refused a name"}`);
+    const named3 = session.randomName();
+    if (!named3.ok) {
+      log(`Squire left the next character to you: ${named3.reason ?? "the game refused a name"}`);
       return false;
     }
   }
@@ -7038,12 +7240,12 @@ function fade2(lessons, turnNow, learningRate01) {
 }
 function blameQuestion(records) {
   const criteria = {};
-  for (const record2 of records) criteria[record2.id] = `${record2.plan}: ${record2.summary}`;
+  for (const record3 of records) criteria[record3.id] = `${record3.plan}: ${record3.summary}`;
   criteria["none_of_these"] = "No listed decision contributed most to the death.";
   return { type: "choice", instructions: "Which earlier decision contributed most to this death? Choose one listed decision or none_of_these.", criteria };
 }
 function applyBlame(answer, records) {
-  return records.some((record2) => record2.id === answer.choice) ? answer.choice : null;
+  return records.some((record3) => record3.id === answer.choice) ? answer.choice : null;
 }
 
 // src/memory/install.ts
@@ -7079,15 +7281,15 @@ function strip(value) {
 function bytes(batch) {
   return Buffer.byteLength(JSON.stringify(batch), "utf8");
 }
-function decision(record2) {
+function decision(record3) {
   return strip({
-    t: record2.turn,
-    kind: record2.plan.trim().split(/\s+/)[0] || "unknown",
-    question: record2.question,
-    choice: record2.choice,
-    confidence: record2.confidence,
-    probs: record2.probs,
-    outcome: record2.outcome
+    t: record3.turn,
+    kind: record3.plan.trim().split(/\s+/)[0] || "unknown",
+    question: record3.question,
+    choice: record3.choice,
+    confidence: record3.confidence,
+    probs: record3.probs,
+    outcome: record3.outcome
   });
 }
 function buildBatches(input, level) {
@@ -7115,8 +7317,8 @@ function buildBatches(input, level) {
   let currentBytes = bytes(current2);
   if (currentBytes > LIMITS[level]) throw new RangeError("The summary exceeds the batch byte limit.");
   if (level !== "summary") {
-    for (const record2 of input.decisions) {
-      const mapped = decision(record2);
+    for (const record3 of input.decisions) {
+      const mapped = decision(record3);
       const count2 = current2.decisions?.length ?? 0;
       const addedBytes = Buffer.byteLength(JSON.stringify(mapped), "utf8") + (count2 ? 1 : 0);
       if (count2 >= MAX_RECORDS || currentBytes + addedBytes > LIMITS[level]) {
@@ -7297,15 +7499,21 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
   const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key2, values]) => [key2, [...values]]));
   const grudges = [...parentLineage.grudges];
   const death = parentLineage.died ?? null;
+  const killers = parentLineage.killers ?? [];
+  const heirGeneration = parentLineage.generation + 1;
+  const shaped = { ...heirPersona, sliders };
   if (parentPersona.toggles.grudges && death !== null) {
     const race = killerRace(death.cause);
     const family = familyOf(race);
     if (family !== "other") {
       grudges.push({ race, family, generation: parentLineage.generation });
-      const target = sliders.boldness >= 50 ? lists.hated : lists.feared;
+      const known = killers.find((k) => k.name.toLowerCase() === race.toLowerCase());
+      const count3 = known === void 0 ? 1 : Math.max(1, remembered(known, heirGeneration));
+      const target = feelingKind(shaped, count3) === "hatred" ? lists.hated : lists.feared;
       if (!target.includes(family) && target.length < 12) target.push(family);
     }
   }
+  const feelings = parentPersona.toggles.grudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
   const count2 = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
   const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit3(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count2).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
   const parent = {
@@ -7318,12 +7526,14 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
   return {
     lineage: {
       name: heirPersona.name,
-      generation: parentLineage.generation + 1,
+      generation: heirGeneration,
       ancestors: [...parentLineage.ancestors, parent],
       lore,
       grudges,
       creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
-      aims: inheritAims(parentLineage.aims ?? [], parentPersona, { ...heirPersona, sliders })
+      aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
+      killers,
+      feelings
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -7501,7 +7711,7 @@ function culprit(view) {
   if (adjacent2.length === 0 && awake.length === 1) return awake[0];
   return void 0;
 }
-function named(view, message) {
+function named2(view, message) {
   const lower = message.toLowerCase();
   return view.monsters().filter((m) => m.visible).sort((a, b) => b.race.length - a.race.length).find((m) => lower.includes(m.race.toLowerCase()));
 }
@@ -7579,7 +7789,7 @@ function createJournal(initial, deps) {
       if (was > 0 && count2 > was) learn("breeding", view, race, { swarm: count2 }, race);
     }
     for (const message of view.messages()) {
-      const who = named(view, message);
+      const who = named2(view, message);
       if (who === void 0) continue;
       if (RESIST_WORDS.test(message) && lastDecision !== null && ATTACKS.has(lastDecision.choice)) {
         learn("resisted", view, who.race, {}, `${who.race}:${lastDecision.choice}`);
@@ -7589,7 +7799,7 @@ function createJournal(initial, deps) {
       if (ability !== void 0) learn("ability", view, who.race, { ability }, `${who.race}:${ability}`);
     }
   }
-  function record2(event, notableByDefault) {
+  function record3(event, notableByDefault) {
     runLog.record(event);
     const persona = deps.persona();
     const voice = persona?.sliders.chronicle ?? 50;
@@ -7636,13 +7846,13 @@ function createJournal(initial, deps) {
       if (last !== null) {
         if (now.depth > last.depth) {
           const record_ = now.maxDepth > last.maxDepth;
-          record2(
+          record3(
             { kind: "descend", turn, depth: now.depth, text: record_ ? `a new record of ${String(now.depth * 50)} ft` : `down to ${String(now.depth * 50)} ft` },
             record_ && now.maxDepth % 5 === 0
           );
         }
         if (now.level > last.level) {
-          record2({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
+          record3({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
           drift("level-up");
         }
         const nearDeath = now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead;
@@ -7650,7 +7860,7 @@ function createJournal(initial, deps) {
           const swarm = swarmOf(view.monsters());
           const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
           const race = swarmed?.race ?? worstRace(view);
-          record2(
+          record3(
             { kind: "near-death", turn, depth: now.depth, text: race === void 0 ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...race === void 0 ? {} : { race } },
             true
           );
@@ -7665,7 +7875,7 @@ function createJournal(initial, deps) {
     kill(race, unique, view) {
       const depth = view?.player().depth ?? 0;
       const turn = view?.turn() ?? 0;
-      record2({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
+      record3({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
       if (unique && view !== null) drift("unique-kill");
     },
     decided(record_, view) {
@@ -7701,7 +7911,7 @@ function createJournal(initial, deps) {
       const turn = view?.turn() ?? 0;
       const depth = view?.player().depth ?? 0;
       if (pending !== null) pending.bad = true;
-      record2({ kind: "death", turn, depth, text: cause }, true);
+      record3({ kind: "death", turn, depth, text: cause }, true);
       const recent = records.slice(-BLAME_WINDOW);
       let blamed = null;
       if (deps.send !== null && recent.length > 0) {
@@ -7721,7 +7931,7 @@ function createJournal(initial, deps) {
       persist();
       return blamed;
     },
-    event: record2,
+    event: record3,
     state: () => ({ runLog: runLog.toJson(), chronicle, lessons, calibration })
   };
 }
@@ -7729,9 +7939,10 @@ function heirFrom(lineage, parent, heir, rng) {
   if (lineage === void 0) return null;
   return inherit(lineage, parent, heir, rng);
 }
-function withAncestor(lineage, name, race, cls, died, lessons) {
+function withAncestor(lineage, name, race, cls, died, lessons, seen = []) {
   const base = lineage ?? { name, generation: 1, ancestors: [], lore: [], grudges: [] };
-  return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60) };
+  const killers = died === null ? base.killers ?? [] : recordDeath(base.killers ?? [], killerOf(died.cause, seen), { generation: base.generation, depth: died.depth, turn: died.turn });
+  return { ...base, name, race, cls, died, lore: [...base.lore, ...lessons].slice(-60), ...killers.length === 0 ? {} : { killers } };
 }
 
 // src/learning/ranks.ts
@@ -8174,8 +8385,8 @@ function capturingNet(net, adapter) {
           if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
             const routing2 = raw["routing"];
             if (routing2 !== null && typeof routing2 === "object" && !Array.isArray(routing2)) {
-              const named2 = routing2["adapter"];
-              if (typeof named2 === "string") adapter(named2);
+              const named3 = routing2["adapter"];
+              if (typeof named3 === "string") adapter(named3);
             }
           }
         } catch {
@@ -8196,15 +8407,15 @@ function createShadow(options) {
   }
   return {
     /** One teacher row is saved per known pilot, including when shadowing is off. */
-    record(record2, seq, enabled, url, fallbacks = []) {
-      if (record2.backend !== "Jev") return Promise.resolve();
+    record(record3, seq, enabled, url, fallbacks = []) {
+      if (record3.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks = [];
       for (const [questionId, pilot] of PILOTS) {
-        const question = record2.request.questions[questionId];
-        const answer = record2.answers[questionId];
+        const question = record3.request.questions[questionId];
+        const answer = record3.answers[questionId];
         if (question === void 0 || answer === void 0) continue;
-        const shouldSend = enabled && record2.backend === "Jev" && options.net !== null && !busy.has(pilot);
+        const shouldSend = enabled && record3.backend === "Jev" && options.net !== null && !busy.has(pilot);
         if (shouldSend) busy.add(pilot);
         let rowWritten = () => {
         };
@@ -8221,16 +8432,16 @@ function createShadow(options) {
               id,
               pilot,
               ts,
-              state: record2.request.state,
+              state: record3.request.state,
               questions,
-              jev: { model: record2.model ?? "jev-latest", answers: { [questionId]: answer } },
-              outcome: { plan: record2.outcome }
+              jev: { model: record3.model ?? "jev-latest", answers: { [questionId]: answer } },
+              outcome: { plan: record3.outcome }
             };
             await options.rows.append(row2, seq);
             rowWritten();
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
-            const request2 = { state: record2.request.state, questions };
+            const request2 = { state: record3.request.state, questions };
             const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => {
               adapter = value;
@@ -8348,7 +8559,8 @@ function createRuntime(host, options = {}) {
     send: (request2) => self.send(request2),
     tally,
     now,
-    log: (message) => host.log(message)
+    log: (message) => host.log(message),
+    feelings: () => feelingsNow()
   });
   const orders = createOrders({
     backend: () => backendFor(config),
@@ -8492,7 +8704,9 @@ function createRuntime(host, options = {}) {
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       self.saveCharacter({ ...character, kills });
       journal.kill(race, unique, view);
+      if (unique) settleGrudge(race);
     },
+    grudgeLines: () => feelingsNow().map(feelingLine),
     observe(view) {
       lastView = view;
       journal.observe(view);
@@ -8543,6 +8757,7 @@ function createRuntime(host, options = {}) {
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
         strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
+        for (const feeling of born.lineage.feelings ?? []) host.log(feelingLog(born.persona.name, feeling));
         return born.persona;
       }
     }
@@ -8551,6 +8766,22 @@ function createRuntime(host, options = {}) {
     const adopted = normalize(chosen);
     self.saveCharacter({ ...character, persona: adopted });
     return adopted;
+  }
+  function feelingsNow() {
+    const line = character.lineage?.trim();
+    if (line === void 0 || line === "") return [];
+    return config.lineages[line]?.feelings ?? [];
+  }
+  function settleGrudge(race) {
+    const line = character.lineage?.trim();
+    const lineage = line === void 0 || line === "" ? void 0 : config.lineages[line];
+    if (line === void 0 || lineage === void 0) return;
+    const before = (lineage.killers ?? []).find((k) => k.unique && k.name.toLowerCase() === race.toLowerCase());
+    const killers = settle(lineage.killers ?? [], race, lineage.generation);
+    if (before === void 0 || killers === null) return;
+    const feelings = (lineage.feelings ?? []).filter((f) => f.name.toLowerCase() !== race.toLowerCase());
+    self.saveConfig({ ...config, lineages: { ...config.lineages, [line]: { ...lineage, killers, feelings } } });
+    host.log(settledLine(character.persona?.name ?? "Squire", before.name, remembered(before, lineage.generation)));
   }
   function startBrain(backend, cfg, terrain) {
     const mark = host.controller?.markNondeterministic;
@@ -8570,6 +8801,7 @@ function createRuntime(host, options = {}) {
         persona: () => persona === null ? null : character.persona,
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
+        grudges: () => feelingsNow(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
@@ -8581,9 +8813,9 @@ function createRuntime(host, options = {}) {
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
-      onDecision: (record2) => {
-        void logLoaded.then(() => logDecision(record2));
-        for (const listener of listeners) listener(record2, lastTurn);
+      onDecision: (record3) => {
+        void logLoaded.then(() => logDecision(record3));
+        for (const listener of listeners) listener(record3, lastTurn);
       },
       onPlanEnd: (end) => {
         void logLoaded.then(() => endDecision(end));
@@ -8600,28 +8832,28 @@ function createRuntime(host, options = {}) {
     openDecision = null;
     void log.flush();
   }
-  function logDecision(record2) {
-    const goal = record2.answers["goal"];
-    const trace = record2.context.trace;
+  function logDecision(record3) {
+    const goal = record3.answers["goal"];
+    const trace = record3.context.trace;
     const id = log.append({
       at: now(),
       turn: lastTurn,
-      trigger: record2.reflex === void 0 ? "decision" : "reflex",
-      backend: record2.backend,
+      trigger: record3.reflex === void 0 ? "decision" : "reflex",
+      backend: record3.backend,
       question: "goal",
       choice: trace?.pick ?? (goal?.type === "choice" ? goal.choice : ""),
       /* No model answered a reflex, so there is no confidence to log or calibrate. */
-      confidence: goal?.type === "choice" && record2.reflex === void 0 ? goal.confidence : null,
-      probs: goal?.type === "choice" && record2.reflex === void 0 ? goal.probabilities : null,
-      ...record2.reflex === void 0 ? {} : { reflex: record2.reflex },
-      state: record2.request.state,
-      options: record2.context.offers.map((o) => o.goal),
-      plan: record2.outcome,
-      latencyMs: record2.latencyMs,
-      ...record2.server === void 0 ? {} : { server: record2.server },
-      inputTokens: record2.usage.inputTokens,
-      outputTokens: record2.usage.outputTokens,
-      estimatedTokens: record2.usage.estimated,
+      confidence: goal?.type === "choice" && record3.reflex === void 0 ? goal.confidence : null,
+      probs: goal?.type === "choice" && record3.reflex === void 0 ? goal.probabilities : null,
+      ...record3.reflex === void 0 ? {} : { reflex: record3.reflex },
+      state: record3.request.state,
+      options: record3.context.offers.map((o) => o.goal),
+      plan: record3.outcome,
+      latencyMs: record3.latencyMs,
+      ...record3.server === void 0 ? {} : { server: record3.server },
+      inputTokens: record3.usage.inputTokens,
+      outputTokens: record3.usage.outputTokens,
+      estimatedTokens: record3.usage.estimated,
       ...trace === void 0 ? {} : {
         persona: {
           best: trace.advice,
@@ -8633,10 +8865,10 @@ function createRuntime(host, options = {}) {
       }
     });
     openDecision = id;
-    if (record2.reflex === void 0) void shadow.record(record2, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+    if (record3.reflex === void 0) void shadow.record(record3, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== void 0 && lastView !== null) journal.decided(logged, lastView);
-    if (record2.reflex === void 0) unsavedSpend += 1;
+    if (record3.reflex === void 0) unsavedSpend += 1;
     if (unsavedSpend >= 20) persistSpend();
     void log.flush();
   }
@@ -8684,7 +8916,7 @@ function createRuntime(host, options = {}) {
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds, ...passable.length > 0 ? { aims: passable } : {} };
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), creeds, ...passable.length > 0 ? { aims: passable } : {} };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },
@@ -9198,9 +9430,9 @@ function mountPersona(body2, rt) {
     draw();
   }
   const library = h("select");
-  const active = h("input", { type: "checkbox" });
-  active.addEventListener("change", () => {
-    config = { ...config, activePersona: active.checked ? index : -1 };
+  const active2 = h("input", { type: "checkbox" });
+  active2.addEventListener("change", () => {
+    config = { ...config, activePersona: active2.checked ? index : -1 };
     rt.saveConfig(config);
   });
   library.addEventListener("change", () => {
@@ -9220,7 +9452,7 @@ function mountPersona(body2, rt) {
   function draw() {
     config = rt.config();
     fill(library, ...config.personas.map((p2, i) => h("option", { value: String(i), selected: i === index }, p2.name)));
-    active.checked = config.activePersona === index;
+    active2.checked = config.activePersona === index;
     const p = current2();
     const playing = rt.character().persona;
     const name = h("input", { type: "text", value: p.name, maxlength: "40" });
@@ -9245,7 +9477,7 @@ function mountPersona(body2, rt) {
   body2.append(
     h("h3", {}, "Personas"),
     h("div", { class: "row" }, library, presets),
-    h("label", {}, active, " New characters play as this persona"),
+    h("label", {}, active2, " New characters play as this persona"),
     h(
       "div",
       {},
@@ -9449,6 +9681,7 @@ function mountDashboard(body2, rt) {
   const recent = h("div");
   const chronicle = h("div");
   const aimsBox = h("div");
+  const grudgesBox = h("div");
   const rows = [];
   function drawStats() {
     const t = rt.tally().session();
@@ -9515,6 +9748,8 @@ function mountDashboard(body2, rt) {
     const player = rt.decisionView()?.player();
     const lines2 = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
     fill(aimsBox, ...lines2.map((l) => h("div", { class: "entry" }, l)));
+    const grudges = rt.grudgeLines();
+    fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));
   }
   function drawAll() {
     drawStats();
@@ -9529,9 +9764,9 @@ function mountDashboard(body2, rt) {
     rows.unshift(...earlier.slice(-500));
     drawAll();
   });
-  const offDecision = rt.onDecision((record2, turn) => {
-    const goal = record2.answers["goal"];
-    const trace = record2.context.trace;
+  const offDecision = rt.onDecision((record3, turn) => {
+    const goal = record3.answers["goal"];
+    const trace = record3.context.trace;
     rows.push({
       turn,
       pick: trace?.pick ?? (goal?.type === "choice" ? goal.choice : "?"),
@@ -9546,7 +9781,7 @@ function mountDashboard(body2, rt) {
     drawStats();
     drawAims();
   }, 1e3);
-  body2.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
+  body2.append(h("h3", {}, "Now"), stats, h("h3", {}, AIMS_HEADING), aimsBox, grudgesBox, h("h3", {}, "Depth"), chart, h("h3", {}, "Recent decisions"), recent, h("h3", {}, "Chronicle"), chronicle);
   drawAll();
   return () => {
     offDecision();
@@ -10077,8 +10312,8 @@ function subscribeExam(rt, entries, result, onStart = () => {
 }) {
   let armed = false;
   let state = null;
-  const off = rt.onDecision((record2) => {
-    if (record2.reflex !== void 0) return;
+  const off = rt.onDecision((record3) => {
+    if (record3.reflex !== void 0) return;
     if (state === null) {
       if (!armed) return;
       armed = false;
@@ -10087,8 +10322,8 @@ function subscribeExam(rt, entries, result, onStart = () => {
     }
     const view = rt.decisionView();
     const expected = view === null ? null : styleGoal(entries(), signatureForView(view));
-    const answer = record2.context.trace?.pick ?? (record2.answers["goal"]?.type === "choice" ? record2.answers["goal"].choice : null);
-    const pick2 = record2.context.offers.find((offer) => offer.goal === answer)?.goal ?? null;
+    const answer = record3.context.trace?.pick ?? (record3.answers["goal"]?.type === "choice" ? record3.answers["goal"].choice : null);
+    const pick2 = record3.context.offers.find((offer) => offer.goal === answer)?.goal ?? null;
     state = scoreExam(state, pick2, expected);
     if (state.decisions >= 20) finish();
   });
@@ -10190,7 +10425,7 @@ function attachSquire(ctx, rt) {
   const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {
   }, ...ctx.core?.turnEnergy === void 0 ? {} : { speedEnergy: ctx.core.turnEnergy } });
-  function record2(squire, knight, view, dangerousNear, serial, confidence) {
+  function record3(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
     const share2 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
     const demonstration = demonstrations > 0;
@@ -10243,7 +10478,7 @@ function attachSquire(ctx, rt) {
     if ("reflex" in asked) {
       const answer = asked.answers["goal"];
       const goal = asked.context.offers.find((o) => answer?.type === "choice" && o.goal === answer.choice)?.goal;
-      if (goal !== void 0) record2(goal, knight, view, dangerousNear, serial);
+      if (goal !== void 0) record3(goal, knight, view, dangerousNear, serial);
       return;
     }
     const question = asked;
@@ -10252,7 +10487,7 @@ function attachSquire(ctx, rt) {
     const offline = proceduralPick(question.context.offers, share2);
     const backend = rt.backend();
     if (backend === null || asking) {
-      if (offline !== null) record2(offline, knight, view, dangerousNear, serial);
+      if (offline !== null) record3(offline, knight, view, dangerousNear, serial);
       return;
     }
     asking = true;
@@ -10263,7 +10498,7 @@ function attachSquire(ctx, rt) {
         const answer = result.answers["goal"];
         const pick2 = answer?.type === "choice" ? answer.choice : "none_of_these";
         const squire = question.context.offers.find((o) => o.goal === pick2)?.goal ?? offline;
-        if (squire !== null && squire !== void 0) record2(
+        if (squire !== null && squire !== void 0) record3(
           squire,
           knight,
           view,
@@ -10274,7 +10509,7 @@ function attachSquire(ctx, rt) {
         void rt.recordLesson(question.request, result.answers, result.model, apprentice.total, knight).catch(() => {
         });
       } else if (offline !== null) {
-        record2(offline, knight, view, dangerousNear, serial);
+        record3(offline, knight, view, dangerousNear, serial);
       }
     });
   });

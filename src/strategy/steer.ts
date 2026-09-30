@@ -51,6 +51,12 @@ function wornKind(view: AgentView, criteria: string): AimKind | null {
   return null;
 }
 
+/** Whether a creature of this name is in sight. */
+function inSight(view: AgentView, name: string): boolean {
+  const wanted = name.toLowerCase();
+  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted);
+}
+
 /** The first aim, best ranked, that the offer serves. */
 function servedBy(offer: Steerable, view: AgentView, aims: readonly Aim[], gold: number): { aim: Aim; rank: number } | null {
   const depth = view.player().depth;
@@ -64,6 +70,11 @@ function servedBy(offer: Steerable, view: AgentView, aims: readonly Aim[], gold:
       case "wear": serves = wear === aim.kind; break;
       case "descend": serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth; break;
       case "explore": serves = depth > 0 && ((aim.kind === "depth" && aim.depth !== null && aim.depth <= depth) || aim.how === "hunt"); break;
+      case "fight":
+      case "shoot":
+      case "throw_oil":
+      case "aim_wand":
+      case "cast_attack": serves = aim.kind === "avenge" && aim.target !== undefined && inSight(view, aim.target); break;
     }
     if (serves) return { aim, rank };
   }

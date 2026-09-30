@@ -20,6 +20,7 @@ Fixed.
 ## [Unreleased]
 
 ### Added
+- [Visible] **Heirs remember who killed the family.** An heir hates or fears the creature that killed its ancestors, depending on its persona, and more strongly with each death. Hatred pulls it toward the fight and can make a hated unique an aim; fear makes the creature look more dangerous and offers a way off the level, and neither overrides the safety floor. Killing a hated unique settles the grudge, and feelings about ordinary monsters fade over the generations.
 - [Visible] **Squire checks the danger before it moves.** It estimates the damage coming over its next action or two, only counts an escape that leaves it safer, checks every step of a walk to the stairs, and heals only when the cure keeps ahead of the damage. When a single cure or escape is all that keeps it alive, it takes that without waiting on the model.
 - [Visible] **Squire gets ready before it goes deeper.** It leaves town with food, light and a healing and Phase Door reserve, checks its level, hit points and supplies against each new depth first, heads home while it still has what it needs to get there, and stays near the stairs while it is young.
 

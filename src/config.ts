@@ -16,6 +16,7 @@ import type { ConsentLevel } from "./telemetry/consent.js";
 import { DEFAULT_ENDPOINT } from "./telemetry/sender.js";
 import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
+import { readFeelings, readKillers } from "./learning/grudges.js";
 import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 
@@ -111,6 +112,8 @@ function lineagesOf(value: unknown): Record<string, Lineage> {
       grudges: Array.isArray(l["grudges"]) ? (l["grudges"] as Lineage["grudges"]).slice(-30) : [],
       creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
       aims: readAims(l["aims"]),
+      killers: readKillers(l["killers"]),
+      feelings: readFeelings(l["feelings"]),
     };
   }
   return out;

@@ -54,6 +54,7 @@ import { activationUse, breatherInSight, buffUse, deviceHealUse, healingAmount, 
 import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull } from "./items.js";
 import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
+import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -227,6 +228,8 @@ export interface GoalPlannerOptions {
   readonly lessons?: (view: AgentView) => readonly string[];
   /** Kinds of creature that killed or nearly killed one of this character's line. */
   readonly dreaded?: () => ReadonlySet<string>;
+  /** The heir's hatred and fear toward the creatures that killed its ancestors. */
+  readonly grudges?: () => readonly Feeling[];
   /** Rescale the best-move answer from past outcomes. Never applied to the in-character answer. */
   readonly calibrate?: (probs: Readonly<Record<string, number>>) => Record<string, number>;
   /** Random draws for persona volatility and quirks. */
@@ -588,7 +591,7 @@ export function recallPending(player: object, read: RecallRead | null, turn: num
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = []): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = []): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -702,6 +705,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     addLeave(`${leaveBy}. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+  }
+  const feared = feelings.length === 0 ? undefined : inSight(view.monsters()).find((m) => feelingToward(feelings, m.race)?.kind === "fear");
+  if (feared !== undefined && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    const who = feared.raceFlags.includes("UNIQUE") ? feared.race : `the ${feared.race}`;
+    addLeave(`${leaveBy}. The character fears ${who}, which killed some of its family, and a new level leaves it behind.`, exposure(s) * 0.3);
   }
   /* A caster out of mana cannot kill a breeder at range, and meleeing one only
    * makes more of them. Leaving the level is the way out. */
@@ -845,6 +853,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const backstoryTokens = options.backstoryTokens ?? 600;
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
+  /* Creatures whose grudge has been told in the log, so each is told once. */
+  const grudgeNoticed = new Set<number>();
   const visitedShops = new Set<number>();
   /* Studies already tried, as "level:spell", so a study the game refused is not repeated. */
   const triedStudies = new Set<string>();
@@ -1427,6 +1437,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return options.dreaded?.() ?? new Set<string>();
   }
 
+  function grudgesNow(): readonly Feeling[] {
+    return options.grudges?.() ?? [];
+  }
+
   function lessonsFor(view: AgentView): { lessons?: string } {
     const persona = personaOf();
     let lines = options.lessons?.(view) ?? [];
@@ -1468,7 +1482,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
     /* A level with nothing left to explore has nothing safe and useful left, and the depth target no longer holds the character on it. */
     const spent = !digest.offers.some((o) => o.goal === "explore");
-    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
+    const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
+    const nudged = holdDescent(felt, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -1532,7 +1548,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow());
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
@@ -1568,11 +1584,20 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * persona's optimism or delusion is what the character believes, so it
        * goes under the persona, where the in-character question reads it. */
       const believed: string[] = [];
+      const feelings = persona === null ? [] : grudgesNow();
       const creatureLines = seen.map((m) => {
         const rating = assessThreat(m, player, s.awake, view, s.dreaded, terrain, options.speedEnergy);
         const real = rating.band;
-        const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
+        const feeling = feelingToward(feelings, m.race);
+        const seenAs = persona === null ? real : fearedBand(shiftThreat(real, THREAT_BANDS.length, persona, rng), THREAT_BANDS.length, feeling);
         if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
+        if (feeling !== undefined) {
+          believed.push(feelingBelief(feeling));
+          if (persona !== null && !grudgeNoticed.has(m.id)) {
+            grudgeNoticed.add(m.id);
+            log(feelingLog(persona.name, feeling));
+          }
+        }
         const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : "", m.speed > player.speed ? "faster than the character" : ""]
           .filter((t) => t !== "")
           .join(", ");

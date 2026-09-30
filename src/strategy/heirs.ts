@@ -7,6 +7,7 @@
  * until it is achieved or the heir's own aim of that kind replaces it.
  */
 
+import type { Feeling } from "../learning/grudges.js";
 import type { Persona } from "../persona/persona.js";
 import type { Aim, AimKind } from "./aims.js";
 
@@ -104,4 +105,25 @@ export function stillInherited(inherited: readonly InheritedAim[], own: readonly
     }
     return !wieldsMagic && !own.some((c) => c.kind === "weapon");
   });
+}
+
+/**
+ * The avenge aim for the hated unique that killed the most of the family, if
+ * the heir hates one. It is ranked with the other aims, and it only adds weight
+ * to fighting that unique within the risk the persona accepts.
+ */
+export function avengeAim(feelings: readonly Feeling[]): Aim | null {
+  const hated = feelings.filter((f) => f.unique && f.kind === "hatred").sort((a, b) => b.count - a.count)[0];
+  if (hated === undefined) return null;
+  return {
+    kind: "avenge", label: `avenge the family on ${hated.name}`,
+    detail: `${hated.name} killed ${hated.count === 1 ? "one" : String(hated.count)} of the family line. Kill it when it can be fought without too much risk.`,
+    how: "hunt", price: null, depth: null, target: hated.name,
+  };
+}
+
+/** Add the avenge aim to the candidates, when the heir holds one. */
+export function withAvenge(candidates: readonly Aim[], feelings: readonly Feeling[]): Aim[] {
+  const aim = avengeAim(feelings);
+  return aim === null ? [...candidates] : [...candidates, aim];
 }

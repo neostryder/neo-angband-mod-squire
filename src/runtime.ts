@@ -27,6 +27,7 @@ import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
 import { dreadedRaces } from "./learning/lessons.js";
+import { feelingLine, feelingLog, remembered, settle, settledLine, type Feeling } from "./learning/grudges.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -159,6 +160,8 @@ export interface Runtime {
    */
   takeOwnCommand(now: number): boolean;
   recordKill(race: string, unique: boolean, view: AgentView | null): void;
+  /** Where this character's hatred and fear of its ancestors' killers come from, one line each. */
+  grudgeLines(): readonly string[];
   /** Record what changed since the last look at the game. */
   observe(view: AgentView): void;
   journal(): Journal;
@@ -252,6 +255,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     tally,
     now,
     log: (message) => host.log(message),
+    feelings: () => feelingsNow(),
   });
 
   const orders = createOrders({
@@ -404,7 +408,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       self.saveCharacter({ ...character, kills });
       journal.kill(race, unique, view);
+      if (unique) settleGrudge(race);
     },
+    grudgeLines: () => feelingsNow().map(feelingLine),
     observe(view) {
       lastView = view;
       journal.observe(view);
@@ -448,6 +454,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         orders.adopt(born.lineage.creeds ?? [], lastTurn);
         strategy.inherit(born.lineage.aims ?? []);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
+        for (const feeling of born.lineage.feelings ?? []) host.log(feelingLog(born.persona.name, feeling));
         return born.persona;
       }
     }
@@ -457,6 +464,26 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const adopted = normalize(chosen);
     self.saveCharacter({ ...character, persona: adopted });
     return adopted;
+  }
+
+  /** The heir's feelings, which only a character born into a line holds. */
+  function feelingsNow(): readonly Feeling[] {
+    const line = character.lineage?.trim();
+    if (line === undefined || line === "") return [];
+    return config.lineages[line]?.feelings ?? [];
+  }
+
+  /** A character that kills a unique the family holds a grudge against settles it for every later heir. */
+  function settleGrudge(race: string): void {
+    const line = character.lineage?.trim();
+    const lineage = line === undefined || line === "" ? undefined : config.lineages[line];
+    if (line === undefined || lineage === undefined) return;
+    const before = (lineage.killers ?? []).find((k) => k.unique && k.name.toLowerCase() === race.toLowerCase());
+    const killers = settle(lineage.killers ?? [], race, lineage.generation);
+    if (before === undefined || killers === null) return;
+    const feelings = (lineage.feelings ?? []).filter((f) => f.name.toLowerCase() !== race.toLowerCase());
+    self.saveConfig({ ...config, lineages: { ...config.lineages, [line]: { ...lineage, killers, feelings } } });
+    host.log(settledLine(character.persona?.name ?? "Squire", before.name, remembered(before, lineage.generation)));
   }
 
   function startBrain(backend: Backend, cfg: SquireCfg, terrain: Terrain): AgentController | null {
@@ -477,6 +504,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
         lessons: (view) => journal.lessonLines(view),
+        grudges: () => feelingsNow(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
@@ -602,7 +630,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons(), lastView?.monsters() ?? []), creeds, ...(passable.length > 0 ? { aims: passable } : {}) };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },
