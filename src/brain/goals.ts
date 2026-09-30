@@ -158,7 +158,11 @@ const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "stu
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
 const REFUSAL_HOLD_TURNS = 200;
 
-/** Rules of the game the model needs for this decision, in a few plain lines. */
+/**
+ * Rules of the game the model needs for this decision, in a few plain lines.
+ * Only lasting strategy belongs here: recall, gear, study and detection are
+ * offered by code that already knows when they apply.
+ */
 const HANDBOOK: readonly string[] = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on.",
@@ -166,9 +170,6 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
-  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
-  "Wear better gear when it is safe to change equipment.",
-  "Map or detect a new dungeon level before exploring it when a source is available.",
   "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
   "While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
 ]);
@@ -209,6 +210,10 @@ export interface GoalDigest {
   readonly situation?: string;
   /** Why Squire decided without the model, when it did. */
   readonly reflex?: string;
+  /** Options a widened offer would add, for a re-ask when the model passes on every option in danger. */
+  readonly missing?: readonly Goal[];
+  /** Set on the re-ask itself, so a second pass on every option is not asked about again. */
+  readonly widened?: true;
   /** Filled in by `choose`. */
   trace?: PersonaTrace;
 }
@@ -456,7 +461,7 @@ export function recallPending(player: object, read: RecallRead | null, turn: num
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -539,13 +544,17 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   /* Breeders are easy one at a time, so the escapes below would not be offered
    * for them; leaving is offered for their numbers instead. */
+  if (widen && !(s.swarming && s.swarm !== null) && s.awake.length > 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    add("leave_level", "Walk to the nearest staircase, up or down, and take it to leave every creature on this level behind.", exposure(s) * 0.4);
+  }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     add("leave_level", `Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
   }
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
   /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
-  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
+  /* A widened offer, made after the model passed on every option in danger, adds the escapes even against easy creatures. */
+  if (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
@@ -629,6 +638,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   /* The game turn on which the errand-order fallback last ended having done nothing. */
   let fallbackStalled: number | null = null;
+  /** Set when the model passed on every option in danger: the next offer adds the escapes it held back. */
+  let widenNext = false;
 
   /* How the last plan ended, told to the model at the next decision: it keeps
    * no memory between calls, so without this it cannot know that fear just
@@ -1057,8 +1068,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
-      let offers = offered.filter((offer) => !stalled.has(offer.goal) && !refused.has(offer.goal));
+      const widen = widenNext;
+      widenNext = false;
+      const recalling = recallPending(player, recallRead, turn);
+      const usable = (offer: Offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
+      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      let offers = offered.filter(usable);
+      const listed = new Set(offers.map((o) => o.goal));
+      const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true)
+        .filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
@@ -1138,7 +1156,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
               ? { goal }
               : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } },
         },
-        context: { depth: player.depth, offers, newCreatures, situation },
+        context: { depth: player.depth, offers, newCreatures, situation, missing, ...(widen ? { widened: true as const } : {}) },
       };
       return question;
     },
@@ -1159,7 +1177,16 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         const likeliest = [...(allowed.length > 0 ? allowed : digest.offers)].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        if (likeliest !== undefined && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
+        const danger = hurt || digest.offers.some((o) => o.risk > 0.3);
+        /* Passing on every option in danger most often means the one it wanted
+         * was not offered. Ask once more with the held-back escapes listed. */
+        const missing = digest.missing ?? [];
+        if (danger && digest.widened !== true && missing.length > 0) {
+          widenNext = true;
+          log(`goal: none fit in danger, asking again with ${missing.join(", ")} added`);
+          return { plan: { label: "ask again with more options", step: () => null } };
+        }
+        if (likeliest !== undefined && danger) {
           log(`goal: none fit in danger, taking the likeliest listed option (${likeliest.goal})`);
           return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
         }

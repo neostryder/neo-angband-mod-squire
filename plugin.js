@@ -421,9 +421,9 @@ function autofight() {
       });
       const at = ctx.view.player().grid;
       const options = { wakeSleepers: cfg.wakeSleepers, reach: REACH };
-      const named = ctx.view.target();
-      if (named !== null && named.midx > 0) {
-        const monster = liveTarget(ctx, named.midx);
+      const named2 = ctx.view.target();
+      if (named2 !== null && named2.midx > 0) {
+        const monster = liveTarget(ctx, named2.midx);
         if (monster !== void 0 && monster.visible) {
           targetId = monster.id;
           return null;
@@ -1981,9 +1981,6 @@ var HANDBOOK = Object.freeze([
   "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
-  "When healing, escapes or food run low, Word of Recall returns the character to town to restock; another recall returns to the deepest reached dungeon level.",
-  "Wear better gear when it is safe to change equipment.",
-  "Map or detect a new dungeon level before exploring it when a source is available.",
   "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
   "While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit."
 ]);
@@ -2110,7 +2107,7 @@ function recallPending(player, read, turn) {
   const depth = player.depth;
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -2171,10 +2168,13 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hurt && healSpell !== void 0) {
     add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
+  if (widen && !(s.swarming && s.swarm !== null) && s.awake.length > 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    add2("leave_level", "Walk to the nearest staircase, up or down, and take it to leave every creature on this level behind.", exposure(s) * 0.4);
+  }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     add2("leave_level", `Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
   }
-  if (s.awake.length > 0 && (s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
+  if (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add2("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
@@ -2232,6 +2232,7 @@ function createGoalPlanner(options) {
   const refused = /* @__PURE__ */ new Map();
   let lastAnswer = null;
   let fallbackStalled = null;
+  let widenNext = false;
   let lastOutcome = null;
   let outcomeVersion = 0;
   function noteOutcome(text) {
@@ -2590,8 +2591,14 @@ function createGoalPlanner(options) {
       for (const [goal2, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal2);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recallPending(player, recallRead, turn));
-      let offers = offered.filter((offer) => !stalled.has(offer.goal) && !refused.has(offer.goal));
+      const widen = widenNext;
+      widenNext = false;
+      const recalling = recallPending(player, recallRead, turn);
+      const usable = (offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
+      const offered = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      let offers = offered.filter(usable);
+      const listed = new Set(offers.map((o) => o.goal));
+      const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true).filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
       if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
@@ -2662,7 +2669,7 @@ function createGoalPlanner(options) {
           },
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
         },
-        context: { depth: player.depth, offers, newCreatures, situation }
+        context: { depth: player.depth, offers, newCreatures, situation, missing, ...widen ? { widened: true } : {} }
       };
       return question;
     },
@@ -2676,7 +2683,14 @@ function createGoalPlanner(options) {
         const likeliest = [...allowed.length > 0 ? allowed : digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        if (likeliest !== void 0 && (hurt || digest.offers.some((o) => o.risk > 0.3))) {
+        const danger = hurt || digest.offers.some((o) => o.risk > 0.3);
+        const missing = digest.missing ?? [];
+        if (danger && digest.widened !== true && missing.length > 0) {
+          widenNext = true;
+          log(`goal: none fit in danger, asking again with ${missing.join(", ")} added`);
+          return { plan: { label: "ask again with more options", step: () => null } };
+        }
+        if (likeliest !== void 0 && danger) {
           log(`goal: none fit in danger, taking the likeliest listed option (${likeliest.goal})`);
           return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view)) };
         }
@@ -3372,8 +3386,8 @@ function rollOnBirth(session, mode, random, log) {
     const previous = cat.previous;
     steps2.push(() => session.usePrevious());
     if (!cat.namePinned && previous.name.trim() !== "") steps2.push(() => {
-      const named = session.setName(previous.name);
-      return named.ok ? named : session.randomName();
+      const named2 = session.setName(previous.name);
+      return named2.ok ? named2 : session.randomName();
     });
   } else {
     const race = cat.races[Math.floor(random() * cat.races.length)];
@@ -3390,9 +3404,9 @@ function rollOnBirth(session, mode, random, log) {
     }
   }
   if (!cat.namePinned && session.draft().name.trim() === "") {
-    const named = session.randomName();
-    if (!named.ok) {
-      log(`Squire left the next character to you: ${named.reason ?? "the game refused a name"}`);
+    const named2 = session.randomName();
+    if (!named2.ok) {
+      log(`Squire left the next character to you: ${named2.reason ?? "the game refused a name"}`);
       return false;
     }
   }
@@ -3500,15 +3514,73 @@ function similarity(a, b) {
 }
 
 // src/learning/lessons.ts
+var UNCAPTIONED = /* @__PURE__ */ new Set(["rest", "none_of_these", "unknown"]);
+var ATTACK_WORDS = {
+  shoot: "missiles",
+  throw_oil: "thrown oil",
+  aim_wand: "the wand",
+  cast_attack: "the attack spell",
+  fight: "melee blows"
+};
+var ESCAPE_WORDS = {
+  phase: "A short teleport",
+  teleport: "A long teleport",
+  retreat: "Stepping back"
+};
+function article(race) {
+  if (/^[A-Z]/.test(race)) return race;
+  return `${/^[aeiou]/i.test(race) ? "an" : "a"} ${race}`;
+}
+function capitalized(text) {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
 function sentence(event, decision2, vars) {
-  const foe = vars.race === void 0 ? "a creature" : vars.swarm === void 0 ? vars.race : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
+  const foe = vars.race === void 0 ? "a creature" : vars.swarm === void 0 ? article(vars.race) : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
+  const Foe = capitalized(foe);
   const action = vars.action ?? decision2.replace(/_/g, " ");
-  const place = vars.depth === void 0 ? "in the dungeon" : `at ${String(vars.depth * 50)} ft`;
+  const place = vars.depth === void 0 ? "in the dungeon" : vars.depth === 0 ? "in town" : `at ${String(vars.depth * 50)} ft`;
+  const who = vars.level === void 0 ? "the character" : `a level ${String(vars.level)} ${(vars.cls ?? "character").toLowerCase()}`;
+  const hp = vars.hpLeft === void 0 || vars.maxHp === void 0 ? "" : `, leaving ${String(vars.hpLeft)} of ${String(vars.maxHp)} HP`;
+  const chose = UNCAPTIONED.has(decision2) ? "" : ` after choosing to ${action}`;
+  const damage = vars.damage ?? 0;
   switch (event) {
     case "died":
-      return `Died ${place} to ${foe} after choosing to ${action}.`;
-    case "near-death":
-      return `Nearly died ${place} to ${foe} after choosing to ${action}.`;
+      return `${Foe} killed ${who} ${place}${chose}; next time avoid it at that depth or keep an escape ready.`;
+    case "near-death": {
+      const low = vars.hpLeft === void 0 || vars.maxHp === void 0 ? " close to death" : ` down to ${String(vars.hpLeft)} of ${String(vars.maxHp)} HP`;
+      return `${Foe} brought ${who}${low} ${place}${chose}; next time leave or escape sooner against it.`;
+    }
+    case "big-hit": {
+      const how = vars.melee === true ? vars.closing === true ? " while it closed to melee" : " in melee" : " from range";
+      const advice = vars.melee === true ? `prefer range or avoid it below ${String(damage * 2)} HP` : `keep out of its line of sight below ${String(damage * 2)} HP`;
+      return `${Foe} hit ${who} for ${String(damage)}${how}${hp}; ${advice}.`;
+    }
+    case "disabled": {
+      const verbs = { paralyzed: "paralyzed", confused: "confused", blind: "blinded", afraid: "frightened" };
+      const advice = {
+        paralyzed: "fight it only with free action, or not at all",
+        confused: "carry a Cure Light Wounds potion and fight it from range",
+        blind: "carry a Cure Light Wounds potion, since scrolls and spells fail while blind",
+        afraid: "fight it with missiles, spells or wands, since fear stops melee"
+      };
+      const status = vars.status ?? "confused";
+      return `${Foe} ${verbs[status]} ${who}; ${advice[status]}.`;
+    }
+    case "ability": {
+      const lines2 = {
+        breath: "can breathe; stay out of its line of sight when hurt",
+        spell: "casts spells; close in fast or break its line of sight",
+        summon: "summons help; kill it quickly or leave before more arrive",
+        missile: "shoots missiles; close in or break its line of sight rather than trade shots"
+      };
+      return `${Foe} ${lines2[vars.ability ?? "spell"]}.`;
+    }
+    case "resisted":
+      return `${Foe} resisted ${ATTACK_WORDS[decision2] ?? action}; use a different attack on it.`;
+    case "breeding":
+      return `${capitalized(article(vars.race ?? "creature"))} breeds${vars.swarm === void 0 ? "" : ` (${String(vars.swarm)} in sight)`}; kill each one at once or take the stairs before it fills the level.`;
+    case "failed-escape":
+      return `${ESCAPE_WORDS[decision2] ?? capitalized(action)} did not get ${who} clear of ${foe}, which hit for ${String(damage)}${hp}; escape earlier, or use a longer escape.`;
     case "escaped":
       return `Escaped ${foe} by choosing to ${action}.`;
     case "unique-kill":
@@ -3517,9 +3589,9 @@ function sentence(event, decision2, vars) {
       return `Lost ground to ${foe} after choosing to ${action}.`;
   }
 }
-function lessonFrom(event, signature, decision2, turn, templateVars = {}) {
+function lessonFrom(event, signature, decision2, turn, templateVars = {}, once) {
   return {
-    id: `${String(turn)}:${event}:${decision2}:${templateVars.race ?? ""}`,
+    id: once === void 0 ? `${String(turn)}:${event}:${decision2}:${templateVars.race ?? ""}` : `once-${once}:${event}:${decision2}:${templateVars.race ?? ""}`,
     signature,
     decision: decision2,
     outcome: event,
@@ -3987,6 +4059,30 @@ var REFIT_EVERY = 50;
 function emptyJournal() {
   return { runLog: "", chronicle: [], lessons: [], calibration: {} };
 }
+var BIG_HIT_SHARE = 0.25;
+var ESCAPE_WINDOW = 50;
+var DISABLING = ["paralyzed", "confused", "blind", "afraid"];
+var ESCAPES = /* @__PURE__ */ new Set(["phase", "teleport", "retreat"]);
+var ATTACKS = /* @__PURE__ */ new Set(["shoot", "throw_oil", "aim_wand", "cast_attack", "fight"]);
+var ABILITY_WORDS = [
+  [/\bbreathes\b/i, "breath"],
+  [/\b(summons|calls for help|magically summons)\b/i, "summon"],
+  [/\b(fires|shoots|throws)\b/i, "missile"],
+  [/\b(casts|invokes|gestures|points at you and curses|mumbles)\b/i, "spell"]
+];
+var RESIST_WORDS = /\b(resists|is unaffected|is immune)\b/i;
+function culprit(view) {
+  const at = view.player().grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const adjacent2 = awake.filter((m) => steps(at, m.grid) <= 1);
+  if (adjacent2.length === 1) return adjacent2[0];
+  if (adjacent2.length === 0 && awake.length === 1) return awake[0];
+  return void 0;
+}
+function named(view, message) {
+  const lower = message.toLowerCase();
+  return view.monsters().filter((m) => m.visible).sort((a, b) => b.race.length - a.race.length).find((m) => lower.includes(m.race.toLowerCase()));
+}
 function signatureFor(view) {
   const p = view.player();
   const pack = readPack(view);
@@ -4023,14 +4119,53 @@ function createJournal(initial, deps) {
     const result = applyDrift(persona, event, rng);
     if (result.changes.length > 0) deps.setPersona(result.persona);
   }
-  function learn(outcome, view, race, swarm) {
+  function learn(outcome, view, race, vars = {}, once) {
     const decision2 = lastDecision?.choice ?? "unknown";
+    const p = view.player();
     const lesson = lessonFrom(outcome, signatureFor(view), decision2, view.turn(), {
       ...race === void 0 ? {} : { race },
-      ...swarm === void 0 ? {} : { swarm },
-      depth: view.player().depth
-    });
+      depth: p.depth,
+      level: p.level,
+      cls: p.cls,
+      hpLeft: p.hp,
+      maxHp: p.maxHp,
+      ...vars
+    }, once);
     lessons = [...lessons.filter((l) => l.id !== lesson.id), lesson].slice(-MAX_LESSONS);
+  }
+  function escaping(turn) {
+    return lastDecision !== null && ESCAPES.has(lastDecision.choice) && turn - lastDecision.turn <= ESCAPE_WINDOW;
+  }
+  function causes(view, before, now, nearDeath) {
+    const turn = view.turn();
+    const p = view.player();
+    const foe = culprit(view);
+    const drop = before.hp - now.hp;
+    if (foe !== void 0 && p.maxHp > 0 && drop >= Math.max(1, p.maxHp * BIG_HIT_SHARE)) {
+      const melee = steps(p.grid, foe.grid) <= 1;
+      const closing = melee && lastDecision?.choice === "fight" && (before.away.get(foe.id) ?? 1) > 1;
+      if (escaping(turn)) learn("failed-escape", view, foe.race, { damage: drop }, `${foe.race}:${lastDecision?.choice ?? ""}`);
+      else if (!nearDeath) learn("big-hit", view, foe.race, { damage: drop, melee, closing }, `${foe.race}:${melee ? "melee" : "range"}`);
+    }
+    for (const status of DISABLING) {
+      if (before.status[status] === 0 && now.status[status] > 0 && foe !== void 0) {
+        learn("disabled", view, foe.race, { status }, `${foe.race}:${status}`);
+      }
+    }
+    for (const [race, count2] of now.breeders) {
+      const was = before.breeders.get(race) ?? 0;
+      if (was > 0 && count2 > was) learn("breeding", view, race, { swarm: count2 }, race);
+    }
+    for (const message of view.messages()) {
+      const who = named(view, message);
+      if (who === void 0) continue;
+      if (RESIST_WORDS.test(message) && lastDecision !== null && ATTACKS.has(lastDecision.choice)) {
+        learn("resisted", view, who.race, {}, `${who.race}:${lastDecision.choice}`);
+        continue;
+      }
+      const ability = ABILITY_WORDS.find(([pattern]) => pattern.test(message))?.[1];
+      if (ability !== void 0) learn("ability", view, who.race, { ability }, `${who.race}:${ability}`);
+    }
   }
   function record2(event, notableByDefault) {
     runLog.record(event);
@@ -4061,12 +4196,19 @@ function createJournal(initial, deps) {
   return {
     observe(view) {
       const p = view.player();
+      const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+      const breeders = /* @__PURE__ */ new Map();
+      for (const m of view.monsters()) if (m.visible && m.raceFlags.includes("MULTIPLY")) breeders.set(m.race, (breeders.get(m.race) ?? 0) + 1);
       const now = {
         depth: p.depth,
         maxDepth: p.maxDepth,
         level: p.level,
+        hp: p.hp,
         hpShare: p.maxHp > 0 ? p.hp / p.maxHp : 1,
-        dead: p.dead
+        dead: p.dead,
+        status: { paralyzed: p.status.paralyzed, confused: p.status.confused, blind: p.status.blind, afraid: p.status.afraid },
+        away: new Map(awake.map((m) => [m.id, steps(p.grid, m.grid)])),
+        breeders
       };
       const turn = view.turn();
       if (last !== null) {
@@ -4081,7 +4223,8 @@ function createJournal(initial, deps) {
           record2({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
           drift("level-up");
         }
-        if (now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead) {
+        const nearDeath = now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead;
+        if (nearDeath) {
           const swarm = swarmOf(view.monsters());
           const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
           const race = swarmed?.race ?? worstRace(view);
@@ -4089,10 +4232,11 @@ function createJournal(initial, deps) {
             { kind: "near-death", turn, depth: now.depth, text: race === void 0 ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...race === void 0 ? {} : { race } },
             true
           );
-          learn("near-death", view, race, swarmed?.count);
+          learn("near-death", view, race, swarmed === null ? {} : { swarm: swarmed.count });
           drift("near-death");
           if (pending !== null) pending.bad = true;
         }
+        if (!now.dead && now.depth === last.depth) causes(view, last, now, nearDeath);
       }
       last = now;
     },
@@ -4100,10 +4244,7 @@ function createJournal(initial, deps) {
       const depth = view?.player().depth ?? 0;
       const turn = view?.turn() ?? 0;
       record2({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
-      if (unique && view !== null) {
-        learn("unique-kill", view, race);
-        drift("unique-kill");
-      }
+      if (unique && view !== null) drift("unique-kill");
     },
     decided(record_, view) {
       if (pending !== null) {
@@ -4600,8 +4741,8 @@ function capturingNet(net, adapter) {
           if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
             const routing = raw["routing"];
             if (routing !== null && typeof routing === "object" && !Array.isArray(routing)) {
-              const named = routing["adapter"];
-              if (typeof named === "string") adapter(named);
+              const named2 = routing["adapter"];
+              if (typeof named2 === "string") adapter(named2);
             }
           }
         } catch {

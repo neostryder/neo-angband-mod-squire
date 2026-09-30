@@ -29,7 +29,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 - **Engine:** `>=1.8.0`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
-- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:turn.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `saves:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
+- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `saves:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
 
 The model, panel and Setup choices (brain, key, personas, telemetry, roll-on, Knight's Lessons) live in the Squire panel rather than on the Mods screen. The errand settings above apply only when no model is choosing.
 

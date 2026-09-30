@@ -22,6 +22,7 @@
     "state:stores.read",
     "network:api.typesafe.ai",
     "state:turn.read",
+    "state:messages.read",
     "event:combat-outcome",
     "event:player-command",
     "ui:panel.mount",

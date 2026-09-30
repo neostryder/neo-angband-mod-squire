@@ -8,7 +8,7 @@
  * host directly, so the whole of it runs in tests.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView } from "@rpgm-tools/neo-angband-core";
 import type { ChoiceAnswer, ScoreAnswer, SystemOneRequest } from "./brain/systemone.js";
 import type { AskResult } from "./brain/backend.js";
 import { readPack } from "./brain/pack.js";
@@ -17,7 +17,8 @@ import type { LoggedDecision } from "./memory/log.js";
 import { applyDrift, type DriftEvent } from "./persona/drift.js";
 import type { Persona } from "./persona/persona.js";
 import { applyTemperature, bestMoveKey, refit, update, type CalibrationBook } from "./learning/calibration.js";
-import { applyBlame, blameQuestion, fade, lessonFrom, retrieve, type Lesson, type LessonOutcome } from "./learning/lessons.js";
+import { applyBlame, blameQuestion, fade, lessonFrom, retrieve, type AbilityKind, type DisablingStatus, type Lesson, type LessonOutcome, type LessonTemplateVars } from "./learning/lessons.js";
+import { steps } from "./grid.js";
 import { inherit, type Lineage } from "./learning/lineage.js";
 import { signatureOf, type SituationSignature } from "./learning/signature.js";
 import { chronicleLine, isNotable, notorietyQuestion, notorietyState } from "./report/chronicle.js";
@@ -62,8 +63,52 @@ interface Watch {
   readonly depth: number;
   readonly maxDepth: number;
   readonly level: number;
+  readonly hp: number;
   readonly hpShare: number;
   readonly dead: boolean;
+  readonly status: Readonly<Record<DisablingStatus, number>>;
+  /** Steps from the character to each awake creature in sight, by creature id. */
+  readonly away: ReadonlyMap<number, number>;
+  /** Breeders in sight, by kind. */
+  readonly breeders: ReadonlyMap<string, number>;
+}
+
+/** One loss of this share of maximum hit points between two looks is a large hit. */
+const BIG_HIT_SHARE = 0.25;
+/** Game turns after an escape during which a large hit counts as the escape failing. */
+const ESCAPE_WINDOW = 50;
+const DISABLING: readonly DisablingStatus[] = ["paralyzed", "confused", "blind", "afraid"];
+const ESCAPES: ReadonlySet<string> = new Set(["phase", "teleport", "retreat"]);
+const ATTACKS: ReadonlySet<string> = new Set(["shoot", "throw_oil", "aim_wand", "cast_attack", "fight"]);
+/** Message verbs that show what a creature can do, first match wins. */
+const ABILITY_WORDS: readonly [RegExp, AbilityKind][] = [
+  [/\bbreathes\b/i, "breath"],
+  [/\b(summons|calls for help|magically summons)\b/i, "summon"],
+  [/\b(fires|shoots|throws)\b/i, "missile"],
+  [/\b(casts|invokes|gestures|points at you and curses|mumbles)\b/i, "spell"],
+];
+const RESIST_WORDS = /\b(resists|is unaffected|is immune)\b/i;
+
+/**
+ * The creature a change in the character's state can be pinned on: the only
+ * awake creature next to it, or else the only awake creature in sight.
+ */
+function culprit(view: AgentView): MonsterView | undefined {
+  const at = view.player().grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const adjacent = awake.filter((m) => steps(at, m.grid) <= 1);
+  if (adjacent.length === 1) return adjacent[0];
+  if (adjacent.length === 0 && awake.length === 1) return awake[0];
+  return undefined;
+}
+
+/** The creature in sight a message names, longest name first so "cave spider" wins over "spider". */
+function named(view: AgentView, message: string): MonsterView | undefined {
+  const lower = message.toLowerCase();
+  return view.monsters()
+    .filter((m) => m.visible)
+    .sort((a, b) => b.race.length - a.race.length)
+    .find((m) => lower.includes(m.race.toLowerCase()));
 }
 
 export interface Journal {
@@ -126,14 +171,58 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
     if (result.changes.length > 0) deps.setPersona(result.persona);
   }
 
-  function learn(outcome: LessonOutcome, view: AgentView, race: string | undefined, swarm?: number): void {
+  function learn(outcome: LessonOutcome, view: AgentView, race: string | undefined, vars: LessonTemplateVars = {}, once?: string): void {
     const decision = lastDecision?.choice ?? "unknown";
+    const p = view.player();
     const lesson = lessonFrom(outcome, signatureFor(view), decision, view.turn(), {
       ...(race === undefined ? {} : { race }),
-      ...(swarm === undefined ? {} : { swarm }),
-      depth: view.player().depth,
-    });
+      depth: p.depth,
+      level: p.level,
+      cls: p.cls,
+      hpLeft: p.hp,
+      maxHp: p.maxHp,
+      ...vars,
+    }, once);
     lessons = [...lessons.filter((l) => l.id !== lesson.id), lesson].slice(-MAX_LESSONS);
+  }
+
+  /** Whether the running decision is an escape made within the last few turns. */
+  function escaping(turn: number): boolean {
+    return lastDecision !== null && ESCAPES.has(lastDecision.choice) && turn - lastDecision.turn <= ESCAPE_WINDOW;
+  }
+
+  /** Lessons from what the character sees and suffers between two looks. */
+  function causes(view: AgentView, before: Watch, now: Watch, nearDeath: boolean): void {
+    const turn = view.turn();
+    const p = view.player();
+    const foe = culprit(view);
+    const drop = before.hp - now.hp;
+    if (foe !== undefined && p.maxHp > 0 && drop >= Math.max(1, p.maxHp * BIG_HIT_SHARE)) {
+      const melee = steps(p.grid, foe.grid) <= 1;
+      const closing = melee && lastDecision?.choice === "fight" && (before.away.get(foe.id) ?? 1) > 1;
+      /* A near-death already names the creature; the hit adds a lesson only when it undid an escape. */
+      if (escaping(turn)) learn("failed-escape", view, foe.race, { damage: drop }, `${foe.race}:${lastDecision?.choice ?? ""}`);
+      else if (!nearDeath) learn("big-hit", view, foe.race, { damage: drop, melee, closing }, `${foe.race}:${melee ? "melee" : "range"}`);
+    }
+    for (const status of DISABLING) {
+      if (before.status[status] === 0 && now.status[status] > 0 && foe !== undefined) {
+        learn("disabled", view, foe.race, { status }, `${foe.race}:${status}`);
+      }
+    }
+    for (const [race, count] of now.breeders) {
+      const was = before.breeders.get(race) ?? 0;
+      if (was > 0 && count > was) learn("breeding", view, race, { swarm: count }, race);
+    }
+    for (const message of view.messages()) {
+      const who = named(view, message);
+      if (who === undefined) continue;
+      if (RESIST_WORDS.test(message) && lastDecision !== null && ATTACKS.has(lastDecision.choice)) {
+        learn("resisted", view, who.race, {}, `${who.race}:${lastDecision.choice}`);
+        continue;
+      }
+      const ability = ABILITY_WORDS.find(([pattern]) => pattern.test(message))?.[1];
+      if (ability !== undefined) learn("ability", view, who.race, { ability }, `${who.race}:${ability}`);
+    }
   }
 
   /** Put an event in the run log and, when it is worth it, in the Chronicle. */
@@ -170,12 +259,19 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
   return {
     observe(view) {
       const p = view.player();
+      const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+      const breeders = new Map<string, number>();
+      for (const m of view.monsters()) if (m.visible && m.raceFlags.includes("MULTIPLY")) breeders.set(m.race, (breeders.get(m.race) ?? 0) + 1);
       const now: Watch = {
         depth: p.depth,
         maxDepth: p.maxDepth,
         level: p.level,
+        hp: p.hp,
         hpShare: p.maxHp > 0 ? p.hp / p.maxHp : 1,
         dead: p.dead,
+        status: { paralyzed: p.status.paralyzed, confused: p.status.confused, blind: p.status.blind, afraid: p.status.afraid },
+        away: new Map(awake.map((m) => [m.id, steps(p.grid, m.grid)])),
+        breeders,
       };
       const turn = view.turn();
       if (last !== null) {
@@ -190,7 +286,8 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
           record({ kind: "level-up", turn, depth: now.depth, text: `reached character level ${String(now.level)}` }, now.level % 5 === 0);
           drift("level-up");
         }
-        if (now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead) {
+        const nearDeath = now.hpShare < 0.2 && last.hpShare >= 0.35 && !now.dead;
+        if (nearDeath) {
           /* A swarm of breeders is the culprit even when none of them is the strongest creature in sight. */
           const swarm = swarmOf(view.monsters());
           const swarmed = swarm !== null && swarm.count >= SWARM_LEAVE_DREADED ? swarm : null;
@@ -199,10 +296,12 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
             { kind: "near-death", turn, depth: now.depth, text: race === undefined ? "hit points ran very low" : `the ${race} nearly killed me`, value: p.hp, ...(race === undefined ? {} : { race }) },
             true,
           );
-          learn("near-death", view, race, swarmed?.count);
+          learn("near-death", view, race, swarmed === null ? {} : { swarm: swarmed.count });
           drift("near-death");
           if (pending !== null) pending.bad = true;
         }
+        /* A level change moves the character away from everything it was watching. */
+        if (!now.dead && now.depth === last.depth) causes(view, last, now, nearDeath);
       }
       last = now;
     },
@@ -211,10 +310,9 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
       const depth = view?.player().depth ?? 0;
       const turn = view?.turn() ?? 0;
       record({ kind: unique ? "unique-kill" : "kill", turn, depth, text: race, race }, unique);
-      if (unique && view !== null) {
-        learn("unique-kill", view, race);
-        drift("unique-kill");
-      }
+      /* A kill is recorded and changes the persona, but teaches no lesson: what
+       * won the fight is not in the event. */
+      if (unique && view !== null) drift("unique-kill");
     },
 
     decided(record_, view) {

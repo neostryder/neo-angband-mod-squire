@@ -249,6 +249,34 @@ describe("goal planner", () => {
     expect(logged.join(" ")).toContain("taking the likeliest listed option (retreat)");
   });
 
+  it("asks once more with the held-back escapes when the model passes on every option in danger", () => {
+    const w = world({ map: ["########", "#.@...>#", "#.#### #", "########"], player: { hp: 4, maxHp: 10 }, monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc", level: 7 }] });
+    const { p, logged } = planner(w);
+    const first = asked(p.ask(w.view));
+    expect(offered(first)).not.toContain("leave_level");
+    expect(first.context.missing).toContain("leave_level");
+    const none = { goal: { type: "choice", choice: "none_of_these", confidence: 0.5, probabilities: { none_of_these: 0.6, retreat: 0.3, fight: 0.1 } } } as const;
+    const again = p.choose(none, first.context, w.view);
+    if (!("plan" in again)) throw new Error("expected a plan");
+    /* The re-ask plan does nothing, so the brain asks again at once. */
+    expect(again.plan.step(w.view, w.act)).toBeNull();
+    expect(logged.join(" ")).toContain("asking again with leave_level added");
+    const second = asked(p.ask(w.view));
+    expect(offered(second)).toContain("leave_level");
+    expect(second.context.widened).toBe(true);
+    /* A second pass on every option takes the likeliest listed one, as before. */
+    p.choose(none, second.context, w.view);
+    expect(logged.join(" ")).toContain("taking the likeliest listed option (retreat)");
+    expect(offered(asked(p.ask(w.view)))).not.toContain("leave_level");
+  });
+
+  it("keeps recall, gear and detection out of the handbook", () => {
+    const w = world({ map: CORRIDOR });
+    const rules = String(asked(planner(w).p.ask(w.view)).request.state["rules"]);
+    expect(rules).not.toMatch(/Word of Recall|Wear better gear|detect a new dungeon level/);
+    expect(rules).toContain("Going deeper too early");
+  });
+
   it("never rates a ranged attack beside a deadly creature safer than retreating", () => {
     const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 31, sp: 5, maxSp: 9 }, spells: [{ name: "Magic Missile", sidx: 0 }], monsters: [{ grid: { x: 3, y: 1 }, race: "Grip, Farmer Maggot's Dog", level: 5, raceFlags: ["UNIQUE"] }] });
     const offers = asked(planner(w).p.ask(w.view)).context.offers;
