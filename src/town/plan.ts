@@ -55,6 +55,9 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 /** Re-read the entered shop after each command; buying can move its stock slots. */
 export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = []): Plan {
   const progress = newProgress(0);
+  /* An aim is bought for once per trip: its list was ranked before the trip,
+   * so after one purchase it would still ask for more of the same. */
+  const boughtFor = new Set<string>();
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -84,8 +87,9 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         /* With the supplies settled, the gold on hand can fund the top aim. */
-        const aimed = aimPurchase(aims, store, view.player().gold);
+        const aimed = aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
         if (aimed !== null) {
+          boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
           return act.shopBuy(aimed.index, aimed.quantity);
         }

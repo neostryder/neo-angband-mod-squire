@@ -578,7 +578,20 @@ function autoexplore(options = {}) {
       if (ctx.progress.idle >= ctx.cfg.idleSteps) {
         return stop("blocked", "The character has stopped making progress.");
       }
-      const goals = frontiers(ctx.view, ctx.terrain);
+      if (options.findTownStairs === true && knownDownStairs(ctx.view, ctx.terrain).length > 0) {
+        return stop("done", "This floor is walked out.");
+      }
+      let goals = frontiers(ctx.view, ctx.terrain);
+      if (goals.length === 0 && options.findTownStairs === true) {
+        const bounds = ctx.view.mapBounds();
+        goals = [];
+        for (let y = 0; y < bounds.height; y += 1) {
+          for (let x = 0; x < bounds.width; x += 1) {
+            const grid = { x, y };
+            if (isRoutable(ctx.view, ctx.terrain, grid) && !ctx.progress.visited.has(key(grid))) goals.push(grid);
+          }
+        }
+      }
       if (goals.length === 0) {
         return stop("done", "This floor is walked out.");
       }
@@ -2350,6 +2363,7 @@ function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new S
 function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
 }, aims = []) {
   const progress = newProgress(0);
+  const boughtFor = /* @__PURE__ */ new Set();
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -2375,8 +2389,9 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
-        const aimed = aimPurchase(aims, store, view.player().gold);
+        const aimed = aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
         if (aimed !== null) {
+          boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
           return act.shopBuy(aimed.index, aimed.quantity);
         }
@@ -3049,10 +3064,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (junk !== null) add2("drop_junk", `The pack is full; drop ${junk.name} to make room.`, exposure(s));
   }
   if (hasFloorObject(view, at) && !full) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
+  const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
+  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && (reachableFrontier(view, terrain) || townNeedsStairs)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
+  if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
@@ -3466,7 +3482,7 @@ function createGoalPlanner(options) {
           return dir === null ? null : ctx.act.tunnel(dir);
         });
       case "explore":
-        return missionPlan("explore", autoexplore({ allowAwake: true }), view);
+        return missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: view.player().depth === 0 }), view);
       case "leave_level": {
         const down = reachableStairs(view, terrain);
         const targets = (v) => down ? knownDownStairs(v, terrain) : knownStairs(v, terrain);

@@ -619,6 +619,16 @@ describe("town goals", () => {
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
   });
 
+  it("keeps exploring town when every visible grid is explored but the stairs are unknown", () => {
+    const w = world({ map: ["#####", "#...#", "#.@.#", "#...#", "#####"], player: { depth: 0, gold: 0, light: 0 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.map((offer) => offer.goal)).toContain("explore");
+    const choice = p.choose(pick("explore"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an explore plan");
+    expect(choice.plan.step(w.view, w.act)?.code).toBe("walk");
+  });
+
   it("takes the town stairs with a recall scroll but no depth to return to", () => {
     const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, maxDepth: 0, gold: 0 }, pack: ["a Scroll of Word of Recall"] });
     const goals = asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal);

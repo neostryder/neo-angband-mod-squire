@@ -27,9 +27,10 @@ import { issue, stop } from "../mission.js";
 import { createWatcher, type Watcher } from "../disturb.js";
 import { advance, pacing } from "../progress.js";
 import { awakeInSight } from "../threat.js";
-import { frontiers, standingOnHarm } from "../map.js";
+import { frontiers, isRoutable, knownDownStairs, standingOnHarm } from "../map.js";
 import { retreatFrom, stepIntoDark, travelTo } from "../travel.js";
 import { engineTravel } from "../travel-engine.js";
+import { key } from "../grid.js";
 
 /** How the exploring errand starts. */
 export interface AutoexploreOptions {
@@ -39,6 +40,8 @@ export interface AutoexploreOptions {
    * awake shoppers is the usual case) passes true.
    */
   readonly allowAwake?: boolean;
+  /** Sweep remembered town ground when the dark map has no frontier to show. */
+  readonly findTownStairs?: boolean;
 }
 
 /** Build the exploring errand. */
@@ -117,7 +120,21 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
         return stop("blocked", "The character has stopped making progress.");
       }
 
-      const goals = frontiers(ctx.view, ctx.terrain);
+      if (options.findTownStairs === true && knownDownStairs(ctx.view, ctx.terrain).length > 0) {
+        return stop("done", "This floor is walked out.");
+      }
+
+      let goals = frontiers(ctx.view, ctx.terrain);
+      if (goals.length === 0 && options.findTownStairs === true) {
+        const bounds = ctx.view.mapBounds();
+        goals = [];
+        for (let y = 0; y < bounds.height; y += 1) {
+          for (let x = 0; x < bounds.width; x += 1) {
+            const grid = { x, y };
+            if (isRoutable(ctx.view, ctx.terrain, grid) && !ctx.progress.visited.has(key(grid))) goals.push(grid);
+          }
+        }
+      }
       if (goals.length === 0) {
         return stop("done", "This floor is walked out.");
       }

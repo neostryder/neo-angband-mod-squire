@@ -674,10 +674,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     if (junk !== null) add("drop_junk", `The pack is full; drop ${junk.name} to make room.`, exposure(s));
   }
   if (hasFloorObject(view, at) && !full) add("pick_up", "Pick up the object on the floor under the character.", exposure(s));
-  if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
+  const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
+  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && (reachableFrontier(view, terrain) || townNeedsStairs)) {
     add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if (!unlit && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
+  if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims).length === 0)))) {
@@ -1178,7 +1179,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       case "explore":
         /* The model saw every awake creature before choosing to explore. */
-        return missionPlan("explore", autoexplore({ allowAwake: true }), view);
+        return missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: view.player().depth === 0 }), view);
       case "leave_level": {
         const down = reachableStairs(view, terrain);
         const targets = (v: AgentView) => (down ? knownDownStairs(v, terrain) : knownStairs(v, terrain));

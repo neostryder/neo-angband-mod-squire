@@ -55,6 +55,22 @@ describe("town trip", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
   });
 
+  it("buys for an aim only once per shopping trip", () => {
+    const stock = [
+      { ...itemNamed("Leather Cloak [1,+0]", 0), index: 0, price: 100, number: 1 },
+      { ...itemNamed("Leather Cloak [1,+0]", 1), index: 1, price: 100, number: 1 },
+    ] as StoreItemView[];
+    const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
+    const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
+    const w = world({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, gold: 200 }, stores: [store] });
+    const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
+    w.setPack(["Leather Cloak [1,+0]"]);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
+  });
+
   it("uses the displayed price when choosing an aim purchase", () => {
     const stock = [
       { ...itemNamed("Leather Armour [8,+0]", 0), index: 0, price: 100, number: 1 },
