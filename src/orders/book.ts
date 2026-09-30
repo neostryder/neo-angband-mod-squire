@@ -18,8 +18,9 @@ import { candidateAims, type Aim } from "../strategy/aims.js";
 import { reviewDue, type ReviewMemory } from "../strategy/review.js";
 import { GIVE_UP_REVIEWS, PASS_ADHERENCE, goalsOf, nextAdherence, stanceOf, weigh } from "./adherence.js";
 import { FAINT, FORGET_BELOW, REMEMBERED_AT, comesBack, fade, isForgotten, refreshed } from "./memory.js";
-import { NONE, sortByCode, sortInstruction, type SortDeps } from "./sort.js";
+import { NONE, sortByCode, sortInstruction, sortMany, type SortDeps } from "./sort.js";
 import { MAX_TEXT, MAX_VIEWER, isLive, type Instruction, type InstructionKind, type InstructionSource, type Sorted } from "./types.js";
+import { bannedGoals, fighting, inStore, underHpLine } from "./vocab.js";
 
 /** What the book keeps between sessions. */
 export interface OrdersState {
@@ -47,6 +48,8 @@ export interface GiveOptions {
   readonly familyCreed?: boolean;
   /** The chat viewer who gave it, kept so the Orders tab and journal can name them. */
   readonly viewer?: string;
+  /** Hold the model sorting for the next flush, so a burst of viewers' orders costs one request. */
+  readonly deferSort?: boolean;
 }
 
 export interface Correction {
@@ -70,14 +73,18 @@ export interface Orders {
   adopt(creeds: readonly Instruction[], turn: number): void;
   /** Look at the game every turn: fade memory, test orders, remember, review. */
   observe(view: AgentView): void;
-  /** The planner picked this goal. */
+  /** The planner picked this goal. Clears the one-decision triggers; nothing counts as done yet. */
   decided(goal: string, view: AgentView): void;
+  /** The plan for the goal last decided took game time, so the instructions it served were carried out. */
+  carried(goal: string, view: AgentView): void;
+  /** Changes whenever what the book says about a decision could change, so a cached answer is not reused past it. */
+  revision(view: AgentView): string;
   /** Lines for the decision state, or null when nothing applies. */
-  note(view: AgentView, gold?: number): string | null;
+  note(view: AgentView, gold?: number, offers?: readonly { readonly goal: string }[]): string | null;
   /** One typed question per instruction that applies, over the offered options. */
   ask(offers: readonly { readonly goal: string; readonly criteria: string }[], view: AgentView): Record<string, ChoiceQuestion>;
   /** Weigh the options by every applicable instruction, beside the persona weights. */
-  weigh(dist: Readonly<Record<string, number>>, answers: Readonly<Record<string, Answer>>, view: AgentView): Record<string, number>;
+  weigh(dist: Readonly<Record<string, number>>, answers: Readonly<Record<string, Answer>>, view: AgentView, offers?: readonly { readonly goal: string; readonly criteria: string }[]): Record<string, number>;
   /** Options an order calls for at an adherence high enough to pass the death-risk ceiling. */
   passes(view: AgentView): ReadonlySet<string>;
   /** Aims with those an order names moved to the front. */
@@ -86,6 +93,8 @@ export interface Orders {
   load(state: OrdersState): void;
   /** Forget every instruction, for a new character. */
   reset(): void;
+  /** Sort, in one batched request, the instructions given with deferSort since the last flush. */
+  flush(): void;
   /** Resolves when no sorting or pruning request is in flight. */
   settled(): Promise<void>;
 }
@@ -101,7 +110,11 @@ const RESENT_STEP = 5;
 /** Gratitude a liked order leaves behind when it is done, and a followed disliked one. */
 const THANKS = 3;
 const GRUDGING_THANKS = 2;
-const HALF_HP = 0.5;
+/** Most instructions in the decision state at once. */
+const SHOWN = 6;
+/** Rank an instruction gains for each decision it waited, and the most it can gain. */
+const ROTATE_STEP = 0.5;
+const ROTATE_CAP = 8;
 
 const STANCE_WORDS: Readonly<Record<string, string>> = {
   following: "You intend to follow it.",
@@ -138,10 +151,19 @@ export function createOrders(deps: OrdersDeps): Orders {
   const rolled = new Set<string>();
   const notedAt = new Map<string, number>();
   let asked: string[] = [];
+  const shownAt = new Map<string, number>();
+  const askedAt = new Map<string, number>();
+  let noteRound = 0;
+  let askRound = 0;
+  /* The goal last decided and the instructions it served, waiting for its plan to take game time. */
+  let pending: { readonly goal: string; readonly ids: readonly string[] } | null = null;
+  let changes = 0;
+  let deferred: string[] = [];
 
   const persona = (): Persona => deps.persona() ?? defaultPersona();
 
   function persist(): void {
+    changes += 1;
     const ended = items.filter((i) => !isLive(i.state));
     const drop = new Set(ended.slice(0, Math.max(0, ended.length - KEEP_ENDED)).map((i) => i.id));
     if (drop.size > 0) items = items.filter((i) => !drop.has(i.id));
@@ -163,7 +185,7 @@ export function createOrders(deps: OrdersDeps): Orders {
 
   function restance(i: Instruction, previous: number | null): Instruction {
     const p = persona();
-    const adherence = nextAdherence(previous, i.sorted, p);
+    const adherence = nextAdherence(previous, i.sorted, p, i.source === "channel");
     return { ...i, adherence, state: stanceOf(adherence, i.sorted, p) };
   }
 
@@ -172,10 +194,41 @@ export function createOrders(deps: OrdersDeps): Orders {
     switch (i.sorted.trigger) {
       case "always": return true;
       case "unique": return view.monsters().some((m) => m.visible && m.raceFlags.includes("UNIQUE"));
-      case "low-hp": return p.maxHp > 0 && p.hp <= p.maxHp * HALF_HP;
+      case "low-hp": return underHpLine(i.sorted.hpBelow, p.hp, p.maxHp);
       case "new-level": return arrived;
-      case "in-store": return p.depth === 0;
+      case "in-store": return inStore(view);
     }
+  }
+
+  /**
+   * Which applicable instructions reach this decision. More than fit take
+   * turns: a situational trigger or an option on offer that the instruction
+   * speaks to ranks it up, and each decision it waits ranks it up further.
+   */
+  function rotate(view: AgentView, slots: number, shown: Map<string, number>, round: number, offers?: readonly { readonly goal: string }[]): Instruction[] {
+    const offered = new Set((offers ?? []).map((o) => o.goal));
+    const score = (i: Instruction): number => {
+      const goals = goalsOf(i.sorted);
+      const meets = [...goals.serves, ...goals.breaks].some((g) => offered.has(g)) ? 1 : 0;
+      const waited = Math.min(ROTATE_CAP, round - (shown.get(i.id) ?? round - ROTATE_CAP));
+      return (i.sorted.trigger === "always" ? 0 : 2) + meets + i.adherence * i.memory + ROTATE_STEP * waited;
+    };
+    const picked = applicable(view).map((i) => ({ i, s: score(i) })).sort((a, b) => b.s - a.s || a.i.createdTurn - b.i.createdTurn).slice(0, slots).map((x) => x.i);
+    for (const i of picked) shown.set(i.id, round);
+    return picked;
+  }
+
+  function said(i: Instruction): string {
+    if (i.source !== "channel") return `${i.kind === "order" ? "Your patron ordered" : "Your patron's standing instruction"}: "${i.text}".`;
+    return `A viewer${i.viewer === undefined ? "" : `, ${i.viewer},`} asked: "${i.text}".`;
+  }
+
+  /** The instruction with its avoids widened by the item uses it bans right now. */
+  function withBans(i: Instruction, view: AgentView, offers: readonly { readonly goal: string; readonly criteria: string }[] | undefined): Instruction {
+    const bans = i.sorted.bans;
+    if (bans === undefined || bans.length === 0 || offers === undefined) return i;
+    const extra = bannedGoals(bans, offers, fighting(view)).filter((g) => !i.sorted.avoids.includes(g));
+    return extra.length === 0 ? i : { ...i, sorted: { ...i.sorted, avoids: [...i.sorted.avoids, ...extra] } };
   }
 
   function applicable(view: AgentView): Instruction[] {
@@ -260,13 +313,13 @@ export function createOrders(deps: OrdersDeps): Orders {
     persist();
   }
 
-  async function prune(mine: number): Promise<void> {
+  async function prune(mine: number, useModel = true): Promise<void> {
     while (mine === generation) {
       const live = items.filter((i) => isLive(i.state));
       if (live.length <= Math.max(1, Math.floor(deps.kept()))) return;
       const fallback = [...live].sort((a, b) => a.adherence * a.memory - b.adherence * b.memory || a.createdTurn - b.createdTurn)[0]!;
       let target = fallback;
-      const backend: Backend | null = deps.backend();
+      const backend: Backend | null = useModel ? deps.backend() : null;
       if (backend !== null && deps.tally.overCap(backend, deps.now()) === null) {
         const criteria: Record<string, string | null> = {};
         for (const i of live) criteria[i.id] = `${short(i.text)} (it is ${i.state})`;
@@ -305,7 +358,10 @@ export function createOrders(deps: OrdersDeps): Orders {
   }
 
   async function refine(id: string, text: string, mine: number): Promise<void> {
-    const sorted = await sortInstruction(text, deps);
+    applySorted(id, await sortInstruction(text, deps), mine);
+  }
+
+  function applySorted(id: string, sorted: { readonly sorted: Sorted; readonly kind: InstructionKind }, mine: number): void {
     if (mine !== generation || corrected.has(id)) return;
     const current = items.find((i) => i.id === id);
     if (current === undefined || !isLive(current.state)) return;
@@ -313,6 +369,11 @@ export function createOrders(deps: OrdersDeps): Orders {
     const next = restance({ ...current, sorted: sorted.sorted, kind, familyCreed: kind === "standing" && current.familyCreed }, current.adherence);
     replace(id, next);
     persist();
+  }
+
+  async function refineMany(batch: readonly { readonly id: string; readonly text: string }[], mine: number): Promise<void> {
+    const results = await sortMany(batch.map((b) => b.text), deps);
+    batch.forEach((b, n) => applySorted(b.id, results[n]!, mine));
   }
 
   const self: Orders = {
@@ -341,9 +402,21 @@ export function createOrders(deps: OrdersDeps): Orders {
       items = [...items, { ...made, disliked: made.state !== "following" }];
       say(`New ${noun(kind)}${viewer === "" ? "" : ` from viewer ${viewer}`}: ${short(trimmed)}`, false);
       persist();
+      if (options.deferSort === true) {
+        deferred.push(id);
+        return { ok: true, instruction: items.find((i) => i.id === id)!, repeated: false };
+      }
       chain((mine) => refine(id, trimmed, mine));
       chain((mine) => prune(mine));
       return { ok: true, instruction: items.find((i) => i.id === id)!, repeated: false };
+    },
+    flush() {
+      const ids = deferred;
+      deferred = [];
+      const batch = ids.map((id) => items.find((i) => i.id === id)).filter((i): i is Instruction => i !== undefined && isLive(i.state)).map((i) => ({ id: i.id, text: i.text }));
+      if (batch.length > 0) chain((mine) => refineMany(batch, mine));
+      /* The batch already spent this poll's one request, so the drop is chosen by code. */
+      if (ids.length > 0) chain((mine) => prune(mine, false));
     },
     retire(id) {
       const i = items.find((x) => x.id === id);
@@ -410,11 +483,18 @@ export function createOrders(deps: OrdersDeps): Orders {
       if (due !== null) reviewNow(view);
     },
     decided(goal, view) {
-      const active = new Set(applicable(view).map((x) => x.id));
+      const ids = applicable(view).filter((i) => goalsOf(i.sorted).serves.includes(goal)).map((i) => i.id);
       arrived = false;
+      pending = ids.length === 0 ? null : { goal, ids };
+    },
+    carried(goal, view) {
+      const now = pending;
+      if (now === null || now.goal !== goal) return;
+      pending = null;
       const turn = view.turn();
-      for (const i of items.filter((x) => active.has(x.id))) {
-        if (!goalsOf(i.sorted).serves.includes(goal)) continue;
+      for (const id of now.ids) {
+        const i = items.find((x) => x.id === id);
+        if (i === undefined || !isLive(i.state)) continue;
         const updated = replace(i.id, { acted: i.acted + 1, memory: refreshed(i.memory, false) });
         const last = notedAt.get(i.id);
         if (updated !== undefined && (last === undefined || turn - last >= NOTE_GAP)) {
@@ -424,14 +504,18 @@ export function createOrders(deps: OrdersDeps): Orders {
         if (updated !== undefined && i.sorted.frequency.mode === "once") finish(updated, "done", "Did as told, once:");
       }
     },
-    note(view, gold) {
-      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, 6);
+    revision(view) {
+      const now = applicable(view).map((i) => `${i.id}:${i.state}:${String(Math.round(i.adherence * 20))}:${String(Math.round(i.memory * 10))}`);
+      return `${String(changes)}|${now.join(",")}`;
+    },
+    note(view, gold, offers) {
+      noteRound += 1;
+      const now = rotate(view, SHOWN, shownAt, noteRound, offers);
       if (now.length === 0) return null;
       const p = persona();
       const lines = now.map((i) => {
-        const who = i.kind === "order" ? "Your patron ordered" : "Your patron's standing instruction";
         const faint = i.memory < 0.35 ? " You only faintly remember it." : "";
-        return `${who}: "${i.text}". ${STANCE_WORDS[i.state] ?? ""}${faint}${routeHint(i, p, gold ?? view.player().gold)}`;
+        return `${said(i)} ${STANCE_WORDS[i.state] ?? ""}${faint}${routeHint(i, p, gold ?? view.player().gold)}`;
       });
       return lines.join(" ");
     },
@@ -439,23 +523,25 @@ export function createOrders(deps: OrdersDeps): Orders {
       const out: Record<string, ChoiceQuestion> = {};
       asked = [];
       if (offers.length === 0) return out;
-      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, ASKED);
+      askRound += 1;
+      const now = rotate(view, ASKED, askedAt, askRound, offers);
       const criteria: Record<string, string | null> = {};
       for (const o of offers) criteria[o.goal] = o.criteria;
       criteria[NONE] = "None of these carries it out.";
       for (const i of now) {
         asked.push(i.id);
-        out[`order_${i.id}`] = { type: "choice", instructions: `The patron told the squire: "${i.text}". Which option best carries that out?`, criteria: { ...criteria } };
+        const told = i.source === "channel" ? said(i) : `The patron told the squire: "${i.text}".`;
+        out[`order_${i.id}`] = { type: "choice", instructions: `${told} Which option best carries that out?`, criteria: { ...criteria } };
       }
       return out;
     },
-    weigh(dist, answers, view) {
+    weigh(dist, answers, view, offers) {
       let out: Record<string, number> = { ...dist };
       for (const i of applicable(view)) {
         const serves = new Set<string>();
         const answer = asked.includes(i.id) ? answers[`order_${i.id}`] : undefined;
         if (answer?.type === "choice" && answer.choice !== NONE && (answer.probabilities[answer.choice] ?? 0) >= 0.4) serves.add(answer.choice);
-        out = weigh(out, i, serves);
+        out = weigh(out, withBans(i, view, offers), serves);
       }
       return out;
     },
@@ -476,6 +562,7 @@ export function createOrders(deps: OrdersDeps): Orders {
     state: () => ({ items }),
     load(state) {
       items = [...state.items];
+      changes += 1;
       counter = items.reduce((n, i) => Math.max(n, Number(/^i(\d+)$/.exec(i.id)?.[1] ?? 0)), 0);
     },
     reset() {
@@ -489,6 +576,13 @@ export function createOrders(deps: OrdersDeps): Orders {
       rolled.clear();
       notedAt.clear();
       asked = [];
+      shownAt.clear();
+      askedAt.clear();
+      noteRound = 0;
+      askRound = 0;
+      pending = null;
+      deferred = [];
+      changes += 1;
       inFlight = Promise.resolve();
     },
     settled: () => inFlight,

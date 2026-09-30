@@ -21,6 +21,10 @@ export const IGNORE_BELOW = 0.2;
 export const GRUDGE_BELOW = 0.4;
 /** Reviews at ignoring stance before the squire gives up an order. */
 export const GIVE_UP_REVIEWS = 3;
+/** A viewer's request settles at this share of the adherence the patron's own word would reach. */
+export const VIEWER_PULL = 0.6;
+/** Devotion at which the squire takes a viewer's request as seriously as the patron's word. */
+export const VERY_DEVOTED = 90;
 
 /** The most a fully adherent instruction raises an option it serves, as a multiple of its weight. */
 const SERVE_BOOST = 3;
@@ -48,19 +52,20 @@ export function clash(sorted: Sorted, persona: Persona): number {
   return wants.length === 0 ? 0 : unit(Math.max(...wants));
 }
 
-/** Where adherence settles for this persona, before stubbornness slows the move. */
-export function targetAdherence(sorted: Sorted, persona: Persona): number {
+/** Where adherence settles for this persona, before stubbornness slows the move. A viewer's request pulls less than the patron's word. */
+export function targetAdherence(sorted: Sorted, persona: Persona, viewer = false): number {
   const s = persona.sliders;
   const pull = ((s.devotion - 50) / 50) * 0.9;
   const grudge = (s.resentment / 100) * 0.4;
   const friction = clash(sorted, persona) * (0.3 + 0.4 * (s.stubbornness / 100));
   const weight = 0.6 + 0.4 * (s.strength / 100);
-  return unit(0.5 + 0.5 * (pull - grudge - friction) * weight);
+  const own = unit(0.5 + 0.5 * (pull - grudge - friction) * weight);
+  return viewer && s.devotion < VERY_DEVOTED ? own * VIEWER_PULL : own;
 }
 
 /** Adherence moves toward its target; a stubborn persona moves slowly, either way. */
-export function nextAdherence(previous: number | null, sorted: Sorted, persona: Persona): number {
-  const target = targetAdherence(sorted, persona);
+export function nextAdherence(previous: number | null, sorted: Sorted, persona: Persona, viewer = false): number {
+  const target = targetAdherence(sorted, persona, viewer);
   if (previous === null) return target;
   const rate = Math.max(0.1, 1 - 0.9 * (persona.sliders.stubbornness / 100));
   return unit(previous + (target - previous) * rate);

@@ -110,15 +110,27 @@ describe("creed files", () => {
 });
 
 describe("the channel input", () => {
-  it("queues exactly as the panel does, with its own source", () => {
+  it("queues as the panel does, with its own source and a viewer's weaker pull", () => {
     const a = book();
     const b = book();
     const p = queueInstruction(a.orders, "Reach 500 ft", "panel");
     const c = queueInstruction(b.orders, "Reach 500 ft", "channel");
     if (!p.ok || !c.ok) throw new Error("not taken");
-    expect({ ...c.instruction, source: "panel" }).toEqual(p.instruction);
+    const { adherence: pa, state: _ps, ...panelRest } = p.instruction;
+    const { adherence: ca, state: _cs, ...channelRest } = c.instruction;
+    expect({ ...channelRest, source: "panel" }).toEqual(panelRest);
+    expect(ca).toBeLessThan(pa);
     expect(c.instruction.source).toBe("channel");
     expect(b.notes).toEqual(a.notes);
+  });
+
+  it("takes a viewer's request as seriously as the patron's word only at very high Devotion", () => {
+    const a = book(keen(defaultPersona("T")));
+    const b = book(keen(defaultPersona("T")));
+    const p = queueInstruction(a.orders, "Reach 500 ft", "panel");
+    const c = queueInstruction(b.orders, "Reach 500 ft", "channel");
+    if (!p.ok || !c.ok) throw new Error("not taken");
+    expect(c.instruction.adherence).toBe(p.instruction.adherence);
   });
 
   it("accepts each of the four sources and refuses anything else", () => {

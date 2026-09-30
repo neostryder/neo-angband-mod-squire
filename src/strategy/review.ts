@@ -13,8 +13,8 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ScoreQuestion, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";
-import { candidateAims, FIXED_ORDER, inFixedOrder, type Aim } from "./aims.js";
-import { withInherited, type InheritedAim } from "./heirs.js";
+import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim } from "./aims.js";
+import { stillInherited, withInherited, type InheritedAim } from "./heirs.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
@@ -134,6 +134,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let tripGold: number | null = null;
   let generation = 0;
   let inherited: readonly InheritedAim[] = [];
+  let latest = 0;
   let inFlight: Promise<void> = Promise.resolve();
 
   function clear(): void {
@@ -168,11 +169,14 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   }
 
   async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
-    const candidates = withInherited(candidateAims(view), inherited);
-    inherited = [];
+    const seq = ++latest;
+    const own = candidateAims(view);
+    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
+    const candidates = withInherited(own, inherited);
     aims = inFixedOrder(candidates);
     const done = await rank(view, candidates);
-    if (mine !== generation) return;
+    /* A slow answer for an older review must not overwrite the aims of a newer one. */
+    if (mine !== generation || seq !== latest) return;
     aims = done.ranked;
     last = { trigger, turn, source: done.source };
     const names = done.ranked.map((aim) => aim.label).join(", ");

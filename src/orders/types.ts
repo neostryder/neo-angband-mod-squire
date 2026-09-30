@@ -30,6 +30,22 @@ export type TriggerKind = "always" | "unique" | "low-hp" | "new-level" | "in-sto
 
 export type ResponseKind = "flee" | "fight" | "leave-level" | "descend" | "buy" | "rest" | "avoid";
 
+/** The hit point line a low-hp trigger reads: a number of hit points, or a share of the maximum. */
+export type HpLine =
+  | { readonly kind: "hp"; readonly value: number }
+  | { readonly kind: "share"; readonly value: number };
+
+export type BanVerb = "read" | "quaff" | "use" | "zap" | "aim";
+
+/** One item use an avoid response forbids: "never read unknown scrolls in a fight". */
+export interface ItemBan {
+  readonly verb: BanVerb;
+  /** "unknown" for unidentified items, a lowercase name part for a named one, or null for any. */
+  readonly item: string | null;
+  /** "fight" while an awake creature is in sight. */
+  readonly when: "always" | "fight";
+}
+
 export type Frequency =
   | { readonly mode: "always" }
   | { readonly mode: "once" }
@@ -53,6 +69,10 @@ export interface Sorted {
   /** Gold to have saved, for a gold aim. */
   readonly gold: number | null;
   readonly frequency: Frequency;
+  /** The line the player named for a low-hp trigger. Absent means half of maximum. */
+  readonly hpBelow?: HpLine;
+  /** Item uses an avoid response forbids. */
+  readonly bans?: readonly ItemBan[];
 }
 
 export interface Instruction {

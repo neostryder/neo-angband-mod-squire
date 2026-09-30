@@ -13,6 +13,7 @@ import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ChoiceQuestion, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";
 import type { Frequency, InstructionKind, OrderAim, ResponseKind, Sorted, TriggerKind } from "./types.js";
+import { readBans, readHpLine } from "./vocab.js";
 
 export const NONE = "none_of_these";
 
@@ -119,16 +120,18 @@ export function sortByCode(text: string): { readonly sorted: Sorted; readonly ki
   const store = STORES.find((s) => t.includes(s.toLowerCase())) ?? (/\barmou?r(?:y| shop| store)\b/.test(t) ? "Armoury" : /\b(weaponsmith|weapon smith)/.test(t) ? "Weapon Smiths" : /\b(alchemist)\b/.test(t) ? "Alchemy shop" : null);
 
   let trigger: TriggerKind = "always";
+  const hpLine = readHpLine(text);
   if (/\bunique/.test(t)) trigger = "unique";
-  else if (/\b(hit points|hp|health|wounded|badly hurt|low on)\b/.test(t)) trigger = "low-hp";
+  else if (hpLine !== null || /\b(hit points|hp|health|wounded|badly hurt|low on)\b/.test(t)) trigger = "low-hp";
   else if (/\b(new level|arriv\w+ (?:on|at)|each level|every level|first arrive)\b/.test(t)) trigger = "new-level";
   else if (/\benter\w*\s+(?:a\s+|the\s+)?(?:store|shop)\b/.test(t)) trigger = "in-store";
 
   const avoidWords = /\b(never|do not|don't|avoid|refuse to|stay out of)\b/.test(t);
   /* The named action must follow the negation closely: "never read scrolls in a fight" avoids reading, not fighting. */
   const avoids = avoidWords ? AVOID_WORDS.filter(([pattern]) => new RegExp(`\\b(?:never|do not|don't|avoid|refuse to|stay out of)\\s+(?:\\w+\\s+){0,2}?${pattern.source}`, "i").test(text)).map(([, goal]) => goal) : [];
+  const bans = readBans(text);
   let response: ResponseKind | null = null;
-  if (avoidWords && avoids.length > 0) response = "avoid";
+  if (avoidWords && (avoids.length > 0 || bans.length > 0)) response = "avoid";
   else if (/\b(flee|run away|run from|escape|retreat|get away|back off)\b/.test(t)) response = "flee";
   else if (/\b(fight|attack|kill|charge|slay|engage)\b/.test(t)) response = "fight";
   else if (/\b(leave the level|take the stairs|leave level|use the stairs)\b/.test(t)) response = "leave-level";
@@ -144,7 +147,11 @@ export function sortByCode(text: string): { readonly sorted: Sorted; readonly ki
   const standing = /\b(always|never|whenever|every time|each time|the first time|until level|any time|when(?:ever)? you|if you see)\b/.test(t) || avoidWords;
   return {
     kind: standing ? "standing" : "order",
-    sorted: { aim, trigger, response, avoids, store, depth, deadlineLevel, item, count, gold, frequency },
+    sorted: {
+      aim, trigger, response, avoids, store, depth, deadlineLevel, item, count, gold, frequency,
+      ...(hpLine === null ? {} : { hpBelow: hpLine }),
+      ...(bans.length === 0 ? {} : { bans }),
+    },
   };
 }
 
@@ -168,6 +175,57 @@ export function sortRequest(text: string): SystemOneRequest {
       frequency: choice("How often does it apply?", { ...FREQUENCY_CHOICES, [NONE]: "It does not say." }),
     },
   };
+}
+
+/** Most instructions sorted in one batched request. */
+export const SORT_BATCH = 5;
+
+/**
+ * One request that sorts several instructions at once, for a burst of viewers'
+ * orders: each instruction's questions are keyed by its place in the list.
+ */
+export function sortManyRequest(texts: readonly string[]): SystemOneRequest {
+  const one = sortRequest("");
+  const instructions: Record<string, string> = {};
+  const questions: Record<string, ChoiceQuestion> = {};
+  texts.forEach((text, n) => {
+    const key = `n${String(n)}`;
+    instructions[key] = text;
+    for (const [part, q] of Object.entries(one.questions)) {
+      const c = q as ChoiceQuestion;
+      questions[`${key}_${part}`] = { ...c, instructions: `For instruction ${key}: ${c.instructions}` };
+    }
+  });
+  return {
+    state: {
+      rules: "A squire has been given several instructions in plain words. Sort each into the squire's own vocabulary. Answer none_of_these for any part the words do not state.",
+      instructions,
+    },
+    questions,
+  };
+}
+
+/** Sort up to SORT_BATCH instructions in one request, else each by code. Never rejects; always one result per text. */
+export async function sortMany(texts: readonly string[], deps: SortDeps): Promise<{ readonly sorted: Sorted; readonly kind: InstructionKind; readonly source: "model" | "code" }[]> {
+  const byCode = texts.map((text) => ({ ...sortByCode(text), source: "code" as const }));
+  const asked = texts.slice(0, SORT_BATCH);
+  const backend = deps.backend();
+  if (asked.length === 0 || backend === null || deps.tally.overCap(backend, deps.now()) !== null) return byCode;
+  let result: AskResult;
+  try {
+    result = await deps.send(sortManyRequest(asked));
+  } catch {
+    return byCode;
+  }
+  if (!result.ok) return byCode;
+  deps.tally.record(backend, result.usage, deps.now());
+  return texts.map((text, n) => {
+    if (n >= asked.length) return byCode[n]!;
+    const prefix = `n${String(n)}_`;
+    const answers: Record<string, Answer> = {};
+    for (const [key, answer] of Object.entries(result.answers)) if (key.startsWith(prefix)) answers[key.slice(prefix.length)] = answer;
+    return { ...readSort(text, answers), source: "model" as const };
+  });
 }
 
 function picked(answers: Readonly<Record<string, Answer>>, key: string, allowed: readonly string[]): string | null {

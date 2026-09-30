@@ -211,10 +211,27 @@ describe("a standing instruction's life cycle", () => {
     expect(only(k).sorted.frequency.mode).toBe("once");
     k.orders.observe(w.view);
     k.orders.decided("fight", w.view);
+    k.orders.carried("fight", w.view);
     expect(only(k).acted).toBe(0);
     k.orders.decided("retreat", w.view);
+    expect(only(k).state).toBe("following");
+    expect(only(k).acted).toBe(0);
+    k.orders.carried("retreat", w.view);
     expect(only(k).state).toBe("done");
     expect(k.notes.at(-1)).toEqual({ text: "Did as told, once: Run away the first time you see a unique", notable: true });
+  });
+
+  it("stays live when the plan chosen for it never carries it out", async () => {
+    const k = kit({ persona: devout });
+    const w = world({ map: ROOM, monsters: [{ grid: { x: 3, y: 1 }, race: "Fang, Farmer Maggot's Dog", level: 5, raceFlags: ["UNIQUE"] }] });
+    k.orders.give("Run away the first time you see a unique", "panel");
+    await k.orders.settled();
+    k.orders.observe(w.view);
+    k.orders.decided("retreat", w.view);
+    k.orders.decided("fight", w.view);
+    k.orders.carried("retreat", w.view);
+    expect(only(k).state).toBe("following");
+    expect(only(k).acted).toBe(0);
   });
 
   it("puts its line in the decision state and asks one typed question for it", async () => {
@@ -440,6 +457,7 @@ describe("forgetting and remembering", () => {
     k.orders.load({ items: [{ ...only(k), memory: 0.4 }] });
     w.setPlayer({ hp: 5, maxHp: 20 });
     k.orders.decided("rest", w.view);
+    k.orders.carried("rest", w.view);
     expect(only(k).memory).toBeCloseTo(0.65, 5);
     k.orders.give("Always rest when you are wounded", "panel");
     expect(only(k).memory).toBe(1);

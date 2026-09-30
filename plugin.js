@@ -2219,6 +2219,13 @@ function candidateAims(view) {
 function inFixedOrder(aims) {
   return [...aims].sort((a, b) => FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
+function wieldsMagicWeapon(view) {
+  return view.equipment().some((item) => {
+    if (item === null || !WEAPONS2.includes(item.tval)) return false;
+    const name = shownName2(item);
+    return name !== null && mightBeSpecial(name);
+  });
+}
 function affordable(aim, gold) {
   return aim.price !== null && gold >= aim.price;
 }
@@ -2437,6 +2444,25 @@ function nudgeAims(dist, offers, ambition, ceiling) {
   return out;
 }
 
+// src/strategy/hold.ts
+var HOLD_SHARE = 0.25;
+function descentEscapes(view, badFeeling) {
+  const p = view.player();
+  if (badFeeling) return true;
+  if (p.maxHp > 0 && p.hp <= p.maxHp * 0.5) return true;
+  return view.monsters().some((m) => m.visible && !m.asleep);
+}
+function holdDescent(dist, aims, view, badFeeling) {
+  const out = { ...dist };
+  const current2 = out["descend"];
+  if (current2 === void 0) return out;
+  const depth = view.player().depth;
+  const target = aims.find((a) => a.kind === "depth" && a.depth !== null)?.depth ?? null;
+  if (target === null || depth < target || descentEscapes(view, badFeeling)) return out;
+  out["descend"] = current2 * HOLD_SHARE;
+  return out;
+}
+
 // src/brain/combat-kit.ts
 var BUFF_ITEMS = [
   [/\bPotions? of (Heroism|Berserk Strength|Speed)\b/i, "quaff"],
@@ -2650,6 +2676,22 @@ function badLevelFeeling(messages) {
     if ([...BAD_MONSTER, ...BAD_OBJECT].some((pattern) => pattern.test(message))) return message;
   }
   return null;
+}
+var ARRIVAL = [
+  "You are still uncertain about this place",
+  "Omens of death haunt this place",
+  "This place seems murderous",
+  "This place seems terribly dangerous",
+  "You feel anxious about this place",
+  "You feel nervous about this place",
+  "This place does not seem too risky",
+  "This place seems reasonably safe",
+  "This seems a tame, sheltered place",
+  "This seems a quiet, peaceful place",
+  "Looks like a typical town"
+];
+function arrivalFeeling(messages) {
+  return messages.some((message) => ARRIVAL.some((line) => message.startsWith(line)));
 }
 
 // src/brain/goals.ts
@@ -2989,11 +3031,12 @@ function createGoalPlanner(options) {
   let feelingDepth = -1;
   function noteFeeling(view) {
     const depth = view.player().depth;
-    if (depth !== feelingDepth) {
+    const messages = view.messages();
+    if (depth !== feelingDepth || arrivalFeeling(messages)) {
       feelingDepth = depth;
       badFeeling = null;
     }
-    const seen = badLevelFeeling(view.messages());
+    const seen = badLevelFeeling(messages);
     if (seen !== null) badFeeling = seen;
   }
   function noteOutcome(text) {
@@ -3003,9 +3046,16 @@ function createGoalPlanner(options) {
   function noteStalls(goal, plan) {
     let issued = 0;
     let startTurn = null;
+    let credited = false;
     const version = outcomeVersion;
+    const settle = (v) => {
+      if (credited || goal === null || issued === 0 || startTurn === null || v.turn() === startTurn) return;
+      credited = true;
+      options.orders?.carried(goal, v);
+    };
     const step = (v, act) => {
       startTurn ??= v.turn();
+      settle(v);
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
       else if (issued === 0 || v.turn() === startTurn) {
@@ -3023,7 +3073,7 @@ function createGoalPlanner(options) {
       }
       return command;
     };
-    return { ...plan, step };
+    return { ...plan, step, settle };
   }
   function refusalOf(goal, v) {
     const p = v.player();
@@ -3434,14 +3484,14 @@ function createGoalPlanner(options) {
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const weighted = options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view);
+    const weighted = options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view, digest.offers);
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
-    const nudged = nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona));
+    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
     return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
   }
-  function reflexFor(offers, persona, situation, turn) {
+  function reflexFor(offers, persona, situation, turn, passes) {
     if (options.reflex === false) return null;
     const routine = ROUTINE.map((goal) => offers.find((o) => o.goal === goal && o.routine === true)).find((o) => o !== void 0);
     if (routine !== void 0) return { goal: routine.goal, why: "routine upkeep" };
@@ -3449,7 +3499,9 @@ function createGoalPlanner(options) {
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
     if (only !== void 0 && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
     const last = lastAnswer;
-    if (last !== null && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS && offers.some((o) => o.goal === last.pick)) {
+    const again = last === null ? void 0 : offers.find((o) => o.goal === last.pick);
+    const allowed = again !== void 0 && (persona === null || again.risk <= ceiling || passes.has(again.goal));
+    if (last !== null && allowed && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS) {
       return { goal: last.pick, why: "same situation as the last answer" };
     }
     return null;
@@ -3488,7 +3540,6 @@ function createGoalPlanner(options) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
       const aimList = options.strategy?.().aims ?? [];
-      const orderNote = options.orders?.note(view, player.gold) ?? null;
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
       const criteria = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
@@ -3514,6 +3565,7 @@ function createGoalPlanner(options) {
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...rating.description === null ? {} : { capability: rating.description }, away: steps(player.grid, m.grid), tags };
       });
       const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
+      const passes = options.orders?.passes(view) ?? /* @__PURE__ */ new Set();
       const situation = JSON.stringify([
         player.depth,
         healthBand(player.hp, player.maxHp),
@@ -3522,9 +3574,12 @@ function createGoalPlanner(options) {
         unexplored,
         stairs,
         hungry(view),
-        offers.map((o) => o.goal).sort()
+        offers.map((o) => o.goal).sort(),
+        options.orders?.revision(view) ?? "",
+        [...passes].sort(),
+        persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on]
       ]);
-      const reflex = reflexFor(offers, persona, situation, turn);
+      const reflex = reflexFor(offers, persona, situation, turn, passes);
       if (reflex !== null) {
         log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
         options.orders?.decided(reflex.goal, view);
@@ -3536,6 +3591,7 @@ function createGoalPlanner(options) {
         };
         return decided;
       }
+      const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
       const question = {
         request: {
           state: {
@@ -3606,6 +3662,7 @@ function createGoalPlanner(options) {
     },
     trigger(view, plan) {
       const watched2 = plan;
+      watched2.settle?.(view);
       const stopped = watched2.watcher?.check(view) ?? null;
       if (stopped !== null) noteOutcome(`${plan.label} stopped: ${stopped.detail}`);
       return stopped === null ? null : stopped.detail;
@@ -3735,6 +3792,15 @@ function withInherited(candidates, inherited) {
   }
   return out;
 }
+function stillInherited(inherited, own, maxDepth, wieldsMagic) {
+  return inherited.filter((aim) => {
+    if (aim.kind === "depth") {
+      if (aim.depth === null || maxDepth >= aim.depth) return false;
+      return !own.some((c) => c.kind === "depth" && (c.depth ?? 0) >= aim.depth);
+    }
+    return !wieldsMagic && !own.some((c) => c.kind === "weapon");
+  });
+}
 
 // src/strategy/review.ts
 var REVIEW_TURNS = 2e3;
@@ -3794,6 +3860,7 @@ function createStrategy(deps) {
   let tripGold = null;
   let generation = 0;
   let inherited = [];
+  let latest = 0;
   let inFlight = Promise.resolve();
   function clear() {
     memory = null;
@@ -3824,11 +3891,13 @@ function createStrategy(deps) {
     return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.` };
   }
   async function review(view, trigger, turn, mine) {
-    const candidates = withInherited(candidateAims(view), inherited);
-    inherited = [];
+    const seq = ++latest;
+    const own = candidateAims(view);
+    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
+    const candidates = withInherited(own, inherited);
     aims = inFixedOrder(candidates);
     const done = await rank2(view, candidates);
-    if (mine !== generation) return;
+    if (mine !== generation || seq !== latest) return;
     aims = done.ranked;
     last = { trigger, turn, source: done.source };
     const names = done.ranked.map((aim) => aim.label).join(", ");
@@ -4013,6 +4082,8 @@ var PASS_ADHERENCE = 0.85;
 var IGNORE_BELOW = 0.2;
 var GRUDGE_BELOW = 0.4;
 var GIVE_UP_REVIEWS = 3;
+var VIEWER_PULL = 0.6;
+var VERY_DEVOTED = 90;
 var SERVE_BOOST = 3;
 var BREAK_CUT = 0.85;
 function unit2(value) {
@@ -4033,16 +4104,17 @@ function clash(sorted, persona) {
   if (response === "avoid") wants.push(s.impulsiveness / 100 * 0.6);
   return wants.length === 0 ? 0 : unit2(Math.max(...wants));
 }
-function targetAdherence(sorted, persona) {
+function targetAdherence(sorted, persona, viewer = false) {
   const s = persona.sliders;
   const pull = (s.devotion - 50) / 50 * 0.9;
   const grudge = s.resentment / 100 * 0.4;
   const friction = clash(sorted, persona) * (0.3 + 0.4 * (s.stubbornness / 100));
   const weight = 0.6 + 0.4 * (s.strength / 100);
-  return unit2(0.5 + 0.5 * (pull - grudge - friction) * weight);
+  const own = unit2(0.5 + 0.5 * (pull - grudge - friction) * weight);
+  return viewer && s.devotion < VERY_DEVOTED ? own * VIEWER_PULL : own;
 }
-function nextAdherence(previous, sorted, persona) {
-  const target = targetAdherence(sorted, persona);
+function nextAdherence(previous, sorted, persona, viewer = false) {
+  const target = targetAdherence(sorted, persona, viewer);
   if (previous === null) return target;
   const rate2 = Math.max(0.1, 1 - 0.9 * (persona.sliders.stubbornness / 100));
   return unit2(previous + (target - previous) * rate2);
@@ -4146,6 +4218,130 @@ function comesBack(persona, draw) {
   return draw < 0.3 + 0.4 * (persona.sliders.devotion / 100);
 }
 
+// src/orders/vocab.ts
+var BELOW = String.raw`(?:below|under|less than|beneath|lower than|at most|(?:drops?|falls?|gets?|goes?) (?:below|under|to))`;
+var SHARES = {
+  half: 0.5,
+  "a half": 0.5,
+  "a third": 1 / 3,
+  "one third": 1 / 3,
+  "a quarter": 0.25,
+  "one quarter": 0.25,
+  "a fourth": 0.25,
+  "two thirds": 2 / 3,
+  "three quarters": 0.75
+};
+var SHARE_WORDS = Object.keys(SHARES).sort((a, b) => b.length - a.length).join("|");
+function readHpLine(text) {
+  const t = text.toLowerCase();
+  const percent = new RegExp(String.raw`${BELOW}\s+(\d{1,3})\s*(?:%|percent)`).exec(t);
+  if (percent !== null) {
+    const value = Number(percent[1]) / 100;
+    return value > 0 && value <= 1 ? { kind: "share", value } : null;
+  }
+  const words = new RegExp(String.raw`${BELOW}\s+(${SHARE_WORDS})\b`).exec(t) ?? new RegExp(String.raw`\b(${SHARE_WORDS})\s+(?:hp|hit points|health)\b`).exec(t);
+  if (words !== null) return { kind: "share", value: SHARES[words[1]] };
+  const hp = new RegExp(String.raw`${BELOW}\s+(\d{1,5})(?!\s*(?:ft|feet|gold|gp|%|percent|\d|th\b|st\b|nd\b|rd\b))`).exec(t);
+  if (hp !== null) {
+    const value = Number(hp[1]);
+    return value > 0 ? { kind: "hp", value } : null;
+  }
+  return null;
+}
+function underHpLine(line, hp, maxHp) {
+  if (maxHp <= 0) return false;
+  if (line === void 0) return hp <= maxHp * 0.5;
+  return line.kind === "hp" ? hp < line.value : hp < maxHp * line.value;
+}
+var VERBS = [
+  [/^read/, "read"],
+  [/^(?:quaff|drink)/, "quaff"],
+  [/^zap/, "zap"],
+  [/^aim/, "aim"],
+  [/^us/, "use"]
+];
+var NOUNS = [
+  [/^scrolls?$/, "read"],
+  [/^potions?$/, "quaff"],
+  [/^wands?$/, "aim"],
+  [/^rods?$/, "zap"],
+  [/^(?:staffs?|staves)$/, "use"],
+  [/^(?:items?|devices?|objects?|anything|things?)$/, "use"]
+];
+var FIGHT = /\b(?:in (?:a )?fights?|in combat|in battle|while fighting|when fighting|during (?:a )?fights?|with (?:a |an )?(?:monster|creature|enemy)s? (?:in sight|nearby|around))\b/;
+var UNKNOWN = /^(?:unknown|unidentified|untried|unrecogni[sz]ed|unfamiliar)$/;
+var FILLER = /^(?:any|a|an|the|my|your|of|those|these)$/;
+function readBans(text) {
+  const t = text.toLowerCase();
+  const out = [];
+  const pattern = /\b(?:never|do not|don't|avoid|refuse to)\s+(read(?:ing)?|quaff(?:ing)?|drink(?:ing)?|zap(?:ping)?|aim(?:ing)?|us(?:e|ing))\b([^.,;!?]*)/g;
+  for (let m = pattern.exec(t); m !== null; m = pattern.exec(t)) {
+    let verb = VERBS.find(([re]) => re.test(m[1]))?.[1] ?? "use";
+    const rest = m[2];
+    const when = FIGHT.test(rest) ? "fight" : "always";
+    const words = rest.replace(FIGHT, " ").replace(/\b(?:when|while|if|during|in|at|on)\b.*$/, " ").trim().split(/\s+/).filter((w) => w !== "");
+    const at = words.findIndex((w) => NOUNS.some(([re]) => re.test(w)));
+    let item = null;
+    if (words.some((w) => UNKNOWN.test(w))) item = "unknown";
+    if (at >= 0) {
+      const nounVerb = NOUNS.find(([re]) => re.test(words[at]))[1];
+      if (verb === "use") verb = nounVerb;
+      const after = words.slice(at + 1);
+      if (item === null && after[0] === "of" && after.length > 1) item = after.slice(1).join(" ");
+    } else if (item === null) {
+      const named2 = words.filter((w) => !FILLER.test(w)).join(" ");
+      item = named2 === "" ? null : named2;
+    }
+    out.push({ verb, item, when });
+  }
+  return out;
+}
+var GOAL_USES = {
+  heal: ["quaff"],
+  phase: ["read"],
+  teleport: ["read", "use"],
+  detect: ["read", "zap"],
+  recall_town: ["read"],
+  recall_dungeon: ["read"],
+  buff: ["quaff", "read"],
+  resist: ["quaff", "read"],
+  device: ["use", "zap"],
+  aim_wand: ["aim"],
+  activate: ["use"]
+};
+function stem(text) {
+  return text.toLowerCase().replace(/\b(\w+?)e?s\b/g, "$1");
+}
+function bannedGoals(bans, offers, fighting2) {
+  const out = /* @__PURE__ */ new Set();
+  for (const ban of bans) {
+    if (ban.when === "fight" && !fighting2) continue;
+    for (const offer of offers) {
+      const uses = GOAL_USES[offer.goal];
+      if (uses === void 0 || ban.verb !== "use" && !uses.includes(ban.verb)) continue;
+      const words = offer.criteria;
+      const named2 = ban.item === null || (ban.item === "unknown" ? /\b(?:unknown|unidentified|untried)\b/i.test(words) : stem(words).includes(stem(ban.item)));
+      if (named2) out.add(offer.goal);
+    }
+  }
+  return [...out];
+}
+function fighting(view) {
+  return view.monsters().some((m) => m.visible && !m.asleep);
+}
+function inStore(view) {
+  const p = view.player();
+  if (p.depth !== 0) return false;
+  let feats;
+  try {
+    feats = view.stores().map((s) => s.feat);
+  } catch {
+    return false;
+  }
+  const cell2 = view.cell(p.grid.x, p.grid.y);
+  return cell2 !== null && feats.includes(cell2.feat);
+}
+
 // src/orders/sort.ts
 var NONE = "none_of_these";
 var STORES = ["General Store", "Armoury", "Weapon Smiths", "Bookseller", "Alchemy shop", "Magic shop", "Black market", "Home"];
@@ -4235,14 +4431,16 @@ function sortByCode(text) {
   }
   const store = STORES.find((s) => t.includes(s.toLowerCase())) ?? (/\barmou?r(?:y| shop| store)\b/.test(t) ? "Armoury" : /\b(weaponsmith|weapon smith)/.test(t) ? "Weapon Smiths" : /\b(alchemist)\b/.test(t) ? "Alchemy shop" : null);
   let trigger = "always";
+  const hpLine = readHpLine(text);
   if (/\bunique/.test(t)) trigger = "unique";
-  else if (/\b(hit points|hp|health|wounded|badly hurt|low on)\b/.test(t)) trigger = "low-hp";
+  else if (hpLine !== null || /\b(hit points|hp|health|wounded|badly hurt|low on)\b/.test(t)) trigger = "low-hp";
   else if (/\b(new level|arriv\w+ (?:on|at)|each level|every level|first arrive)\b/.test(t)) trigger = "new-level";
   else if (/\benter\w*\s+(?:a\s+|the\s+)?(?:store|shop)\b/.test(t)) trigger = "in-store";
   const avoidWords = /\b(never|do not|don't|avoid|refuse to|stay out of)\b/.test(t);
   const avoids = avoidWords ? AVOID_WORDS.filter(([pattern]) => new RegExp(`\\b(?:never|do not|don't|avoid|refuse to|stay out of)\\s+(?:\\w+\\s+){0,2}?${pattern.source}`, "i").test(text)).map(([, goal]) => goal) : [];
+  const bans = readBans(text);
   let response = null;
-  if (avoidWords && avoids.length > 0) response = "avoid";
+  if (avoidWords && (avoids.length > 0 || bans.length > 0)) response = "avoid";
   else if (/\b(flee|run away|run from|escape|retreat|get away|back off)\b/.test(t)) response = "flee";
   else if (/\b(fight|attack|kill|charge|slay|engage)\b/.test(t)) response = "fight";
   else if (/\b(leave the level|take the stairs|leave level|use the stairs)\b/.test(t)) response = "leave-level";
@@ -4256,7 +4454,21 @@ function sortByCode(text) {
   const standing = /\b(always|never|whenever|every time|each time|the first time|until level|any time|when(?:ever)? you|if you see)\b/.test(t) || avoidWords;
   return {
     kind: standing ? "standing" : "order",
-    sorted: { aim, trigger, response, avoids, store, depth, deadlineLevel, item, count: count2, gold, frequency }
+    sorted: {
+      aim,
+      trigger,
+      response,
+      avoids,
+      store,
+      depth,
+      deadlineLevel,
+      item,
+      count: count2,
+      gold,
+      frequency,
+      ...hpLine === null ? {} : { hpBelow: hpLine },
+      ...bans.length === 0 ? {} : { bans }
+    }
   };
 }
 function choice(instructions, criteria) {
@@ -4277,6 +4489,48 @@ function sortRequest(text) {
       frequency: choice("How often does it apply?", { ...FREQUENCY_CHOICES, [NONE]: "It does not say." })
     }
   };
+}
+var SORT_BATCH = 5;
+function sortManyRequest(texts) {
+  const one = sortRequest("");
+  const instructions = {};
+  const questions = {};
+  texts.forEach((text, n) => {
+    const key2 = `n${String(n)}`;
+    instructions[key2] = text;
+    for (const [part, q] of Object.entries(one.questions)) {
+      const c = q;
+      questions[`${key2}_${part}`] = { ...c, instructions: `For instruction ${key2}: ${c.instructions}` };
+    }
+  });
+  return {
+    state: {
+      rules: "A squire has been given several instructions in plain words. Sort each into the squire's own vocabulary. Answer none_of_these for any part the words do not state.",
+      instructions
+    },
+    questions
+  };
+}
+async function sortMany(texts, deps) {
+  const byCode = texts.map((text) => ({ ...sortByCode(text), source: "code" }));
+  const asked = texts.slice(0, SORT_BATCH);
+  const backend = deps.backend();
+  if (asked.length === 0 || backend === null || deps.tally.overCap(backend, deps.now()) !== null) return byCode;
+  let result;
+  try {
+    result = await deps.send(sortManyRequest(asked));
+  } catch {
+    return byCode;
+  }
+  if (!result.ok) return byCode;
+  deps.tally.record(backend, result.usage, deps.now());
+  return texts.map((text, n) => {
+    if (n >= asked.length) return byCode[n];
+    const prefix2 = `n${String(n)}_`;
+    const answers = {};
+    for (const [key2, answer] of Object.entries(result.answers)) if (key2.startsWith(prefix2)) answers[key2.slice(prefix2.length)] = answer;
+    return { ...readSort(text, answers), source: "model" };
+  });
 }
 function picked(answers, key2, allowed) {
   const answer = answers[key2];
@@ -4349,7 +4603,9 @@ var NOTE_GAP = 500;
 var RESENT_STEP = 5;
 var THANKS = 3;
 var GRUDGING_THANKS = 2;
-var HALF_HP = 0.5;
+var SHOWN = 6;
+var ROTATE_STEP = 0.5;
+var ROTATE_CAP = 8;
 var STANCE_WORDS = {
   following: "You intend to follow it.",
   grudgingly: "You intend to follow it grudgingly.",
@@ -4380,8 +4636,16 @@ function createOrders(deps) {
   const rolled = /* @__PURE__ */ new Set();
   const notedAt = /* @__PURE__ */ new Map();
   let asked = [];
+  const shownAt = /* @__PURE__ */ new Map();
+  const askedAt = /* @__PURE__ */ new Map();
+  let noteRound = 0;
+  let askRound = 0;
+  let pending = null;
+  let changes = 0;
+  let deferred = [];
   const persona = () => deps.persona() ?? defaultPersona();
   function persist() {
+    changes += 1;
     const ended = items.filter((i) => !isLive(i.state));
     const drop = new Set(ended.slice(0, Math.max(0, ended.length - KEEP_ENDED)).map((i) => i.id));
     if (drop.size > 0) items = items.filter((i) => !drop.has(i.id));
@@ -4400,7 +4664,7 @@ function createOrders(deps) {
   }
   function restance(i, previous) {
     const p = persona();
-    const adherence = nextAdherence(previous, i.sorted, p);
+    const adherence = nextAdherence(previous, i.sorted, p, i.source === "channel");
     return { ...i, adherence, state: stanceOf(adherence, i.sorted, p) };
   }
   function triggerActive(i, view) {
@@ -4411,12 +4675,34 @@ function createOrders(deps) {
       case "unique":
         return view.monsters().some((m) => m.visible && m.raceFlags.includes("UNIQUE"));
       case "low-hp":
-        return p.maxHp > 0 && p.hp <= p.maxHp * HALF_HP;
+        return underHpLine(i.sorted.hpBelow, p.hp, p.maxHp);
       case "new-level":
         return arrived;
       case "in-store":
-        return p.depth === 0;
+        return inStore(view);
     }
+  }
+  function rotate(view, slots, shown, round, offers) {
+    const offered = new Set((offers ?? []).map((o) => o.goal));
+    const score = (i) => {
+      const goals = goalsOf(i.sorted);
+      const meets = [...goals.serves, ...goals.breaks].some((g) => offered.has(g)) ? 1 : 0;
+      const waited = Math.min(ROTATE_CAP, round - (shown.get(i.id) ?? round - ROTATE_CAP));
+      return (i.sorted.trigger === "always" ? 0 : 2) + meets + i.adherence * i.memory + ROTATE_STEP * waited;
+    };
+    const picked2 = applicable(view).map((i) => ({ i, s: score(i) })).sort((a, b) => b.s - a.s || a.i.createdTurn - b.i.createdTurn).slice(0, slots).map((x) => x.i);
+    for (const i of picked2) shown.set(i.id, round);
+    return picked2;
+  }
+  function said(i) {
+    if (i.source !== "channel") return `${i.kind === "order" ? "Your patron ordered" : "Your patron's standing instruction"}: "${i.text}".`;
+    return `A viewer${i.viewer === void 0 ? "" : `, ${i.viewer},`} asked: "${i.text}".`;
+  }
+  function withBans(i, view, offers) {
+    const bans = i.sorted.bans;
+    if (bans === void 0 || bans.length === 0 || offers === void 0) return i;
+    const extra = bannedGoals(bans, offers, fighting(view)).filter((g) => !i.sorted.avoids.includes(g));
+    return extra.length === 0 ? i : { ...i, sorted: { ...i.sorted, avoids: [...i.sorted.avoids, ...extra] } };
   }
   function applicable(view) {
     return items.filter((i) => isLive(i.state) && i.memory >= FORGET_BELOW && triggerActive(i, view));
@@ -4458,9 +4744,9 @@ function createOrders(deps) {
     if (s.aim === "depth" && s.depth !== null && p.maxDepth >= s.depth) return "Order done:";
     if (s.aim === "gold" && s.gold !== null && p.gold >= s.gold) return "Order done:";
     if (s.aim === "item" && s.item !== null) {
-      const stem = (t) => t.toLowerCase().replace(/\b(\w+?)e?s\b/g, "$1");
-      const want = stem(s.item);
-      const held2 = view.inventory().filter((it) => stem(it.label).includes(want)).reduce((n, it) => n + it.number, 0);
+      const stem2 = (t) => t.toLowerCase().replace(/\b(\w+?)e?s\b/g, "$1");
+      const want = stem2(s.item);
+      const held2 = view.inventory().filter((it) => stem2(it.label).includes(want)).reduce((n, it) => n + it.number, 0);
       if (held2 >= s.count) return "Order done:";
     }
     return null;
@@ -4490,13 +4776,13 @@ function createOrders(deps) {
     }
     persist();
   }
-  async function prune(mine) {
+  async function prune(mine, useModel = true) {
     while (mine === generation) {
       const live = items.filter((i) => isLive(i.state));
       if (live.length <= Math.max(1, Math.floor(deps.kept()))) return;
       const fallback = [...live].sort((a, b) => a.adherence * a.memory - b.adherence * b.memory || a.createdTurn - b.createdTurn)[0];
       let target = fallback;
-      const backend = deps.backend();
+      const backend = useModel ? deps.backend() : null;
       if (backend !== null && deps.tally.overCap(backend, deps.now()) === null) {
         const criteria = {};
         for (const i of live) criteria[i.id] = `${short(i.text)} (it is ${i.state})`;
@@ -4533,7 +4819,9 @@ function createOrders(deps) {
     });
   }
   async function refine(id, text, mine) {
-    const sorted = await sortInstruction(text, deps);
+    applySorted(id, await sortInstruction(text, deps), mine);
+  }
+  function applySorted(id, sorted, mine) {
     if (mine !== generation || corrected.has(id)) return;
     const current2 = items.find((i) => i.id === id);
     if (current2 === void 0 || !isLive(current2.state)) return;
@@ -4541,6 +4829,10 @@ function createOrders(deps) {
     const next = restance({ ...current2, sorted: sorted.sorted, kind, familyCreed: kind === "standing" && current2.familyCreed }, current2.adherence);
     replace(id, next);
     persist();
+  }
+  async function refineMany(batch, mine) {
+    const results = await sortMany(batch.map((b) => b.text), deps);
+    batch.forEach((b, n) => applySorted(b.id, results[n], mine));
   }
   const self = {
     list: () => items,
@@ -4580,9 +4872,20 @@ function createOrders(deps) {
       items = [...items, { ...made, disliked: made.state !== "following" }];
       say(`New ${noun(kind)}${viewer === "" ? "" : ` from viewer ${viewer}`}: ${short(trimmed)}`, false);
       persist();
+      if (options.deferSort === true) {
+        deferred.push(id);
+        return { ok: true, instruction: items.find((i) => i.id === id), repeated: false };
+      }
       chain((mine) => refine(id, trimmed, mine));
       chain((mine) => prune(mine));
       return { ok: true, instruction: items.find((i) => i.id === id), repeated: false };
+    },
+    flush() {
+      const ids = deferred;
+      deferred = [];
+      const batch = ids.map((id) => items.find((i) => i.id === id)).filter((i) => i !== void 0 && isLive(i.state)).map((i) => ({ id: i.id, text: i.text }));
+      if (batch.length > 0) chain((mine) => refineMany(batch, mine));
+      if (ids.length > 0) chain((mine) => prune(mine, false));
     },
     retire(id) {
       const i = items.find((x) => x.id === id);
@@ -4651,11 +4954,18 @@ function createOrders(deps) {
       if (due !== null) reviewNow(view);
     },
     decided(goal, view) {
-      const active = new Set(applicable(view).map((x) => x.id));
+      const ids = applicable(view).filter((i) => goalsOf(i.sorted).serves.includes(goal)).map((i) => i.id);
       arrived = false;
+      pending = ids.length === 0 ? null : { goal, ids };
+    },
+    carried(goal, view) {
+      const now = pending;
+      if (now === null || now.goal !== goal) return;
+      pending = null;
       const turn = view.turn();
-      for (const i of items.filter((x) => active.has(x.id))) {
-        if (!goalsOf(i.sorted).serves.includes(goal)) continue;
+      for (const id of now.ids) {
+        const i = items.find((x) => x.id === id);
+        if (i === void 0 || !isLive(i.state)) continue;
         const updated = replace(i.id, { acted: i.acted + 1, memory: refreshed(i.memory, false) });
         const last = notedAt.get(i.id);
         if (updated !== void 0 && (last === void 0 || turn - last >= NOTE_GAP)) {
@@ -4665,14 +4975,18 @@ function createOrders(deps) {
         if (updated !== void 0 && i.sorted.frequency.mode === "once") finish(updated, "done", "Did as told, once:");
       }
     },
-    note(view, gold) {
-      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, 6);
+    revision(view) {
+      const now = applicable(view).map((i) => `${i.id}:${i.state}:${String(Math.round(i.adherence * 20))}:${String(Math.round(i.memory * 10))}`);
+      return `${String(changes)}|${now.join(",")}`;
+    },
+    note(view, gold, offers) {
+      noteRound += 1;
+      const now = rotate(view, SHOWN, shownAt, noteRound, offers);
       if (now.length === 0) return null;
       const p = persona();
       const lines2 = now.map((i) => {
-        const who = i.kind === "order" ? "Your patron ordered" : "Your patron's standing instruction";
         const faint = i.memory < 0.35 ? " You only faintly remember it." : "";
-        return `${who}: "${i.text}". ${STANCE_WORDS[i.state] ?? ""}${faint}${routeHint(i, p, gold ?? view.player().gold)}`;
+        return `${said(i)} ${STANCE_WORDS[i.state] ?? ""}${faint}${routeHint(i, p, gold ?? view.player().gold)}`;
       });
       return lines2.join(" ");
     },
@@ -4680,23 +4994,25 @@ function createOrders(deps) {
       const out = {};
       asked = [];
       if (offers.length === 0) return out;
-      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, ASKED);
+      askRound += 1;
+      const now = rotate(view, ASKED, askedAt, askRound, offers);
       const criteria = {};
       for (const o of offers) criteria[o.goal] = o.criteria;
       criteria[NONE] = "None of these carries it out.";
       for (const i of now) {
         asked.push(i.id);
-        out[`order_${i.id}`] = { type: "choice", instructions: `The patron told the squire: "${i.text}". Which option best carries that out?`, criteria: { ...criteria } };
+        const told = i.source === "channel" ? said(i) : `The patron told the squire: "${i.text}".`;
+        out[`order_${i.id}`] = { type: "choice", instructions: `${told} Which option best carries that out?`, criteria: { ...criteria } };
       }
       return out;
     },
-    weigh(dist, answers, view) {
+    weigh(dist, answers, view, offers) {
       let out = { ...dist };
       for (const i of applicable(view)) {
         const serves = /* @__PURE__ */ new Set();
         const answer = asked.includes(i.id) ? answers[`order_${i.id}`] : void 0;
         if (answer?.type === "choice" && answer.choice !== NONE && (answer.probabilities[answer.choice] ?? 0) >= 0.4) serves.add(answer.choice);
-        out = weigh(out, i, serves);
+        out = weigh(out, withBans(i, view, offers), serves);
       }
       return out;
     },
@@ -4717,6 +5033,7 @@ function createOrders(deps) {
     state: () => ({ items }),
     load(state) {
       items = [...state.items];
+      changes += 1;
       counter = items.reduce((n, i) => Math.max(n, Number(/^i(\d+)$/.exec(i.id)?.[1] ?? 0)), 0);
     },
     reset() {
@@ -4730,6 +5047,13 @@ function createOrders(deps) {
       rolled.clear();
       notedAt.clear();
       asked = [];
+      shownAt.clear();
+      askedAt.clear();
+      noteRound = 0;
+      askRound = 0;
+      pending = null;
+      deferred = [];
+      changes += 1;
       inFlight = Promise.resolve();
     },
     settled: () => inFlight
@@ -4753,33 +5077,42 @@ function routeHint(i, p, gold) {
 var CHANNEL_POLL_MS = 5e3;
 var CHANNEL_RETRY_MS = 3e4;
 var CHANNEL_MAX_TEXT = 300;
-var MAX_PER_POLL = 20;
+var MAX_PER_REPLY = 50;
+var MAX_PAGES = 10;
 var TIMEOUT_MS = 4e3;
 function clean(value, max) {
   if (typeof value !== "string") return "";
   return value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max).trim();
 }
-function readChannelOrders(body2) {
+function readChannelReply(body2) {
   let parsed;
   try {
     parsed = JSON.parse(body2);
   } catch {
     return null;
   }
-  if (!Array.isArray(parsed)) return null;
+  let list = parsed;
+  let more = false;
+  if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const r = parsed;
+    list = r["orders"];
+    more = r["more"] === true;
+  }
+  if (!Array.isArray(list)) return null;
   const out = [];
-  for (const raw of parsed.slice(0, MAX_PER_POLL)) {
+  for (const raw of list.slice(0, MAX_PER_REPLY)) {
     if (raw === null || typeof raw !== "object") continue;
     const r = raw;
     const text = clean(r["text"], CHANNEL_MAX_TEXT);
     if (text === "") continue;
     out.push({ text, viewer: clean(r["user"], MAX_VIEWER), platform: clean(r["platform"], 20) });
   }
-  return out;
+  return { orders: out, more };
 }
 function createChannelPoller(deps) {
   let dueAt = 0;
   let inFlight = null;
+  let generation = 0;
   let failing = false;
   function failed(url, problem) {
     dueAt = deps.now() + CHANNEL_RETRY_MS;
@@ -4787,15 +5120,34 @@ function createChannelPoller(deps) {
     failing = true;
     deps.log(`Squire couldn't collect viewer orders from ${url}: ${problem}. It will try again in ${String(CHANNEL_RETRY_MS / 1e3)} seconds.`);
   }
-  async function collect(net, url) {
-    const reply = await net.request({ url, method: "GET", timeoutMs: TIMEOUT_MS });
-    if (!reply.ok) return failed(url, reply.problem);
-    if (reply.status !== 200) return failed(url, `HTTP ${String(reply.status)}`);
-    const orders = readChannelOrders(reply.body);
-    if (orders === null) return failed(url, "the reply is not a list of orders");
-    if (failing) deps.log("Squire is collecting viewer orders again.");
-    failing = false;
+  async function collect(net, url, mine) {
+    const stale = () => mine !== generation || deps.url().trim() !== url;
+    const orders = [];
+    let more = true;
+    for (let page = 0; more && page < MAX_PAGES; page += 1) {
+      const reply = await net.request({ url, method: "GET", timeoutMs: TIMEOUT_MS });
+      if (stale()) return;
+      if (!reply.ok) {
+        failed(url, reply.problem);
+        break;
+      }
+      if (reply.status !== 200) {
+        failed(url, `HTTP ${String(reply.status)}`);
+        break;
+      }
+      const read = readChannelReply(reply.body);
+      if (read === null) {
+        failed(url, "the reply is not a list of orders");
+        break;
+      }
+      if (failing) deps.log("Squire is collecting viewer orders again.");
+      failing = false;
+      orders.push(...read.orders);
+      more = read.more;
+    }
+    if (more && !failing) dueAt = deps.now();
     for (const order of orders) deps.queue(order);
+    if (orders.length > 0) deps.flush?.();
   }
   return {
     tick() {
@@ -4804,9 +5156,13 @@ function createChannelPoller(deps) {
       const net = deps.net();
       if (net === null) return;
       dueAt = deps.now() + CHANNEL_POLL_MS;
-      inFlight = collect(net, url).catch((error) => failed(url, error instanceof Error ? error.message : String(error))).finally(() => {
+      inFlight = collect(net, url, generation).catch((error) => failed(url, error instanceof Error ? error.message : String(error))).finally(() => {
         inFlight = null;
       });
+    },
+    reset() {
+      generation += 1;
+      dueAt = 0;
     },
     settled: () => inFlight ?? Promise.resolve()
   };
@@ -4820,6 +5176,7 @@ function queueInstruction(orders, text, source, options) {
 }
 
 // src/orders/read.ts
+var BAN_VERBS = ["read", "quaff", "use", "zap", "aim"];
 var STATES = ["following", "grudgingly", "ignoring", "forgotten", "done", "abandoned"];
 var AIMS = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth", "item", "gold"];
 var TRIGGERS2 = ["always", "unique", "low-hp", "new-level", "in-store"];
@@ -4855,8 +5212,31 @@ function readSorted(value) {
     item: typeof r["item"] === "string" ? r["item"].slice(0, 80) : null,
     count: Math.round(num2(r["count"], 1, 99, 1)),
     gold: optional(r["gold"], 0, 1e8),
-    frequency
+    frequency,
+    ...readHpBelow(r["hpBelow"]),
+    ...readBansField(r["bans"])
   };
+}
+function readHpBelow(value) {
+  const r = rec(value);
+  if (r === null || typeof r["value"] !== "number" || !Number.isFinite(r["value"])) return {};
+  if (r["kind"] === "hp") return { hpBelow: { kind: "hp", value: Math.round(num2(r["value"], 1, 1e5, 1)) } };
+  if (r["kind"] === "share") return { hpBelow: { kind: "share", value: num2(r["value"], 0.01, 1, 0.5) } };
+  return {};
+}
+function readBansField(value) {
+  if (!Array.isArray(value)) return {};
+  const bans = [];
+  for (const raw of value.slice(0, 8)) {
+    const r = rec(raw);
+    if (r === null) continue;
+    bans.push({
+      verb: oneOf(r["verb"], BAN_VERBS, "use"),
+      item: typeof r["item"] === "string" && r["item"].trim() !== "" ? r["item"].trim().slice(0, 40) : null,
+      when: oneOf(r["when"], ["always", "fight"], "always")
+    });
+  }
+  return bans.length === 0 ? {} : { bans };
 }
 function readInstruction(value) {
   const r = rec(value);
@@ -6964,9 +7344,10 @@ function createRuntime(host, options = {}) {
     url: () => config.channelUrl,
     net: () => host.net ?? null,
     queue: (order) => {
-      const result = queueInstruction(orders, order.text, "channel", order.viewer === "" ? {} : { viewer: order.viewer });
+      const result = queueInstruction(orders, order.text, "channel", { deferSort: true, ...order.viewer === "" ? {} : { viewer: order.viewer } });
       if (!result.ok) host.log(`Squire didn't take a viewer's order: ${result.problem}`);
     },
+    flush: () => orders.flush(),
     log: (message) => host.log(message),
     now
   });
@@ -7250,6 +7631,7 @@ function createRuntime(host, options = {}) {
     strategy.reset();
     const creeds = orders.creeds();
     orders.reset();
+    channel.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();

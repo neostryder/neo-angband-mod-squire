@@ -28,3 +28,23 @@ export function badLevelFeeling(messages: readonly string[]): string | null {
   }
   return null;
 }
+
+/** Every monster-feeling opening (mon_feeling_text, cmd-cave.c); the game prints one on arrival at each new level. */
+const ARRIVAL: readonly string[] = [
+  "You are still uncertain about this place",
+  "Omens of death haunt this place",
+  "This place seems murderous",
+  "This place seems terribly dangerous",
+  "You feel anxious about this place",
+  "You feel nervous about this place",
+  "This place does not seem too risky",
+  "This place seems reasonably safe",
+  "This seems a tame, sheltered place",
+  "This seems a quiet, peaceful place",
+  "Looks like a typical town",
+];
+
+/** Whether these messages include the feeling a new level announces, which marks a fresh floor even at the same depth. */
+export function arrivalFeeling(messages: readonly string[]): boolean {
+  return messages.some((message) => ARRIVAL.some((line) => message.startsWith(line)));
+}

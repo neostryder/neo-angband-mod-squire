@@ -5,7 +5,9 @@
  * copied into a fresh value with its own bounds.
  */
 
-import { MAX_TEXT, MAX_VIEWER, SOURCES, type Frequency, type Instruction, type InstructionKind, type InstructionSource, type InstructionState, type OrderAim, type ResponseKind, type Sorted, type TriggerKind } from "./types.js";
+import { MAX_TEXT, MAX_VIEWER, SOURCES, type BanVerb, type Frequency, type Instruction, type InstructionKind, type InstructionSource, type InstructionState, type ItemBan, type OrderAim, type ResponseKind, type Sorted, type TriggerKind } from "./types.js";
+
+const BAN_VERBS: readonly string[] = ["read", "quaff", "use", "zap", "aim"];
 
 const STATES: readonly InstructionState[] = ["following", "grudgingly", "ignoring", "forgotten", "done", "abandoned"];
 const AIMS: readonly string[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth", "item", "gold"];
@@ -50,7 +52,32 @@ export function readSorted(value: unknown): Sorted {
     count: Math.round(num(r["count"], 1, 99, 1)),
     gold: optional(r["gold"], 0, 100_000_000),
     frequency,
+    ...readHpBelow(r["hpBelow"]),
+    ...readBansField(r["bans"]),
   };
+}
+
+function readHpBelow(value: unknown): Pick<Sorted, "hpBelow"> {
+  const r = rec(value);
+  if (r === null || typeof r["value"] !== "number" || !Number.isFinite(r["value"])) return {};
+  if (r["kind"] === "hp") return { hpBelow: { kind: "hp", value: Math.round(num(r["value"], 1, 100_000, 1)) } };
+  if (r["kind"] === "share") return { hpBelow: { kind: "share", value: num(r["value"], 0.01, 1, 0.5) } };
+  return {};
+}
+
+function readBansField(value: unknown): Pick<Sorted, "bans"> {
+  if (!Array.isArray(value)) return {};
+  const bans: ItemBan[] = [];
+  for (const raw of value.slice(0, 8)) {
+    const r = rec(raw);
+    if (r === null) continue;
+    bans.push({
+      verb: oneOf<BanVerb>(r["verb"], BAN_VERBS, "use"),
+      item: typeof r["item"] === "string" && r["item"].trim() !== "" ? r["item"].trim().slice(0, 40) : null,
+      when: oneOf<ItemBan["when"]>(r["when"], ["always", "fight"], "always"),
+    });
+  }
+  return bans.length === 0 ? {} : { bans };
 }
 
 /** One instruction, or null when the value is not one. */

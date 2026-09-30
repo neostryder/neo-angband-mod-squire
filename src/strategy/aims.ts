@@ -218,6 +218,15 @@ export function inFixedOrder(aims: readonly Aim[]): Aim[] {
   return [...aims].sort((a, b) => FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 
+/** Whether the character wields a weapon that may be magical, which is what the weapon aim asks for. */
+export function wieldsMagicWeapon(view: AgentView): boolean {
+  return view.equipment().some((item) => {
+    if (item === null || !WEAPONS.includes(item.tval)) return false;
+    const name = shownName(item);
+    return name !== null && mightBeSpecial(name);
+  });
+}
+
 /** Whether the gold on hand covers an aim's price. */
 export function affordable(aim: Aim, gold: number): boolean {
   return aim.price !== null && gold >= aim.price;

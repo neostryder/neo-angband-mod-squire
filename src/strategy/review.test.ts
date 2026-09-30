@@ -108,11 +108,30 @@ describe("review triggers", () => {
     const w = world({ map: ROOM, player: { depth: 0, level: 5, maxHp: 100 } });
     const { strategy, logs } = rig(never, null);
     strategy.observe(w.view);
+    await strategy.settled();
     w.setPlayer({ depth: 3 });
     strategy.observe(w.view);
     await strategy.settled();
     expect(strategy.last()?.trigger).toBe("town");
     expect(logs).toHaveLength(2);
+  });
+
+  it("keeps only the newest review when an older one answers later", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { depth: 1 } });
+    const releases: ((r: AskResult) => void)[] = [];
+    const { strategy, logs } = rig(() => new Promise<AskResult>((resolve) => { releases.push(resolve); }));
+    strategy.observe(w.view);
+    w.setPlayer({ depth: 2 });
+    strategy.observe(w.view);
+    expect(releases).toHaveLength(2);
+    releases[1]!(reply({ lantern: 10, depth: 90 }));
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    releases[0]!(reply({ lantern: 90, depth: 10 }));
+    await strategy.settled();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(strategy.ranked()[0]?.kind).toBe("depth");
+    expect(logs).toHaveLength(1);
   });
 });
 
@@ -211,11 +230,10 @@ describe("a new character", () => {
   });
 });
 
-describe("an heir's first review", () => {
-  it("ranks an inherited depth target and weapon with the code's own aims, once", async () => {
+describe("an heir's inherited aims", () => {
+  it("ranks an inherited depth target and weapon with the code's own aims, and keeps them at later reviews", async () => {
     const w = world({ map: ROOM, worn: ["Wooden Torch"] });
     const { strategy } = rig(never, null);
-    const own = candidateAims(w.view).find((a) => a.kind === "depth")?.depth;
     strategy.inherit([{ kind: "depth", depth: 8 }, { kind: "weapon", depth: null }]);
     strategy.observe(w.view);
     await strategy.settled();
@@ -224,7 +242,57 @@ describe("an heir's first review", () => {
     w.advance(REVIEW_TURNS + 1);
     strategy.observe(w.view);
     await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(8);
+    expect(strategy.ranked().map((a) => a.kind)).toContain("weapon");
+  });
+
+  it("drops an inherited depth target once the heir has reached it", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"] });
+    const { strategy } = rig(never, null);
+    const own = candidateAims(w.view).find((a) => a.kind === "depth")?.depth;
+    strategy.inherit([{ kind: "depth", depth: 8 }]);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(8);
+    w.setPlayer({ maxDepth: 8 });
+    w.advance(REVIEW_TURNS + 1);
+    strategy.observe(w.view);
+    await strategy.settled();
     expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(own);
+  });
+
+  it("drops an inherited depth target once the heir's own target reaches as deep", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { level: 5, maxHp: 60 } });
+    const { strategy } = rig(never, null);
+    strategy.inherit([{ kind: "depth", depth: 8 }]);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(8);
+    w.setPlayer({ level: 30, maxHp: 300 });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(15);
+    w.setPlayer({ level: 12, maxHp: 120 });
+    w.advance(REVIEW_TURNS + 1);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().find((a) => a.kind === "depth")?.depth).toBe(6);
+  });
+
+  it("drops an inherited weapon aim once a magical weapon is wielded", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"] });
+    const { strategy } = rig(never, null);
+    strategy.inherit([{ kind: "weapon", depth: null }]);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked().map((a) => a.kind)).toContain("weapon");
+    const armed = world({ map: ROOM, worn: ["Wooden Torch", "a Dagger of Slay Evil (1d4) (+3,+4)"] });
+    strategy.observe(armed.view);
+    await strategy.settled();
+    armed.advance(REVIEW_TURNS + 1);
+    strategy.observe(armed.view);
+    await strategy.settled();
+    expect(strategy.ranked().map((a) => a.kind)).not.toContain("weapon");
   });
 
   it("carries nothing after a reset", async () => {

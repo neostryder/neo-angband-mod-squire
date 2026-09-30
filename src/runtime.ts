@@ -271,9 +271,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     url: () => config.channelUrl,
     net: () => host.net ?? null,
     queue: (order) => {
-      const result = queueInstruction(orders, order.text, "channel", order.viewer === "" ? {} : { viewer: order.viewer });
+      const result = queueInstruction(orders, order.text, "channel", { deferSort: true, ...(order.viewer === "" ? {} : { viewer: order.viewer }) });
       if (!result.ok) host.log(`Squire didn't take a viewer's order: ${result.problem}`);
     },
+    flush: () => orders.flush(),
     log: (message) => host.log(message),
     now,
   });
@@ -568,6 +569,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     strategy.reset();
     const creeds = orders.creeds();
     orders.reset();
+    channel.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();

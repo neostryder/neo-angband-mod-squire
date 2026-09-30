@@ -10,7 +10,7 @@ import { createRuntime } from "../runtime.js";
 import { defaultCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createOrders } from "./book.js";
-import { CHANNEL_POLL_MS, CHANNEL_RETRY_MS, createChannelPoller, readChannelOrders, type ChannelOrder } from "./channel.js";
+import { CHANNEL_POLL_MS, CHANNEL_RETRY_MS, MAX_PAGES, createChannelPoller, readChannelOrders, readChannelReply, type ChannelOrder } from "./channel.js";
 import { queueInstruction } from "./input.js";
 import { orderLines } from "./panel.js";
 import { readInstructions } from "./read.js";
@@ -150,6 +150,63 @@ describe("collecting viewer orders", () => {
     expect(read?.[0]?.text.startsWith("run x")).toBe(true);
     expect(read?.[0]?.viewer).toBe("Grip");
     expect(read?.[1]).toEqual({ text: "rest", viewer: "", platform: "" });
+  });
+
+  it("reads the paged reply shape as well as the bare list", () => {
+    expect(readChannelReply(JSON.stringify([{ text: "rest" }]))).toEqual({ orders: [{ text: "rest", viewer: "", platform: "" }], more: false });
+    expect(readChannelReply(JSON.stringify({ orders: [{ text: "rest", user: "Grip" }], more: true }))).toEqual({ orders: [{ text: "rest", viewer: "Grip", platform: "" }], more: true });
+    expect(readChannelReply(JSON.stringify({ orders: [], more: "yes" }))).toEqual({ orders: [], more: false });
+    expect(readChannelReply(JSON.stringify({ more: true }))).toBeNull();
+  });
+
+  it("keeps collecting while the channel says more are waiting", async () => {
+    const net = stubNet([
+      ok({ orders: [{ text: "one", user: "a" }], more: true }),
+      ok({ orders: [{ text: "two", user: "b" }], more: true }),
+      ok({ orders: [{ text: "three", user: "c" }], more: false }),
+    ]);
+    const { p, queued } = poller(net);
+    p.tick();
+    await p.settled();
+    expect(net.calls).toHaveLength(3);
+    expect(queued.map((o) => o.text)).toEqual(["one", "two", "three"]);
+  });
+
+  it("stops at the page bound and collects again at the next tick", async () => {
+    const net = stubNet(() => Promise.resolve(ok({ orders: [{ text: "again" }], more: true })));
+    const { p, queued } = poller(net);
+    p.tick();
+    await p.settled();
+    expect(net.calls).toHaveLength(MAX_PAGES);
+    expect(queued).toHaveLength(MAX_PAGES);
+    p.tick();
+    await p.settled();
+    expect(net.calls).toHaveLength(MAX_PAGES * 2);
+  });
+
+  it("drops a collection that started before a reset", async () => {
+    let release: (r: Reply) => void = () => {};
+    const net = stubNet(() => new Promise<Reply>((resolve) => { release = resolve; }));
+    const { p, queued } = poller(net);
+    p.tick();
+    p.reset();
+    release(ok([{ text: "old character's order", user: "Grip" }]));
+    await p.settled();
+    expect(queued).toEqual([]);
+  });
+
+  it("asks for one batched sort after a collection that queued orders", async () => {
+    const net = stubNet([ok([{ text: "one" }, { text: "two" }]), ok([])]);
+    let clock = 1_000;
+    let flushes = 0;
+    const p = createChannelPoller({ url: () => URL, net: () => net, queue: () => {}, flush: () => { flushes += 1; }, log: () => {}, now: () => clock });
+    p.tick();
+    await p.settled();
+    expect(flushes).toBe(1);
+    clock += CHANNEL_POLL_MS;
+    p.tick();
+    await p.settled();
+    expect(flushes).toBe(1);
   });
 });
 

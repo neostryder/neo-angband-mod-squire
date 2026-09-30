@@ -3,8 +3,8 @@
  * successor; a lantern, empty armour slots and the next spellbook belong to the
  * old character's kit and class, and the protection aims follow the heir's own
  * gear, so those are never carried. The heir's persona can drop what clashes
- * with it, and what stays is ranked with every other candidate at the first
- * review.
+ * with it, and what stays is ranked with every other candidate at each review
+ * until it is achieved or the heir's own aim of that kind replaces it.
  */
 
 import type { Persona } from "../persona/persona.js";
@@ -61,7 +61,7 @@ export function inheritAims(aims: readonly InheritedAim[], parent: Persona, heir
 }
 
 /**
- * Fold inherited aims into the heir's first candidates. A depth target only
+ * Fold inherited aims into the heir's candidates. A depth target only
  * raises the code's own target, and a weapon aim is added when the heir has no
  * weapon aim of its own.
  */
@@ -88,4 +88,20 @@ export function withInherited(candidates: readonly Aim[], inherited: readonly In
     }
   }
   return out;
+}
+
+/**
+ * The inherited aims still worth carrying into this review: a depth target
+ * stays until the heir reaches it or its own target reaches as deep, and a
+ * weapon aim stays until the heir wields a magical weapon or finds one to
+ * pursue of its own.
+ */
+export function stillInherited(inherited: readonly InheritedAim[], own: readonly Aim[], maxDepth: number, wieldsMagic: boolean): InheritedAim[] {
+  return inherited.filter((aim) => {
+    if (aim.kind === "depth") {
+      if (aim.depth === null || maxDepth >= aim.depth) return false;
+      return !own.some((c) => c.kind === "depth" && (c.depth ?? 0) >= aim.depth!);
+    }
+    return !wieldsMagic && !own.some((c) => c.kind === "weapon");
+  });
 }

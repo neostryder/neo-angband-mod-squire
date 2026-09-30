@@ -47,11 +47,12 @@ export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
 import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
+import { holdDescent } from "../strategy/hold.js";
 import type { Aim } from "../strategy/aims.js";
 import { activationUse, breatherInSight, buffUse, deviceHealUse, resistUse, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull } from "./items.js";
-import { badLevelFeeling } from "./level-feel.js";
+import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -702,11 +703,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let feelingDepth = -1;
   function noteFeeling(view: AgentView): void {
     const depth = view.player().depth;
-    if (depth !== feelingDepth) {
+    const messages = view.messages();
+    /* The game announces a feeling on arrival at every new level, so a fresh one also means a fresh floor at the same depth. */
+    if (depth !== feelingDepth || arrivalFeeling(messages)) {
       feelingDepth = depth;
       badFeeling = null;
     }
-    const seen = badLevelFeeling(view.messages());
+    const seen = badLevelFeeling(messages);
     if (seen !== null) badFeeling = seen;
   }
   function noteOutcome(text: string): void {
@@ -717,9 +720,17 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   function noteStalls(goal: Goal | null, plan: Plan): Plan {
     let issued = 0;
     let startTurn: number | null = null;
+    let credited = false;
     const version = outcomeVersion;
+    /* An instruction counts as carried out only once a command it chose has taken game time. */
+    const settle = (v: AgentView): void => {
+      if (credited || goal === null || issued === 0 || startTurn === null || v.turn() === startTurn) return;
+      credited = true;
+      options.orders?.carried(goal, v);
+    };
     const step: Plan["step"] = (v, act) => {
       startTurn ??= v.turn();
+      settle(v);
       const command = plan.step(v, act);
       if (command !== null) issued += 1;
       /* A plan that ends with no game time passed changed nothing: either it
@@ -740,7 +751,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       return command;
     };
-    return { ...plan, step };
+    return { ...plan, step, settle } as Plan;
   }
 
   /** The cause of a refusal, when the view shows one. */
@@ -1215,10 +1226,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk: Record<string, number> = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const weighted = options.orders === undefined ? blended : options.orders.weigh(blended, answers, view);
+    const weighted = options.orders === undefined ? blended : options.orders.weigh(blended, answers, view, digest.offers);
     /* An order at high adherence carries its options past the ceiling, as Death wish does for every option. */
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
-    const nudged = nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona));
+    const nudged = holdDescent(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), options.strategy?.().aims ?? [], view, badFeeling !== null);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -1229,7 +1240,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * single option the persona's risk ceiling allows, and a situation the model
    * answered within the last few turns.
    */
-  function reflexFor(offers: readonly Offer[], persona: Persona | null, situation: string, turn: number): { readonly goal: Goal; readonly why: string } | null {
+  function reflexFor(offers: readonly Offer[], persona: Persona | null, situation: string, turn: number, passes: ReadonlySet<string>): { readonly goal: Goal; readonly why: string } | null {
     if (options.reflex === false) return null;
     const routine = ROUTINE.map((goal) => offers.find((o) => o.goal === goal && o.routine === true)).find((o) => o !== undefined);
     if (routine !== undefined) return { goal: routine.goal, why: "routine upkeep" };
@@ -1237,7 +1248,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
     if (only !== undefined && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
     const last = lastAnswer;
-    if (last !== null && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS && offers.some((o) => o.goal === last.pick)) {
+    const again = last === null ? undefined : offers.find((o) => o.goal === last.pick);
+    /* A reused answer still has to clear today's ceiling, which an order may have lifted. */
+    const allowed = again !== undefined && (persona === null || again.risk <= ceiling || passes.has(again.goal));
+    if (last !== null && allowed && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS) {
       return { goal: last.pick, why: "same situation as the last answer" };
     }
     return null;
@@ -1282,7 +1296,6 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
 
       const aimList = options.strategy?.().aims ?? [];
-      const orderNote = options.orders?.note(view, player.gold) ?? null;
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`
       const criteria: Record<string, string | null> = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
@@ -1315,11 +1328,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       });
 
       const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
+      const passes = options.orders?.passes(view) ?? new Set<string>();
+      /* What the orders and the persona's ceiling say is part of the situation: a new order or a lower ceiling makes the last answer stale. */
       const situation = JSON.stringify([
         player.depth, healthBand(player.hp, player.maxHp), creatures, statusOf(view, canRead(view)), unexplored, stairs,
         hungry(view), offers.map((o) => o.goal).sort(),
+        options.orders?.revision(view) ?? "", [...passes].sort(), persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on],
       ]);
-      const reflex = reflexFor(offers, persona, situation, turn);
+      const reflex = reflexFor(offers, persona, situation, turn, passes);
       if (reflex !== null) {
         log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
         options.orders?.decided(reflex.goal, view);
@@ -1332,6 +1348,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return decided;
       }
 
+      const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
       const question: Question<GoalDigest> = {
         request: {
           state: {
@@ -1416,7 +1433,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     trigger(view, plan) {
-      const watched = plan as Partial<WatchedPlan>;
+      const watched = plan as Partial<WatchedPlan> & { settle?: (v: AgentView) => void };
+      watched.settle?.(view);
       const stopped = watched.watcher?.check(view) ?? null;
       if (stopped !== null) noteOutcome(`${plan.label} stopped: ${stopped.detail}`);
       return stopped === null ? null : stopped.detail;
