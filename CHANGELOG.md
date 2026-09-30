@@ -35,6 +35,7 @@ Fixed.
 - [Visible] **Roll-on.** After a death, Setup can have Squire start the next character, like the last one or with a random race and class, and keep playing. The new character inherits some of what its ancestors learned.
 - [Visible] [Security] **Telemetry, off by default.** Setup lists what each level sends to squire.rpgm.tools, from a run summary up to every decision, and a backstory is sent only with its own consent. "Delete what I have sent" removes everything this install has sent.
 - [Visible] **Train Laya while Jev plays.** When switched on in Setup, Squire also sends each decision to Laya and never acts on Laya's answer. Every Jev decision is saved as a training row, and a Knight's Lessons row carries your own choice as its label. "Save Laya training rows" downloads them.
+- [Visible] **Squire keeps shooting at the creature it picked.** Arrows, flasks of oil, wands and bolt spells go on at one target until it dies, leaves sight, the line of fire closes or the ammunition or mana runs out, with no new model call per shot. A ball spell is still aimed afresh each cast, so the blast stays off the character. With nothing in view, Squire now walks to stairs and unexplored ground with the game's own travel and run commands, and when it flees it heads for a known staircase before it just backs away.
 
 ### Removed
 

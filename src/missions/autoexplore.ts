@@ -29,6 +29,7 @@ import { advance, pacing } from "../progress.js";
 import { awakeInSight } from "../threat.js";
 import { frontiers, standingOnHarm } from "../map.js";
 import { retreatFrom, stepIntoDark, travelTo } from "../travel.js";
+import { engineTravel } from "../travel-engine.js";
 
 /** How the exploring errand starts. */
 export interface AutoexploreOptions {
@@ -43,6 +44,11 @@ export interface AutoexploreOptions {
 /** Build the exploring errand. */
 export function autoexplore(options: AutoexploreOptions = {}): Mission {
   let watcher: Watcher | null = null;
+  /* The game turn of the last engine travel command, and whether the game
+   * refused it. A refused command passes no time, which is how the mission
+   * falls back to its own steps. */
+  let engineTurn: number | null = null;
+  let engineBlocked = false;
 
   return {
     id: "autoexplore",
@@ -77,6 +83,9 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
     step(ctx: SquireContext): Decision {
       const at = ctx.view.player().grid;
       advance(ctx.progress, at);
+
+      if (engineTurn !== null && ctx.view.turn() === engineTurn) engineBlocked = true;
+      engineTurn = null;
 
       if (watcher === null) return stop("nothing-to-do", "The errand never started.");
       if (ctx.progress.steps > ctx.cfg.errandSteps) {
@@ -113,6 +122,13 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
        * every one it can when there is another way. */
       const seen = ctx.view.monsters().filter((m) => m.visible).map((m) => m.grid);
       const nearCreature = (grid: { x: number; y: number }) => seen.some((m) => Math.max(Math.abs(m.x - grid.x), Math.abs(m.y - grid.y)) <= 1);
+      if (!engineBlocked) {
+        const engine = engineTravel(ctx, goals, { run: true });
+        if (engine !== null) {
+          engineTurn = ctx.view.turn();
+          return issue(engine);
+        }
+      }
       const travel = travelTo(ctx, goals, seen.length === 0 ? undefined : nearCreature);
       switch (travel.kind) {
         case "step":

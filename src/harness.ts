@@ -137,6 +137,10 @@ export interface WorldSpec {
   /** Castable spells: name, index, mana and failure chance. */
   readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number; readonly learned?: boolean }[];
   readonly stores?: readonly StoreView[];
+  /** The engine's own line of fire to a grid, for tests of volleys. Absent keeps the single shot. */
+  readonly projectionPath?: (to: Loc) => readonly Loc[];
+  /** The engine's own walking route to a grid, for tests of engine travel. Absent keeps Squire's steps. */
+  readonly travelPath?: (to: Loc) => readonly Loc[] | null;
 }
 
 /** An item as the inventory would show it, with only the fields the tests read. */
@@ -342,6 +346,20 @@ export function world(spec: WorldSpec): World {
   if (spec.quiver !== undefined) {
     const quiver = spec.quiver;
     Object.assign(view, { quiver: (): ItemView[] => quiver.map((name, i) => itemNamed(name, 200 + i)) });
+  }
+  /* The engine's own route reads are optional on the real view too. */
+  if (spec.projectionPath !== undefined) {
+    const line = spec.projectionPath;
+    Object.assign(view, { projectionPath: (to: Loc) => ({ token: { epoch: 0, revision: 0 }, grids: line(to) }) });
+  }
+  if (spec.travelPath !== undefined) {
+    const route = spec.travelPath;
+    Object.assign(view, {
+      travelPath: (to: Loc) => {
+        const grids = route(to);
+        return grids === null ? null : { token: { epoch: 0, revision: 0 }, grids };
+      },
+    });
   }
 
   const record = (command: AgentCommand): AgentCommand => {

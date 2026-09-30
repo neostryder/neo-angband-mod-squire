@@ -27,6 +27,8 @@ import { flowFrom } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
 import { awakeInSight, inSight, pickTarget } from "../threat.js";
 import { retreatFrom, travelTo } from "../travel.js";
+import { engineTravel } from "../travel-engine.js";
+import { volleyAvailable, volleySteps, type RangedGoal } from "./volley.js";
 import { AUTOFIGHT_REACH, autofight } from "../missions/autofight.js";
 import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
@@ -537,7 +539,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
         ? `Use ${teleport.name} to leave this level entirely, going one level up or down.`
         : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
-    add("retreat", "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", exposure(s) * 0.8);
+    add("retreat", reachableAnyStairs(view, terrain)
+      ? "Head for the nearest known staircase and take it, leaving the awake creatures behind."
+      : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", exposure(s) * 0.8);
   }
   if (!bleeding && s.awake.length === 0 && (hurt || player.sp < player.maxSp)) {
     add("rest", "Rest until hit points and mana recover.", 0.01);
@@ -827,6 +831,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     });
   }
 
+  /**
+   * A volley: fire at the one target the model chose until it dies, leaves
+   * sight, the line of fire closes, or the ammunition runs out. Only built when
+   * the view can report the line of fire, so an older game keeps the single
+   * shot.
+   */
+  function volleyPlan(goal: RangedGoal, label: string, view: AgentView, spellSidx?: number): WatchedPlan {
+    const target = situationOf(view, dreadedNow(), stationaryNow(view, false)).target;
+    if (target === null) return once("no target", view, () => null);
+    const next = volleySteps(goal, target.id, spellSidx);
+    return stepsPlan(label, view, (ctx) => next(ctx));
+  }
+
   function build(goal: Goal, view: AgentView): Plan {
     const pack = readPack(view);
     switch (goal) {
@@ -842,20 +859,28 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
+        if (volleyAvailable(view)) return volleyPlan("shoot", "shoot", view);
         const ammo = pack.ammo[0];
         return atTarget("shoot", view, (ctx) => ctx.act.fire(ammo?.handle ?? 0));
       }
       case "throw_oil": {
+        if (volleyAvailable(view)) return volleyPlan("throw_oil", "throw oil", view);
         const oil = pack.oil[0];
         return atTarget("throw oil", view, (ctx) => ctx.act.throw(oil?.handle ?? 0));
       }
       case "aim_wand": {
         const wand = pack.attackWand[0];
+        if (volleyAvailable(view)) return volleyPlan("aim_wand", `aim ${wand?.name ?? "a wand"}`, view);
         return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
       }
       case "cast_attack": {
         const spell = pickAttackSpell(pack.attackSpell, spellInfoOf(view));
-        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), spell !== undefined && /(?:ball|orb|cloud|storm)/i.test(spell.name));
+        const label = `cast ${spell?.name ?? "a spell"}`;
+        const ball = spell !== undefined && /(?:ball|orb|cloud|storm)/i.test(spell.name);
+        /* A ball is aimed afresh every cast to keep the blast off the
+         * character, so only bolts volley. */
+        if (!ball && spell !== undefined && volleyAvailable(view)) return volleyPlan("cast_attack", label, view, spell.sidx);
+        return atTarget(label, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), ball);
       }
       case "heal": {
         const potion = pack.heal[0];
@@ -882,7 +907,22 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       }
       case "retreat":
+        /* Fleeing heads for the way out of the level when one is known, and
+         * only backs up a few steps when it is not. */
         return stepsPlan("back away", view, (ctx, i) => {
+          const stairs = knownStairs(ctx.view, terrain);
+          if (stairs.length > 0 && reachableAnyStairs(ctx.view, terrain)) {
+            const here = ctx.view.player().grid;
+            const cell = ctx.view.cell(here.x, here.y);
+            if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
+            if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+            if (i === 0) {
+              const engine = engineTravel(ctx, stairs, { run: true });
+              if (engine !== null) return engine;
+            }
+            const travel = travelTo(ctx, stairs);
+            return travel.kind === "step" ? travel.command : null;
+          }
           if (i >= RETREAT_STEPS) return null;
           const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
           return away.kind === "step" ? away.command : null;
@@ -919,22 +959,30 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         /* The model saw every awake creature before choosing to explore. */
         return missionPlan("explore", autoexplore({ allowAwake: true }), view);
       case "leave_level":
-        return stepsPlan("take the nearest stairs", view, (ctx) => {
+        return stepsPlan("take the nearest stairs", view, (ctx, i) => {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
           if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
           if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+          if (i === 0) {
+            const engine = engineTravel(ctx, knownStairs(ctx.view, terrain), { run: true });
+            if (engine !== null) return engine;
+          }
           const travel = travelTo(ctx, knownStairs(ctx.view, terrain));
           return travel.kind === "step" ? travel.command : null;
         });
       case "descend":
-        return stepsPlan("take the stairs down", view, (ctx) => {
+        return stepsPlan("take the stairs down", view, (ctx, i) => {
           const at = ctx.view.player().grid;
           const stairs = knownDownStairs(ctx.view, terrain);
           if (stairs.some((s) => s.x === at.x && s.y === at.y)) {
             /* One descend, then the plan is over: the next level is a new decision. */
             return ctx.view.player().depth === view.player().depth ? ctx.act.descend() : null;
+          }
+          if (i === 0) {
+            const engine = engineTravel(ctx, stairs, { stairs: "down" });
+            if (engine !== null) return engine;
           }
           const travel = travelTo(ctx, stairs);
           return travel.kind === "step" ? travel.command : null;
