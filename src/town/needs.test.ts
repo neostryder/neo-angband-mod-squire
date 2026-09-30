@@ -5,9 +5,11 @@ import { defaultPersona } from "../persona/persona.js";
 import { lowOnSupplies, supplyNeeds } from "./needs.js";
 
 describe("town supplies", () => {
-  it("wants no recall scroll before the character has been to level 5", () => {
-    const shallow = world({ map: ["###", "#@#", "###"], player: { maxDepth: 4 } });
+  it("wants no recall scroll before the next intended descent can reach level 5", () => {
+    const shallow = world({ map: ["###", "#@#", "###"], player: { maxDepth: 3 } });
     expect(supplyNeeds(shallow.view, readPack(shallow.view), null).find((n) => n.kind === "recall")?.want).toBe(0);
+    shallow.setPlayer({ maxDepth: 4 });
+    expect(supplyNeeds(shallow.view, readPack(shallow.view), null).find((n) => n.kind === "recall")?.want).toBe(1);
   });
 
   it("scales healing and escapes with persona, with minimums", () => {

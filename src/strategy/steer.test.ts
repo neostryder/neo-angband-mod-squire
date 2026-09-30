@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld as world } from "../harness.js";
 import { createGoalPlanner, type GoalDigest, type Offer } from "../brain/goals.js";
 import type { Question } from "../brain/brain.js";
 import { applySafetyFloor, riskCeiling } from "../persona/blend.js";

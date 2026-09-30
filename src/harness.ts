@@ -179,6 +179,15 @@ export function itemNamed(name: string, handle: number): ItemView {
   return { handle, name, label: name, tval, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
 }
 
+/** Planner fixtures that exercise travel rather than shortages need explicit reserves. */
+export function suppliedWorld(spec: WorldSpec): World {
+  const reserves = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
+  const pack = [...(spec.pack ?? []), ...reserves];
+  const worn = [...(spec.worn ?? [])];
+  if (spec.player?.light !== 0 && !worn.some((name) => /Torch|Lantern/i.test(name))) worn.push("a Wooden Torch (5000 turns)");
+  return world({ ...spec, player: { hp: 60, maxHp: 60, ...spec.player }, pack, worn });
+}
+
 /** A built world, plus what the errands did to it. */
 export interface World {
   readonly view: AgentView;

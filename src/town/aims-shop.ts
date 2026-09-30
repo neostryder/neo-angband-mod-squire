@@ -32,6 +32,7 @@ function matchesAim(aim: Aim, name: string, tval: number): boolean {
     case "free-action": return /Free Action/i.test(name);
     case "see-invisible": return /See Invisible|Seeing/i.test(name);
     case "spellbook": return /\bBook\b/i.test(name);
+    case "preparation": return false;
     case "depth": return false;
   }
 }
@@ -40,7 +41,8 @@ function matchesAim(aim: Aim, name: string, tval: number): boolean {
 export function aimPurchase(aims: readonly Aim[], store: StoreView, gold: number): AimPurchase | null {
   if (store.isHome) return null;
   for (const aim of aims) {
-    if (aim.price === null || !affordable(aim, gold)) continue;
+    const protection = (aim.kind === "free-action" || aim.kind === "see-invisible") && aim.how === "hunt";
+    if (!protection && (aim.price === null || !affordable(aim, gold))) continue;
     const ware = store.stock.find((item) => {
       const name = shownName(item);
       return name !== null && item.price !== undefined && item.price > 0 && item.price <= gold && matchesAim(aim, name, item.tval);

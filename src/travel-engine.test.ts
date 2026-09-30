@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { run, world } from "./harness.js";
+import { run, suppliedWorld as world } from "./harness.js";
 import { defaultCfg } from "./settings.js";
 import { isStop } from "./mission.js";
 import { autoexplore } from "./missions/autoexplore.js";
@@ -64,19 +64,18 @@ describe("engine travel", () => {
     expect(planFor(w, "descend").step(w.view, w.act)?.code).toBe("walk");
   });
 
-  it("runs down a corridor toward a frontier", () => {
+  it("walks one step at a time within the early stair leash", () => {
     const w = world({ map: CORRIDOR, travelPath: (to: { x: number; y: number }) => [to] });
     const plan = planFor(w, "explore");
-    expect(plan.step(w.view, w.act)?.code).toBe("run");
+    expect(plan.step(w.view, w.act)?.code).toBe("walk");
   });
 
-  it("pathfinds toward a frontier in the open", () => {
+  it("keeps exploration to single steps so the game-turn budget can stop it", () => {
     const open = ["#########", "#.......#", "#.@....  ", "#.......#", "#########"];
-    const w = world({ map: open, travelPath: (to: { x: number; y: number }) => [to] });
+    const w = world({ map: open, player: { level: 20, maxLevel: 20 }, travelPath: (to: { x: number; y: number }) => [to] });
     const plan = planFor(w, "explore");
     const command = plan.step(w.view, w.act);
-    expect(command?.code).toBe("pathfind");
-    expect(command?.args?.["dest"]).toBeDefined();
+    expect(command?.code).toBe("walk");
   });
 
   it("walks toward a frontier while a creature is awake", () => {

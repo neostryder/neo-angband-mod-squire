@@ -12,8 +12,9 @@ import type { AgentView, ItemView, StoreView } from "@rpgm-tools/neo-angband-cor
 import { TV } from "../gear/compare.js";
 import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
+import { missingPreparation } from "./readiness.js";
 
-export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "depth";
+export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth";
 
 /** How an aim is pursued: gold to save, something to find, something already carried, or a depth to reach. */
 export type AimHow = "save" | "hunt" | "try" | "dive";
@@ -32,13 +33,13 @@ export interface Aim {
 }
 
 /** The order aims come in when the model cannot rank them. */
-export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth"];
+export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth"];
 
 /** A book counts as next when its first spell is at most this many levels above the character. */
 export const BOOK_LOOKAHEAD = 5;
 /** Dungeon levels (50 ft each) where paralysis and invisible attackers start to be common. */
 export const FREE_ACTION_DEPTH = 20;
-export const SEE_INVISIBLE_DEPTH = 15;
+export const SEE_INVISIBLE_DEPTH = 10;
 /** How many levels before that depth the aim starts. */
 export const PROTECTION_LEAD = 5;
 
@@ -193,6 +194,16 @@ export function candidateAims(view: AgentView): Aim[] {
   const pack = namesOf(packItems);
   const worn = view.equipment().flatMap((item) => (item === null ? [] : [item]));
   const target = depthTarget(player.level, player.maxHp);
+  const next = Math.max(2, player.depth + 1, player.depth === 0 ? player.maxDepth : 0);
+  const missing = missingPreparation(view, next);
+  const preparation: Aim | null = missing.length === 0 ? null : {
+    kind: "preparation",
+    label: "prepare for descent",
+    detail: `Before dungeon level ${String(next)}, acquire ${missing.map((requirement) => requirement.reason).join(", ")}. Buy named supplies in town, find the required protections, and gain experience on a prepared shallower level for the missing level or hit points.`,
+    how: "hunt",
+    price: null,
+    depth: next,
+  };
   const depth: Aim = {
     kind: "depth",
     label: "depth target",
@@ -208,6 +219,7 @@ export function candidateAims(view: AgentView): Aim[] {
     weaponAim(shelf, packItems, worn),
     protectionAim(view, "free-action", pack),
     protectionAim(view, "see-invisible", pack),
+    preparation,
     depth,
   ];
   return found.filter((aim): aim is Aim => aim !== null);

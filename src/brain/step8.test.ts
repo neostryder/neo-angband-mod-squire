@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld as world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer } from "./systemone.js";
 import { createGoalPlanner, type GoalDigest } from "./goals.js";

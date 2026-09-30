@@ -10,8 +10,10 @@ import type { Terrain } from "../terrain.js";
 import { travelTo } from "../travel.js";
 import type { Persona } from "../persona/persona.js";
 import { affordable, type Aim } from "../strategy/aims.js";
+import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores } from "./aims-shop.js";
 import { supplyNeeds } from "./needs.js";
+import { basketNeeds } from "./departure.js";
 import { saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 
 export interface ShopEntrance extends Loc {
@@ -38,13 +40,13 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
 export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = []): ShopEntrance[] {
   if (view.player().depth !== 0) return [];
   const pack = readPack(view);
-  const needs = supplyNeeds(view, pack, persona);
+  const needs = basketNeeds(view, supplyNeeds(view, pack, persona));
   const sales = sellList(pack, view, persona);
   const gold = view.player().gold;
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
     const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
-    const aiming = aims.some((aim) => affordable(aim, gold) && aimStores(aim).includes(entrance.name));
+    const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && aimStores(aim).includes(entrance.name));
     return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
   }).sort((a, b) => {
     const rank = (shop: ShopEntrance): number => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
@@ -89,13 +91,13 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           log(`shop: selling ${sale.name} in the ${store.featName}`);
           return act.shopSell(sale.handle, sale.quantity);
         }
-        const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
+        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona)), store, view.player().gold, persona)[0];
         if (purchase !== undefined) {
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         /* With the supplies settled, the gold on hand can fund the top aim. */
-        const aimed = aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
+        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold);
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);

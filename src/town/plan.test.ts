@@ -1,6 +1,6 @@
 import type { AgentView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
-import { FEAT, itemNamed, world } from "../harness.js";
+import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
 import { defaultPersona } from "../persona/persona.js";
 import type { Aim } from "../strategy/aims.js";
 import { aimPurchase } from "./aims-shop.js";
@@ -40,7 +40,7 @@ describe("town trip", () => {
     const stock = [{ ...itemNamed("a Scroll of Word of Recall", 0), index: 0, price: 35, number: 2 }] as StoreItemView[];
     /* The engine names stores by terrain code, as the live game does. */
     const store: StoreView = { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock };
-    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, maxDepth: 5, gold: 50 }, stores: [store] });
+    const w = suppliedWorld({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, maxDepth: 5, gold: 50 }, stores: [store] });
     let reads = 0;
     const view: AgentView = { ...w.view, stores: () => { reads += 1; return w.view.stores(); } };
     expect(neededEntrances(view, w.terrain, null).map((entry) => entry.name)).toEqual(["Alchemy Shop"]);
@@ -50,7 +50,7 @@ describe("town trip", () => {
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
     expect(reads).toBe(1);
-    w.setPack(["a Scroll of Word of Recall"]);
+    w.setPack(["a Scroll of Word of Recall", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"]);
     w.setPlayer({ gold: 15 });
     expect(plan.step(view, w.act)).toEqual({ code: "shop-exit" });
     expect(plan.step(view, w.act)).toBeNull();
@@ -76,7 +76,7 @@ describe("town trip", () => {
     const stock = [{ ...itemNamed("Leather Armour [8,+0]", 0), index: 0, price: 100, number: 1 }] as StoreItemView[];
     const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
     const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
-    const w = world({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, maxDepth: 5, gold: 200 }, stores: [store] });
+    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, maxDepth: 5, gold: 200 }, stores: [store] });
     expect(neededEntrances(w.view, w.terrain, null, new Set(), [aim]).map((entry) => entry.name)).toEqual(["Armoury"]);
     const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
@@ -91,12 +91,12 @@ describe("town trip", () => {
     ] as StoreItemView[];
     const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
     const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
-    const w = world({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, gold: 200 }, stores: [store] });
+    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, gold: 200 }, stores: [store] });
     const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
-    w.setPack(["Leather Cloak [1,+0]"]);
+    w.setPack(["Leather Cloak [1,+0]", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
   });
 
@@ -109,6 +109,15 @@ describe("town trip", () => {
     const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 6, depth: null };
     expect(aimPurchase([aim], store, 6)).toMatchObject({ index: 1, quantity: 1 });
     expect(aimPurchase([aim], { ...store, stock: stock.slice(0, 1) }, 6)).toBeNull();
+  });
+
+  it("inspects mapped shops for a needed protection and buys only an affordable named match", () => {
+    const aim: Aim = { kind: "free-action", label: "free action", detail: "Get Free Action before descending.", how: "hunt", price: null, depth: null };
+    const w = suppliedWorld({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 200 } });
+    expect(neededEntrances(w.view, w.terrain, null, new Set(), [aim]).map((entry) => entry.name)).toEqual(["Alchemy Shop"]);
+    const store: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [{ ...itemNamed("a Ring of Free Action", 0), index: 0, price: 150, number: 1 }] };
+    expect(aimPurchase([aim], store, 200)).toMatchObject({ index: 0, quantity: 1 });
+    expect(aimPurchase([aim], store, 100)).toBeNull();
   });
 
   it("sells surplus loot in town to fund the trip", () => {

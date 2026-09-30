@@ -18,11 +18,11 @@ export interface Sale {
   readonly name: string;
 }
 
-const PRIORITY: readonly SupplyKind[] = ["healing", "phase", "recall", "food", "light", "oil", "ammo"];
+const PRIORITY: readonly SupplyKind[] = ["healing", "phase", "food", "light", "escape", "recall", "oil", "ammo"];
 
 /** Fixed stock categories in Angband 4.2 store.txt. */
 export function storesFor(kind: SupplyKind): readonly string[] {
-  return kind === "healing" || kind === "phase" || kind === "recall" ? ["Alchemy Shop"] : ["General Store"];
+  return kind === "healing" || kind === "phase" || kind === "escape" || kind === "recall" ? ["Alchemy Shop"] : ["General Store"];
 }
 
 /** A small survival reserve takes precedence over savings and larger supply stacks. */
@@ -35,7 +35,7 @@ export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gol
   const stockBought = new Map<number, number>();
   /* Alternating small purchases leaves gold for both kinds when a full stack would consume it. */
   for (const target of [1, 2]) {
-    for (const kind of ["healing", "phase"] as const) {
+    for (const kind of ["healing", "phase", "food", "light"] as const) {
       const need = needs.find((entry) => entry.kind === kind);
       const already = starterBought.get(kind) ?? 0;
       if (need === undefined || need.have + already >= Math.min(target, need.want) || !storesFor(kind).includes(store.featName)) continue;

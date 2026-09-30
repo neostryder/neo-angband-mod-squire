@@ -15,17 +15,19 @@ import type { Answer, ScoreQuestion, SystemOneRequest } from "../brain/systemone
 import type { Tally } from "../brain/tally.js";
 import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim } from "./aims.js";
 import { stillInherited, withInherited, type InheritedAim } from "./heirs.js";
+import { createLevelPacing } from "./pacing.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
 
-export type ReviewTrigger = "arrival" | "town" | "level" | "periodic";
+export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget";
 
 const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   arrival: "on reaching a new level",
   town: "after the town trip",
   level: "after gaining a level",
   periodic: "after 2,000 game turns",
+  budget: "when the level's game-turn budget runs out",
 };
 
 /** What the last look at the game showed, and when the last review ran. */
@@ -129,6 +131,7 @@ const TRIP_GOLD_GROWTH = 1.5;
 
 export function createStrategy(deps: StrategyDeps): Strategy {
   let memory: ReviewMemory | null = null;
+  let pacing = createLevelPacing();
   let aims: readonly Aim[] = [];
   let last: ReviewSummary | null = null;
   let tripGold: number | null = null;
@@ -139,6 +142,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
 
   function clear(): void {
     memory = null;
+    pacing = createLevelPacing();
     aims = [];
     last = null;
     tripGold = null;
@@ -189,7 +193,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       if (player.dead) return;
       const turn = view.turn();
       if (memory !== null && turn < memory.reviewTurn) clear();
-      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn });
+      const budget = pacing.observe(view);
+      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (budget.review ? "budget" : null);
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
       if (trigger === null) return;
       if (trigger === "town") tripGold = player.gold;

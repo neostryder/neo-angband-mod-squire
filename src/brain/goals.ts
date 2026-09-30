@@ -48,6 +48,7 @@ export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
 import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
 import { holdDescent } from "../strategy/hold.js";
+import { createJourney } from "../strategy/journey.js";
 import type { Aim } from "../strategy/aims.js";
 import { activationUse, breatherInSight, buffUse, deviceHealUse, resistUse, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
@@ -718,6 +719,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
   const { cfg, terrain, log } = options;
+  const journey = createJourney(terrain);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
   const rng = options.rng ?? Math.random;
@@ -781,6 +783,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   }
 
   function noteStalls(goal: Goal | null, plan: Plan, turn: number): Plan {
+    plan = journey.guarded(goal, plan);
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -1214,7 +1217,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       case "explore":
         /* The model saw every awake creature before choosing to explore. */
-        return missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: view.player().depth === 0 }), view);
+        return view.player().depth === 0
+          ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true }), view)
+          : stepsPlan("explore", view, (ctx) => journey.explore(ctx));
       case "leave_level": {
         const down = !stairsUnderfoot(situationOf(view), terrain) && reachableStairs(view, terrain);
         const targets = (v: AgentView) => (down ? knownDownStairs(v, terrain) : knownStairs(v, terrain));
@@ -1379,17 +1384,18 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
-      const offered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
+      const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
+      const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
-      if (offers.length === 0 && offered.length > 0 && !stalled.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
+      if (offers.length === 0 && offered.length > 0 && (!recalling || journey.safeDelay(view)) && !stalled.has("wait") && (sameTurn.get("wait") ?? 0) < SAME_TURN_PLANS) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
       if (offers.length === 0) {
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
-        return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
+        return { handBack: journey.blocked(view) ?? "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
 
       const aimList = options.strategy?.().aims ?? [];

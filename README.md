@@ -35,7 +35,13 @@ Squire only knows what the character knows:
 - It plans routes only over ground the character remembers, and picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
-In town, Squire buys healing potions and Phase Door first, alternating purchases toward two of each before filling larger stacks or buying recall, food, light, oil or ammunition. These first supplies can use gold reserved by the savings setting. Warriors carry more healing; a character with a usable healing spell needs fewer potions. When supplies run low at 250 ft or deeper and it has gold to spend, it reads Word of Recall to go home and restock, then reads another to go back down.
+In town, Squire first makes sure the character has a small reserve: two healing potions, two Phase Doors, some food, and a working light with spare fuel. These come before anything optional, and they can use money the savings setting would otherwise hold back. It won't head back down while one of them is missing and affordable. When there isn't the gold for them, a healthy character can go and earn some on the first dungeon level, staying close to the stairs.
+
+Before going deeper on purpose, Squire checks that the character is ready for that depth: enough levels and hit points for its class, and the supplies and protections the depth calls for, such as Word of Recall from 250 ft, Phase Door from 300 ft and Free Action by 1000 ft. Whatever is missing becomes an aim, so the next trip to town shops for it. Fleeing down the stairs in an emergency doesn't wait for this check.
+
+It heads home while it still has enough to get there, not when the last potion is gone, and walks back up if it has no Recall. It reads Recall only somewhere quiet, and while waiting for it to work it won't rest near anything dangerous.
+
+While the character is young, it explores and picks up loot only within a leash of the up stairs that grows with its level. When a level stops paying off in experience, gold or new ground, Squire reconsiders: a fresh level, a deeper one if it is ready, or a trip to town.
 
 Squire does not offer to back away from an adjacent creature that moves at least as fast as the character, unless a staircase is already underfoot. It offers usable healing and teleportation near death. Word of Recall remains an option even without restocking gold, but its delay cannot save the character from the next blow. Deep Descent is an option only with time to wait and leads several levels deeper. If every option is declined in danger, Squire chooses an escape or heal itself, or fights when none can help. A faster unique is deadly to a level 1 to 3 character on first sight; Squire offers to leave the level and does not walk up to fight it.
 

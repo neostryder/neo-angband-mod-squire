@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld as world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { defaultPersona } from "../persona/persona.js";
 import { createGoalPlanner } from "../brain/goals.js";
@@ -35,7 +35,7 @@ describe("holding back past the depth target", () => {
 
   it("turns the planner's pick from descend to explore past the target", () => {
     const choose = (aims: readonly Aim[]): string | undefined => {
-      const w = world({ map: ["##########", "#@......>#", "#.........  ", "##########"], player: { depth: 6, maxDepth: 6 } });
+      const w = world({ map: ["##########", "#@......>#", "#<........  ", "##########"], player: { depth: 6, maxDepth: 6, level: 7, maxLevel: 7 }, pack: ["a Scroll of Word of Recall"] });
       const persona = defaultPersona("Steady");
       persona.sliders.strength = 100;
       persona.sliders.volatility = 0;
@@ -54,7 +54,7 @@ describe("holding back past the depth target", () => {
   });
 
   it("does not hold the character on a floor with nothing left to explore", () => {
-    const w = world({ map: ROOM, player: { depth: 6, maxDepth: 6 } });
+    const w = world({ map: ROOM, player: { depth: 6, maxDepth: 6, level: 7, maxLevel: 7 }, pack: ["a Scroll of Word of Recall"] });
     expect(holdDescent(dist, [dive(5)], w.view, false, true)).toEqual(dist);
     const persona = defaultPersona("Steady");
     persona.sliders.strength = 100;

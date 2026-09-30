@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld, world } from "../harness.js";
 import { JEV, type AskResult } from "../brain/backend.js";
 import { createTally } from "../brain/tally.js";
 import type { ScoreAnswer, SystemOneRequest } from "../brain/systemone.js";
@@ -92,7 +92,8 @@ describe("review triggers", () => {
     w.advance(REVIEW_TURNS - 1);
     strategy.observe(w.view);
     await strategy.settled();
-    expect(logs).toHaveLength(2);
+    expect(logs).toHaveLength(3);
+    expect(strategy.last()?.trigger).toBe("budget");
     w.setPlayer({ level: 6 });
     strategy.observe(w.view);
     await strategy.settled();
@@ -101,7 +102,7 @@ describe("review triggers", () => {
     strategy.observe(w.view);
     await strategy.settled();
     expect(strategy.last()?.trigger).toBe("arrival");
-    expect(logs).toHaveLength(4);
+    expect(logs).toHaveLength(5);
   });
 
   it("reviews when the character goes from the town to the dungeon", async () => {
@@ -145,7 +146,7 @@ describe("ranking", () => {
     const questions = Object.values(requests[0]?.questions ?? {});
     expect(questions).toHaveLength(candidateAims(w.view).length);
     expect(questions.every((q) => q.type === "score")).toBe(true);
-    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "lantern", "spellbook", "armour"]);
+    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "lantern", "spellbook", "armour", "preparation"]);
     expect(strategy.last()?.source).toBe("model");
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("Jev ranked them.");
@@ -197,7 +198,7 @@ describe("ranking", () => {
   });
 
   it("does not ask when only one aim applies", async () => {
-    const w = world({ map: ROOM, worn: ["Lantern", "Soft Leather Armour", "Cloak", "Leather Shield", "Hard Helm", "Leather Boots", "Leather Gloves"] });
+    const w = suppliedWorld({ map: ROOM, worn: ["Lantern", "Soft Leather Armour", "Cloak", "Leather Shield", "Hard Helm", "Leather Boots", "Leather Gloves"] });
     const { strategy, requests } = rig(never);
     strategy.observe(w.view);
     await strategy.settled();

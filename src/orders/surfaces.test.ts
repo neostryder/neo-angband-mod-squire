@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld as world } from "../harness.js";
 import { createTally } from "../brain/tally.js";
 import type { Answer } from "../brain/systemone.js";
 import { createGoalPlanner } from "../brain/goals.js";

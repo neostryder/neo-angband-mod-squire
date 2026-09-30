@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { world } from "../harness.js";
+import { suppliedWorld, world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import { createGoalPlanner, healthBand, RECALL_WAIT_TURNS, recallPending, threatIndex, type GoalDigest } from "./goals.js";
@@ -175,7 +175,7 @@ function pick(choice: string): Readonly<Record<string, Answer>> {
 
 describe("goal planner", () => {
   it("offers only the goals that fit, plus none_of_these", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const goal = q.request.questions["goal"] as ChoiceQuestion;
@@ -219,7 +219,7 @@ describe("goal planner", () => {
   });
 
   it("turns an explore answer into a plan that walks", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const choice = p.choose(pick("explore"), q.context, w.view);
@@ -252,9 +252,9 @@ describe("goal planner", () => {
   });
 
   it("does not offer stairs it cannot walk to", () => {
-    const walled = world({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
+    const walled = suppliedWorld({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
     expect(planner(walled).p.ask(walled.view)).toHaveProperty("handBack");
-    const open = world({ map: ["#######", "#.@..>#", "#######"], player: { depth: 2, maxDepth: 2 } });
+    const open = suppliedWorld({ map: ["#######", "#.@..>#", "#######"], player: { depth: 2, maxDepth: 2 } });
     expect(offered(planner(open).p.ask(open.view))).toContain("descend");
   });
 
@@ -296,7 +296,7 @@ describe("goal planner", () => {
   });
 
   it("explores when the model chose it with an awake creature in sight", () => {
-    const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 6, y: 1 }, race: "scruffy little dog" }] });
+    const w = suppliedWorld({ map: CORRIDOR, monsters: [{ grid: { x: 6, y: 1 }, race: "scruffy little dog" }] });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const choice = p.choose(pick("explore"), q.context, w.view);
@@ -323,7 +323,7 @@ describe("goal planner", () => {
   });
 
   it("falls back to the errand order on none_of_these, and hands back on a goal it did not offer", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const fallback = p.choose(pick("none_of_these"), q.context, w.view);
@@ -350,7 +350,7 @@ describe("goal planner", () => {
   });
 
   it("drops a plan when a new creature comes into view", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
@@ -361,7 +361,7 @@ describe("goal planner", () => {
 
   it("keeps a plan when a creature already seen on this level steps back into view", () => {
     const dog = { grid: { x: 6, y: 1 }, race: "scruffy little dog", asleep: true };
-    const w = world({ map: CORRIDOR, monsters: [dog] });
+    const w = suppliedWorld({ map: CORRIDOR, monsters: [dog] });
     const { p } = planner(w);
     asked(p.ask(w.view));
     w.setMonsters([{ ...dog, visible: false }]);
@@ -395,7 +395,7 @@ describe("goal planner", () => {
   });
 
   it("keeps recall, gear and detection out of the handbook", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const rules = String(asked(planner(w).p.ask(w.view)).request.state["rules"]);
     expect(rules).not.toMatch(/Word of Recall|Wear better gear|detect a new dungeon level/);
     expect(rules).toContain("Going deeper too early");
@@ -410,7 +410,7 @@ describe("goal planner", () => {
   });
 
   it("tells the model what the last plan ran into", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
@@ -442,7 +442,7 @@ describe("goal planner", () => {
 
 describe("reflexes", () => {
   it("takes the only option without asking the model", () => {
-    const w = world({ map: CORRIDOR });
+    const w = suppliedWorld({ map: CORRIDOR });
     const r = reflexed(planner(w, true).p.ask(w.view));
     expect(r.reflex).toBe("the only option");
     expect(r.context.offers.map((o) => o.goal)).toEqual(["explore"]);
@@ -464,7 +464,7 @@ describe("reflexes", () => {
   });
 
   it("keeps the model's answer while the situation stays the same, for a few turns", () => {
-    const w = world({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
     const { p } = planner(w, true);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toEqual(expect.arrayContaining(["rest", "explore"]));
@@ -478,7 +478,7 @@ describe("reflexes", () => {
   });
 
   it("asks again when the situation changes", () => {
-    const w = world({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
     const { p } = planner(w, true);
     p.choose(pick("rest"), asked(p.ask(w.view)).context, w.view);
     w.setPlayer({ hp: 3 });
@@ -523,9 +523,9 @@ describe("items and spells", () => {
 
   it("offers healing only when hurt, naming the potion", () => {
     const pack = ["3 Potions of Cure Light Wounds"];
-    const full = world({ map: CORRIDOR, pack });
+    const full = suppliedWorld({ map: CORRIDOR, pack });
     expect(offered(planner(full).p.ask(full.view))).not.toContain("heal");
-    const hurt = world({ map: CORRIDOR, pack, player: { hp: 5, maxHp: 20 } });
+    const hurt = suppliedWorld({ map: CORRIDOR, pack, player: { hp: 5, maxHp: 20 } });
     const q = asked(planner(hurt).p.ask(hurt.view));
     expect(q.context.offers.find((o) => o.goal === "heal")?.criteria).toContain("Cure Light Wounds");
   });
@@ -604,7 +604,7 @@ describe("items and spells", () => {
   });
 
   it("offers to study an unlearned spell from a carried book, once per level", () => {
-    const w = world({ map: CORRIDOR, pack: ["a Book of Magic Spells [Magic for Beginners]"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["a Book of Magic Spells [Magic for Beginners]"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toContain("study");
@@ -670,7 +670,7 @@ describe("persona", () => {
   });
 
   it("picks up everything when compulsive", () => {
-    const w = world({ map: ["#####", "#@*.#", "#####"] });
+    const w = suppliedWorld({ map: ["#####", "#@*.#", "#####"] });
     w.moveTo({ x: 2, y: 1 });
     const persona = defaultPersona("Magpie");
     persona.quirks.compulsive.on = true;
@@ -712,11 +712,11 @@ describe("town goals", () => {
     expect(recallPending({ depth: 6 }, { turn: 0, depth: 6 }, RECALL_WAIT_TURNS + 1)).toBe(false);
   });
 
-  it("does not recall home near the surface or with no gold to spend", () => {
+  it("starts a supply-margin recall near the surface and without restocking gold", () => {
     const pack = ["a Scroll of Word of Recall", "a Potion of Cure Light Wounds", "a Scroll of Phase Door"];
     for (const player of [{ depth: 2, maxDepth: 2, gold: 300 }, { depth: 6, maxDepth: 6, gold: 10 }]) {
       const w = world({ map: CORRIDOR, player, pack });
-      expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).not.toContain("recall_town");
+      expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("recall_town");
     }
   });
 
@@ -734,13 +734,13 @@ describe("town goals", () => {
   });
 
   it("offers recall back down when shopping is finished", () => {
-    const w = world({ map: ["###", "#@#", "###"], player: { depth: 0, maxDepth: 5 }, pack: ["a Scroll of Word of Recall"] });
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], player: { depth: 0, maxDepth: 5, level: 6, maxLevel: 6 }, pack: ["a Scroll of Word of Recall"] });
     const q = asked(planner(w).p.ask(w.view));
     expect(q.context.offers.find((offer) => offer.goal === "recall_dungeon")?.criteria).toContain("250 ft");
   });
 
   it("offers town stairs when there is no scroll or gold", () => {
-    const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, gold: 0 } });
+    const w = suppliedWorld({ map: ["#####", "#@>##", "#####"], player: { depth: 0, gold: 0 } });
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
   });
 
@@ -755,7 +755,7 @@ describe("town goals", () => {
   });
 
   it("takes the town stairs with a recall scroll but no depth to return to", () => {
-    const w = world({ map: ["#####", "#@>##", "#####"], player: { depth: 0, maxDepth: 0, gold: 0 }, pack: ["a Scroll of Word of Recall"] });
+    const w = suppliedWorld({ map: ["#####", "#@>##", "#####"], player: { depth: 0, maxDepth: 0, gold: 0 }, pack: ["a Scroll of Word of Recall"] });
     const goals = asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal);
     expect(goals).toContain("descend");
     expect(goals).not.toContain("recall_dungeon");
@@ -790,7 +790,7 @@ describe("gear and detection", () => {
   });
 
   it("does not offer a worse known item", () => {
-    const w = world({ map: CORRIDOR, pack: ["Leather Armour [2,+0]"], worn: ["Leather Armour [8,+2]"] });
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["Leather Armour [2,+0]"], worn: ["Leather Armour [8,+2]"] });
     expect(offered(planner(w).p.ask(simulatedView(w, -6)))).not.toContain("wear");
     const curious = defaultPersona();
     curious.sliders.curiosity = 90;
@@ -810,14 +810,14 @@ describe("gear and detection", () => {
   });
 
   it("tries an unknown item only when curious and never simulates its runes", () => {
-    const w = world({ map: CORRIDOR, pack: ["Leather Shield [8] {??}"], worn: ["Leather Shield [4,+0]"] });
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["Leather Shield [8] {??}"], worn: ["Leather Shield [4,+0]"] });
     const view: AgentView = { ...w.view, simulateLoadout: () => { throw new Error("unknown runes were simulated"); } };
     expect(offered(planner(w).p.ask(view))).not.toContain("wear");
     const curious = defaultPersona();
     curious.sliders.curiosity = 50;
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona: curious, reflex: false });
     expect(asked(p.ask(view)).context.offers.find((o) => o.goal === "wear")?.criteria).toContain("unknown Leather Shield");
-    const magical = world({ map: CORRIDOR, pack: ["Leather Shield [8,+2] {magical}"] });
+    const magical = suppliedWorld({ map: CORRIDOR, pack: ["Leather Shield [8,+2] {magical}"] });
     const magicalView: AgentView = { ...magical.view, simulateLoadout: () => { throw new Error("magical mark was simulated"); } };
     expect(gearCandidates(magicalView)[0]?.unknown).toBe(true);
   });
@@ -834,7 +834,7 @@ describe("gear and detection", () => {
   });
 
   it("offers detection on arrival once and reads the scroll", () => {
-    const w = world({ map: CORRIDOR, pack: ["a Scroll of Magic Mapping"] });
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["a Scroll of Magic Mapping"] });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toContain("detect");
@@ -908,7 +908,7 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("walks to the nearest stairs to leave a swarm", () => {
-    const w = world({ map: ROOM, player: { depth: 2 }, monsters: worms(6) });
+    const w = suppliedWorld({ map: ROOM, player: { depth: 2 }, monsters: worms(6) });
     const { p } = planner(w);
     const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
@@ -916,7 +916,7 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("does not stop a plan for one more of a breeder already seen, but does for anything else", () => {
-    const w = world({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2 }, monsters: worms(2) });
+    const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2 }, monsters: worms(2) });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
@@ -953,7 +953,7 @@ describe("soak findings", () => {
 
   it("leaves a level by a known down staircase rather than the nearer up one", () => {
     const worms = Array.from({ length: 6 }, (_, i) => ({ grid: { x: 2 + i, y: 3 }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
-    const w = world({ map: TWO_STAIRS, player: { depth: 1 }, monsters: worms });
+    const w = suppliedWorld({ map: TWO_STAIRS, player: { depth: 1 }, monsters: worms });
     const { p } = planner(w);
     expect(asked(p.ask(w.view)).context.offers.find((o) => o.goal === "leave_level")?.criteria).toContain("down staircase");
     expect(planOf(planner(w).p, w, "leave_level").step(w.view, w.act)).toMatchObject({ dir: 6 });
@@ -1012,7 +1012,7 @@ describe("soak findings", () => {
 
   it("does not stop a plan when one more worm of a known mass comes up beside the character", () => {
     const worm = (x: number, y: number) => ({ grid: { x, y }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"], asleep: true });
-    const w = world({ map: ["###########", "#.@....... ", "#........##", "#........#", "##########"], player: { depth: 1 }, monsters: [worm(6, 3)] });
+    const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 1 }, monsters: [worm(6, 3)] });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");

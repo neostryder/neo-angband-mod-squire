@@ -4,7 +4,7 @@ import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
 import { hungry, type Pack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 
-export type SupplyKind = "healing" | "phase" | "recall" | "oil" | "food" | "light" | "ammo";
+export type SupplyKind = "healing" | "phase" | "escape" | "recall" | "oil" | "food" | "light" | "ammo";
 
 export interface SupplyNeed {
   readonly kind: SupplyKind;
@@ -33,6 +33,7 @@ export function supplyName(kind: SupplyKind, level: number, lantern: boolean, la
   switch (kind) {
     case "healing": return level >= 15 ? "Cure Serious Wounds" : "Cure Light Wounds";
     case "phase": return "Phase Door";
+    case "escape": return "Teleportation";
     case "recall": return "Word of Recall";
     case "oil": return "Flask of Oil";
     case "food": return "Ration of Food";
@@ -44,7 +45,8 @@ export function supplyName(kind: SupplyKind, level: number, lantern: boolean, la
 function count(items: readonly ItemView[], needle: string): number {
   return items.reduce((sum, item) => {
     const name = shownName(item);
-    return sum + (name !== null && matchesSupplyName(name, needle) ? item.number : 0);
+    const matches = /Cure (Light|Serious) Wounds/.test(needle) ? /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i.test(name ?? "") : name !== null && matchesSupplyName(name, needle);
+    return sum + (matches ? item.number : 0);
   }, 0);
 }
 
@@ -62,25 +64,27 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
   const lantern = worn.some((name) => name !== null && /\bLantern\b/i.test(name));
   const launcher = worn.find((name) => name !== null && /\b(Sling|Short Bow|Long Bow|Light Crossbow|Heavy Crossbow)\b/i.test(name)) ?? null;
   const level = view.player().level;
+  const destination = Math.max(view.player().depth + 1, view.player().maxDepth + 1);
   const consumables = persona?.sliders.consumables ?? 50;
   const escapes = persona?.sliders.escapes ?? 50;
   const healAt = persona?.sliders.healat ?? 50;
   const make = (kind: SupplyKind, want: number, extra: Pick<SupplyNeed, "hungry"> = {}): SupplyNeed => {
-    const name = supplyName(kind, level, lantern, launcher);
+    const name = kind === "healing" && destination >= 10 ? "Cure Critical Wounds" : supplyName(kind, level, lantern, launcher);
     return { kind, want, have: count(items, name), name, ...extra };
   };
   const healingBase = view.player().cls === "Warrior" ? 6 : pack.healSpell.length > 0 ? 3 : 5;
   const healing = Math.max(2, scale(healingBase, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
   /* Near the surface the stairs are close, and a recall scroll costs most of a
    * new character's gold, which healing potions need more. */
-  const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
+  const recall = destination >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
   return [
     make("healing", healing),
-    make("phase", scale(5, escapes, 1)),
+    make("phase", scale(5, escapes, 2)),
+    ...(destination >= 10 ? [make("escape", destination > 25 ? 6 : 2)] : []),
     make("recall", recall),
     ...(level < 20 ? [make("oil", scale(10, consumables, 1))] : []),
-    make("food", scale(4, consumables, 1), { hungry: hungry(view) }),
-    make("light", scale(2, consumables, 1)),
+    make("food", scale(5, consumables, 5), { hungry: hungry(view) }),
+    ...(!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", scale(2, consumables, 2))] : []),
     ...(pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []),
   ];
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { StoreView } from "@rpgm-tools/neo-angband-core";
-import { FEAT, world } from "../harness.js";
+import { FEAT, suppliedWorld as world } from "../harness.js";
 import { createTally } from "../brain/tally.js";
 import { JEV, type AskResult } from "../brain/backend.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
