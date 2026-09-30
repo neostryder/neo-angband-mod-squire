@@ -1,6 +1,6 @@
 /** Facts Squire records while a run is still in progress. */
 export interface RunEvent {
-  readonly kind: "kill" | "unique-kill" | "near-death" | "escape" | "level-up" | "descend" | "item-found" | "death" | "divergence" | "lesson" | "lineage";
+  readonly kind: "kill" | "unique-kill" | "near-death" | "escape" | "level-up" | "descend" | "item-found" | "death" | "divergence" | "lesson" | "lineage" | "instruction";
   readonly turn: number;
   readonly depth: number;
   readonly text: string;
@@ -22,7 +22,7 @@ export interface RunLog {
 }
 
 const KINDS = new Set<RunEvent["kind"]>([
-  "kill", "unique-kill", "near-death", "escape", "level-up", "descend", "item-found", "death", "divergence", "lesson", "lineage",
+  "kill", "unique-kill", "near-death", "escape", "level-up", "descend", "item-found", "death", "divergence", "lesson", "lineage", "instruction",
 ]);
 
 function eventFrom(value: unknown): RunEvent | null {

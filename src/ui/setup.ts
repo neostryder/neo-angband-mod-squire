@@ -5,7 +5,8 @@
 
 import type { Runtime } from "../runtime.js";
 import type { BackendChoice, RollOn, SquireConfig } from "../config.js";
-import { LAYA_DEFAULT_URL, parseAddresses } from "../config.js";
+import { LAYA_DEFAULT_URL, MAX_INSTRUCTIONS_KEPT, MIN_INSTRUCTIONS_KEPT, parseAddresses } from "../config.js";
+import { KEPT_HELP, KEPT_LABEL, ORDERS_HEADING } from "../orders/panel.js";
 import { describeLevel, type ConsentLevel } from "../telemetry/consent.js";
 import { DEFAULT_ENDPOINT, createSender } from "../telemetry/sender.js";
 import { installId } from "../memory/install.js";
@@ -152,11 +153,23 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     h("p", { class: "muted" }, "Only for characters Squire is playing. Your own characters are never replaced."),
     h("h3", {}, "Knight's Lessons"),
     h("label", {}, knights, " Learn from how I play while I have the keyboard"),
+    h("h3", {}, ORDERS_HEADING),
+    h("label", {}, KEPT_LABEL, keptInput(config.instructionsKept, (v) => update({ instructionsKept: v }))),
+    h("p", { class: "muted" }, KEPT_HELP),
     telemetry,
     h("div", {}, h("button", { class: "act", onclick: () => { update({ setupDone: true }); done(); } }, "Next: choose a persona")),
   );
   drawServer();
   return () => {};
+}
+
+function keptInput(value: number, change: (v: number) => void): HTMLInputElement {
+  const input = h("input", { type: "number", min: String(MIN_INSTRUCTIONS_KEPT), max: String(MAX_INSTRUCTIONS_KEPT), step: "1", value: String(value) });
+  input.addEventListener("change", () => {
+    const v = Math.round(Number(input.value));
+    if (Number.isFinite(v)) change(Math.min(MAX_INSTRUCTIONS_KEPT, Math.max(MIN_INSTRUCTIONS_KEPT, v)));
+  });
+  return input;
 }
 
 function numberInput(value: number, change: (v: number) => void): HTMLInputElement {

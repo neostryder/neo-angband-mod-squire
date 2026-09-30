@@ -59,7 +59,8 @@ function servedBy(offer: Steerable, view: AgentView, aims: readonly Aim[], gold:
     let serves = false;
     switch (offer.goal) {
       case "recall_town": serves = affordable(aim, gold); break;
-      case "pick_up": serves = aim.how === "save" && !affordable(aim, gold); break;
+      case "pick_up":
+      case "fetch": serves = aim.how === "save" && !affordable(aim, gold); break;
       case "wear": serves = wear === aim.kind; break;
       case "descend": serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth; break;
       case "explore": serves = depth > 0 && ((aim.kind === "depth" && aim.depth !== null && aim.depth <= depth) || aim.how === "hunt"); break;

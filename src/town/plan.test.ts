@@ -1,6 +1,8 @@
 import type { AgentView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { FEAT, itemNamed, world } from "../harness.js";
+import { defaultPersona } from "../persona/persona.js";
+import type { Aim } from "../strategy/aims.js";
 import { neededEntrances, townTripPlan } from "./plan.js";
 
 describe("town trip", () => {
@@ -38,5 +40,29 @@ describe("town trip", () => {
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
     expect(plan.step(w.view, w.act)).toBeNull();
+  });
+
+  it("walks to a shop and buys the top affordable aim's item", () => {
+    const stock = [{ ...itemNamed("Leather Armour [8,+0]", 0), index: 0, price: 100, number: 1 }] as StoreItemView[];
+    const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
+    const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
+    const w = world({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, maxDepth: 5, gold: 200 }, stores: [store] });
+    expect(neededEntrances(w.view, w.terrain, null, new Set(), [aim]).map((entry) => entry.name)).toEqual(["Armoury"]);
+    const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
+  });
+
+  it("sells surplus loot in town to fund the trip", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 80;
+    const stock = [{ ...itemNamed("a Dagger", 0), index: 0, price: 5, number: 1 }] as StoreItemView[];
+    const store: StoreView = { feat: FEAT.WEAPON, featName: "Weapon Smiths", isHome: false, owner: { name: "Bert", purse: 5000 }, stock };
+    const w = world({ map: ["#####", "#@.W#", "#####"], player: { depth: 0, maxDepth: 5, gold: 0 }, pack: ["a Dagger", "a Dagger"], stores: [store] });
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {});
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
   });
 });

@@ -15,6 +15,9 @@ import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
+import { createOrders, type Orders } from "./orders/book.js";
+import { readInstructions } from "./orders/read.js";
+import type { Instruction } from "./orders/types.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
 import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
@@ -72,6 +75,8 @@ export interface CharacterData {
   readonly journal: JournalState;
   /** The family line this character belongs to, when it is an heir or has one. */
   readonly lineage: string | null;
+  /** Orders and standing instructions, live and ended. */
+  readonly orders: readonly Instruction[];
 }
 
 const CHARACTER_FORMAT = "neo-angband/squire/character";
@@ -110,6 +115,7 @@ function readCharacter(stored: unknown): CharacterData | null {
     kills,
     journal,
     lineage: typeof data["lineage"] === "string" ? data["lineage"] : null,
+    orders: readInstructions(data["orders"]),
   };
 }
 
@@ -154,6 +160,8 @@ export interface Runtime {
   journal(): Journal;
   /** The aims Squire reviews above its errands. Empty until the first review. */
   strategy(): Strategy;
+  /** The orders and standing instructions the player has given. */
+  orders(): Orders;
   /** The report for the run that ended on this page, or the last one stored. */
   lastSummary(): Promise<RunSummary | null>;
   onChronicle(listener: (line: string) => void): () => void;
@@ -195,6 +203,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     kills: {},
     journal: emptyJournal(),
     lineage: null,
+    orders: [],
   };
   const tally = createTally(config.caps, config.spend);
   const log = createDecisionLog(store, character.runId);
@@ -239,6 +248,20 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     now,
     log: (message) => host.log(message),
   });
+
+  const orders = createOrders({
+    backend: () => backendFor(config),
+    send: (request) => self.send(request),
+    tally,
+    now,
+    persona: () => character.persona,
+    setPersona: (persona) => self.saveCharacter({ ...character, persona }),
+    kept: () => config.instructionsKept,
+    note: (text, notable, turn, depth) => journal.event({ kind: "instruction", turn, depth, text }, notable),
+    log: (message) => host.log(message),
+    save: (state) => self.saveCharacter({ ...character, orders: state.items }),
+  });
+  orders.load({ items: character.orders });
 
   const self: Runtime = {
     config: () => config,
@@ -344,7 +367,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
-        if (brain !== null) strategy.observe(view);
+        if (brain !== null) {
+          strategy.observe(view);
+          orders.observe(view);
+        }
         const command = chosen(view, act);
         if (command !== null) ownCommandAt = Date.now();
         return command;
@@ -367,6 +393,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     journal: () => journal,
     strategy: () => strategy,
+    orders: () => orders,
     async lastSummary() {
       if (summary !== null) return summary;
       const stored = await store.get(`squire/reports/${character.runId}`);
@@ -400,6 +427,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       self.saveConfig({ ...config, pendingHeir: null, ...(born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } }) });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
+        orders.adopt(born.lineage.creeds ?? [], lastTurn);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
@@ -431,7 +459,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lessons: (view) => journal.lessonLines(view),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: strategy.ranked(), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
+        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
+        orders,
       }),
       tally,
       send: (request) => self.send(request),
@@ -519,6 +548,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
 
   async function finishRun(report: RunReportLike): Promise<void> {
     strategy.reset();
+    const creeds = orders.creeds();
+    orders.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
@@ -549,7 +580,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons());
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },

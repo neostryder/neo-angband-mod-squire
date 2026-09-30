@@ -11,15 +11,17 @@ import { mountPersona } from "./persona-sheet.js";
 import { mountLessons } from "./lessons.js";
 import { mountDashboard } from "./dashboard.js";
 import { mountReport } from "./report-view.js";
+import { isOrderHotkey, mountOrders } from "./orders.js";
 import { h, STYLE } from "./dom.js";
 
-type Tab = "setup" | "persona" | "lessons" | "dashboard" | "report";
+type Tab = "setup" | "persona" | "lessons" | "dashboard" | "orders" | "report";
 
 const TABS: readonly [Tab, string][] = [
   ["setup", "Setup"],
   ["persona", "Persona"],
   ["lessons", "Lessons"],
   ["dashboard", "Dashboard"],
+  ["orders", "Orders"],
   ["report", "Report"],
 ];
 
@@ -67,7 +69,7 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
   /* First run opens on setup; after that, on the dashboard. */
   let current: Tab = rt.config().setupDone ? "dashboard" : "setup";
 
-  function show(tab: Tab): void {
+  function show(tab: Tab, source: "panel" | "hotkey" = "panel"): void {
     current = tab;
     cleanup?.();
     body.replaceChildren();
@@ -87,6 +89,9 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
       case "dashboard":
         cleanup = mountDashboard(body, rt);
         break;
+      case "orders":
+        cleanup = mountOrders(body, rt, source);
+        break;
       case "report":
         cleanup = mountReport(body, rt);
         break;
@@ -103,5 +108,17 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
     h("button", { title: "Larger text", "aria-label": "Larger text", onclick: () => step(1) }, "A+"),
   );
   show(current);
-  return () => cleanup?.();
+  /* A mod cannot bind a game key, so the key works while the panel is mounted. Capture phase, so the game does not take it first. */
+  const onKey = (e: KeyboardEvent): void => {
+    if (!isOrderHotkey(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    host.requestFocus?.();
+    show("orders", "hotkey");
+  };
+  window.addEventListener("keydown", onKey, true);
+  return () => {
+    window.removeEventListener("keydown", onKey, true);
+    cleanup?.();
+  };
 }

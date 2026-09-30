@@ -26,6 +26,7 @@
  *   `>`  a down staircase the character remembers
  *   `~`  ground that burns, which the character remembers
  *   `*`  floor with something lying on it
+ *   `%`  rubble the character remembers, which only tunnelling clears
  *   `G`  General Store entrance
  *   `A`  Alchemy Shop entrance
  */
@@ -44,6 +45,7 @@ import type {
   TargetView,
 } from "@rpgm-tools/neo-angband-core";
 import { TV } from "@rpgm-tools/neo-angband-core";
+import type { InspectText, ItemRef } from "./brain/threat-model.js";
 import type { Loc } from "./grid.js";
 import type { Terrain } from "./terrain.js";
 import type { SquireContext } from "./context.js";
@@ -63,6 +65,7 @@ export const FEAT = {
   WEAPON: 8,
   ARMOUR: 9,
   UP_STAIR: 10,
+  RUBBLE: 11,
 } as const;
 
 /** The terrain classification matching FEAT. */
@@ -74,6 +77,7 @@ export function harnessTerrain(): Terrain {
     isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.ARMOUR,
     shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury" })[feat] ?? null,
     isHarmful: (feat) => feat === FEAT.LAVA,
+    isDiggable: (feat) => feat === FEAT.RUBBLE,
     size: Object.keys(FEAT).length,
   };
 }
@@ -101,6 +105,8 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.LAVA, passable: true, known: true, objectCount: 0 };
     case "*":
       return { feat: FEAT.FLOOR, passable: true, known: true, objectCount: 1 };
+    case "%":
+      return { feat: FEAT.RUBBLE, passable: false, known: true, objectCount: 0 };
     case "G":
       return { feat: FEAT.GENERAL, passable: true, known: true, objectCount: 0 };
     case "A":
@@ -137,6 +143,18 @@ export interface WorldSpec {
   /** Castable spells: name, index, mana and failure chance. */
   readonly spells?: readonly { readonly name: string; readonly sidx: number; readonly mana?: number; readonly fail?: number; readonly learned?: boolean }[];
   readonly stores?: readonly StoreView[];
+  /** Messages the game would report since the previous decision. */
+  readonly messages?: readonly string[];
+  /** Objects lying on remembered grids, as floorItems reports them. */
+  readonly floor?: readonly { readonly x: number; readonly y: number; readonly name: string }[];
+  /** The player-facing text inspectItem returns, or null when the read is absent. */
+  readonly inspect?: (ref: number | { readonly floor: { readonly x: number; readonly y: number; readonly index: number } } | { readonly store: number; readonly index: number }) => string | null;
+  /** The lore text monsterRecall returns for a race, or null when the read is absent. */
+  readonly monsterRecall?: (raceIndex: number) => string | null;
+  /** Grids holding a visible trap. */
+  readonly traps?: readonly { readonly x: number; readonly y: number }[];
+  /** Carried names the game reports as activatable and ready. */
+  readonly activations?: readonly string[];
   /** The engine's own line of fire to a grid, for tests of volleys. Absent keeps the single shot. */
   readonly projectionPath?: (to: Loc) => readonly Loc[];
   /** The engine's own walking route to a grid, for tests of engine travel. Absent keeps Squire's steps. */
@@ -146,6 +164,7 @@ export interface WorldSpec {
 /** An item as the inventory would show it, with only the fields the tests read. */
 export function itemNamed(name: string, handle: number): ItemView {
   const kinds: readonly [RegExp, number][] = [
+    [/\bGold\b/i, 1],
     [/\b(Arrows?|Seeker Arrows?)\b/i, TV.ARROW], [/\b(Bolts?|Seeker Bolts?)\b/i, TV.BOLT],
     [/\b(Shots?|Pebbles?)\b/i, TV.SHOT],
     [/\b(Sling|Bow|Crossbow)\b/i, TV.BOW], [/\b(Sword|Dagger|Blade)\b/i, TV.SWORD],
@@ -175,6 +194,12 @@ export interface World {
   setMonsters(monsters: readonly MonsterSpec[]): void;
   setPack(items: readonly string[]): void;
   setStores(stores: readonly StoreView[]): void;
+  /** Replace the messages the game reports since the previous decision. */
+  setMessages(messages: readonly string[]): void;
+  /** Replace the objects lying on remembered grids. */
+  setFloor(floor: readonly { readonly x: number; readonly y: number; readonly name: string }[]): void;
+  /** Replace the grids holding a visible trap. */
+  setTraps(traps: readonly { readonly x: number; readonly y: number }[]): void;
   /** Reveal a grid the character had not seen. */
   reveal(at: Loc): void;
   /** The character's grid. */
@@ -283,10 +308,16 @@ export function world(spec: WorldSpec): World {
   let monsterSpecs: readonly MonsterSpec[] = spec.monsters ?? [];
   let packSpec: readonly string[] = spec.pack ?? [];
   let storeSpec: readonly StoreView[] = spec.stores ?? [];
+  let messageSpec: readonly string[] = spec.messages ?? [];
+  let floorSpec: readonly { readonly x: number; readonly y: number; readonly name: string }[] = spec.floor ?? [];
+  let trapSpec: readonly { readonly x: number; readonly y: number }[] = spec.traps ?? [];
+  const activations = new Set(spec.activations ?? []);
   const issued: AgentCommand[] = [];
   let turn = 1;
 
   const monsters = (): MonsterView[] => monsterSpecs.map(fullMonster);
+  const floorOn = (x: number, y: number): { readonly x: number; readonly y: number; readonly name: string }[] =>
+    floorSpec.filter((object) => object.x === x && object.y === y);
 
   const view: AgentView = {
     apiVersion: "1.3.0",
@@ -307,17 +338,21 @@ export function world(spec: WorldSpec): World {
         inView: square.known,
         known: square.known,
         monster,
-        objectCount: square.objectCount,
+        objectCount: square.objectCount + floorOn(x, y).length,
         glow: false,
-        trap: false,
+        trap: trapSpec.some((trap) => trap.x === x && trap.y === y),
       };
     },
     mapBounds: () => ({ width, height }),
-    inventory: (): ItemView[] => packSpec.map((name, i) => itemNamed(name, i + 1)),
+    inventory: (): ItemView[] => packSpec.map((name, i) => {
+      const item = itemNamed(name, i + 1);
+      if (!activations.has(name)) return item;
+      return { ...(item as object), activation: true, timeout: 0 } as unknown as ItemView;
+    }),
     equipment: (): Array<ItemView | null> => (spec.worn ?? []).map((name, i) => itemNamed(name, 100 + i)),
-    floorItems: (): ItemView[] => [],
+    floorItems: (x: number, y: number): ItemView[] => floorOn(x, y).map((object, index) => ({ ...itemNamed(object.name, 0), floorIndex: index })),
     target: (): TargetView | null => spec.target ?? null,
-    messages: (): string[] => [],
+    messages: (): string[] => [...messageSpec],
     stores: (): StoreView[] => [...storeSpec],
     spellbooks: (): SpellbookView[] =>
       spec.spells === undefined
@@ -358,6 +393,27 @@ export function world(spec: WorldSpec): World {
       travelPath: (to: Loc) => {
         const grids = route(to);
         return grids === null ? null : { token: { epoch: 0, revision: 0 }, grids };
+      },
+    });
+  }
+  /* Item inspection is optional on the real view; without it a test keeps the
+   * name-only judgement. */
+  if (spec.inspect !== undefined) {
+    const read = spec.inspect;
+    Object.assign(view, {
+      inspectItem: (ref: ItemRef): InspectText | null => {
+        const text = read(ref);
+        return text === null ? null : { token: { epoch: 0, revision: 0 }, title: "", text };
+      },
+    });
+  }
+  /* Creature lore is optional on the real view too. */
+  if (spec.monsterRecall !== undefined) {
+    const lore = spec.monsterRecall;
+    Object.assign(view, {
+      monsterRecall: (raceIndex: number): InspectText | null => {
+        const text = lore(raceIndex);
+        return text === null ? null : { token: { epoch: 0, revision: 0 }, title: "", text };
       },
     });
   }
@@ -438,6 +494,15 @@ export function world(spec: WorldSpec): World {
     },
     setStores(next: readonly StoreView[]): void {
       storeSpec = next;
+    },
+    setMessages(next: readonly string[]): void {
+      messageSpec = next;
+    },
+    setFloor(next: readonly { readonly x: number; readonly y: number; readonly name: string }[]): void {
+      floorSpec = next;
+    },
+    setTraps(next: readonly { readonly x: number; readonly y: number }[]): void {
+      trapSpec = next;
     },
     reveal(at: Loc): void {
       const square = squares[at.y]?.[at.x];

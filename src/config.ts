@@ -16,6 +16,7 @@ import type { ConsentLevel } from "./telemetry/consent.js";
 import { DEFAULT_ENDPOINT } from "./telemetry/sender.js";
 import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
+import { readInstructions } from "./orders/read.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -54,11 +55,18 @@ export interface SquireConfig {
   readonly setupDone: boolean;
   /** Today's spend on metered servers, so a day cap survives a reload. */
   readonly spend: { readonly day: string; readonly usd: number };
+  /** How many orders and standing instructions the squire holds before it drops one. */
+  readonly instructionsKept: number;
   /** Family lines, by name, so an heir inherits across characters. */
   readonly lineages: Readonly<Record<string, Lineage>>;
   /** Set when a Squire character died and roll-on is starting its heir. */
   readonly pendingHeir: { readonly lineage: string; readonly parent: Persona } | null;
 }
+
+/** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
+export const DEFAULT_INSTRUCTIONS_KEPT = 8;
+export const MIN_INSTRUCTIONS_KEPT = 1;
+export const MAX_INSTRUCTIONS_KEPT = 50;
 
 export const LAYA_DEFAULT_URL = "http://localhost:8010/v1/systemone";
 
@@ -78,6 +86,7 @@ export function defaultConfig(): SquireConfig {
     knightsLessons: { enabled: true, ghost: false },
     setupDone: false,
     spend: { day: "", usd: 0 },
+    instructionsKept: DEFAULT_INSTRUCTIONS_KEPT,
     lineages: {},
     pendingHeir: null,
   };
@@ -96,6 +105,7 @@ function lineagesOf(value: unknown): Record<string, Lineage> {
       ancestors: Array.isArray(l["ancestors"]) ? (l["ancestors"] as Lineage["ancestors"]).slice(-50) : [],
       lore: Array.isArray(l["lore"]) ? (l["lore"] as Lineage["lore"]).slice(-60) : [],
       grudges: Array.isArray(l["grudges"]) ? (l["grudges"] as Lineage["grudges"]).slice(-30) : [],
+      creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed),
     };
   }
   return out;
@@ -168,6 +178,7 @@ export function readConfig(stored: unknown): SquireConfig {
     knightsLessons: { enabled: bool(knights["enabled"], true), ghost: bool(knights["ghost"], false) },
     setupDone: bool(data["setupDone"], false),
     spend: { day: str(spend["day"], "", 10), usd: numberIn(spend["usd"], 0, 1_000_000, 0) },
+    instructionsKept: Math.round(numberIn(data["instructionsKept"], MIN_INSTRUCTIONS_KEPT, MAX_INSTRUCTIONS_KEPT, DEFAULT_INSTRUCTIONS_KEPT)),
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
       const heir = rec(data["pendingHeir"]);

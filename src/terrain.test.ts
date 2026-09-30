@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { noTerrain, readTerrain, type FeatureLike, type TerrainFlagIndex } from "./terrain.js";
 
 /** The indices the engine happens to use, near enough for a table test. */
+const ROCK = 17;
+const PERMANENT = 5;
 const TF: TerrainFlagIndex = {
   PASSABLE: 4,
   DOWNSTAIR: 28,
@@ -9,6 +11,8 @@ const TF: TerrainFlagIndex = {
   DOOR_CLOSED: 20,
   SHOP: 21,
   FIERY: 31,
+  ROCK,
+  PERMANENT,
 };
 
 function feature(fidx: number, code: string, flags: readonly number[]): FeatureLike {
@@ -25,6 +29,8 @@ describe("readTerrain", () => {
     feature(5, "LESS", [TF.PASSABLE, TF.UPSTAIR]),
     feature(6, "LAVA", [TF.PASSABLE, TF.FIERY]),
     feature(7, "STORE_GENERAL", [TF.PASSABLE, TF.SHOP]),
+    feature(16, "RUBBLE", [ROCK]),
+    feature(21, "PERM", [ROCK, PERMANENT]),
   ];
   const terrain = readTerrain(features, TF);
 
@@ -56,6 +62,12 @@ describe("readTerrain", () => {
     expect(terrain.isClosedDoor(99)).toBe(false);
   });
 
+  it("calls rubble diggable and a permanent wall not", () => {
+    expect(terrain.isDiggable?.(16)).toBe(true);
+    expect(terrain.isDiggable?.(21)).toBe(false);
+    expect(terrain.isDiggable?.(1)).toBe(false);
+  });
+
   it("counts what it classified, so an empty registry is visible", () => {
     expect(terrain.size).toBe(features.length);
     expect(readTerrain([], TF).size).toBe(0);
@@ -68,5 +80,6 @@ describe("noTerrain", () => {
     expect(terrain.size).toBe(0);
     expect(terrain.isDownStair(4)).toBe(false);
     expect(terrain.isHarmful(6)).toBe(false);
+    expect(terrain.isDiggable?.(16)).toBe(false);
   });
 });

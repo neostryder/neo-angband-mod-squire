@@ -63,7 +63,7 @@ export function detectionSources(view: AgentView): Detection[] {
     const name = shownName(item);
     if (name === null || empty(name)) continue;
     if (reading && /\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
-    if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
+    if (/\bRods? of (Treasure Location|Detection|Detect Evil)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
   }
   for (const spell of reading ? castable(view) : []) {
     if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });

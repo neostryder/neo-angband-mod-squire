@@ -37,6 +37,9 @@ export interface TerrainFlagIndex {
   readonly DOOR_CLOSED: number;
   readonly SHOP: number;
   readonly FIERY: number;
+  /** ROCK and PERMANENT, when the host numbers them, tell diggable rubble from a permanent wall. */
+  readonly ROCK?: number;
+  readonly PERMANENT?: number;
 }
 
 /** Names in Angband 4.2 terrain.txt for the shops that stock travel supplies. */
@@ -57,6 +60,12 @@ export interface Terrain {
   shopName(feat: number): string | null;
   /** Passable and it hurts to stand there. Lava, and whatever a mod adds. */
   isHarmful(feat: number): boolean;
+  /**
+   * Rock the character can dig through, rubble among it. Optional because the
+   * older host does not name the ROCK and PERMANENT flags; a caller treats its
+   * absence as "nothing here can be dug".
+   */
+  isDiggable?(feat: number): boolean;
   /** How many features were classified. Zero means the registry was empty. */
   readonly size: number;
 }
@@ -81,6 +90,7 @@ export function readTerrain(
   const shops = new Set<number>();
   const shopNames = new Map<number, string>();
   const harmful = new Set<number>();
+  const diggable = new Set<number>();
 
   for (const feature of features) {
     const has = (flag: number): boolean => flag > 0 && feature.flags.has(flag);
@@ -92,6 +102,8 @@ export function readTerrain(
       const name = SHOP_NAMES[feature.code];
       if (name !== undefined) shopNames.set(feature.fidx, name);
     }
+    /* Rubble is rock that is not permanent: the tunnel command can clear it. */
+    if (tf.ROCK !== undefined && has(tf.ROCK) && !(tf.PERMANENT !== undefined && has(tf.PERMANENT))) diggable.add(feature.fidx);
     /* Harmful is PASSABLE AND FIERY together, deliberately. FIERY alone would
      * take in a wall of fire a mod might add, which is not somewhere an errand
      * could step anyway, and PASSABLE alone is most of the map. What this set
@@ -107,6 +119,7 @@ export function readTerrain(
     isShopEntrance: (feat) => shops.has(feat),
     shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),
+    isDiggable: (feat) => diggable.has(feat),
     size: features.length,
   };
 }
@@ -120,6 +133,7 @@ export function noTerrain(): Terrain {
     isShopEntrance: () => false,
     shopName: () => null,
     isHarmful: () => false,
+    isDiggable: () => false,
     size: 0,
   };
 }

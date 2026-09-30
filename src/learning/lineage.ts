@@ -2,6 +2,8 @@ import { PARAMETERS } from "../persona/catalog.js";
 import type { Persona } from "../persona/persona.js";
 import { familyOf } from "./signature.js";
 import type { Lesson } from "./lessons.js";
+import { inheritCreeds } from "../orders/creed.js";
+import type { Instruction } from "../orders/types.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -17,6 +19,8 @@ export interface Lineage {
   readonly ancestors: readonly Ancestor[];
   readonly lore: readonly Lesson[];
   readonly grudges: readonly { readonly race: string; readonly family: string; readonly generation: number }[];
+  /** Standing instructions the family holds as creeds. Orders are never kept here. */
+  readonly creeds?: readonly Instruction[];
   /** Current-character facts are optional until a run has supplied them. */
   readonly race?: string;
   readonly cls?: string;
@@ -70,6 +74,7 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
     lineage: {
       name: heirPersona.name, generation: parentLineage.generation + 1,
       ancestors: [...parentLineage.ancestors, parent], lore, grudges,
+      creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona),
     },
     persona: { ...heirPersona, sliders, lists },
   };

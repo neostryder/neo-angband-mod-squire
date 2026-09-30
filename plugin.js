@@ -765,9 +765,9 @@ function parseOne(name, question, raw) {
       return { type: "noul", p };
     }
     case "choice": {
-      const choice = raw["choice"];
+      const choice2 = raw["choice"];
       const probs = raw["probabilities"];
-      if (typeof choice !== "string" || !(choice in question.criteria)) {
+      if (typeof choice2 !== "string" || !(choice2 in question.criteria)) {
         return `the answer to "${name}" picked an option that was not offered`;
       }
       if (!isRecord(probs)) return `the answer to "${name}" had no probabilities`;
@@ -775,7 +775,7 @@ function parseOne(name, question, raw) {
       for (const option of Object.keys(question.criteria)) {
         probabilities[option] = num(probs[option]) ?? 0;
       }
-      return { type: "choice", choice, confidence: num(raw["confidence"]) ?? 0, probabilities };
+      return { type: "choice", choice: choice2, confidence: num(raw["confidence"]) ?? 0, probabilities };
     }
     case "score": {
       const score = num(raw["score"]);
@@ -990,8 +990,8 @@ async function askOne(net, backend, request2, now) {
 // src/brain/boot.ts
 async function keyReady(secrets, backend, canReadEnv, log) {
   if (backend.secret === void 0) return true;
-  const held = await secrets.has(backend.secret);
-  if (held.present) return true;
+  const held2 = await secrets.has(backend.secret);
+  if (held2.present) return true;
   if (!canReadEnv) {
     log(`No API key is set for ${backend.label}, so Squire runs its errands without a model.`);
     return false;
@@ -1102,8 +1102,8 @@ function createBrain(deps) {
       state = { kind: "idle" };
       return null;
     }
-    const choice = planner.choose(result.answers, question.context, view);
-    const outcome = "plan" in choice ? choice.plan.label : `hand back: ${choice.handBack}`;
+    const choice2 = planner.choose(result.answers, question.context, view);
+    const outcome = "plan" in choice2 ? choice2.plan.label : `hand back: ${choice2.handBack}`;
     deps.onDecision?.({
       token,
       backend: backend.label,
@@ -1117,13 +1117,13 @@ function createBrain(deps) {
       outcome
     });
     const hp = deps.gauge?.(view).hp ?? null;
-    if ("handBack" in choice) {
-      deps.onPlanEnd?.({ stop: "handed back", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
-      stopWith(choice.handBack);
+    if ("handBack" in choice2) {
+      deps.onPlanEnd?.({ stop: "handed back", reason: choice2.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+      stopWith(choice2.handBack);
       return null;
     }
-    state = { kind: "running", plan: choice.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null } };
-    deps.status(choice.plan.label);
+    state = { kind: "running", plan: choice2.plan, run: { hpBefore: hp, commands: 0, refused: 0, issuedAt: null } };
+    deps.status(choice2.plan.label);
     return "planned";
   }
   const controller = (view, act) => {
@@ -1195,7 +1195,7 @@ function detectionSources(view) {
     const name = shownName(item);
     if (name === null || empty(name)) continue;
     if (reading && /\bScrolls? of Magic Mapping\b/i.test(name)) out.push({ kind: "read", handle: item.handle, name });
-    if (/\bRods? of (Treasure Location|Detection)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
+    if (/\bRods? of (Treasure Location|Detection|Detect Evil)\b/i.test(name)) out.push({ kind: "zap", handle: item.handle, name });
   }
   for (const spell of reading ? castable(view) : []) {
     if (DETECTION_SPELLS.includes(spell.name)) out.push({ kind: "cast", sidx: spell.sidx, name: spell.name });
@@ -1801,8 +1801,8 @@ function blend(best, inCharacter, strength01) {
 }
 function jitteredStrength(persona, rng) {
   const draw = rng();
-  const unit3 = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
-  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit3 * 2 - 1) * persona.sliders.volatility / 400));
+  const unit4 = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
+  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit4 * 2 - 1) * persona.sliders.volatility / 400));
 }
 function riskCeiling(persona) {
   return 0.6 - persona.sliders.selfpreservation * 5e-3;
@@ -1827,15 +1827,15 @@ function applySafetyFloor(dist, risk, ceiling, deathWish) {
   return { dist: result, removed };
 }
 function pick(dist) {
-  let choice;
+  let choice2;
   let highest = -Infinity;
   for (const [key2, probability] of Object.entries(dist)) {
     if (probability > highest) {
-      choice = key2;
+      choice2 = key2;
       highest = probability;
     }
   }
-  return choice;
+  return choice2;
 }
 
 // src/persona/quirks.ts
@@ -2067,93 +2067,6 @@ function saleFits(name, storeName) {
   return storeName === "Armoury" ? /\b(Armour|Armor|Shield|Helm|Boots|Gloves|Cloak)\b/i.test(name) : storeName === "Weapon Smiths" && /\b(Sword|Dagger|Mace|Axe|Spear|Bow|Crossbow|Sling)\b/i.test(name);
 }
 
-// src/town/plan.ts
-function shopEntrances(view, terrain) {
-  const bounds = view.mapBounds();
-  const found = [];
-  for (let y = 0; y < bounds.height; y++) {
-    for (let x = 0; x < bounds.width; x++) {
-      const cell2 = view.cell(x, y);
-      if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
-      const name = terrain.shopName(cell2.feat);
-      if (name !== null) found.push({ x, y, feat: cell2.feat, name });
-    }
-  }
-  return found;
-}
-function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new Set()) {
-  if (view.player().depth !== 0) return [];
-  const pack = readPack(view);
-  const needs = supplyNeeds(view, pack, persona);
-  const sales = sellList(pack, view, persona);
-  return shopEntrances(view, terrain).filter((entrance) => {
-    if (visited.has(entrance.feat)) return false;
-    const buying = view.player().gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
-    return buying || sales.some((sale) => saleFits(sale.name, entrance.name));
-  }).sort((a, b) => {
-    const rank2 = (shop) => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
-    return rank2(a) - rank2(b);
-  });
-}
-function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
-}) {
-  const progress = newProgress(0);
-  return {
-    label: "shop for supplies",
-    step(view, act) {
-      if (view.player().depth !== 0) return null;
-      const at = view.player().grid;
-      const cell2 = view.cell(at.x, at.y);
-      if (cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
-        const found = view.stores().find((entry) => entry.feat === cell2.feat);
-        const store = found === void 0 ? void 0 : { ...found, featName: terrain.shopName(cell2.feat) ?? found.featName };
-        if (store === void 0) {
-          visited.add(cell2.feat);
-          log("shop: this store has no stock to read");
-          return act.shopExit();
-        }
-        const pack = readPack(view);
-        const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
-        if (sale !== void 0) {
-          log(`shop: selling ${sale.name} in the ${store.featName}`);
-          return act.shopSell(sale.handle, sale.quantity);
-        }
-        const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
-        if (purchase !== void 0) {
-          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
-          return act.shopBuy(purchase.index, purchase.quantity);
-        }
-        visited.add(cell2.feat);
-        const shelf = store.stock.slice(0, 8).map((item) => `${item.name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
-        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
-        return act.shopExit();
-      }
-      const next = neededEntrances(view, terrain, persona, visited)[0];
-      if (next === void 0) {
-        log("shop: no shop left with anything needed");
-        return null;
-      }
-      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
-      } }, [next]);
-      if (travel.kind === "step") return travel.command;
-      if (travel.kind === "unreachable") visited.add(next.feat);
-      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
-      return null;
-    }
-  };
-}
-function recallPlan(item) {
-  let read = false;
-  return {
-    label: "read Word of Recall",
-    step(_view, act) {
-      if (read) return null;
-      read = true;
-      return act.read(item.handle);
-    }
-  };
-}
-
 // src/strategy/aims.ts
 var FIXED_ORDER = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth"];
 var BOOK_LOOKAHEAD = 5;
@@ -2310,10 +2223,154 @@ function affordable(aim, gold) {
   return aim.price !== null && gold >= aim.price;
 }
 
-// src/strategy/steer.ts
-var MAX_NUDGE = 0.2;
+// src/town/aims-shop.ts
 var ARMOUR = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
 var WEAPONS3 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
+function matchesAim(aim, name, tval) {
+  switch (aim.kind) {
+    case "lantern":
+      return /\bLantern\b/i.test(name);
+    case "armour":
+      return ARMOUR.includes(tval);
+    case "weapon":
+      return WEAPONS3.includes(tval) && mightBeSpecial(name);
+    case "free-action":
+      return /Free Action/i.test(name);
+    case "see-invisible":
+      return /See Invisible|Seeing/i.test(name);
+    case "spellbook":
+      return /\bBook\b/i.test(name);
+    case "depth":
+      return false;
+  }
+}
+function aimPurchase(aims, store, gold) {
+  if (store.isHome) return null;
+  for (const aim of aims) {
+    if (aim.price === null || !affordable(aim, gold)) continue;
+    const ware = store.stock.find((item) => {
+      const name = shownName2(item);
+      return name !== null && item.price !== void 0 && item.price > 0 && matchesAim(aim, name, item.tval);
+    });
+    if (ware === void 0) continue;
+    return { index: ware.index, quantity: 1, name: shownName2(ware) ?? aim.label, aim: aim.label };
+  }
+  return null;
+}
+function aimStores(aim) {
+  switch (aim.kind) {
+    case "armour":
+      return ["Armoury"];
+    case "weapon":
+      return ["Weapon Smiths"];
+    case "lantern":
+      return ["General Store"];
+    case "free-action":
+    case "see-invisible":
+      return ["Alchemy Shop", "General Store", "Armoury"];
+    default:
+      return [];
+  }
+}
+
+// src/town/plan.ts
+function shopEntrances(view, terrain) {
+  const bounds = view.mapBounds();
+  const found = [];
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
+      const name = terrain.shopName(cell2.feat);
+      if (name !== null) found.push({ x, y, feat: cell2.feat, name });
+    }
+  }
+  return found;
+}
+function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new Set(), aims = []) {
+  if (view.player().depth !== 0) return [];
+  const pack = readPack(view);
+  const needs = supplyNeeds(view, pack, persona);
+  const sales = sellList(pack, view, persona);
+  const gold = view.player().gold;
+  return shopEntrances(view, terrain).filter((entrance) => {
+    if (visited.has(entrance.feat)) return false;
+    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const aiming = aims.some((aim) => affordable(aim, gold) && aimStores(aim).includes(entrance.name));
+    return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
+  }).sort((a, b) => {
+    const rank2 = (shop) => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
+    return rank2(a) - rank2(b);
+  });
+}
+function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
+}, aims = []) {
+  const progress = newProgress(0);
+  return {
+    label: "shop for supplies",
+    step(view, act) {
+      if (view.player().depth !== 0) return null;
+      const at = view.player().grid;
+      const cell2 = view.cell(at.x, at.y);
+      if (cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
+        const found = view.stores().find((entry) => entry.feat === cell2.feat);
+        const store = found === void 0 ? void 0 : { ...found, featName: terrain.shopName(cell2.feat) ?? found.featName };
+        if (store === void 0) {
+          visited.add(cell2.feat);
+          log("shop: this store has no stock to read");
+          return act.shopExit();
+        }
+        const pack = readPack(view);
+        const sale = sellList(pack, view, persona).find((item) => saleFits(item.name, store.featName));
+        if (sale !== void 0) {
+          log(`shop: selling ${sale.name} in the ${store.featName}`);
+          return act.shopSell(sale.handle, sale.quantity);
+        }
+        const purchase = shoppingList(supplyNeeds(view, pack, persona), store, view.player().gold, persona)[0];
+        if (purchase !== void 0) {
+          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
+          return act.shopBuy(purchase.index, purchase.quantity);
+        }
+        const aimed = aimPurchase(aims, store, view.player().gold);
+        if (aimed !== null) {
+          log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
+          return act.shopBuy(aimed.index, aimed.quantity);
+        }
+        visited.add(cell2.feat);
+        const shelf = store.stock.slice(0, 8).map((item) => `${item.name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
+        log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
+        return act.shopExit();
+      }
+      const next = neededEntrances(view, terrain, persona, visited, aims)[0];
+      if (next === void 0) {
+        log("shop: no shop left with anything needed");
+        return null;
+      }
+      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
+      } }, [next]);
+      if (travel.kind === "step") return travel.command;
+      if (travel.kind === "unreachable") visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
+      return null;
+    }
+  };
+}
+function recallPlan(item) {
+  let read = false;
+  return {
+    label: "read Word of Recall",
+    step(_view, act) {
+      if (read) return null;
+      read = true;
+      return act.read(item.handle);
+    }
+  };
+}
+
+// src/strategy/steer.ts
+var MAX_NUDGE = 0.2;
+var ARMOUR2 = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
+var WEAPONS4 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
 function wornKind(view, criteria) {
   const candidate = gearCandidates(view).find((c) => c.criteria === criteria);
   const item = candidate === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate.handle);
@@ -2322,8 +2379,8 @@ function wornKind(view, criteria) {
   if (/Free Action/i.test(name)) return "free-action";
   if (/See Invisible|Seeing/i.test(name)) return "see-invisible";
   if (item.tval === TV.LIGHT && /Lantern/i.test(name)) return "lantern";
-  if (WEAPONS3.includes(item.tval)) return "weapon";
-  if (ARMOUR.includes(item.tval)) return "armour";
+  if (WEAPONS4.includes(item.tval)) return "weapon";
+  if (ARMOUR2.includes(item.tval)) return "armour";
   return null;
 }
 function servedBy(offer, view, aims, gold) {
@@ -2336,6 +2393,7 @@ function servedBy(offer, view, aims, gold) {
         serves = affordable(aim, gold);
         break;
       case "pick_up":
+      case "fetch":
         serves = aim.how === "save" && !affordable(aim, gold);
         break;
       case "wear":
@@ -2377,6 +2435,221 @@ function nudgeAims(dist, offers, ambition, ceiling) {
     if (current2 !== void 0) out[offer.goal] = current2 * (1 + MAX_NUDGE * scale2 * weight);
   }
   return out;
+}
+
+// src/brain/combat-kit.ts
+var BUFF_ITEMS = [
+  [/\bPotions? of (Heroism|Berserk Strength|Speed)\b/i, "quaff"],
+  [/\bScrolls? of (Blessing|Heroism)\b/i, "read"]
+];
+var BUFF_SPELLS = [/^(Heroism|Blessing|Berserk Strength|Haste Self)$/i];
+var CURING = [
+  [/\bStaffs? of Curing\b/i, "staff"],
+  [/\bRods? of Curing\b/i, "rod"]
+];
+function held(view) {
+  return view.inventory().flatMap((item) => {
+    const name = shownName2(item);
+    return name === null ? [] : [{ item, name }];
+  });
+}
+function castable2(view) {
+  const sp = view.player().sp;
+  const out = [];
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (spell.learned && !spell.forgotten && spell.mana <= sp && spell.fail <= 50) out.push({ sidx: spell.sidx, name: spell.name });
+    }
+  }
+  return out;
+}
+function alreadyBuffed(view) {
+  const s = view.player().status;
+  return s.hero > 0 || s.shero > 0 || s.blessed > 0 || s.fast > 0 || s.sprint > 0;
+}
+function buffUse(view) {
+  if (alreadyBuffed(view)) return null;
+  for (const { item, name } of held(view)) {
+    const found = BUFF_ITEMS.find(([pattern]) => pattern.test(name));
+    if (found !== void 0) return { how: found[1], handle: item.handle, name };
+  }
+  for (const spell of castable2(view)) {
+    if (BUFF_SPELLS.some((pattern) => pattern.test(spell.name))) return { how: "cast", sidx: spell.sidx, name: spell.name };
+  }
+  return null;
+}
+function resistUse(view) {
+  for (const { item, name } of held(view)) {
+    if (/\bPotions? of Resist/i.test(name)) return { how: "quaff", handle: item.handle, name };
+    if (/\bScrolls? of Resist/i.test(name)) return { how: "read", handle: item.handle, name };
+  }
+  return null;
+}
+function deviceHealUse(view) {
+  for (const { item, name } of held(view)) {
+    const found = CURING.find(([pattern]) => pattern.test(name));
+    if (found !== void 0) return { how: found[1], handle: item.handle, name };
+  }
+  return null;
+}
+function activationUse(view) {
+  for (const { item, name } of held(view)) {
+    if (item.activation && item.timeout <= 0) return { how: "activate", handle: item.handle, name };
+  }
+  return null;
+}
+function breatherInSight(view, monsters) {
+  const recall = inspecting(view).monsterRecall;
+  if (recall === void 0) return null;
+  for (const monster of monsters) {
+    if (!monster.visible || monster.asleep) continue;
+    const info = recall.call(view, monster.raceIndex);
+    if (info === null || info === void 0 || !/\bbreathe/i.test(info.text)) continue;
+    const element = /\bbreathe[s]?\s+([a-z]+)/i.exec(info.text)?.[1] ?? null;
+    return { race: monster.race, element };
+  }
+  return null;
+}
+
+// src/brain/hazards.ts
+function trapDirection(view) {
+  const at = view.player().grid;
+  for (const direction of DIRECTIONS) {
+    const cell2 = view.cell(at.x + direction.dx, at.y + direction.dy);
+    if (cell2 !== null && cell2.known && cell2.trap) return direction.key;
+  }
+  return null;
+}
+function rubbleDirection(view, terrain) {
+  if (terrain.isDiggable === void 0) return null;
+  const at = view.player().grid;
+  const goals = [...frontiers(view, terrain), ...knownStairs(view, terrain)];
+  if (goals.length === 0) return null;
+  const routable = (grid) => isRoutable(view, terrain, grid);
+  const fromGoals = flowFrom({ goals, canEnter: routable });
+  if (Number.isFinite(fromGoals.distance(at))) return null;
+  for (const direction of DIRECTIONS) {
+    const rock = { x: at.x + direction.dx, y: at.y + direction.dy };
+    const cell2 = view.cell(rock.x, rock.y);
+    if (cell2 === null || !cell2.known || cell2.passable || !terrain.isDiggable(cell2.feat)) continue;
+    const beyond = { x: at.x + 2 * direction.dx, y: at.y + 2 * direction.dy };
+    if (routable(beyond) && Number.isFinite(fromGoals.distance(beyond))) return direction.key;
+  }
+  return null;
+}
+
+// src/brain/items.ts
+var TV_GOLD = 1;
+var LOOT_VALUE = 10;
+var PACK_LIMIT = 23;
+var GEAR = [
+  TV.SHOT,
+  TV.ARROW,
+  TV.BOLT,
+  TV.BOW,
+  TV.DIGGING,
+  TV.HAFTED,
+  TV.POLEARM,
+  TV.SWORD,
+  TV.BOOTS,
+  TV.GLOVES,
+  TV.HELM,
+  TV.CROWN,
+  TV.SHIELD,
+  TV.CLOAK,
+  TV.SOFT_ARMOR,
+  TV.HARD_ARMOR,
+  TV.DRAG_ARMOR,
+  TV.LIGHT,
+  TV.AMULET,
+  TV.RING
+];
+var USEFUL = [
+  /\bPotion\b/i,
+  /\bScroll\b/i,
+  /\bStaff\b/i,
+  /\bRod\b/i,
+  /\bWand\b/i,
+  /\bFlask of Oil\b/i,
+  /\bRations? of Food\b/i,
+  /\bFood\b/i,
+  /\bTorch(?:es)?\b/i,
+  /\bLantern\b/i,
+  /\bBook\b/i
+];
+function itemValue(view, at, item) {
+  if (typeof item.value === "number") return item.value;
+  const index = item.floorIndex;
+  const v = inspecting(view);
+  if (v.inspectItem === void 0 || index === void 0) return null;
+  const info = v.inspectItem({ floor: { x: at.x, y: at.y, index } });
+  if (info === null) return null;
+  const match = /(\d+)\s+gold/i.exec(info.text) ?? /value[:\s]+(\d+)/i.exec(info.text);
+  return match === null ? null : Number(match[1]);
+}
+function judge(view, at, item) {
+  const name = shownName2(item) ?? item.label;
+  const value = itemValue(view, at, item);
+  const gold = item.tval === TV_GOLD;
+  const useful = USEFUL.some((pattern) => pattern.test(name));
+  const sellable = !useful && (mightBeSpecial(name) || value !== null && value >= LOOT_VALUE);
+  return { gold, sellable, useful, value, name };
+}
+function floorTarget(view, terrain, saving) {
+  const player = view.player();
+  const at = player.grid;
+  const bounds = view.mapBounds();
+  const routable = (grid) => isRoutable(view, terrain, grid);
+  const field = flowFrom({ goals: [at], canEnter: routable });
+  let best = null;
+  for (let y = 0; y < bounds.height; y++) {
+    for (let x = 0; x < bounds.width; x++) {
+      const cell2 = view.cell(x, y);
+      if (cell2 === null || !cell2.known || cell2.objectCount === 0) continue;
+      const here = { x, y };
+      if (here.x === at.x && here.y === at.y) continue;
+      if (!Number.isFinite(field.distance(here))) continue;
+      for (const item of view.floorItems(x, y)) {
+        const verdict = judge(view, here, item);
+        const wanted = verdict.gold || verdict.sellable || !saving && verdict.useful;
+        if (!wanted) continue;
+        const away = steps(at, here);
+        if (best === null || away < best.away) best = { at: here, name: verdict.name, away, gold: verdict.gold, sellable: verdict.sellable, useful: verdict.useful, value: verdict.value };
+      }
+    }
+  }
+  return best;
+}
+function packFull(view) {
+  return view.inventory().length >= PACK_LIMIT;
+}
+function junkInPack(view) {
+  for (const item of view.inventory()) {
+    const name = shownName2(item);
+    if (name === null) continue;
+    if (item.tval === TV_GOLD || GEAR.includes(item.tval)) continue;
+    if (USEFUL.some((pattern) => pattern.test(name)) || mightBeSpecial(name)) continue;
+    return { handle: item.handle, name };
+  }
+  return null;
+}
+
+// src/brain/level-feel.ts
+var BAD_MONSTER = [
+  /Omens of death haunt this place/i,
+  /This place seems murderous/i,
+  /This place seems terribly dangerous/i,
+  /You feel anxious about this place/i
+];
+var BAD_OBJECT = [
+  /there is naught but cobwebs here/i,
+  /there are only scraps of junk here/i
+];
+function badLevelFeeling(messages) {
+  for (const message of messages) {
+    if ([...BAD_MONSTER, ...BAD_OBJECT].some((pattern) => pattern.test(message))) return message;
+  }
+  return null;
 }
 
 // src/brain/goals.ts
@@ -2540,13 +2813,16 @@ function recallPending(player, read, turn) {
   const depth = player.depth;
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = []) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
   const out = [];
   const add2 = (goal, criteria, risk, routine = false) => out.push({ goal, criteria, risk: clamp01(risk), ...routine ? { routine: true } : {} });
+  const addLeave = (criteria, risk) => {
+    if (!out.some((o) => o.goal === "leave_level")) add2("leave_level", criteria, risk);
+  };
   const needs = supplyNeeds(view, s.pack, persona);
   const recall = canRead(view) ? recallItem(view) : null;
   const townRisk = s.awake.some((m) => steps(at, m.grid) <= 3) ? Math.max(0.02, BAND_RISK[s.worst] ?? 0.75) : 0.02;
@@ -2561,7 +2837,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
   if (player.depth === 0) {
-    const shops = neededEntrances(view, terrain, persona, visited);
+    const shops = neededEntrances(view, terrain, persona, visited, aims);
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add2("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
@@ -2603,10 +2879,18 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, exposure(s) * 0.6);
   }
   if (widen && !(s.swarming && s.swarm !== null) && s.awake.length > 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
-    add2("leave_level", "Walk to the nearest staircase, up or down, and take it to leave every creature on this level behind.", exposure(s) * 0.4);
+    addLeave("Walk to the nearest staircase, up or down, and take it to leave every creature on this level behind.", exposure(s) * 0.4);
   }
   if (s.swarming && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
-    add2("leave_level", `Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+    addLeave(`Walk to the nearest staircase, up or down, and take it. ${String(s.swarm.count)} ${s.swarm.race} are in sight and breed faster than they die; a new level leaves them behind.`, exposure(s) * 0.3);
+  }
+  const outOfMana = player.maxSp > 0 && player.sp === 0;
+  if (outOfMana && s.swarm !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    addLeave(`The character is out of mana and ${s.swarm.race} breeds; walk to the stairs and leave rather than melee it.`, exposure(s) * 0.3);
+  }
+  const feeling = rememberedFeeling ?? badLevelFeeling(view.messages());
+  if (feeling !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+    addLeave(`Leave the level: the game says "${feeling}"`, exposure(s) * 0.3);
   }
   if (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
@@ -2640,13 +2924,45 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0);
   }
-  if (hasFloorObject(view, at)) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
+  if (!bleeding) {
+    if (trapDirection(view) !== null) add2("disarm", "Disarm the visible trap next to the character before stepping onto it.", exposure(s) * 0.5);
+    if (rubbleDirection(view, terrain) !== null) add2("tunnel", "Tunnel through the rubble that blocks the way to the rest of the level.", exposure(s) * 0.5);
+  }
+  const hardFight = s.target !== null && (s.worst >= 2 || fightRisk(s) >= 0.4);
+  if (!bleeding && hardFight) {
+    const buff = buffUse(view);
+    if (buff !== null) add2("buff", `Use ${buff.name} before the fight: it makes the character stronger for a while.`, exposure(s) * 0.6);
+    const activation = activationUse(view);
+    if (activation !== null) add2("activate", `Activate ${activation.name} before the fight.`, exposure(s) * 0.6);
+  }
+  if (!bleeding && hurt) {
+    const device = deviceHealUse(view);
+    if (device !== null) add2("device", `Use ${device.name} to restore hit points.`, exposure(s) * 0.5);
+  }
+  const breather = breatherInSight(view, s.awake);
+  if (!bleeding && breather !== null) {
+    const resist = resistUse(view);
+    if (resist !== null) add2("resist", `Use ${resist.name} before the ${breather.race} breathes${breather.element === null ? "" : ` ${breather.element}`}.`, exposure(s) * 0.6);
+  }
+  const full = packFull(view);
+  if (!bleeding && !full) {
+    const loot = floorTarget(view, terrain, saving);
+    if (loot !== null) {
+      const why = loot.gold ? " It is gold, which buys the aim." : loot.sellable ? " It looks worth selling." : "";
+      add2("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to the ${loot.name} on the floor and pick it up.${why}`, exposure(s) + 0.02);
+    }
+  }
+  if (!bleeding && full) {
+    const junk = junkInPack(view);
+    if (junk !== null) add2("drop_junk", `The pack is full; drop ${junk.name} to make room.`, exposure(s));
+  }
+  if (hasFloorObject(view, at) && !full) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   if (!unlit && !learnFirst && !bleeding && reachableFrontier(view, terrain)) {
     add2("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if (!unlit && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
    * or no depth yet to return to. Shopping comes first while there is gold. */
-  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited).length === 0))) {
+  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   return out;
@@ -2669,6 +2985,17 @@ function createGoalPlanner(options) {
   let widenNext = false;
   let lastOutcome = null;
   let outcomeVersion = 0;
+  let badFeeling = null;
+  let feelingDepth = -1;
+  function noteFeeling(view) {
+    const depth = view.player().depth;
+    if (depth !== feelingDepth) {
+      feelingDepth = depth;
+      badFeeling = null;
+    }
+    const seen = badLevelFeeling(view.messages());
+    if (seen !== null) badFeeling = seen;
+  }
   function noteOutcome(text) {
     lastOutcome = text;
     outcomeVersion += 1;
@@ -2841,6 +3168,27 @@ function createGoalPlanner(options) {
     const next = volleySteps(goal, target.id, spellSidx);
     return stepsPlan(label, view, (ctx) => next(ctx));
   }
+  function useCommand(ctx, use) {
+    switch (use.how) {
+      case "cast":
+        return ctx.act.cast(use.sidx);
+      case "quaff":
+        return ctx.act.quaff(use.handle);
+      case "read":
+        return ctx.act.read(use.handle);
+      case "staff":
+        return ctx.act.useStaff(use.handle);
+      case "rod":
+        return ctx.act.zapRod(use.handle);
+      case "activate":
+        return ctx.act.activate(use.handle);
+    }
+  }
+  function savingFor(view) {
+    const aims = options.strategy?.().aims ?? [];
+    const gold = view.player().gold;
+    return aims.some((aim) => aim.how === "save" && aim.price !== null && gold < aim.price);
+  }
   function build(goal, view) {
     const pack = readPack(view);
     switch (goal) {
@@ -2852,7 +3200,7 @@ function createGoalPlanner(options) {
         return watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops, log), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? []), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -2948,6 +3296,61 @@ function createGoalPlanner(options) {
       }
       case "pick_up":
         return once("pick up", view, (ctx) => ctx.act.pickup());
+      case "fetch":
+        return (() => {
+          const loot = floorTarget(view, terrain, savingFor(view));
+          if (loot === null) return once("nothing to fetch", view, () => null);
+          let grabbed = false;
+          return stepsPlan("fetch item", view, (ctx) => {
+            if (grabbed) return null;
+            const here = ctx.view.player().grid;
+            if (here.x === loot.at.x && here.y === loot.at.y) {
+              grabbed = true;
+              return ctx.act.pickup();
+            }
+            const engine = engineTravel(ctx, [loot.at], { run: true });
+            if (engine !== null) return engine;
+            const travel = travelTo(ctx, [loot.at]);
+            return travel.kind === "step" ? travel.command : null;
+          });
+        })();
+      case "drop_junk": {
+        const junk = junkInPack(view);
+        return once(`drop ${junk?.name ?? "junk"}`, view, (ctx) => {
+          const now = junkInPack(ctx.view);
+          return now === null ? null : ctx.act.drop(now.handle);
+        });
+      }
+      case "buff":
+        return once("use a combat buff", view, (ctx) => {
+          const use = buffUse(ctx.view);
+          return use === null ? null : useCommand(ctx, use);
+        });
+      case "resist":
+        return once("drink a resist potion", view, (ctx) => {
+          const use = resistUse(ctx.view);
+          return use === null ? null : useCommand(ctx, use);
+        });
+      case "device":
+        return once("use a curing device", view, (ctx) => {
+          const use = deviceHealUse(ctx.view);
+          return use === null ? null : useCommand(ctx, use);
+        });
+      case "activate":
+        return once("activate an item", view, (ctx) => {
+          const use = activationUse(ctx.view);
+          return use === null ? null : useCommand(ctx, use);
+        });
+      case "disarm":
+        return once("disarm a trap", view, (ctx) => {
+          const dir = trapDirection(ctx.view);
+          return dir === null ? null : ctx.act.disarm(dir);
+        });
+      case "tunnel":
+        return once("tunnel through rubble", view, (ctx) => {
+          const dir = rubbleDirection(ctx.view, terrain);
+          return dir === null ? null : ctx.act.tunnel(dir);
+        });
       case "explore":
         return missionPlan("explore", autoexplore({ allowAwake: true }), view);
       case "leave_level":
@@ -3008,7 +3411,7 @@ function createGoalPlanner(options) {
     if (persona !== null) lines2 = forget(lines2, persona, rng);
     return lines2.length === 0 ? {} : { lessons: lines2.join(" ") };
   }
-  function decide(raw, inCharacter, digest) {
+  function decide(raw, inCharacter, digest, answers, view) {
     const persona = personaOf();
     const probs = options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities);
     const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
@@ -3031,7 +3434,9 @@ function createGoalPlanner(options) {
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const nudged = nudgeAims(blended, digest.offers, persona.sliders.ambition, riskCeiling(persona));
+    const weighted = options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view);
+    for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
+    const nudged = nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona));
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
     return record2(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -3056,6 +3461,7 @@ function createGoalPlanner(options) {
       if (player.depth > 0) visitedShops.clear();
       if (player.dead) return { handBack: "The character has died." };
       noteSeen(view);
+      noteFeeling(view);
       const s = situationOf(view, dreadedNow(), stationaryNow(view));
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
@@ -3066,12 +3472,14 @@ function createGoalPlanner(options) {
       const widen = widenNext;
       widenNext = false;
       const recalling = recallPending(player, recallRead, turn);
+      const saving = savingFor(view);
+      const aims = options.strategy?.().aims ?? [];
       const usable = (offer) => !stalled.has(offer.goal) && !refused.has(offer.goal);
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
       const offered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       let offers = offered.filter(usable);
       const listed = new Set(offers.map((o) => o.goal));
-      const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true).filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
+      const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims).filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
       if (offers.length === 0 && offered.length > 0 && !stalled.has("wait")) {
         offers = [{ goal: "wait", criteria: "Wait a turn; nothing else on offer can be done from here right now.", risk: exposure(s) }];
       }
@@ -3080,6 +3488,7 @@ function createGoalPlanner(options) {
         return { handBack: "Squire can see nothing to do here: no creature to fight, nothing unexplored, and no known way down." };
       }
       const aimList = options.strategy?.().aims ?? [];
+      const orderNote = options.orders?.note(view, player.gold) ?? null;
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
       const criteria = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
@@ -3118,6 +3527,7 @@ function createGoalPlanner(options) {
       const reflex = reflexFor(offers, persona, situation, turn);
       if (reflex !== null) {
         log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
+        options.orders?.decided(reflex.goal, view);
         const decided = {
           reflex: reflex.why,
           plan: noteStalls(reflex.goal, build(reflex.goal, view)),
@@ -3139,12 +3549,13 @@ function createGoalPlanner(options) {
             status: statusOf(view, canRead(view)),
             ...lastOutcome === null ? {} : { last: lastOutcome },
             ...aimNote === null ? {} : { aims: aimNote },
+            ...orderNote === null ? {} : { orders: orderNote },
             ...hungry(view) ? { hunger: "The character is hungry." } : {},
             ...swarmNote(seen),
             ...lessonsFor(view),
             ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } } }
           },
-          questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria } }
+          questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...options.orders?.ask(offers, view) ?? {} }
         },
         context: { depth: player.depth, offers, newCreatures, situation, missing, ...widen ? { widened: true } : {} }
       };
@@ -3153,7 +3564,7 @@ function createGoalPlanner(options) {
     choose(answers, digest, view) {
       const answer = answers["goal"];
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
-      const pick2 = decide(answer, answers["in_character"], digest);
+      const pick2 = decide(answer, answers["in_character"], digest, answers, view);
       if (pick2 === "none_of_these") {
         const removed = new Set(digest.trace?.removed ?? []);
         const allowed = digest.offers.filter((o) => !removed.has(o.goal));
@@ -3183,6 +3594,7 @@ function createGoalPlanner(options) {
       if (offer === void 0) {
         return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
       }
+      options.orders?.decided(offer.goal, view);
       if (digest.situation !== void 0) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal };
       const trace = digest.trace;
       if (trace !== void 0 && trace.pick !== trace.advice) {
@@ -3378,6 +3790,958 @@ function createStrategy(deps) {
   };
 }
 
+// src/persona/persona.ts
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function bounded(value, fallback, high = 100) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(high, Math.round(value))) : fallback;
+}
+function defaultPersona(name = "Squire") {
+  const sliders = {};
+  const lists = {};
+  const quirks = {};
+  const toggles = {};
+  for (const parameter of PARAMETERS) {
+    switch (parameter.kind) {
+      case "slider":
+        sliders[parameter.id] = "default" in parameter ? parameter.default : 50;
+        break;
+      case "list":
+        lists[parameter.id] = [];
+        break;
+      case "quirk":
+        quirks[parameter.id] = { on: false, strength: 50 };
+        break;
+      case "toggle":
+        toggles[parameter.id] = parameter.default;
+        break;
+      case "number":
+        break;
+    }
+  }
+  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
+}
+function normalize(input) {
+  try {
+    const raw = record(input);
+    const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
+    const sliders = record(raw["sliders"]);
+    const lists = record(raw["lists"]);
+    const quirks = record(raw["quirks"]);
+    const toggles = record(raw["toggles"]);
+    for (const parameter of PARAMETERS) {
+      switch (parameter.kind) {
+        case "slider":
+          result.sliders[parameter.id] = bounded(sliders[parameter.id], result.sliders[parameter.id]);
+          break;
+        case "list": {
+          const value = lists[parameter.id];
+          result.lists[parameter.id] = Array.isArray(value) ? value.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
+          break;
+        }
+        case "quirk": {
+          const value = record(quirks[parameter.id]);
+          result.quirks[parameter.id] = {
+            on: typeof value["on"] === "boolean" ? value["on"] : false,
+            strength: bounded(value["strength"], 50)
+          };
+          break;
+        }
+        case "toggle": {
+          const value = toggles[parameter.id];
+          result.toggles[parameter.id] = typeof value === "boolean" ? value : result.toggles[parameter.id];
+          break;
+        }
+        case "number":
+          break;
+      }
+    }
+    result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
+    result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
+    return result;
+  } catch {
+    return defaultPersona();
+  }
+}
+function unit(rng) {
+  const value = rng();
+  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0;
+}
+function randomPersona(rng, name = "Squire") {
+  const result = defaultPersona(name);
+  for (const parameter of PARAMETERS) {
+    if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
+  }
+  const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
+  const count2 = 1 + Math.floor(unit(rng) * 2);
+  for (let i = 0; i < count2; i += 1) {
+    const index = Math.floor(unit(rng) * pool.length);
+    const id = pool.splice(index, 1)[0];
+    if (id !== void 0) result.quirks[id].on = true;
+  }
+  return result;
+}
+var ARCHETYPES = {
+  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
+  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
+  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
+  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
+  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
+};
+function archetype(id) {
+  const override = ARCHETYPES[id];
+  return normalize({
+    ...defaultPersona(),
+    name: id[0].toUpperCase() + id.slice(1),
+    sliders: { ...defaultPersona().sliders, ...override.sliders },
+    lists: { ...defaultPersona().lists, ...override.lists },
+    quirks: { ...defaultPersona().quirks, ...override.quirks }
+  });
+}
+
+// src/persona/drift.ts
+function applyDrift(persona, event, _rng) {
+  const next = normalize(persona);
+  const changes = [];
+  const step = Math.round(next.sliders.drift / 20);
+  function move(id, amount) {
+    const from = next.sliders[id];
+    const to = Math.max(0, Math.min(100, from + amount));
+    if (to !== from) {
+      next.sliders[id] = to;
+      changes.push({ id, from, to });
+    }
+  }
+  switch (event) {
+    case "near-death":
+      move("boldness", -step);
+      move("paranoia", step);
+      break;
+    case "unique-kill":
+      move("pride", step);
+      move("boldness", step);
+      break;
+    case "level-up":
+      move("composure", step);
+      break;
+    case "patron-blessing":
+      move("devotion", Math.round(step * next.sliders.gratitude / 50));
+      break;
+    case "patron-trial":
+      move("devotion", -Math.round(step * next.sliders.resentment / 50));
+      break;
+    case "fled":
+      move("pride", -step);
+      break;
+  }
+  return { persona: next, changes };
+}
+
+// src/orders/adherence.ts
+var PASS_ADHERENCE = 0.85;
+var IGNORE_BELOW = 0.2;
+var GRUDGE_BELOW = 0.4;
+var GIVE_UP_REVIEWS = 3;
+var SERVE_BOOST = 3;
+var BREAK_CUT = 0.85;
+function unit2(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+function clash(sorted, persona) {
+  const s = persona.sliders;
+  const bold = s.boldness / 100;
+  const careful = s.selfpreservation / 100;
+  const wants = [];
+  const response = sorted.response;
+  if (response === "flee") wants.push(bold * 0.6 + s.pride / 100 * 0.4);
+  if (response === "fight") wants.push((1 - bold) * 0.5 + careful * 0.5);
+  if (response === "descend" || sorted.aim === "depth") wants.push(careful * 0.6 + (1 - s.ambition / 100) * 0.4);
+  if (response === "buy" || sorted.aim === "armour" || sorted.aim === "weapon" || sorted.aim === "item") wants.push(s.savings / 100 * 0.5 + s.pricesense / 100 * 0.5);
+  if (sorted.aim === "gold") wants.push(s.impulsiveness / 100 * 0.5 + s.greed / 100 * 0.5);
+  if (response === "rest") wants.push((1 - s.patience / 100) * 0.7);
+  if (response === "avoid") wants.push(s.impulsiveness / 100 * 0.6);
+  return wants.length === 0 ? 0 : unit2(Math.max(...wants));
+}
+function targetAdherence(sorted, persona) {
+  const s = persona.sliders;
+  const pull = (s.devotion - 50) / 50 * 0.9;
+  const grudge = s.resentment / 100 * 0.4;
+  const friction = clash(sorted, persona) * (0.3 + 0.4 * (s.stubbornness / 100));
+  const weight = 0.6 + 0.4 * (s.strength / 100);
+  return unit2(0.5 + 0.5 * (pull - grudge - friction) * weight);
+}
+function nextAdherence(previous, sorted, persona) {
+  const target = targetAdherence(sorted, persona);
+  if (previous === null) return target;
+  const rate2 = Math.max(0.1, 1 - 0.9 * (persona.sliders.stubbornness / 100));
+  return unit2(previous + (target - previous) * rate2);
+}
+function stanceOf(adherence, sorted, persona) {
+  if (adherence < IGNORE_BELOW) return "ignoring";
+  if (adherence < GRUDGE_BELOW || clash(sorted, persona) >= 0.4 || persona.sliders.resentment >= 60) return "grudgingly";
+  return "following";
+}
+function goalsOf(sorted) {
+  const serves = /* @__PURE__ */ new Set();
+  const breaks = new Set(sorted.avoids);
+  const attacks = ["fight", "shoot", "cast_attack", "throw_oil", "aim_wand"];
+  const escapes = ["retreat", "phase", "teleport"];
+  switch (sorted.response) {
+    case "flee":
+      escapes.forEach((g) => serves.add(g));
+      serves.add("leave_level");
+      attacks.forEach((g) => breaks.add(g));
+      break;
+    case "fight":
+      attacks.forEach((g) => serves.add(g));
+      escapes.forEach((g) => breaks.add(g));
+      break;
+    case "leave-level":
+      serves.add("leave_level");
+      serves.add("descend");
+      break;
+    case "descend":
+      serves.add("descend");
+      break;
+    case "buy":
+      serves.add("shop");
+      serves.add("recall_town");
+      break;
+    case "rest":
+      serves.add("rest");
+      break;
+    case "avoid":
+    case null:
+      break;
+  }
+  switch (sorted.aim) {
+    case "armour":
+    case "weapon":
+    case "spellbook":
+    case "lantern":
+    case "item":
+      serves.add("recall_town");
+      serves.add("shop");
+      if (sorted.aim === "armour" || sorted.aim === "weapon") serves.add("wear");
+      if (sorted.aim === "item") serves.add("pick_up");
+      break;
+    case "depth":
+      serves.add("descend");
+      serves.add("leave_level");
+      break;
+    default:
+      break;
+  }
+  for (const goal of breaks) serves.delete(goal);
+  return { serves: [...serves], breaks: [...breaks] };
+}
+function weigh(dist, instruction, modelServes = /* @__PURE__ */ new Set()) {
+  const { serves, breaks } = goalsOf(instruction.sorted);
+  const a = unit2(instruction.adherence) * unit2(instruction.memory);
+  const out = { ...dist };
+  for (const key2 of Object.keys(out)) {
+    const serving = serves.includes(key2) || modelServes.has(key2);
+    const base = out[key2] ?? 0;
+    if (breaks.includes(key2)) out[key2] = base * (1 - BREAK_CUT * a);
+    else if (serving) out[key2] = base * (1 + SERVE_BOOST * a);
+  }
+  return out;
+}
+
+// src/orders/memory.ts
+var FORGET_BELOW = 0.15;
+var REMEMBERED_AT = 0.6;
+var FAINT = 0.1;
+var TURN_FADE = 1 / 12e4;
+var LEVEL_FADE = 0.03;
+var ACT_REFRESH = 0.25;
+function fadeRate(persona) {
+  const forgetful = persona.quirks.forgetful.on ? 1 + 2 * (persona.quirks.forgetful.strength / 100) : 1;
+  const devotion = 1.25 - 0.75 * (persona.sliders.devotion / 100);
+  return forgetful * devotion;
+}
+function fade(memory, turns, levelChanges, persona) {
+  const t = Number.isFinite(turns) ? Math.max(0, turns) : 0;
+  const l = Number.isFinite(levelChanges) ? Math.max(0, levelChanges) : 0;
+  return Math.max(0, memory - (t * TURN_FADE + l * LEVEL_FADE) * fadeRate(persona));
+}
+function refreshed(memory, full) {
+  return full ? 1 : Math.min(1, memory + ACT_REFRESH);
+}
+function isForgotten(memory) {
+  return memory < FORGET_BELOW;
+}
+function comesBack(persona, draw) {
+  return draw < 0.3 + 0.4 * (persona.sliders.devotion / 100);
+}
+
+// src/orders/sort.ts
+var NONE = "none_of_these";
+var STORES = ["General Store", "Armoury", "Weapon Smiths", "Bookseller", "Alchemy shop", "Magic shop", "Black market", "Home"];
+var AIM_CHOICES = {
+  armour: "Wear armour on the empty or weak slots.",
+  weapon: "Get a better weapon.",
+  spellbook: "Get the next spellbook.",
+  lantern: "Get a lantern or a better light.",
+  item: "Buy, find or keep a particular item.",
+  depth: "Reach a certain depth.",
+  gold: "Save a sum of gold.",
+  [NONE]: "The instruction states no aim of this sort."
+};
+var TRIGGER_CHOICES = {
+  unique: "A unique creature comes into view.",
+  "low-hp": "Hit points fall below a line.",
+  "new-level": "The character arrives on a new level.",
+  "in-store": "The character enters a store.",
+  always: "The instruction names no trigger; it applies all the time."
+};
+var RESPONSE_CHOICES = {
+  flee: "Run away or escape.",
+  fight: "Attack.",
+  "leave-level": "Leave the level by the stairs.",
+  descend: "Go deeper.",
+  buy: "Buy something.",
+  rest: "Rest.",
+  avoid: "Never do a certain thing.",
+  [NONE]: "The instruction states no response of this sort."
+};
+var KIND_CHOICES = {
+  order: "A task that ends once it is done.",
+  standing: "A rule that keeps applying until it is retired."
+};
+var FREQUENCY_CHOICES = {
+  once: "It applies the first time only.",
+  always: "It applies every time.",
+  "until-level": "It applies until the character reaches a level."
+};
+var NUMBER_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+var AVOID_WORDS = [
+  [/\b(fight|melee|attack)/i, "fight"],
+  [/\b(shoot|fire)\b/i, "shoot"],
+  [/\b(descend|dive|stairs down|go deeper)\b/i, "descend"],
+  [/\brest/i, "rest"],
+  [/\b(phase|teleport)\b/i, "phase"],
+  [/\b(shop|buy)/i, "shop"]
+];
+function wordsOf(text) {
+  return text.toLowerCase();
+}
+function sortByCode(text) {
+  const t = wordsOf(text);
+  let aim = null;
+  let item = null;
+  let count2 = 1;
+  let depth = null;
+  let deadlineLevel = null;
+  let gold = null;
+  const feet2 = /(\d[\d,]*)\s*(?:ft|feet)\b/.exec(t);
+  const goldMatch = /(\d[\d,]*)\s*(?:gold|gp)\b/.exec(t);
+  const before = /\b(?:before|by)\s+(?:character\s+)?level\s+(\d+)/.exec(t);
+  const itemMatch = /\b(?:bring back|bring|keep|carry|buy|get|find|fetch|stock up on)\s+(?:(\d+|an?|one|two|three|four|five|six|seven|eight|nine|ten)\s+)?(?:of\s+)?((?:potions?|scrolls?|flasks?|rations?|wands?|rods?|staffs?|staves|rings?|amulets?|arrows?|bolts?|shots?|pebbles?)\b[^.,;]*)/.exec(t);
+  if (feet2 !== null) {
+    depth = Math.max(1, Math.round(Number(feet2[1].replace(/,/g, "")) / 50));
+    aim = "depth";
+  } else if (/\b(?:reach|dive to|descend to|get to)\s+(?:dungeon\s+)?level\s+(\d+)/.exec(t) !== null) {
+    depth = Number(/level\s+(\d+)/.exec(t)[1]);
+    aim = "depth";
+  }
+  if (before !== null) deadlineLevel = Number(before[1]);
+  if (aim === null && itemMatch !== null) {
+    aim = "item";
+    const raw = itemMatch[1];
+    count2 = raw === void 0 ? 1 : /^\d+$/.test(raw) ? Number(raw) : NUMBER_WORDS[raw] ?? 1;
+    item = itemMatch[2].replace(/\b(?:from|at|in|with|for|when|before)\b.*$/, "").replace(/\s+/g, " ").trim().replace(/s$/, "");
+  }
+  if (aim === null && goldMatch !== null && /\b(save|keep|hold|hoard|have|bank)\b/.test(t)) {
+    aim = "gold";
+    gold = Number(goldMatch[1].replace(/,/g, ""));
+  }
+  if (aim === null) {
+    if (/\b(armou?r|suit up|helm|shield|boots|gloves|cloak|gauntlets)\b/.test(t)) aim = "armour";
+    else if (/\b(weapon|sword|axe|blade|polearm|mace)\b/.test(t)) aim = "weapon";
+    else if (/\b(spellbook|magic book|prayer book|book of)\b/.test(t)) aim = "spellbook";
+    else if (/\b(lantern|torch|light source)\b/.test(t)) aim = "lantern";
+  }
+  const store = STORES.find((s) => t.includes(s.toLowerCase())) ?? (/\barmou?r(?:y| shop| store)\b/.test(t) ? "Armoury" : /\b(weaponsmith|weapon smith)/.test(t) ? "Weapon Smiths" : /\b(alchemist)\b/.test(t) ? "Alchemy shop" : null);
+  let trigger = "always";
+  if (/\bunique/.test(t)) trigger = "unique";
+  else if (/\b(hit points|hp|health|wounded|badly hurt|low on)\b/.test(t)) trigger = "low-hp";
+  else if (/\b(new level|arriv\w+ (?:on|at)|each level|every level|first arrive)\b/.test(t)) trigger = "new-level";
+  else if (/\benter\w*\s+(?:a\s+|the\s+)?(?:store|shop)\b/.test(t)) trigger = "in-store";
+  const avoidWords = /\b(never|do not|don't|avoid|refuse to|stay out of)\b/.test(t);
+  const avoids = avoidWords ? AVOID_WORDS.filter(([pattern]) => new RegExp(`\\b(?:never|do not|don't|avoid|refuse to|stay out of)\\s+(?:\\w+\\s+){0,2}?${pattern.source}`, "i").test(text)).map(([, goal]) => goal) : [];
+  let response = null;
+  if (avoidWords && avoids.length > 0) response = "avoid";
+  else if (/\b(flee|run away|run from|escape|retreat|get away|back off)\b/.test(t)) response = "flee";
+  else if (/\b(fight|attack|kill|charge|slay|engage)\b/.test(t)) response = "fight";
+  else if (/\b(leave the level|take the stairs|leave level|use the stairs)\b/.test(t)) response = "leave-level";
+  else if (/\b(descend|dive|go deeper|go down)\b/.test(t) && aim !== "depth") response = "descend";
+  else if (/\b(buy|purchase|shop)\b/.test(t) && aim !== "item") response = "buy";
+  else if (/\brest\b/.test(t)) response = "rest";
+  let frequency = { mode: "always" };
+  const until = /\buntil\s+(?:character\s+)?level\s+(\d+)/.exec(t);
+  if (/\b(first time|the first|just once|once)\b/.test(t)) frequency = { mode: "once" };
+  else if (until !== null) frequency = { mode: "until-level", level: Number(until[1]) };
+  const standing = /\b(always|never|whenever|every time|each time|the first time|until level|any time|when(?:ever)? you|if you see)\b/.test(t) || avoidWords;
+  return {
+    kind: standing ? "standing" : "order",
+    sorted: { aim, trigger, response, avoids, store, depth, deadlineLevel, item, count: count2, gold, frequency }
+  };
+}
+function choice(instructions, criteria) {
+  return { type: "choice", instructions, criteria: { ...criteria } };
+}
+function sortRequest(text) {
+  return {
+    state: {
+      rules: "A squire has been given an instruction in plain words. Sort it into the squire's own vocabulary. Answer none_of_these for any part the words do not state.",
+      instruction: text
+    },
+    questions: {
+      kind: choice("Is this an order that ends when done, or a standing instruction that keeps applying?", { ...KIND_CHOICES, [NONE]: "Neither fits." }),
+      aim: choice("What is the instruction aiming for?", AIM_CHOICES),
+      trigger: choice("What situation triggers it?", { ...TRIGGER_CHOICES, [NONE]: "It names no trigger." }),
+      response: choice("What should the squire do in response?", RESPONSE_CHOICES),
+      store: choice("Which store does it name, if any?", { ...Object.fromEntries(STORES.map((s) => [s, `The ${s}.`])), [NONE]: "It names no store." }),
+      frequency: choice("How often does it apply?", { ...FREQUENCY_CHOICES, [NONE]: "It does not say." })
+    }
+  };
+}
+function picked(answers, key2, allowed) {
+  const answer = answers[key2];
+  if (answer?.type !== "choice" || answer.choice === NONE) return null;
+  return allowed.includes(answer.choice) ? answer.choice : null;
+}
+var AIM_KINDS = ["armour", "weapon", "spellbook", "lantern", "item", "depth", "gold"];
+var TRIGGERS = ["unique", "low-hp", "new-level", "in-store", "always"];
+var RESPONSES = ["flee", "fight", "leave-level", "descend", "buy", "rest", "avoid"];
+function readSort(text, answers) {
+  const code = sortByCode(text);
+  const aim = picked(answers, "aim", AIM_KINDS);
+  const trigger = picked(answers, "trigger", TRIGGERS);
+  const response = picked(answers, "response", RESPONSES);
+  const store = picked(answers, "store", STORES);
+  const kind = picked(answers, "kind", ["order", "standing"]);
+  const mode = picked(answers, "frequency", ["once", "always", "until-level"]);
+  const seen = code.sorted.frequency;
+  const frequency = mode === null || mode === seen.mode ? seen : mode === "until-level" ? seen : mode === "once" ? { mode: "once" } : { mode: "always" };
+  const chosenResponse = response ?? code.sorted.response;
+  return {
+    kind: kind ?? code.kind,
+    sorted: {
+      ...code.sorted,
+      aim: aim ?? code.sorted.aim,
+      trigger: trigger ?? code.sorted.trigger,
+      response: chosenResponse,
+      store: store ?? code.sorted.store,
+      frequency
+    }
+  };
+}
+async function sortInstruction(text, deps) {
+  const fallback = () => ({ ...sortByCode(text), source: "code" });
+  const backend = deps.backend();
+  if (backend === null) return fallback();
+  if (deps.tally.overCap(backend, deps.now()) !== null) return fallback();
+  let result;
+  try {
+    result = await deps.send(sortRequest(text));
+  } catch {
+    return fallback();
+  }
+  if (!result.ok) return fallback();
+  deps.tally.record(backend, result.usage, deps.now());
+  return { ...readSort(text, result.answers), source: "model" };
+}
+
+// src/orders/types.ts
+var SOURCES = ["panel", "hotkey", "creed", "channel"];
+var LIVE_STATES = ["following", "grudgingly", "ignoring"];
+var MAX_TEXT = 2e3;
+var STATE_LABELS = {
+  following: "following",
+  grudgingly: "grudgingly",
+  ignoring: "ignoring",
+  forgotten: "forgotten",
+  done: "done",
+  abandoned: "abandoned"
+};
+function isLive(state) {
+  return LIVE_STATES.includes(state);
+}
+
+// src/orders/book.ts
+var KEEP_ENDED = 20;
+var ASKED = 3;
+var NOTE_GAP = 500;
+var RESENT_STEP = 5;
+var HALF_HP = 0.5;
+var STANCE_WORDS = {
+  following: "You intend to follow it.",
+  grudgingly: "You intend to follow it grudgingly.",
+  ignoring: "You mean to ignore it."
+};
+function normal(text) {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+function short(text) {
+  const one = text.trim().replace(/\s+/g, " ");
+  return one.length > 90 ? `${one.slice(0, 87)}...` : one;
+}
+function noun(kind) {
+  return kind === "order" ? "order" : "standing instruction";
+}
+function createOrders(deps) {
+  const rng = deps.rng ?? Math.random;
+  let items = [];
+  let counter = 0;
+  let lastTurn = 0;
+  let lastDepth = 0;
+  let review = null;
+  let arrived = false;
+  let generation = 0;
+  let inFlight = Promise.resolve();
+  const corrected = /* @__PURE__ */ new Set();
+  const explicit = /* @__PURE__ */ new Set();
+  const rolled = /* @__PURE__ */ new Set();
+  const notedAt = /* @__PURE__ */ new Map();
+  let asked = [];
+  const persona = () => deps.persona() ?? defaultPersona();
+  function persist() {
+    const ended = items.filter((i) => !isLive(i.state));
+    const drop = new Set(ended.slice(0, Math.max(0, ended.length - KEEP_ENDED)).map((i) => i.id));
+    if (drop.size > 0) items = items.filter((i) => !drop.has(i.id));
+    deps.save({ items });
+  }
+  function say(text, notable) {
+    deps.log(text);
+    deps.note(text, notable, lastTurn, lastDepth);
+  }
+  function replace(id, patch) {
+    const at = items.findIndex((i) => i.id === id);
+    if (at < 0) return void 0;
+    const next = { ...items[at], ...patch };
+    items = [...items.slice(0, at), next, ...items.slice(at + 1)];
+    return next;
+  }
+  function restance(i, previous) {
+    const p = persona();
+    const adherence = nextAdherence(previous, i.sorted, p);
+    return { ...i, adherence, state: stanceOf(adherence, i.sorted, p) };
+  }
+  function triggerActive(i, view) {
+    const p = view.player();
+    switch (i.sorted.trigger) {
+      case "always":
+        return true;
+      case "unique":
+        return view.monsters().some((m) => m.visible && m.raceFlags.includes("UNIQUE"));
+      case "low-hp":
+        return p.maxHp > 0 && p.hp <= p.maxHp * HALF_HP;
+      case "new-level":
+        return arrived;
+      case "in-store":
+        return p.depth === 0;
+    }
+  }
+  function applicable(view) {
+    return items.filter((i) => isLive(i.state) && i.memory >= FORGET_BELOW && triggerActive(i, view));
+  }
+  function finish(i, state, why) {
+    const was = i;
+    const next = replace(i.id, { state, memory: state === "forgotten" && i.kind === "standing" ? FAINT : i.memory });
+    if (next === void 0) return;
+    if (state === "done") {
+      say(`${why} ${short(was.text)}`, true);
+      if (was.kind === "order") answerPatron(was);
+    } else if (state === "forgotten") {
+      say(`Forgot the ${noun(was.kind)}: ${short(was.text)}`, true);
+    } else {
+      say(`${why} ${short(was.text)}`, false);
+    }
+    persist();
+  }
+  function answerPatron(i) {
+    const p = deps.persona();
+    if (p === null) return;
+    if (i.disliked) {
+      const resentment = Math.min(100, p.sliders.resentment + RESENT_STEP);
+      if (resentment !== p.sliders.resentment) deps.setPersona({ ...p, sliders: { ...p.sliders, resentment } });
+      return;
+    }
+    const drift = applyDrift(p, "patron-blessing", rng);
+    if (drift.changes.length > 0) deps.setPersona(drift.persona);
+  }
+  function complete(view, i) {
+    const s = i.sorted;
+    const p = view.player();
+    if (s.frequency.mode === "once" && i.acted >= 1) return "Instruction done:";
+    if (s.frequency.mode === "until-level" && p.level >= s.frequency.level) return `Reached level ${String(s.frequency.level)}, so the instruction lapsed:`;
+    if (i.kind !== "order") return null;
+    if (s.aim === "depth" && s.depth !== null && p.maxDepth >= s.depth) return "Order done:";
+    if (s.aim === "gold" && s.gold !== null && p.gold >= s.gold) return "Order done:";
+    if (s.aim === "item" && s.item !== null) {
+      const stem = (t) => t.toLowerCase().replace(/\b(\w+?)e?s\b/g, "$1");
+      const want = stem(s.item);
+      const held2 = view.inventory().filter((it) => stem(it.label).includes(want)).reduce((n, it) => n + it.number, 0);
+      if (held2 >= s.count) return "Order done:";
+    }
+    return null;
+  }
+  function reviewNow(view) {
+    const p = view.player();
+    let aims = null;
+    for (const i of items.filter((x) => isLive(x.state))) {
+      let now = restance(items.find((x) => x.id === i.id) ?? i, i.adherence);
+      now = { ...now, lowReviews: now.state === "ignoring" ? now.lowReviews + 1 : 0, disliked: now.state !== "following" };
+      replace(i.id, now);
+      if (i.kind === "order" && i.sorted.deadlineLevel !== null && p.level >= i.sorted.deadlineLevel && complete(view, i) === null) {
+        finish(now, "abandoned", "Order dropped, out of time:");
+        continue;
+      }
+      let done = complete(view, now);
+      if (done === null && i.kind === "order" && (i.sorted.aim === "armour" || i.sorted.aim === "weapon" || i.sorted.aim === "spellbook" || i.sorted.aim === "lantern")) {
+        aims ??= candidateAims(view);
+        const kind = i.sorted.aim;
+        if (!aims.some((a) => a.kind === kind)) done = "Order done:";
+      }
+      if (done !== null) {
+        finish(now, "done", done);
+        continue;
+      }
+      if (now.kind === "order" && now.lowReviews >= GIVE_UP_REVIEWS) finish(now, "abandoned", "Order dropped, never followed:");
+    }
+    persist();
+  }
+  async function prune(mine) {
+    while (mine === generation) {
+      const live = items.filter((i) => isLive(i.state));
+      if (live.length <= Math.max(1, Math.floor(deps.kept()))) return;
+      const fallback = [...live].sort((a, b) => a.adherence * a.memory - b.adherence * b.memory || a.createdTurn - b.createdTurn)[0];
+      let target = fallback;
+      const backend = deps.backend();
+      if (backend !== null && deps.tally.overCap(backend, deps.now()) === null) {
+        const criteria = {};
+        for (const i of live) criteria[i.id] = `${short(i.text)} (it is ${i.state})`;
+        criteria[NONE] = "None of these stands out.";
+        const request2 = {
+          state: { rules: "A squire holds more instructions than it will keep. One must be dropped.", persona: persona().name },
+          questions: { drop: { type: "choice", instructions: "Which instruction is least like this persona, the one it follows least readily?", criteria } }
+        };
+        let result = null;
+        try {
+          result = await deps.send(request2);
+        } catch {
+          result = null;
+        }
+        if (mine !== generation) return;
+        if (result !== null && result.ok) {
+          deps.tally.record(backend, result.usage, deps.now());
+          const answer = result.answers["drop"];
+          const named2 = answer?.type === "choice" ? live.find((i) => i.id === answer.choice) : void 0;
+          if (named2 !== void 0) target = named2;
+        }
+      }
+      const still = items.find((i) => i.id === target.id);
+      if (still === void 0 || !isLive(still.state)) return;
+      replace(target.id, { state: "abandoned" });
+      say(`Dropped the ${noun(target.kind)} to keep the number down: ${short(target.text)}`, false);
+      persist();
+    }
+  }
+  function chain(work) {
+    const mine = generation;
+    inFlight = inFlight.then(() => work(mine)).catch((error) => {
+      deps.log(`Squire could not sort its orders: ${String(error)}`);
+    });
+  }
+  async function refine(id, text, mine) {
+    const sorted = await sortInstruction(text, deps);
+    if (mine !== generation || corrected.has(id)) return;
+    const current2 = items.find((i) => i.id === id);
+    if (current2 === void 0 || !isLive(current2.state)) return;
+    const kind = explicit.has(id) ? current2.kind : sorted.kind;
+    const next = restance({ ...current2, sorted: sorted.sorted, kind, familyCreed: kind === "standing" && current2.familyCreed }, current2.adherence);
+    replace(id, next);
+    persist();
+  }
+  const self = {
+    list: () => items,
+    live: () => items.filter((i) => isLive(i.state)),
+    give(text, source, options = {}) {
+      const trimmed = text.trim().slice(0, MAX_TEXT);
+      if (trimmed === "") return { ok: false, problem: "Write the instruction first." };
+      const same2 = items.find((i) => normal(i.text) === normal(trimmed) && (isLive(i.state) || i.state === "forgotten" && i.kind === "standing"));
+      if (same2 !== void 0) {
+        const again = replace(same2.id, { memory: 1, seenTurn: lastTurn, state: isLive(same2.state) ? same2.state : "following" });
+        persist();
+        return { ok: true, instruction: again ?? same2, repeated: true };
+      }
+      const code = sortByCode(trimmed);
+      const kind = options.kind ?? code.kind;
+      counter += 1;
+      const id = `i${String(counter)}`;
+      if (options.kind !== void 0) explicit.add(id);
+      const made = restance({
+        id,
+        text: trimmed,
+        kind,
+        source,
+        sorted: code.sorted,
+        state: "following",
+        memory: 1,
+        adherence: 0.5,
+        familyCreed: kind === "standing" && options.familyCreed === true,
+        createdTurn: lastTurn,
+        seenTurn: lastTurn,
+        acted: 0,
+        lowReviews: 0,
+        disliked: false
+      }, null);
+      items = [...items, { ...made, disliked: made.state !== "following" }];
+      say(`New ${noun(kind)}: ${short(trimmed)}`, false);
+      persist();
+      chain((mine) => refine(id, trimmed, mine));
+      chain((mine) => prune(mine));
+      return { ok: true, instruction: items.find((i) => i.id === id), repeated: false };
+    },
+    retire(id) {
+      const i = items.find((x) => x.id === id);
+      if (i === void 0 || !isLive(i.state)) return false;
+      finish(i, i.kind === "order" ? "abandoned" : "done", i.kind === "order" ? "Order withdrawn:" : "Standing instruction retired:");
+      return true;
+    },
+    correct(id, patch) {
+      const i = items.find((x) => x.id === id);
+      if (i === void 0) return false;
+      corrected.add(id);
+      const kind = patch.kind ?? i.kind;
+      const next = restance({
+        ...i,
+        kind,
+        sorted: { ...i.sorted, ...patch.sorted },
+        familyCreed: kind === "standing" && (patch.familyCreed ?? i.familyCreed)
+      }, i.adherence);
+      replace(id, next);
+      persist();
+      return true;
+    },
+    creeds: () => items.filter((i) => i.kind === "standing" && i.familyCreed && isLive(i.state)),
+    adopt(creeds, turn) {
+      for (const c of creeds) {
+        if (items.some((i) => normal(i.text) === normal(c.text))) continue;
+        counter += 1;
+        items = [...items, { ...c, id: `i${String(counter)}`, kind: "standing", familyCreed: true, source: "creed", state: "following", createdTurn: turn, seenTurn: turn, acted: 0, lowReviews: 0 }];
+      }
+      items = items.map((i) => isLive(i.state) ? restance(i, null) : i);
+      persist();
+    },
+    observe(view) {
+      const p = view.player();
+      if (p.dead) return;
+      const turn = view.turn();
+      if (turn < lastTurn) review = null;
+      const levelMoved = p.depth !== lastDepth ? 1 : 0;
+      if (levelMoved === 1) arrived = true;
+      const persona_ = persona();
+      for (const i of items) {
+        if (isLive(i.state)) {
+          const memory = fade(i.memory, Math.max(0, turn - i.seenTurn), levelMoved, persona_);
+          if (memory !== i.memory || i.seenTurn !== turn) {
+            const next = replace(i.id, { memory, seenTurn: turn });
+            if (next !== void 0 && isForgotten(memory)) finish(next, "forgotten", "");
+          }
+        } else if (i.state === "forgotten" && i.kind === "standing") {
+          const on = triggerActive(i, view);
+          if (!on) rolled.delete(i.id);
+          else if (!rolled.has(i.id)) {
+            rolled.add(i.id);
+            if (comesBack(persona_, rng())) {
+              replace(i.id, { state: "following", memory: REMEMBERED_AT, seenTurn: turn });
+              const back = restance(items.find((x) => x.id === i.id), null);
+              replace(i.id, back);
+              say(`Remembered: ${short(i.text)}`, false);
+            }
+          }
+        }
+      }
+      lastTurn = turn;
+      lastDepth = p.depth;
+      const due = reviewDue(review, { depth: p.depth, level: p.level, turn });
+      review = { depth: p.depth, level: p.level, reviewTurn: due === null ? review?.reviewTurn ?? turn : turn };
+      if (due !== null) reviewNow(view);
+    },
+    decided(goal, view) {
+      const active = new Set(applicable(view).map((x) => x.id));
+      arrived = false;
+      const turn = view.turn();
+      for (const i of items.filter((x) => active.has(x.id))) {
+        if (!goalsOf(i.sorted).serves.includes(goal)) continue;
+        const updated = replace(i.id, { acted: i.acted + 1, memory: refreshed(i.memory, false) });
+        const last = notedAt.get(i.id);
+        if (updated !== void 0 && (last === void 0 || turn - last >= NOTE_GAP)) {
+          notedAt.set(i.id, turn);
+          say(`Acted on the ${noun(i.kind)} (${goal.replace(/_/g, " ")}): ${short(i.text)}`, i.acted === 0);
+        }
+        if (updated !== void 0 && i.sorted.frequency.mode === "once") finish(updated, "done", "Did as told, once:");
+      }
+    },
+    note(view, gold) {
+      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, 6);
+      if (now.length === 0) return null;
+      const p = persona();
+      const lines2 = now.map((i) => {
+        const who = i.kind === "order" ? "Your patron ordered" : "Your patron's standing instruction";
+        const faint = i.memory < 0.35 ? " You only faintly remember it." : "";
+        return `${who}: "${i.text}". ${STANCE_WORDS[i.state] ?? ""}${faint}${routeHint(i, p, gold ?? view.player().gold)}`;
+      });
+      return lines2.join(" ");
+    },
+    ask(offers, view) {
+      const out = {};
+      asked = [];
+      if (offers.length === 0) return out;
+      const now = applicable(view).sort((a, b) => b.adherence * b.memory - a.adherence * a.memory).slice(0, ASKED);
+      const criteria = {};
+      for (const o of offers) criteria[o.goal] = o.criteria;
+      criteria[NONE] = "None of these carries it out.";
+      for (const i of now) {
+        asked.push(i.id);
+        out[`order_${i.id}`] = { type: "choice", instructions: `The patron told the squire: "${i.text}". Which option best carries that out?`, criteria: { ...criteria } };
+      }
+      return out;
+    },
+    weigh(dist, answers, view) {
+      let out = { ...dist };
+      for (const i of applicable(view)) {
+        const serves = /* @__PURE__ */ new Set();
+        const answer = asked.includes(i.id) ? answers[`order_${i.id}`] : void 0;
+        if (answer?.type === "choice" && answer.choice !== NONE && (answer.probabilities[answer.choice] ?? 0) >= 0.4) serves.add(answer.choice);
+        out = weigh(out, i, serves);
+      }
+      return out;
+    },
+    passes(view) {
+      const out = /* @__PURE__ */ new Set();
+      for (const i of applicable(view)) {
+        if (i.kind !== "order" || i.state === "ignoring" || i.adherence < PASS_ADHERENCE || i.memory < 0.5) continue;
+        for (const goal of goalsOf(i.sorted).serves) out.add(goal);
+      }
+      return out;
+    },
+    promote(aims) {
+      const named2 = /* @__PURE__ */ new Set();
+      for (const i of items) if (isLive(i.state) && i.kind === "order" && i.sorted.aim !== null && i.state !== "ignoring") named2.add(i.sorted.aim);
+      if (named2.size === 0) return aims;
+      return [...aims.filter((a) => named2.has(a.kind)), ...aims.filter((a) => !named2.has(a.kind))];
+    },
+    state: () => ({ items }),
+    load(state) {
+      items = [...state.items];
+      counter = items.reduce((n, i) => Math.max(n, Number(/^i(\d+)$/.exec(i.id)?.[1] ?? 0)), 0);
+    },
+    reset() {
+      items = [];
+      counter = 0;
+      review = null;
+      arrived = false;
+      generation += 1;
+      corrected.clear();
+      explicit.clear();
+      rolled.clear();
+      notedAt.clear();
+      asked = [];
+      inFlight = Promise.resolve();
+    },
+    settled: () => inFlight
+  };
+  return self;
+}
+function routeHint(i, p, gold) {
+  const s = i.sorted;
+  if (i.kind !== "order" || s.aim === null || !["armour", "weapon", "item", "spellbook", "lantern"].includes(s.aim)) return "";
+  const store = s.store ?? (s.aim === "armour" ? "Armoury" : s.aim === "weapon" ? "Weapon Smiths" : "store");
+  const thrifty = p.sliders.pricesense >= 65 || p.sliders.savings >= 65 || gold < 100;
+  const parts = [];
+  if (thrifty) parts.push("You would look in the dungeon first and buy only what it does not turn up.");
+  else if (p.sliders.patience <= 35 || gold >= 500) parts.push(`You would go to the ${store} and buy.`);
+  if (p.sliders.curiosity >= 70) parts.push("You would try unknown pieces found on the way.");
+  if (p.sliders.pride >= 70 || p.sliders.ambition >= 70) parts.push("You want the best you can afford.");
+  return parts.length === 0 ? "" : ` ${parts.join(" ")}`;
+}
+
+// src/orders/read.ts
+var STATES = ["following", "grudgingly", "ignoring", "forgotten", "done", "abandoned"];
+var AIMS = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "depth", "item", "gold"];
+var TRIGGERS2 = ["always", "unique", "low-hp", "new-level", "in-store"];
+var RESPONSES2 = ["flee", "fight", "leave-level", "descend", "buy", "rest", "avoid"];
+var MAX_STORED = 60;
+function rec(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
+}
+function num2(value, min, max, fallback) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : fallback;
+}
+function oneOf(value, allowed, fallback) {
+  return typeof value === "string" && allowed.includes(value) ? value : fallback;
+}
+function optional(value, min, max) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : null;
+}
+function readSorted(value) {
+  const r = rec(value) ?? {};
+  const f = rec(r["frequency"]) ?? {};
+  const mode = oneOf(f["mode"], ["always", "once", "until-level"], "always");
+  const frequency = mode === "until-level" ? { mode, level: Math.round(num2(f["level"], 1, 50, 50)) } : { mode };
+  const aim = typeof r["aim"] === "string" && AIMS.includes(r["aim"]) ? r["aim"] : null;
+  const response = typeof r["response"] === "string" && RESPONSES2.includes(r["response"]) ? r["response"] : null;
+  return {
+    aim,
+    trigger: oneOf(r["trigger"], TRIGGERS2, "always"),
+    response,
+    avoids: Array.isArray(r["avoids"]) ? r["avoids"].filter((v) => typeof v === "string").slice(0, 8).map((v) => v.slice(0, 30)) : [],
+    store: typeof r["store"] === "string" ? r["store"].slice(0, 40) : null,
+    depth: optional(r["depth"], 1, 127),
+    deadlineLevel: optional(r["deadlineLevel"], 1, 50),
+    item: typeof r["item"] === "string" ? r["item"].slice(0, 80) : null,
+    count: Math.round(num2(r["count"], 1, 99, 1)),
+    gold: optional(r["gold"], 0, 1e8),
+    frequency
+  };
+}
+function readInstruction(value) {
+  const r = rec(value);
+  if (r === null || typeof r["text"] !== "string" || r["text"].trim() === "" || typeof r["id"] !== "string") return null;
+  const kind = oneOf(r["kind"], ["order", "standing"], "order");
+  return {
+    id: r["id"].slice(0, 20),
+    text: r["text"].slice(0, MAX_TEXT),
+    kind,
+    source: oneOf(r["source"], SOURCES, "panel"),
+    sorted: readSorted(r["sorted"]),
+    state: oneOf(r["state"], STATES, "following"),
+    memory: num2(r["memory"], 0, 1, 1),
+    adherence: num2(r["adherence"], 0, 1, 0.5),
+    familyCreed: kind === "standing" && r["familyCreed"] === true,
+    createdTurn: num2(r["createdTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
+    seenTurn: num2(r["seenTurn"], 0, Number.MAX_SAFE_INTEGER, 0),
+    acted: Math.round(num2(r["acted"], 0, 1e6, 0)),
+    lowReviews: Math.round(num2(r["lowReviews"], 0, 1e3, 0)),
+    disliked: r["disliked"] === true
+  };
+}
+function readInstructions(value) {
+  if (!Array.isArray(value)) return [];
+  const out = [];
+  for (const raw of value.slice(-MAX_STORED)) {
+    const one = readInstruction(raw);
+    if (one !== null) out.push(one);
+  }
+  return out;
+}
+
 // src/telemetry/sender.ts
 var DEFAULT_ENDPOINT = "https://squire.rpgm.tools";
 var QUEUE = "squire/telemetry/queue/";
@@ -3536,120 +4900,12 @@ function createSender(options) {
   };
 }
 
-// src/persona/persona.ts
-function record(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function bounded(value, fallback, high = 100) {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(high, Math.round(value))) : fallback;
-}
-function defaultPersona(name = "Squire") {
-  const sliders = {};
-  const lists = {};
-  const quirks = {};
-  const toggles = {};
-  for (const parameter of PARAMETERS) {
-    switch (parameter.kind) {
-      case "slider":
-        sliders[parameter.id] = "default" in parameter ? parameter.default : 50;
-        break;
-      case "list":
-        lists[parameter.id] = [];
-        break;
-      case "quirk":
-        quirks[parameter.id] = { on: false, strength: 50 };
-        break;
-      case "toggle":
-        toggles[parameter.id] = parameter.default;
-        break;
-      case "number":
-        break;
-    }
-  }
-  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
-}
-function normalize(input) {
-  try {
-    const raw = record(input);
-    const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
-    const sliders = record(raw["sliders"]);
-    const lists = record(raw["lists"]);
-    const quirks = record(raw["quirks"]);
-    const toggles = record(raw["toggles"]);
-    for (const parameter of PARAMETERS) {
-      switch (parameter.kind) {
-        case "slider":
-          result.sliders[parameter.id] = bounded(sliders[parameter.id], result.sliders[parameter.id]);
-          break;
-        case "list": {
-          const value = lists[parameter.id];
-          result.lists[parameter.id] = Array.isArray(value) ? value.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
-          break;
-        }
-        case "quirk": {
-          const value = record(quirks[parameter.id]);
-          result.quirks[parameter.id] = {
-            on: typeof value["on"] === "boolean" ? value["on"] : false,
-            strength: bounded(value["strength"], 50)
-          };
-          break;
-        }
-        case "toggle": {
-          const value = toggles[parameter.id];
-          result.toggles[parameter.id] = typeof value === "boolean" ? value : result.toggles[parameter.id];
-          break;
-        }
-        case "number":
-          break;
-      }
-    }
-    result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
-    result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
-    return result;
-  } catch {
-    return defaultPersona();
-  }
-}
-function unit(rng) {
-  const value = rng();
-  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0;
-}
-function randomPersona(rng, name = "Squire") {
-  const result = defaultPersona(name);
-  for (const parameter of PARAMETERS) {
-    if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
-  }
-  const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
-  const count2 = 1 + Math.floor(unit(rng) * 2);
-  for (let i = 0; i < count2; i += 1) {
-    const index = Math.floor(unit(rng) * pool.length);
-    const id = pool.splice(index, 1)[0];
-    if (id !== void 0) result.quirks[id].on = true;
-  }
-  return result;
-}
-var ARCHETYPES = {
-  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
-  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
-  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
-  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
-  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
-  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
-};
-function archetype(id) {
-  const override = ARCHETYPES[id];
-  return normalize({
-    ...defaultPersona(),
-    name: id[0].toUpperCase() + id.slice(1),
-    sliders: { ...defaultPersona().sliders, ...override.sliders },
-    lists: { ...defaultPersona().lists, ...override.lists },
-    quirks: { ...defaultPersona().quirks, ...override.quirks }
-  });
-}
-
 // src/config.ts
 var CONFIG_FORMAT = "neo-angband/squire/prefs";
 var CONFIG_SCHEMA = 1;
+var DEFAULT_INSTRUCTIONS_KEPT = 8;
+var MIN_INSTRUCTIONS_KEPT = 1;
+var MAX_INSTRUCTIONS_KEPT = 50;
 var LAYA_DEFAULT_URL = "http://localhost:8010/v1/systemone";
 function defaultConfig() {
   return {
@@ -3667,28 +4923,30 @@ function defaultConfig() {
     knightsLessons: { enabled: true, ghost: false },
     setupDone: false,
     spend: { day: "", usd: 0 },
+    instructionsKept: DEFAULT_INSTRUCTIONS_KEPT,
     lineages: {},
     pendingHeir: null
   };
 }
 function lineagesOf(value) {
   const out = {};
-  const r = rec(value);
+  const r = rec2(value);
   if (r === null) return out;
   for (const [name, raw] of Object.entries(r).slice(0, 30)) {
-    const l = rec(raw);
+    const l = rec2(raw);
     if (l === null || typeof l["name"] !== "string" || typeof l["generation"] !== "number") continue;
     out[name] = {
       name: l["name"],
       generation: l["generation"],
       ancestors: Array.isArray(l["ancestors"]) ? l["ancestors"].slice(-50) : [],
       lore: Array.isArray(l["lore"]) ? l["lore"].slice(-60) : [],
-      grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : []
+      grudges: Array.isArray(l["grudges"]) ? l["grudges"].slice(-30) : [],
+      creeds: readInstructions(l["creeds"]).filter((i) => i.kind === "standing" && i.familyCreed)
     };
   }
   return out;
 }
-function rec(value) {
+function rec2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function pickOf(value, allowed, fallback) {
@@ -3712,15 +4970,15 @@ function parseAddresses(text) {
 }
 function readConfig(stored) {
   const base = defaultConfig();
-  const envelope = rec(stored);
+  const envelope = rec2(stored);
   if (envelope === null || envelope["format"] !== CONFIG_FORMAT) return base;
-  const data = rec(envelope["data"]);
+  const data = rec2(envelope["data"]);
   if (data === null) return base;
-  const caps = rec(data["caps"]) ?? {};
-  const telemetry = rec(data["telemetry"]) ?? {};
-  const knights = rec(data["knightsLessons"]) ?? {};
-  const spend = rec(data["spend"]) ?? {};
-  const layaShadow = rec(data["layaShadow"]) ?? {};
+  const caps = rec2(data["caps"]) ?? {};
+  const telemetry = rec2(data["telemetry"]) ?? {};
+  const knights = rec2(data["knightsLessons"]) ?? {};
+  const spend = rec2(data["spend"]) ?? {};
+  const layaShadow = rec2(data["layaShadow"]) ?? {};
   const personas = Array.isArray(data["personas"]) ? data["personas"].slice(0, 50).map((p) => normalize(p)) : base.personas;
   return {
     backend: pickOf(data["backend"], ["jev", "laya", "custom", "none"], base.backend),
@@ -3745,9 +5003,10 @@ function readConfig(stored) {
     knightsLessons: { enabled: bool(knights["enabled"], true), ghost: bool(knights["ghost"], false) },
     setupDone: bool(data["setupDone"], false),
     spend: { day: str(spend["day"], "", 10), usd: numberIn(spend["usd"], 0, 1e6, 0) },
+    instructionsKept: Math.round(numberIn(data["instructionsKept"], MIN_INSTRUCTIONS_KEPT, MAX_INSTRUCTIONS_KEPT, DEFAULT_INSTRUCTIONS_KEPT)),
     lineages: lineagesOf(data["lineages"]),
     pendingHeir: (() => {
-      const heir = rec(data["pendingHeir"]);
+      const heir = rec2(data["pendingHeir"]);
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]) } : null;
     })()
   };
@@ -4208,7 +5467,7 @@ function retrieve(lessons, signature, limit) {
 function rate(value) {
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
 }
-function fade(lessons, turnNow, learningRate01) {
+function fade2(lessons, turnNow, learningRate01) {
   const decay = rate(learningRate01);
   return lessons.map((lesson) => {
     if (lesson.pinned) return lesson;
@@ -4337,44 +5596,6 @@ function buildBatches(input, level) {
   return batches;
 }
 
-// src/persona/drift.ts
-function applyDrift(persona, event, _rng) {
-  const next = normalize(persona);
-  const changes = [];
-  const step = Math.round(next.sliders.drift / 20);
-  function move(id, amount) {
-    const from = next.sliders[id];
-    const to = Math.max(0, Math.min(100, from + amount));
-    if (to !== from) {
-      next.sliders[id] = to;
-      changes.push({ id, from, to });
-    }
-  }
-  switch (event) {
-    case "near-death":
-      move("boldness", -step);
-      move("paranoia", step);
-      break;
-    case "unique-kill":
-      move("pride", step);
-      move("boldness", step);
-      break;
-    case "level-up":
-      move("composure", step);
-      break;
-    case "patron-blessing":
-      move("devotion", Math.round(step * next.sliders.gratitude / 50));
-      break;
-    case "patron-trial":
-      move("devotion", -Math.round(step * next.sliders.resentment / 50));
-      break;
-    case "fled":
-      move("pride", -step);
-      break;
-  }
-  return { persona: next, changes };
-}
-
 // src/learning/calibration.ts
 var EPS = 1e-6;
 function clamp(p) {
@@ -4447,8 +5668,60 @@ function refit(book) {
   return Object.fromEntries(Object.entries(book).map(([key2, entry]) => [key2, entry.kind === "noul" ? { ...entry, fit: fitPlatt(entry.samples) } : { ...entry, temperature: fitTemperature(entry.samples) }]));
 }
 
+// src/orders/input.ts
+function queueInstruction(orders, text, source, options) {
+  if (!SOURCES.includes(source)) return { ok: false, problem: "Instructions can only come from the panel, the hotkey, a creed file or a channel." };
+  if (typeof text !== "string") return { ok: false, problem: "Write the instruction first." };
+  return orders.give(text, source, options);
+}
+
+// src/orders/creed.ts
+var CREED_FORMAT = "neo-angband/squire/creed";
+var CREED_SCHEMA = 1;
+var MAX_CREED_LINES = 100;
+function exportCreed(name, instructions) {
+  const entries = instructions.filter((i) => i.kind === "standing" && (i.state === "following" || i.state === "grudgingly" || i.state === "ignoring")).map((i) => ({ text: i.text, familyCreed: i.familyCreed }));
+  return JSON.stringify({ format: CREED_FORMAT, schemaVersion: CREED_SCHEMA, data: { name, instructions: entries } }, null, 2);
+}
+function importCreed(text) {
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return { ok: false, problem: "That file isn't a creed file." };
+  }
+  const env = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+  if (env === null || env["format"] !== CREED_FORMAT) return { ok: false, problem: "That file isn't a creed file." };
+  if (typeof env["schemaVersion"] !== "number" || env["schemaVersion"] > CREED_SCHEMA) return { ok: false, problem: "That creed file needs a newer version of Squire." };
+  const data = env["data"] !== null && typeof env["data"] === "object" ? env["data"] : null;
+  const list = data?.["instructions"];
+  if (data === null || !Array.isArray(list)) return { ok: false, problem: "That creed file has no instructions in it." };
+  const entries = [];
+  for (const raw of list.slice(0, MAX_CREED_LINES)) {
+    const r = raw !== null && typeof raw === "object" ? raw : null;
+    if (r === null || typeof r["text"] !== "string" || r["text"].trim() === "") continue;
+    entries.push({ text: r["text"].slice(0, MAX_TEXT), familyCreed: r["familyCreed"] === true });
+  }
+  return { ok: true, name: typeof data["name"] === "string" ? data["name"].slice(0, 60) : "", entries };
+}
+function loadCreed(orders, text) {
+  const read = importCreed(text);
+  if (!read.ok) return read;
+  let taken = 0;
+  for (const entry of read.entries) {
+    const result = queueInstruction(orders, entry.text, "creed", { kind: "standing", familyCreed: entry.familyCreed });
+    if (result.ok) taken += 1;
+  }
+  return { ok: true, taken };
+}
+function inheritCreeds(creeds, parent) {
+  const share = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
+  const count2 = Math.min(12, Math.floor(12 * share));
+  return creeds.filter((i) => i.kind === "standing" && i.familyCreed).sort((a, b) => b.memory - a.memory || a.createdTurn - b.createdTurn).slice(0, count2).map((i) => ({ ...i, memory: i.memory / 2 }));
+}
+
 // src/learning/lineage.ts
-function unit2(rng) {
+function unit3(rng) {
   const value = rng();
   return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
 }
@@ -4480,7 +5753,7 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
     }
   }
   const count2 = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
-  const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit2(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count2).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
+  const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit3(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count2).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
   const parent = {
     name: parentLineage.name,
     race: parentLineage.race ?? "unknown",
@@ -4494,7 +5767,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       generation: parentLineage.generation + 1,
       ancestors: [...parentLineage.ancestors, parent],
       lore,
-      grudges
+      grudges,
+      creeds: inheritCreeds(parentLineage.creeds ?? [], parentPersona)
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -4536,6 +5810,7 @@ var TEMPLATES = {
   "death": [(f, d) => `Died at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}. That was the end.`, (f, d) => `My run ended at ${d} ft: ${f}.`],
   "divergence": [(f, d) => `Chose my own way at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I went against advice: ${f}.`, (f, d) => `${f} at ${d} ft. I made the call.`],
   "lesson": [(f, d) => `Learned at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I learned: ${f}.`, (f, d) => `${f} That lesson came at ${d} ft.`],
+  "instruction": [(f, d) => `Kept to my orders at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} That was at ${d} ft.`],
   "lineage": [(f, d) => `Carried the family story to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} The line reached ${d} ft.`]
 };
 function chronicleLine(event, persona, rng) {
@@ -4562,7 +5837,8 @@ var KINDS = /* @__PURE__ */ new Set([
   "death",
   "divergence",
   "lesson",
-  "lineage"
+  "lineage",
+  "instruction"
 ]);
 function eventFrom(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
@@ -4856,7 +6132,7 @@ function createJournal(initial, deps) {
     lessonLines(view) {
       const persona = deps.persona();
       const learningRate = (persona?.sliders.learning ?? 50) / 100;
-      lessons = fade(lessons, view.turn(), learningRate);
+      lessons = fade2(lessons, view.turn(), learningRate);
       return retrieve(lessons, signatureFor(view), LESSONS_PER_DECISION).map((l) => l.line);
     },
     calibrate(probs) {
@@ -4890,6 +6166,7 @@ function createJournal(initial, deps) {
       persist();
       return blamed;
     },
+    event: record2,
     state: () => ({ runLog: runLog.toJson(), chronicle, lessons, calibration })
   };
 }
@@ -5064,6 +6341,14 @@ var LABEL = {
   wear: "wear gear",
   detect: "survey the level",
   pick_up: "pick it up",
+  fetch: "fetch an item",
+  drop_junk: "drop junk",
+  buff: "use a combat buff",
+  resist: "drink a resist potion",
+  device: "use a curing device",
+  activate: "activate an item",
+  disarm: "disarm a trap",
+  tunnel: "tunnel through rubble",
   explore: "explore",
   descend: "take the stairs",
   leave_level: "leave the level",
@@ -5446,7 +6731,8 @@ function readCharacter(stored) {
     runId: data["runId"],
     kills,
     journal,
-    lineage: typeof data["lineage"] === "string" ? data["lineage"] : null
+    lineage: typeof data["lineage"] === "string" ? data["lineage"] : null,
+    orders: readInstructions(data["orders"])
   };
 }
 var current = null;
@@ -5463,7 +6749,8 @@ function createRuntime(host, options = {}) {
     runId: runIdFor(host.character?.key?.(), now()),
     kills: {},
     journal: emptyJournal(),
-    lineage: null
+    lineage: null,
+    orders: []
   };
   const tally = createTally(config.caps, config.spend);
   const log = createDecisionLog(store, character.runId);
@@ -5505,6 +6792,19 @@ function createRuntime(host, options = {}) {
     now,
     log: (message) => host.log(message)
   });
+  const orders = createOrders({
+    backend: () => backendFor(config),
+    send: (request2) => self.send(request2),
+    tally,
+    now,
+    persona: () => character.persona,
+    setPersona: (persona) => self.saveCharacter({ ...character, persona }),
+    kept: () => config.instructionsKept,
+    note: (text, notable, turn, depth) => journal.event({ kind: "instruction", turn, depth, text }, notable),
+    log: (message) => host.log(message),
+    save: (state) => self.saveCharacter({ ...character, orders: state.items })
+  });
+  orders.load({ items: character.orders });
   const self = {
     config: () => config,
     saveConfig(next) {
@@ -5590,20 +6890,23 @@ function createRuntime(host, options = {}) {
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen = null;
-      let picked = null;
+      let picked2 = null;
       ready.then(
-        (ok) => picked = ok,
-        () => picked = false
+        (ok) => picked2 = ok,
+        () => picked2 = false
       );
       return (view, act) => {
         if (chosen === null) {
-          if (picked === null) return null;
-          chosen = picked ? startBrain(backend, cfg, terrain) ?? errands() : errands();
+          if (picked2 === null) return null;
+          chosen = picked2 ? startBrain(backend, cfg, terrain) ?? errands() : errands();
         }
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
-        if (brain !== null) strategy.observe(view);
+        if (brain !== null) {
+          strategy.observe(view);
+          orders.observe(view);
+        }
         const command = chosen(view, act);
         if (command !== null) ownCommandAt = Date.now();
         return command;
@@ -5626,6 +6929,7 @@ function createRuntime(host, options = {}) {
     },
     journal: () => journal,
     strategy: () => strategy,
+    orders: () => orders,
     async lastSummary() {
       if (summary !== null) return summary;
       const stored = await store.get(`squire/reports/${character.runId}`);
@@ -5666,6 +6970,7 @@ function createRuntime(host, options = {}) {
       self.saveConfig({ ...config, pendingHeir: null, ...born === null ? {} : { lineages: { ...config.lineages, [heir.lineage]: born.lineage } } });
       if (born !== null) {
         self.saveCharacter({ ...character, persona: born.persona, lineage: heir.lineage });
+        orders.adopt(born.lineage.creeds ?? [], lastTurn);
         host.log(`Squire's new character carries on the ${heir.lineage.trim() || "Squire"} line`);
         return born.persona;
       }
@@ -5695,7 +7000,8 @@ function createRuntime(host, options = {}) {
         lessons: (view) => journal.lessonLines(view),
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: strategy.ranked(), tripAllowed: (gold) => strategy.tripAllowed(gold) })
+        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
+        orders
       }),
       tally,
       send: (request2) => self.send(request2),
@@ -5774,6 +7080,8 @@ function createRuntime(host, options = {}) {
   });
   async function finishRun(report) {
     strategy.reset();
+    const creeds = orders.creeds();
+    orders.reset();
     persistSpend();
     const blamed = report.outcome === "death" ? await journal.died(log.records(), report.cause, lastView) : null;
     await log.flush();
@@ -5802,7 +7110,7 @@ function createRuntime(host, options = {}) {
     }
     if (report.outcome === "death" && character.persona !== null) {
       const died = { depth: report.maxDepth, cause: report.cause, turn: report.turn };
-      const next = withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons());
+      const next = { ...withAncestor(lineage, report.name, report.race, report.cls, died, journal.lessons()), creeds };
       self.saveConfig({
         ...config,
         lineages: { ...config.lineages, [lineageName]: next },
@@ -5874,6 +7182,7 @@ function readTerrain(features, tf) {
   const shops = /* @__PURE__ */ new Set();
   const shopNames = /* @__PURE__ */ new Map();
   const harmful = /* @__PURE__ */ new Set();
+  const diggable = /* @__PURE__ */ new Set();
   for (const feature of features) {
     const has = (flag) => flag > 0 && feature.flags.has(flag);
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
@@ -5884,6 +7193,7 @@ function readTerrain(features, tf) {
       const name = SHOP_NAMES[feature.code];
       if (name !== void 0) shopNames.set(feature.fidx, name);
     }
+    if (tf.ROCK !== void 0 && has(tf.ROCK) && !(tf.PERMANENT !== void 0 && has(tf.PERMANENT))) diggable.add(feature.fidx);
     if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
   }
   return {
@@ -5893,6 +7203,7 @@ function readTerrain(features, tf) {
     isShopEntrance: (feat) => shops.has(feat),
     shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),
+    isDiggable: (feat) => diggable.has(feat),
     size: features.length
   };
 }
@@ -5904,8 +7215,41 @@ function noTerrain() {
     isShopEntrance: () => false,
     shopName: () => null,
     isHarmful: () => false,
+    isDiggable: () => false,
     size: 0
   };
+}
+
+// src/orders/panel.ts
+var ORDERS_HEADING = "Orders";
+var ORDERS_EMPTY = "No orders. Give one below, or press Ctrl+Shift+O in the game.";
+var ORDER_PROMPT = "What does your patron order?";
+var ORDER_PLACEHOLDER = "For example: suit up at the armour shop";
+var KEPT_LABEL = "Instructions kept";
+var KEPT_HELP = "How many orders and standing instructions the squire holds before it drops the one it follows least readily.";
+var FAMILY_LABEL = "Family creed (heirs inherit it)";
+var KIND_ORDER_LABEL = "Order";
+var KIND_STANDING_LABEL = "Standing instruction";
+var GIVE_LABEL = "Give";
+var RETIRE_LABEL = "Retire";
+var LOAD_CREED_LABEL = "Load creed";
+var SAVE_CREED_LABEL = "Save creed";
+var AUTO_KIND_LABEL = "Let the squire tell";
+function kindLabel(kind) {
+  return kind === "order" ? "Order" : "Standing";
+}
+function sortedLine(sorted) {
+  const parts = [];
+  if (sorted.aim !== null) {
+    const detail = sorted.aim === "depth" && sorted.depth !== null ? ` ${String(sorted.depth * 50)} ft` : sorted.aim === "item" && sorted.item !== null ? ` ${String(sorted.count)} ${sorted.item}` : sorted.aim === "gold" && sorted.gold !== null ? ` ${String(sorted.gold)} gold` : "";
+    parts.push(`aim: ${sorted.aim}${detail}`);
+  }
+  if (sorted.trigger !== "always") parts.push(`when: ${sorted.trigger}`);
+  if (sorted.response !== null) parts.push(`then: ${sorted.response}${sorted.avoids.length > 0 ? ` ${sorted.avoids.join(", ")}` : ""}`);
+  if (sorted.store !== null) parts.push(`at: ${sorted.store}`);
+  if (sorted.frequency.mode === "once") parts.push("how often: the first time");
+  else if (sorted.frequency.mode === "until-level") parts.push(`how often: until level ${String(sorted.frequency.level)}`);
+  return parts.length === 0 ? "kept as written" : parts.join("; ");
 }
 
 // src/telemetry/consent.ts
@@ -6076,10 +7420,10 @@ function mountSetup(body2, rt, done) {
     }
   }
   const brainBox = h("div");
-  for (const [choice, label, help] of BRAINS) {
-    const radio = h("input", { type: "radio", name: "squire-brain", checked: config.backend === choice });
+  for (const [choice2, label, help] of BRAINS) {
+    const radio = h("input", { type: "radio", name: "squire-brain", checked: config.backend === choice2 });
     radio.addEventListener("change", () => {
-      update2({ backend: choice });
+      update2({ backend: choice2 });
       drawServer();
     });
     brainBox.append(h("label", {}, radio, ` ${label}: `, h("span", { class: "muted" }, help)));
@@ -6132,6 +7476,9 @@ function mountSetup(body2, rt, done) {
     h("p", { class: "muted" }, "Only for characters Squire is playing. Your own characters are never replaced."),
     h("h3", {}, "Knight's Lessons"),
     h("label", {}, knights, " Learn from how I play while I have the keyboard"),
+    h("h3", {}, ORDERS_HEADING),
+    h("label", {}, KEPT_LABEL, keptInput(config.instructionsKept, (v) => update2({ instructionsKept: v }))),
+    h("p", { class: "muted" }, KEPT_HELP),
     telemetry,
     h("div", {}, h("button", { class: "act", onclick: () => {
       update2({ setupDone: true });
@@ -6141,6 +7488,14 @@ function mountSetup(body2, rt, done) {
   drawServer();
   return () => {
   };
+}
+function keptInput(value, change) {
+  const input = h("input", { type: "number", min: String(MIN_INSTRUCTIONS_KEPT), max: String(MAX_INSTRUCTIONS_KEPT), step: "1", value: String(value) });
+  input.addEventListener("change", () => {
+    const v = Math.round(Number(input.value));
+    if (Number.isFinite(v)) change(Math.min(MAX_INSTRUCTIONS_KEPT, Math.max(MIN_INSTRUCTIONS_KEPT, v)));
+  });
+  return input;
 }
 function numberInput(value, change) {
   const input = h("input", { type: "number", min: "0", step: "any", value: String(value) });
@@ -6880,12 +8235,83 @@ function saveBlob(filename, blob) {
   setTimeout(() => URL.revokeObjectURL(url), 5e3);
 }
 
+// src/ui/orders.ts
+var ORDER_HOTKEY = { ctrl: true, shift: true, key: "o" };
+function isOrderHotkey(e) {
+  return e.ctrlKey === ORDER_HOTKEY.ctrl && e.shiftKey === ORDER_HOTKEY.shift && e.key.toLowerCase() === ORDER_HOTKEY.key;
+}
+function mountOrders(body2, rt, source = "panel") {
+  const orders = rt.orders();
+  const list = h("div");
+  const message = h("p", { class: "muted" });
+  const text = h("textarea", { placeholder: ORDER_PLACEHOLDER, "aria-label": ORDER_PROMPT });
+  const kind = h("select");
+  for (const [value, label] of [["", AUTO_KIND_LABEL], ["order", KIND_ORDER_LABEL], ["standing", KIND_STANDING_LABEL]]) kind.append(h("option", { value }, label));
+  const family = h("input", { type: "checkbox" });
+  function draw() {
+    const items = orders.list();
+    fill(list, ...items.length === 0 ? [h("p", { class: "muted" }, ORDERS_EMPTY)] : items.map((i) => {
+      const live = isLive(i.state);
+      return h(
+        "div",
+        { class: "entry" },
+        h("p", {}, h("b", {}, STATE_LABELS[i.state]), ` - ${kindLabel(i.kind)}${i.familyCreed ? " (family creed)" : ""}: ${i.text}`),
+        h("p", { class: "muted" }, sortedLine(i.sorted)),
+        live ? h("button", { class: "act", onclick: () => {
+          orders.retire(i.id);
+          draw();
+        } }, RETIRE_LABEL) : null
+      );
+    }));
+  }
+  function give() {
+    const chosen = kind.value === "" ? void 0 : kind.value;
+    const result = queueInstruction(orders, text.value, source, { ...chosen === void 0 ? {} : { kind: chosen }, familyCreed: family.checked });
+    if (!result.ok) {
+      message.textContent = result.problem;
+      message.className = "bad";
+      return;
+    }
+    text.value = "";
+    message.textContent = "";
+    draw();
+  }
+  async function load() {
+    const file = await pickFile(".json,application/json");
+    if (file === null) return;
+    const result = loadCreed(orders, file);
+    message.textContent = result.ok ? `Loaded ${String(result.taken)} instructions from the creed.` : result.problem;
+    message.className = result.ok ? "ok" : "bad";
+    draw();
+  }
+  fill(
+    body2,
+    h("h3", {}, ORDERS_HEADING),
+    list,
+    h("label", {}, ORDER_PROMPT, text),
+    h("div", { class: "row" }, kind, h("label", {}, family, ` ${FAMILY_LABEL}`)),
+    h(
+      "div",
+      {},
+      h("button", { class: "act", onclick: give }, GIVE_LABEL),
+      h("button", { class: "act", onclick: () => void load() }, LOAD_CREED_LABEL),
+      h("button", { class: "act", onclick: () => download("squire.creed.json", exportCreed(rt.character().persona?.name ?? "Squire", orders.list())) }, SAVE_CREED_LABEL)
+    ),
+    message
+  );
+  draw();
+  const timer = setInterval(draw, 4e3);
+  text.focus();
+  return () => clearInterval(timer);
+}
+
 // src/ui/panel.ts
 var TABS = [
   ["setup", "Setup"],
   ["persona", "Persona"],
   ["lessons", "Lessons"],
   ["dashboard", "Dashboard"],
+  ["orders", "Orders"],
   ["report", "Report"]
 ];
 var SCALE_KEY = "squire/panelScale";
@@ -6923,7 +8349,7 @@ function mountPanel(host, rt, lessons) {
   };
   let cleanup = null;
   let current2 = rt.config().setupDone ? "dashboard" : "setup";
-  function show(tab) {
+  function show(tab, source = "panel") {
     current2 = tab;
     cleanup?.();
     body2.replaceChildren();
@@ -6943,6 +8369,9 @@ function mountPanel(host, rt, lessons) {
       case "dashboard":
         cleanup = mountDashboard(body2, rt);
         break;
+      case "orders":
+        cleanup = mountOrders(body2, rt, source);
+        break;
       case "report":
         cleanup = mountReport(body2, rt);
         break;
@@ -6958,7 +8387,18 @@ function mountPanel(host, rt, lessons) {
     h("button", { title: "Larger text", "aria-label": "Larger text", onclick: () => step(1) }, "A+")
   );
   show(current2);
-  return () => cleanup?.();
+  const onKey = (e) => {
+    if (!isOrderHotkey(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    host.requestFocus?.();
+    show("orders", "hotkey");
+  };
+  window.addEventListener("keydown", onKey, true);
+  return () => {
+    window.removeEventListener("keydown", onKey, true);
+    cleanup?.();
+  };
 }
 
 // src/lessons/evidence.ts

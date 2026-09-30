@@ -122,6 +122,8 @@ export interface Journal {
   /** Rescale best-move probabilities from past outcomes. */
   calibrate(probs: Readonly<Record<string, number>>): Record<string, number>;
   runLog(): RunLog;
+  /** Record an event from outside the journal's own watching, such as an order being followed. */
+  event(event: RunEvent, notable: boolean): void;
   chronicle(): readonly string[];
   lessons(): readonly Lesson[];
   /** At death: blame a decision and learn from it. Returns the blamed decision id, if any. */
@@ -373,6 +375,7 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
       return blamed;
     },
 
+    event: record,
     state: () => ({ runLog: runLog.toJson(), chronicle, lessons, calibration }),
   };
 }

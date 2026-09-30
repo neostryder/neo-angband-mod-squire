@@ -32,7 +32,18 @@ export interface InspectingView {
   spellInfo?(spellIndex: number): SpellInfoRead | null;
   projectionPath?(to: Loc): GridList;
   blastArea?(to: Loc, radius: number, arc?: number): GridList;
+  inspectItem?(ref: ItemRef): InspectText | null;
 }
+
+/** An item inspection's text, as newer engines return it. */
+export interface InspectText {
+  readonly token: { readonly epoch: number; readonly revision: number };
+  readonly title: string;
+  readonly text: string;
+}
+
+/** Where an inspected item is: on the floor at a grid, or elsewhere by the engine's own reference. */
+export type ItemRef = { readonly floor: { readonly x: number; readonly y: number; readonly index: number } };
 
 export function inspecting(view: AgentView): AgentView & InspectingView {
   return view as AgentView & InspectingView;

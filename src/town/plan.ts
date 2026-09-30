@@ -9,6 +9,8 @@ import { defaultCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { travelTo } from "../travel.js";
 import type { Persona } from "../persona/persona.js";
+import { affordable, type Aim } from "../strategy/aims.js";
+import { aimPurchase, aimStores } from "./aims-shop.js";
 import { supplyNeeds } from "./needs.js";
 import { saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 
@@ -32,16 +34,18 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
   return found;
 }
 
-/** Visible needs and mapped entrances determine where to walk, without stores(). */
-export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set()): ShopEntrance[] {
+/** Visible needs, affordable aims and mapped entrances determine where to walk, without stores(). */
+export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = []): ShopEntrance[] {
   if (view.player().depth !== 0) return [];
   const pack = readPack(view);
   const needs = supplyNeeds(view, pack, persona);
   const sales = sellList(pack, view, persona);
+  const gold = view.player().gold;
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
-    const buying = view.player().gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
-    return buying || sales.some((sale) => saleFits(sale.name, entrance.name));
+    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const aiming = aims.some((aim) => affordable(aim, gold) && aimStores(aim).includes(entrance.name));
+    return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
   }).sort((a, b) => {
     const rank = (shop: ShopEntrance): number => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
     return rank(a) - rank(b);
@@ -49,7 +53,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 }
 
 /** Re-read the entered shop after each command; buying can move its stock slots. */
-export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}): Plan {
+export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = []): Plan {
   const progress = newProgress(0);
   return {
     label: "shop for supplies",
@@ -79,12 +83,18 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
+        /* With the supplies settled, the gold on hand can fund the top aim. */
+        const aimed = aimPurchase(aims, store, view.player().gold);
+        if (aimed !== null) {
+          log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
+          return act.shopBuy(aimed.index, aimed.quantity);
+        }
         visited.add(cell.feat);
         const shelf = store.stock.slice(0, 8).map((item) => `${(item as { name?: string }).name ?? "?"} at ${String(item.price ?? "?")}`).join("; ");
         log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
         return act.shopExit();
       }
-      const next = neededEntrances(view, terrain, persona, visited)[0];
+      const next = neededEntrances(view, terrain, persona, visited, aims)[0];
       if (next === undefined) {
         log("shop: no shop left with anything needed");
         return null;
