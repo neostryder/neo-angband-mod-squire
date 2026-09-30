@@ -1929,20 +1929,16 @@ function recallPlan(item) {
   };
 }
 
-// src/brain/goals.ts
-var NONE_OF_THESE2 = "None of the listed options suits this moment.";
-var FALLBACK_STEPS = 8;
-var RETREAT_STEPS = 4;
-var MISSILE_RANGE = 10;
-function healthBand(hp, maxHp) {
-  if (maxHp <= 0) return "unknown";
-  const share = hp / maxHp;
-  if (share >= 0.9) return "full";
-  if (share >= 0.6) return "lightly hurt";
-  if (share >= 0.35) return "badly hurt";
-  return "near death";
-}
+// src/brain/threat-model.ts
 var THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"];
+var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
+function inspecting(view) {
+  return view;
+}
+function spellInfoOf(view) {
+  const v = inspecting(view);
+  return v.spellInfo?.bind(v);
+}
 function roundEstimate(level) {
   return 8 + 3 * level;
 }
@@ -1959,9 +1955,113 @@ function threatIndex(monster, characterLevel, characterHp = Infinity, dreaded = 
   if (monster.race !== void 0 && dreaded.has(monster.race)) band = Math.max(band, 2);
   return band;
 }
+function knownCapability(text, level) {
+  const blows = [...text.matchAll(/\b(\d+)d(\d+)(?=[, )])/g)].map((match) => Number(match[1]) * Number(match[2]));
+  const spellText = [...text.matchAll(/\bmay (?:breathe|cast spells|[^.]*?)([^.]*?)\.\s{1,2}/gi)].map((match) => match[0]).join(" ");
+  const spell = Math.max(0, ...[...spellText.matchAll(/\((\d+)\)/g)].map((match) => Number(match[1])));
+  return {
+    round: blows.length > 0 ? blows.reduce((sum, damage) => sum + damage, 0) : roundEstimate(level),
+    spell,
+    breeds: /\bbreeds explosively\b/i.test(text),
+    knownBlows: blows.length > 0
+  };
+}
+function assessThreat(monster, player, awake, view, dreaded = /* @__PURE__ */ new Set()) {
+  const old = threatIndex(monster, player.level, player.hp, dreaded);
+  const recall = inspecting(view).monsterRecall?.(monster.raceIndex);
+  if (recall === void 0 || recall === null) {
+    return { capability: threatIndex(monster, player.level, Infinity, dreaded), lethality: old, band: old, round: roundEstimate(monster.level), description: null, enhanced: false };
+  }
+  const known = knownCapability(recall.text, monster.level);
+  let capability = threatIndex(monster, player.level, Infinity, dreaded);
+  const knownMagic = /\bmay (?:breathe|cast spells)\b/i.test(recall.text);
+  if (known.breeds || known.round >= 16 || knownMagic) capability = Math.max(capability, 1);
+  if (known.round >= 32 || known.spell >= 24) capability = Math.max(capability, 2);
+  const incoming = Math.max(known.round, known.spell);
+  const nearby = awake.filter((other) => steps(player.grid, other.grid) <= 5).length;
+  const closing = Math.max(0, steps(player.grid, monster.grid) - 1);
+  const speed = monster.speed > player.speed ? Math.min(2, Math.ceil((monster.speed - player.speed) / 10)) : 0;
+  const exposure2 = incoming * (1 + speed * 0.5) * (1 + Math.min(2, closing) * 0.5);
+  let lethality = 0;
+  if (player.hp <= exposure2 / 2) lethality = 3;
+  else if (player.hp <= exposure2 || player.maxHp > 0 && incoming >= player.maxHp) lethality = 2;
+  else if (player.hp <= exposure2 * 2) lethality = 1;
+  if (nearby >= 2) lethality = Math.min(3, lethality + (nearby >= 4 ? 2 : 1));
+  const band = Math.max(capability, lethality);
+  const description = known.knownBlows ? `${known.round >= 16 ? "hits hard" : "known blows"} for a level ${String(player.level)} ${player.cls.toLowerCase()} (up to ${String(known.round)} a round)` : known.spell > 0 ? `known magic up to ${String(known.spell)} damage` : knownMagic ? "known spells or breaths" : known.breeds ? "breeds explosively" : "attacks not yet known";
+  return { capability, lethality, band, round: known.round, description, enhanced: true };
+}
+function pickAttackSpell(spells, info) {
+  if (info === void 0) return spells[0];
+  let best;
+  let fallback;
+  let bestScore = -1;
+  for (const spell of spells) {
+    const detail = info(spell.sidx);
+    if (detail === null) {
+      fallback ??= spell;
+      continue;
+    }
+    if (!detail.canCastNow) continue;
+    fallback ??= spell;
+    const summary = /\baverage of (.+?) damage\b/i.exec(detail.description);
+    if (summary === null) continue;
+    const damage = [...summary[1].matchAll(/\d+(?:\.\d+)?/g)].reduce((sum, match) => sum + Number(match[0]), 0);
+    const score = damage * (1 - detail.failChance / 100) / Math.max(1, detail.mana);
+    if (score > bestScore) {
+      best = spell;
+      bestScore = score;
+    }
+  }
+  return best ?? fallback;
+}
+function same(a, b) {
+  return a.x === b.x && a.y === b.y;
+}
+function clearShot(view, target) {
+  const { projectionPath } = inspecting(view);
+  if (projectionPath === void 0) return true;
+  const path = projectionPath.call(view, target.grid).grids;
+  const end = path.findIndex((grid) => same(grid, target.grid));
+  if (end < 0) return false;
+  return path.slice(0, end).every((grid) => {
+    const occupant = view.cell(grid.x, grid.y)?.monster;
+    return occupant === void 0 || occupant <= 0;
+  });
+}
+function bestBallAim(view, monsters, target, radius = 2) {
+  const { blastArea, projectionPath } = inspecting(view);
+  if (blastArea === void 0 || projectionPath === void 0) return target.grid;
+  let best = null;
+  let count2 = -1;
+  for (const monster of monsters.filter((m) => m.visible)) {
+    const at = monster.grid;
+    if (!clearShot(view, monster)) continue;
+    const grids = blastArea.call(view, at, radius, 0).grids;
+    const caught = monsters.filter((m) => m.visible && grids.some((grid) => same(grid, m.grid))).length;
+    if (caught > count2 && caught > 0) {
+      best = at;
+      count2 = caught;
+    }
+  }
+  return best;
+}
+
+// src/brain/goals.ts
+var NONE_OF_THESE2 = "None of the listed options suits this moment.";
+var FALLBACK_STEPS = 8;
+var RETREAT_STEPS = 4;
+var MISSILE_RANGE = 10;
+function healthBand(hp, maxHp) {
+  if (maxHp <= 0) return "unknown";
+  const share = hp / maxHp;
+  if (share >= 0.9) return "full";
+  if (share >= 0.6) return "lightly hurt";
+  if (share >= 0.35) return "badly hurt";
+  return "near death";
+}
 var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
-var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
 var DAMAGE_SHARE_REDECIDE = 0.1;
 var BAD_CUT = 25;
 var NASTY_CUT = 50;
@@ -1998,7 +2098,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, assessThreat(m, player, awake, view, dreaded).band), -1);
   const swarm = swarmOf(monsters);
   return {
     dreaded,
@@ -2019,14 +2119,15 @@ function clamp01(n) {
 function groupLines(lines2) {
   const groups = /* @__PURE__ */ new Map();
   for (const line of lines2) {
-    const key2 = `${line.race}|${line.band}|${line.tags}`;
+    const key2 = `${line.race}|${line.capability ?? ""}|${line.band}|${line.tags}`;
     groups.set(key2, [...groups.get(key2) ?? [], line]);
   }
   return [...groups.values()].map((group) => {
     const first = group[0];
     const nearest = Math.min(...group.map((g) => g.away));
     const tags = first.tags === "" ? "" : `, ${first.tags}`;
-    return group.length === 1 ? `${first.race}: ${first.band}, ${String(nearest)} steps away${tags}` : `${String(group.length)} ${first.race}: ${first.band} each, the nearest ${String(nearest)} steps away${tags}`;
+    const rating = first.capability === void 0 ? first.band : `${first.capability}, ${first.band}`;
+    return group.length === 1 ? `${first.race}: ${rating}, ${String(nearest)} steps away${tags}` : `${String(group.length)} ${first.race}: ${rating} each, the nearest ${String(nearest)} steps away${tags}`;
   }).join("; ");
 }
 function crowd(s) {
@@ -2058,7 +2159,7 @@ function swarmNote(seen) {
   return many.length === 0 ? {} : { swarm: `${many.join(" and ")} in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.` };
 }
 function fightRisk(s) {
-  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
+  const target = s.target === null ? 0 : assessThreat(s.target, s.view.player(), s.awake, s.view, s.dreaded).band;
   const band = Math.max(target, s.worst);
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
@@ -2144,18 +2245,19 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add2("fight", adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, fightRisk(s));
     }
     const ranged = within(s, MISSILE_RANGE);
+    const clear = clearShot(view, s.target);
     const standing = exposure(s);
-    if (ranged && s.pack.launcher && s.pack.ammo[0] !== void 0) {
+    if (ranged && clear && s.pack.launcher && s.pack.ammo[0] !== void 0) {
       add2("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${s.pack.ammo[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
-    if (ranged && s.pack.oil[0] !== void 0) {
+    if (ranged && clear && s.pack.oil[0] !== void 0) {
       add2("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game (carrying ${s.pack.oil[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
-    if (ranged && s.pack.attackWand[0] !== void 0) {
+    if (ranged && clear && s.pack.attackWand[0] !== void 0) {
       add2("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, Math.max(fightRisk(s) * 0.65, standing));
     }
-    const spell = s.pack.attackSpell[0];
-    if (ranged && spell !== void 0) {
+    const spell = pickAttackSpell(s.pack.attackSpell, spellInfoOf(view));
+    if (ranged && spell !== void 0 && (clear || /(?:ball|orb|cloud|storm)/i.test(spell.name) && bestBallAim(view, s.awake, s.target) !== null)) {
       add2("cast_attack", `Cast ${spell.name} at the ${s.target.race}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, Math.max(fightRisk(s) * 0.65, standing));
     }
   }
@@ -2389,11 +2491,15 @@ function createGoalPlanner(options) {
   function once(label, view, command) {
     return stepsPlan(label, view, (ctx, i) => i === 0 ? command(ctx) : null);
   }
-  function atTarget(label, view, command) {
+  function atTarget(label, view, command, ball = false) {
     return once(label, view, (ctx) => {
       const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
-      if (!ctx.act.setTargetMonster(s.target.id)) return null;
+      if (ball && inspecting(ctx.view).blastArea !== void 0 && inspecting(ctx.view).projectionPath !== void 0) {
+        const aim = bestBallAim(ctx.view, s.awake, s.target);
+        if (aim === null) return null;
+        ctx.act.setTargetLocation(aim.x, aim.y);
+      } else if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
     });
   }
@@ -2424,8 +2530,8 @@ function createGoalPlanner(options) {
         return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
       }
       case "cast_attack": {
-        const spell = pack.attackSpell[0];
-        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0));
+        const spell = pickAttackSpell(pack.attackSpell, spellInfoOf(view));
+        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), spell !== void 0 && /(?:ball|orb|cloud|storm)/i.test(spell.name));
       }
       case "heal": {
         const potion = pack.heal[0];
@@ -2622,11 +2728,12 @@ function createGoalPlanner(options) {
       const stairs = knownDownStairs(view, terrain).length > 0;
       const believed = [];
       const creatureLines = seen.map((m) => {
-        const real = threatIndex(m, player.level, player.hp, s.dreaded);
+        const rating = assessThreat(m, player, s.awake, view, s.dreaded);
+        const real = rating.band;
         const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
         if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
         const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""].filter((t) => t !== "").join(", ");
-        return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", away: steps(player.grid, m.grid), tags };
+        return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...rating.description === null ? {} : { capability: rating.description }, away: steps(player.grid, m.grid), tags };
       });
       const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
       const situation = JSON.stringify([

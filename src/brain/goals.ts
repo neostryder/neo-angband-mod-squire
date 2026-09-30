@@ -40,6 +40,9 @@ import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
+import { assessThreat, bestBallAim, clearShot, inspecting, pickAttackSpell, spellInfoOf, threatIndex, THREAT_BANDS, BAND_RISK, type ThreatBand } from "./threat-model.js";
+export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
+export type { ThreatBand } from "./threat-model.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -88,40 +91,6 @@ export function healthBand(hp: number, maxHp: number): string {
   return "near death";
 }
 
-export const THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"] as const;
-export type ThreatBand = (typeof THREAT_BANDS)[number];
-
-/**
- * How a creature compares with the character, from their levels. Uniques count
- * one band worse than their level suggests.
- */
-/**
- * A rough ceiling on one round of a creature's melee, from its level alone.
- * The view carries no blows, and a player sizing up a creature does the same:
- * a town mercenary (level 0) can hit for 10, so a 5 hit point mage should not
- * call it an easy kill.
- */
-export function roundEstimate(level: number): number {
-  return 8 + 3 * level;
-}
-
-export function threatIndex(monster: Pick<MonsterView, "level" | "raceFlags"> & { readonly race?: string }, characterLevel: number, characterHp = Infinity, dreaded: ReadonlySet<string> = new Set()): number {
-  let band: number;
-  if (monster.level * 2 <= characterLevel) band = 0;
-  else if (monster.level <= characterLevel) band = 1;
-  else if (monster.level <= characterLevel + 5) band = 2;
-  else band = 3;
-  if (monster.raceFlags.includes("UNIQUE")) band = Math.min(3, band + 1);
-  /* Hit points the creature could take in a round or two outrank levels. */
-  const round = roundEstimate(monster.level);
-  if (characterHp <= round / 2) band = 3;
-  else if (characterHp <= round) band = Math.max(band, 2);
-  /* A kind of creature that killed or nearly killed one of this line is
-   * treated as dangerous at least, whatever its level says. */
-  if (monster.race !== undefined && dreaded.has(monster.race)) band = Math.max(band, 2);
-  return band;
-}
-
 export function threatBand(monsterLevel: number, characterLevel: number): ThreatBand {
   return THREAT_BANDS[threatIndex({ level: monsterLevel, raceFlags: [] }, characterLevel)] ?? "deadly";
 }
@@ -132,8 +101,6 @@ const RECALL_MIN_GOLD = 50;
 /** Health share under which escapes are offered even against easy creatures. */
 const ESCAPE_BELOW_HP = 0.7;
 
-/** Rough chance a band kills a healthy character that stands and fights it. */
-const BAND_RISK: readonly number[] = [0.03, 0.15, 0.4, 0.75];
 /** One blow of this share of maximum hit points, or twice it in all since the plan began, sends the decision back to the model. */
 const DAMAGE_SHARE_REDECIDE = 0.1;
 /** Cut timers above these are a bad cut and a nasty cut; a bad cut or worse does not close by itself. */
@@ -280,7 +247,7 @@ function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), 
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, threatIndex(m, player.level, player.hp, dreaded)), -1);
+  const worst = awake.reduce((max, m) => Math.max(max, assessThreat(m, player, awake, view, dreaded).band), -1);
   const swarm = swarmOf(monsters);
   return {
     dreaded,
@@ -309,6 +276,7 @@ function clamp01(n: number): number {
 export interface CreatureLine {
   readonly race: string;
   readonly band: string;
+  readonly capability?: string;
   readonly away: number;
   readonly tags: string;
 }
@@ -320,16 +288,17 @@ export interface CreatureLine {
 export function groupLines(lines: readonly CreatureLine[]): string {
   const groups = new Map<string, CreatureLine[]>();
   for (const line of lines) {
-    const key = `${line.race}|${line.band}|${line.tags}`;
+    const key = `${line.race}|${line.capability ?? ""}|${line.band}|${line.tags}`;
     groups.set(key, [...(groups.get(key) ?? []), line]);
   }
   return [...groups.values()].map((group) => {
     const first = group[0]!;
     const nearest = Math.min(...group.map((g) => g.away));
     const tags = first.tags === "" ? "" : `, ${first.tags}`;
+    const rating = first.capability === undefined ? first.band : `${first.capability}, ${first.band}`;
     return group.length === 1
-      ? `${first.race}: ${first.band}, ${String(nearest)} steps away${tags}`
-      : `${String(group.length)} ${first.race}: ${first.band} each, the nearest ${String(nearest)} steps away${tags}`;
+      ? `${first.race}: ${rating}, ${String(nearest)} steps away${tags}`
+      : `${String(group.length)} ${first.race}: ${rating} each, the nearest ${String(nearest)} steps away${tags}`;
   }).join("; ");
 }
 
@@ -377,7 +346,7 @@ function swarmNote(seen: readonly { readonly race: string }[]): { swarm?: string
 
 /** The death risk of a fight: the worst awake creature in sight, not only the one being hit. */
 function fightRisk(s: Situation): number {
-  const target = s.target === null ? 0 : threatIndex(s.target, s.view.player().level, s.view.player().hp, s.dreaded);
+  const target = s.target === null ? 0 : assessThreat(s.target, s.view.player(), s.awake, s.view, s.dreaded).band;
   const band = Math.max(target, s.worst);
   /* A fight with a swarm does not end: each kill makes room for more. */
   return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
@@ -511,21 +480,22 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
         : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, fightRisk(s));
     }
     const ranged = within(s, MISSILE_RANGE);
+    const clear = clearShot(view, s.target);
     /* A ranged attack keeps the character where it stands, so it is never safer
      * than standing there: rating it lower once had Squire cast at an adjacent
      * deadly creature when the model and the persona both said to retreat. */
     const standing = exposure(s);
-    if (ranged && s.pack.launcher && s.pack.ammo[0] !== undefined) {
+    if (ranged && clear && s.pack.launcher && s.pack.ammo[0] !== undefined) {
       add("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${s.pack.ammo[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
-    if (ranged && s.pack.oil[0] !== undefined) {
+    if (ranged && clear && s.pack.oil[0] !== undefined) {
       add("throw_oil", `Throw a flask of oil at the ${s.target.race}; it burns for good damage early in the game (carrying ${s.pack.oil[0].name}).`, Math.max(fightRisk(s) * 0.7, standing));
     }
-    if (ranged && s.pack.attackWand[0] !== undefined) {
+    if (ranged && clear && s.pack.attackWand[0] !== undefined) {
       add("aim_wand", `Aim ${s.pack.attackWand[0].name} at the ${s.target.race}.`, Math.max(fightRisk(s) * 0.65, standing));
     }
-    const spell = s.pack.attackSpell[0];
-    if (ranged && spell !== undefined) {
+    const spell = pickAttackSpell(s.pack.attackSpell, spellInfoOf(view));
+    if (ranged && spell !== undefined && (clear || /(?:ball|orb|cloud|storm)/i.test(spell.name) && bestBallAim(view, s.awake, s.target) !== null)) {
       add("cast_attack", `Cast ${spell.name} at the ${s.target.race}: it costs ${String(spell.mana)} of the ${String(player.sp)} mana left (${String(spell.fail)}% chance to fail).`, Math.max(fightRisk(s) * 0.65, standing));
     }
   }
@@ -844,11 +814,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   }
 
   /** One command aimed at the current target: set the target, then issue it. */
-  function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand): WatchedPlan {
+  function atTarget(label: string, view: AgentView, command: (ctx: SquireContext) => AgentCommand, ball = false): WatchedPlan {
     return once(label, view, (ctx) => {
       const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
-      if (!ctx.act.setTargetMonster(s.target.id)) return null;
+      if (ball && inspecting(ctx.view).blastArea !== undefined && inspecting(ctx.view).projectionPath !== undefined) {
+        const aim = bestBallAim(ctx.view, s.awake, s.target);
+        if (aim === null) return null;
+        ctx.act.setTargetLocation(aim.x, aim.y);
+      } else if (!ctx.act.setTargetMonster(s.target.id)) return null;
       return command(ctx);
     });
   }
@@ -880,8 +854,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return atTarget(`aim ${wand?.name ?? "a wand"}`, view, (ctx) => ctx.act.aimWand(wand?.handle ?? 0));
       }
       case "cast_attack": {
-        const spell = pack.attackSpell[0];
-        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0));
+        const spell = pickAttackSpell(pack.attackSpell, spellInfoOf(view));
+        return atTarget(`cast ${spell?.name ?? "a spell"}`, view, (ctx) => ctx.act.cast(spell?.sidx ?? 0), spell !== undefined && /(?:ball|orb|cloud|storm)/i.test(spell.name));
       }
       case "heal": {
         const potion = pack.heal[0];
@@ -1108,13 +1082,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * goes under the persona, where the in-character question reads it. */
       const believed: string[] = [];
       const creatureLines = seen.map((m) => {
-        const real = threatIndex(m, player.level, player.hp, s.dreaded);
+        const rating = assessThreat(m, player, s.awake, view, s.dreaded);
+        const real = rating.band;
         const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
         if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
         const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""]
           .filter((t) => t !== "")
           .join(", ");
-        return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", away: steps(player.grid, m.grid), tags };
+        return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...(rating.description === null ? {} : { capability: rating.description }), away: steps(player.grid, m.grid), tags };
       });
 
       const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
