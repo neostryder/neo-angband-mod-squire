@@ -69,7 +69,8 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
     const name = supplyName(kind, level, lantern, launcher);
     return { kind, want, have: count(items, name), name, ...extra };
   };
-  const healing = Math.max(2, scale(5, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
+  const healingBase = view.player().cls === "Warrior" ? 6 : pack.healSpell.length > 0 ? 3 : 5;
+  const healing = Math.max(2, scale(healingBase, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
   /* Near the surface the stairs are close, and a recall scroll costs most of a
    * new character's gold, which healing potions need more. */
   const recall = view.player().maxDepth >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;

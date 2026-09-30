@@ -34,6 +34,7 @@ export interface Pack {
   readonly heal: readonly PackItem[];
   readonly phase: readonly PackItem[];
   readonly teleport: readonly PackItem[];
+  readonly descent: readonly PackItem[];
   readonly oil: readonly PackItem[];
   readonly attackWand: readonly PackItem[];
   readonly ammo: readonly PackItem[];
@@ -199,6 +200,7 @@ export function readPack(view: AgentView): Pack {
   const heal: PackItem[] = [];
   const phase: PackItem[] = [];
   const teleport: PackItem[] = [];
+  const descent: PackItem[] = [];
   const oil: PackItem[] = [];
   const attackWand: PackItem[] = [];
   const ammo: PackItem[] = [];
@@ -215,6 +217,8 @@ export function readPack(view: AgentView): Pack {
     if (h !== null) heal.push(entry(h));
     else if (/\bScrolls? of Phase Door\b/i.test(name)) {
       if (reading) phase.push(entry(1));
+    } else if (/\bScrolls? of Deep Descent\b/i.test(name)) {
+      if (reading) descent.push(entry(1));
     } else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
       if (reading || !/\bScrolls?\b/i.test(name)) teleport.push(entry(/Level/i.test(name) ? 1 : 2));
     } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
@@ -258,6 +262,7 @@ export function readPack(view: AgentView): Pack {
     heal: byPower(heal),
     phase,
     teleport: byPower(teleport),
+    descent,
     oil,
     attackWand: byPower(attackWand),
     ammo: fireable,

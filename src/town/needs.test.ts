@@ -42,4 +42,15 @@ describe("town supplies", () => {
     expect(needs.find((n) => n.kind === "healing")?.name).toBe("Cure Serious Wounds");
     expect(needs.find((n) => n.kind === "light")?.have).toBe(3);
   });
+
+  it("keeps scroll supplies for a dark warrior and lowers healing only for a usable healing spell", () => {
+    const warrior = world({ map: ["@"], player: { cls: "Warrior", level: 1, light: 0, depth: 0 } });
+    const priest = world({ map: ["@"], player: { cls: "Priest", level: 1, sp: 2, maxSp: 2, depth: 0 }, spells: [{ name: "Minor Healing", sidx: 0, mana: 1 }] });
+    const need = (w: typeof warrior, kind: string) => supplyNeeds(w.view, readPack(w.view), null).find((n) => n.kind === kind)?.want;
+    expect(need(warrior, "healing")).toBe(6);
+    expect(need(warrior, "phase")).toBe(5);
+    expect(need(priest, "healing")).toBe(3);
+    priest.setPlayer({ sp: 0 });
+    expect(need(priest, "healing")).toBe(5);
+  });
 });

@@ -42,7 +42,7 @@ import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
-import { assessThreat, bestBallAim, clearShot, inspecting, pickAttackSpell, spellInfoOf, threatIndex, THREAT_BANDS, BAND_RISK, type ThreatBand } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, inspecting, pickAttackSpell, spellInfoOf, threatIndex, THREAT_BANDS, BAND_RISK, type ThreatBand } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -65,6 +65,7 @@ export type Goal =
   | "cast_heal"
   | "phase"
   | "teleport"
+  | "deep_descent"
   | "retreat"
   | "rest"
   | "eat"
@@ -139,7 +140,7 @@ const FORCED_RISK = 0.3;
 /** Upkeep Squire does on its own when nothing awake is in sight, first to last. */
 const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
-const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon"]);
+const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
 const REFUSAL_HOLD_TURNS = 200;
 /** Plans for one goal that may start on the same game turn before the goal is left out until time passes. */
@@ -199,10 +200,6 @@ export interface GoalDigest {
   readonly situation?: string;
   /** Why Squire decided without the model, when it did. */
   readonly reflex?: string;
-  /** Options a widened offer would add, for a re-ask when the model passes on every option in danger. */
-  readonly missing?: readonly Goal[];
-  /** Set on the re-ask itself, so a second pass on every option is not asked about again. */
-  readonly widened?: true;
   /** Filled in by `choose`. */
   trace?: PersonaTrace;
 }
@@ -395,6 +392,22 @@ function within(s: Situation, range: number): boolean {
   return s.target !== null && steps(s.view.player().grid, s.target.grid) <= range;
 }
 
+function pinned(s: Situation): boolean {
+  const player = s.view.player();
+  return s.awake.some((m) => steps(player.grid, m.grid) <= 1 && m.speed >= player.speed);
+}
+
+function immediateDanger(s: Situation): boolean {
+  const player = s.view.player();
+  return s.awake.some((m) => steps(player.grid, m.grid) <= (m.speed > player.speed ? 2 : 1));
+}
+
+function stairsUnderfoot(s: Situation, terrain: Terrain): boolean {
+  const player = s.view.player();
+  const cell = s.view.cell(player.grid.x, player.grid.y);
+  return player.depth > 0 && cell !== null && (terrain.isUpStair(cell.feat) || terrain.isDownStair(cell.feat));
+}
+
 /**
  * Whether any unexplored ground can be walked to over remembered ground, as the
  * exploring errand would. Frontiers behind lava or walls are not worth offering:
@@ -453,6 +466,8 @@ function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
 /** The options that apply right now, each with its description and risk. */
 /** Game turns to wait for a recall to fire before trusting it failed: the delay is 15 to 34 player turns of 10 game turns each. */
 export const RECALL_WAIT_TURNS = 400;
+/* A second scroll restarts descent's countdown, so a stack must wait longer than the maximum seven world ticks. */
+const DEEP_DESCENT_WAIT_TURNS = 80;
 
 export interface RecallRead {
   readonly turn: number;
@@ -479,7 +494,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const out: Offer[] = [];
   const add = (goal: Goal, criteria: string, risk: number, routine = false) => out.push({ goal, criteria, risk: clamp01(risk), ...(routine ? { routine: true as const } : {}) });
   /* A level is left once, however many reasons there are to leave it. */
-  const addLeave = (criteria: string, risk: number) => { if (!out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, risk); };
+  const canFlee = !pinned(s) || stairsUnderfoot(s, terrain);
+  const addLeave = (criteria: string, risk: number) => { if (canFlee && !out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, risk); };
+  const nearDeath = s.hpShare < 0.35;
+  const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
 
   const needs = supplyNeeds(view, s.pack, persona);
   /* A recall scroll cannot be read while blind or confused. */
@@ -496,7 +514,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8, s.awake.length === 0);
   }
   /* A second reading cancels a recall already under way, so none is offered while one is pending. */
-  if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays) {
+  if (!recallActive && player.depth > 0 && recall !== null && (nearDeath || (fastUnique !== undefined && !immediateDanger(s)))) {
+    add("recall_town", "Read Word of Recall to leave the dungeon. It takes 15 to 34 turns to work and cannot stop the next blow.", exposure(s));
+  } else if (!recallActive && player.depth > 0 && recall !== null && lowOnSupplies(needs) && tripPays && !immediateDanger(s)) {
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
@@ -514,7 +534,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     /* Walking up to a creature that stays where it is, a mold or a mushroom
      * patch, only trades blows with something that would never have followed. */
     const adjacent = steps(at, s.target.grid) <= 1;
-    const walkUp = !adjacent && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    const walkUp = !adjacent && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     /* The game refuses every blow from an afraid character without spending a turn. */
     if ((adjacent || walkUp) && player.status.afraid === 0) {
       const away = steps(at, s.target.grid);
@@ -557,6 +577,12 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   /* Leaving goes down when it can, since going up from the first level is a trip to town and back. */
   const leaveBy = reachableStairs(view, terrain) ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
+  if (stairsUnderfoot(s, terrain) && (nearDeath || s.worst >= 2)) {
+    addLeave("Take the staircase underfoot now to leave the creatures behind.", 0.01);
+  }
+  if (fastUnique !== undefined && reachableAnyStairs(view, terrain)) {
+    addLeave(`${leaveBy}. The ${fastUnique.race} moves faster than this low-level character; leave before it closes in.`, exposure(s) * 0.3);
+  }
   /* Breeders are easy one at a time, so the escapes below would not be offered
    * for them; leaving is offered for their numbers instead. */
   if (widen && !(s.swarming && s.swarm !== null) && s.awake.length > 0 && player.depth > 0 && reachableAnyStairs(view, terrain)) {
@@ -584,8 +610,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
   /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
-  /* A widened offer, made after the model passed on every option in danger, adds the escapes even against easy creatures. */
-  if (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
+  /* Low health makes escapes worth offering even against easy creatures. */
+  if (nearDeath || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       add("phase", `Use ${how}: a short random teleport that breaks contact for a moment.`, exposure(s) * 0.4);
@@ -598,8 +624,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
         ? `Use ${teleport.name} to leave this level entirely, going one level up or down.`
         : `Use ${teleport.name} to escape far from every creature in sight.`, exposure(s) * (leaves ? 0.3 : 0.2));
     }
+    if (!immediateDanger(s) && s.pack.descent[0] !== undefined) {
+      add("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns. It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
+    }
     const flight = retreatStairs(s, terrain, widen);
-    add("retreat", flight === "any"
+    if (s.awake.length > 0 && canFlee) add("retreat", flight === "any"
       ? "Head for the nearest known staircase and take it, leaving the awake creatures behind."
       : flight === "down"
         ? "Head for a known down staircase and take it, leaving the awake creatures behind."
@@ -701,6 +730,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let decisionDepth: number | null = null;
   /* When and where Squire last read Word of Recall, for games whose view does not report a pending recall. */
   let recallRead: RecallRead | null = null;
+  let descentRead: RecallRead | null = null;
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
    * plan, so it is left out until the turn changes. */
@@ -724,8 +754,6 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   /* The game turn on which the errand-order fallback last ended having done nothing. */
   let fallbackStalled: number | null = null;
-  /** Set when the model passed on every option in danger: the next offer adds the escapes it held back. */
-  let widenNext = false;
 
   /* How the last plan ended, told to the model at the next decision: it keeps
    * no memory between calls, so without this it cannot know that fear just
@@ -1069,6 +1097,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           return /Staff/i.test(item.name) ? ctx.act.useStaff(item.handle) : ctx.act.read(item.handle);
         });
       }
+      case "deep_descent": {
+        const scroll = pack.descent[0];
+        if (scroll !== undefined) descentRead = { turn: view.turn(), depth: view.player().depth };
+        return once("read Deep Descent", view, (ctx) => scroll === undefined ? null : ctx.act.read(scroll.handle));
+      }
       case "retreat": {
         /* Fleeing heads for the way out of the level when one is known and
          * leads somewhere safer, and only backs up a few steps when not. */
@@ -1082,6 +1115,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             const cell = ctx.view.cell(here.x, here.y);
             if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
             if (cell !== null && flight === "any" && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+            if (pinned(situationOf(ctx.view))) return null;
             if (i === 0) {
               const engine = engineTravel(ctx, stairs, { run: true });
               if (engine !== null) return engine;
@@ -1090,6 +1124,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             return travel.kind === "step" ? travel.command : null;
           }
           if (i >= RETREAT_STEPS) return null;
+          if (pinned(situationOf(ctx.view))) return null;
           const away = retreatFrom(ctx, awakeInSight(ctx.view.monsters()).map((m) => m.grid));
           return away.kind === "step" ? away.command : null;
         });
@@ -1181,7 +1216,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         /* The model saw every awake creature before choosing to explore. */
         return missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: view.player().depth === 0 }), view);
       case "leave_level": {
-        const down = reachableStairs(view, terrain);
+        const down = !stairsUnderfoot(situationOf(view), terrain) && reachableStairs(view, terrain);
         const targets = (v: AgentView) => (down ? knownDownStairs(v, terrain) : knownStairs(v, terrain));
         return stepsPlan(down ? "take the stairs down" : "take the nearest stairs", view, (ctx, i) => {
           const here = ctx.view.player();
@@ -1189,6 +1224,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
           if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
           if (cell !== null && !down && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
+          if (pinned(situationOf(ctx.view))) return null;
           if (i === 0) {
             const engine = engineTravel(ctx, targets(ctx.view), down ? { stairs: "down" } : { run: true });
             if (engine !== null) return engine;
@@ -1325,8 +1361,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      const widen = widenNext;
-      widenNext = false;
+      const widen = s.hpShare < 0.35 || (s.awake.length > 0 && player.hp <= player.maxHp * cfg.retreatFraction);
       offeredWiden = widen;
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -1341,13 +1376,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const recalling = recallPending(player, recallRead, turn);
       const saving = savingFor(view);
       const aims = options.strategy?.().aims ?? [];
-      const usable = (offer: Offer) => !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
+      const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
+      const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims);
       const offered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       let offers = offered.filter(usable);
-      const listed = new Set(offers.map((o) => o.goal));
-      const missing = widen ? [] : offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims)
-        .filter((o) => usable(o) && !listed.has(o.goal)).map((o) => o.goal);
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
        * would not. */
@@ -1385,7 +1418,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         const real = rating.band;
         const seenAs = persona === null ? real : shiftThreat(real, THREAT_BANDS.length, persona, rng);
         if (seenAs !== real) believed.push(`the ${m.race} is ${THREAT_BANDS[seenAs] ?? "deadly"}`);
-        const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : ""]
+        const tags = [m.asleep ? "asleep" : "", m.afraid ? "afraid" : "", m.raceFlags.includes("UNIQUE") ? "unique" : "", m.speed > player.speed ? "faster than the character" : ""]
           .filter((t) => t !== "")
           .join(", ");
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...(rating.description === null ? {} : { capability: rating.description }), away: steps(player.grid, m.grid), tags };
@@ -1437,7 +1470,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
               ? { goal }
               : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...(options.orders?.ask(offers, view) ?? {}) },
         },
-        context: { depth: player.depth, offers, newCreatures, situation, missing, ...(widen ? { widened: true as const } : {}) },
+        context: { depth: player.depth, offers, newCreatures, situation },
       };
       return question;
     },
@@ -1447,29 +1480,27 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
       const pick = decide(answer, answers["in_character"], digest, answers, view);
       if (pick === "none_of_these") {
-        /* The errand order fights what is in front of it, which is the wrong
-         * fallback for a character in trouble. Then the model's own likeliest
-         * listed option stands in. Squire's risk figures are rougher than the
-         * model's ranking: taking the lowest of them once cast spells at a
-         * creature for hundreds of turns while the model rated retreat at 76%. */
         /* Options the persona's safety floor took away stay away. */
         const removed = new Set(digest.trace?.removed ?? []);
         const allowed = digest.offers.filter((o) => !removed.has(o.goal));
         const likeliest = [...(allowed.length > 0 ? allowed : digest.offers)].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
+        const s = situationOf(view, dreadedNow());
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        const danger = hurt || digest.offers.some((o) => o.risk > 0.3);
-        /* Passing on every option in danger most often means the one it wanted
-         * was not offered. Ask once more with the held-back escapes listed. */
-        const missing = digest.missing ?? [];
-        if (danger && digest.widened !== true && missing.length > 0) {
-          widenNext = true;
-          log(`goal: none fit in danger, asking again with ${missing.join(", ")} added`);
-          return { plan: { label: "ask again with more options", step: () => null } };
-        }
-        if (likeliest !== undefined && danger) {
-          log(`goal: none fit in danger, taking the likeliest listed option (${likeliest.goal})`);
-          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view), view.turn()) };
+        const danger = (hurt && (s.awake.length > 0 || p.status.poisoned > 0 || p.status.cut > 0)) || s.worst >= 2 || digest.offers.some((o) => o.risk > 0.3);
+        if (danger) {
+          const priority: Goal[] = [
+            ...(stairsUnderfoot(s, terrain) ? ["leave_level", "retreat"] as const : []),
+            "teleport", "phase", "heal", "device", "cast_heal",
+            ...(!immediateDanger(s) ? ["recall_town", "deep_descent", "leave_level"] as const : []),
+            ...(!pinned(s) ? ["retreat"] as const : []),
+            "fight", "shoot", "cast_attack", "aim_wand", "throw_oil",
+          ];
+          /* A refusal cannot turn survival into a loot errand, even when the persona rejected every useful action. */
+          const fallback = priority.find((goal) => digest.offers.some((o) => o.goal === goal));
+          if (fallback === undefined) return { handBack: "Squire has no usable escape, healing or attack in this danger." };
+          log(`goal: none fit in danger, taking the survival fallback (${fallback})`);
+          return { plan: noteStalls(fallback, build(fallback, view), view.turn()) };
         }
         /* On a cleared floor the errand order has nothing to do either, and
          * repeating it only stops Squire. The model's likeliest offer stands in. */

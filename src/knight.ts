@@ -88,6 +88,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
       if (has(pack.teleport)) return "teleport";
+      if (has(pack.descent)) return "deep_descent";
       return null;
     case "use-staff":
       return has(pack.teleport) ? "teleport" : null;
@@ -153,6 +154,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   cast_heal: "cast a healing spell",
   phase: "phase away",
   teleport: "teleport away",
+  deep_descent: "read Deep Descent",
   retreat: "back away",
   rest: "rest",
   eat: "eat",

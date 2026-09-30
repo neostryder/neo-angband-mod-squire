@@ -78,6 +78,10 @@ export function townsperson(monster: Creature, depth: number): boolean {
   return depth === 0 && monster.level === 0 && !monster.raceFlags.includes("UNIQUE");
 }
 
+export function fastUniqueAtLowLevel(monster: MonsterView, player: PlayerView): boolean {
+  return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
+}
+
 /**
  * How a creature compares with the character, from their levels. Uniques count
  * one band worse than their level suggests, hit points the creature could take
@@ -123,14 +127,15 @@ export function knownCapability(text: string, level: number): { round: number; s
 
 export function assessThreat(monster: MonsterView, player: PlayerView, awake: readonly MonsterView[], view: AgentView, dreaded: ReadonlySet<string> = new Set()): ThreatAssessment {
   const town = townsperson(monster, player.depth);
-  const old = threatIndex(monster, player.level, player.hp, dreaded, town);
+  const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
+  const old = Math.max(uniqueFloor, threatIndex(monster, player.level, player.hp, dreaded, town));
   const recall = inspecting(view).monsterRecall?.(monster.raceIndex);
   if (recall === undefined || recall === null) {
-    return { capability: threatIndex(monster, player.level, Infinity, dreaded), lethality: old, band: old, round: town ? TOWN_ROUND : roundEstimate(monster.level), description: null, enhanced: false };
+    return { capability: Math.max(uniqueFloor, threatIndex(monster, player.level, Infinity, dreaded)), lethality: old, band: old, round: town ? TOWN_ROUND : roundEstimate(monster.level), description: null, enhanced: false };
   }
   const read = knownCapability(recall.text, monster.level);
   const known = town && !read.knownBlows ? { ...read, round: TOWN_ROUND } : read;
-  let capability = threatIndex(monster, player.level, Infinity, dreaded);
+  let capability = Math.max(uniqueFloor, threatIndex(monster, player.level, Infinity, dreaded));
   const knownMagic = /\bmay (?:breathe|cast spells)\b/i.test(recall.text);
   if (known.breeds || known.round >= 16 || knownMagic) capability = Math.max(capability, 1);
   if (known.round >= 32 || known.spell >= 24) capability = Math.max(capability, 2);

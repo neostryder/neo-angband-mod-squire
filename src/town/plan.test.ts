@@ -7,6 +7,35 @@ import { aimPurchase } from "./aims-shop.js";
 import { neededEntrances, townTripPlan } from "./plan.js";
 
 describe("town trip", () => {
+  it("leaves the general store to buy survival supplies before oil or gear", () => {
+    const stores: StoreView[] = [
+      { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+        { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 10 },
+        { ...itemNamed("a Scroll of Phase Door", 0), index: 1, price: 18, number: 10 },
+      ] },
+      { feat: FEAT.GENERAL, featName: "STORE_GENERAL", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [
+        { ...itemNamed("a Flask of Oil", 0), index: 0, price: 3, number: 10 },
+      ] },
+    ];
+    const w = world({ map: ["######", "#G@.A#", "######"], player: { cls: "Warrior", level: 1, depth: 0, gold: 65 }, pack: ["a Ration of Food", "a Wooden Torch"], stores });
+    const plan = townTripPlan(w.terrain, null);
+    w.moveTo({ x: 1, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 4, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
+    w.setPack(["a Potion of Cure Light Wounds", "a Ration of Food", "a Wooden Torch"]);
+    w.setPlayer({ gold: 45 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 1, quantity: 1 } });
+    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "a Ration of Food", "a Wooden Torch"]);
+    w.setPlayer({ gold: 27 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
+    w.setPack(["2 Potions of Cure Light Wounds", "a Scroll of Phase Door", "a Ration of Food", "a Wooden Torch"]);
+    w.setPlayer({ gold: 7 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
+    expect(w.issued.filter((command) => command.code === "shop-buy")).toHaveLength(3);
+  });
+
   it("does not read any stock before stepping inside the matching shop", () => {
     const stock = [{ ...itemNamed("a Scroll of Word of Recall", 0), index: 0, price: 35, number: 2 }] as StoreItemView[];
     /* The engine names stores by terrain code, as the live game does. */

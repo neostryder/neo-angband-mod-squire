@@ -18,19 +18,40 @@ export interface Sale {
   readonly name: string;
 }
 
-const PRIORITY: readonly SupplyKind[] = ["recall", "healing", "phase", "food", "light", "oil", "ammo"];
+const PRIORITY: readonly SupplyKind[] = ["healing", "phase", "recall", "food", "light", "oil", "ammo"];
 
 /** Fixed stock categories in Angband 4.2 store.txt. */
 export function storesFor(kind: SupplyKind): readonly string[] {
   return kind === "healing" || kind === "phase" || kind === "recall" ? ["Alchemy Shop"] : ["General Store"];
 }
 
-/** Keep high-savings gold in reserve, but let essential recall break the reserve. */
+/** A small survival reserve takes precedence over savings and larger supply stacks. */
 export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gold: number, persona: Persona | null): Purchase[] {
   if (store.isHome) return [];
   const reserve = Math.floor(gold * Math.max(0, (persona?.sliders.savings ?? 50) - 50) / 200);
   let left = Math.max(0, gold);
   const out: Purchase[] = [];
+  const starterBought = new Map<SupplyKind, number>();
+  const stockBought = new Map<number, number>();
+  /* Alternating small purchases leaves gold for both kinds when a full stack would consume it. */
+  for (const target of [1, 2]) {
+    for (const kind of ["healing", "phase"] as const) {
+      const need = needs.find((entry) => entry.kind === kind);
+      const already = starterBought.get(kind) ?? 0;
+      if (need === undefined || need.have + already >= Math.min(target, need.want) || !storesFor(kind).includes(store.featName)) continue;
+      const ware = store.stock.find((item) => {
+        const name = shownName(item);
+        return name !== null && matchesSupplyName(name, need.name) && item.number > (stockBought.get(item.index) ?? 0) &&
+          item.price !== undefined && item.price > 0 && item.price <= left;
+      });
+      if (ware === undefined || ware.price === undefined) continue;
+      out.push({ index: ware.index, quantity: 1, kind, name: shownName(ware) ?? need.name });
+      left -= ware.price;
+      starterBought.set(kind, already + 1);
+      stockBought.set(ware.index, (stockBought.get(ware.index) ?? 0) + 1);
+    }
+  }
+  if (out.length > 0) return out;
   const bought = new Set<number>();
   for (const kind of PRIORITY) {
     const need = needs.find((entry) => entry.kind === kind);

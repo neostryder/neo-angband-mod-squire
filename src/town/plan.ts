@@ -58,13 +58,21 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
   /* An aim is bought for once per trip: its list was ranked before the trip,
    * so after one purchase it would still ask for more of the same. */
   const boughtFor = new Set<string>();
+  let leftShopForSupplies = false;
   return {
     label: "shop for supplies",
     step(view, act) {
       if (view.player().depth !== 0) return null;
       const at = view.player().grid;
       const cell = view.cell(at.x, at.y);
-      if (cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
+      const first = neededEntrances(view, terrain, persona, visited, aims)[0];
+      const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
+      if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !leftShopForSupplies) {
+        leftShopForSupplies = true;
+        return act.shopExit();
+      }
+      if (!alchemyFirst) leftShopForSupplies = false;
+      if (!alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
         /* stores() exposes the whole town; touch only the matching store's stock. */
         const found = view.stores().find((entry) => entry.feat === cell.feat);
         /* The engine names a store by its terrain code (STORE_ALCHEMY); the

@@ -116,7 +116,7 @@ describe("fleeing", () => {
   });
 
   it("backs up four steps when no staircase is known", () => {
-    const w = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10 }] });
+    const w = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10, speed: 100 }] });
     const plan = planFor(w, "retreat");
     for (let i = 0; i < 4; i++) expect(plan.step(w.view, w.act)?.code).toBe("walk");
     expect(plan.step(w.view, w.act)).toBeNull();
@@ -127,7 +127,7 @@ describe("fleeing", () => {
     const offers = asked(planner(withStairs).ask(withStairs.view)).context.offers;
     expect(offers.find((o) => o.goal === "retreat")?.criteria).toContain("staircase");
 
-    const noStairs = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10 }] });
+    const noStairs = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10, speed: 100 }] });
     const away = asked(planner(noStairs).ask(noStairs.view)).context.offers;
     expect(away.find((o) => o.goal === "retreat")?.criteria).toContain("four steps");
   });

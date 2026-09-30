@@ -35,7 +35,9 @@ Squire only knows what the character knows:
 - It plans routes only over ground the character remembers, and picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
-In town, Squire buys what the next trip needs: healing potions, Phase Door, food, light, flasks of oil and, once the character has been to 250 ft, a Word of Recall scroll. When supplies run low at 250 ft or deeper and it has gold to spend, it reads Word of Recall to go home and restock, then reads another to go back down.
+In town, Squire buys healing potions and Phase Door first, alternating purchases toward two of each before filling larger stacks or buying recall, food, light, oil or ammunition. These first supplies can use gold reserved by the savings setting. Warriors carry more healing; a character with a usable healing spell needs fewer potions. When supplies run low at 250 ft or deeper and it has gold to spend, it reads Word of Recall to go home and restock, then reads another to go back down.
+
+Squire does not offer to back away from an adjacent creature that moves at least as fast as the character, unless a staircase is already underfoot. It offers usable healing and teleportation near death. Word of Recall remains an option even without restocking gold, but its delay cannot save the character from the next blow. Deep Descent is an option only with time to wait and leads several levels deeper. If every option is declined in danger, Squire chooses an escape or heal itself, or fights when none can help. A faster unique is deadly to a level 1 to 3 character on first sight; Squire offers to leave the level and does not walk up to fight it.
 
 If the model can't be reached, Squire finishes the step it is on, stops, and tries again a few times, showing how long it will wait. After that it gives you the keyboard and says how to resume.
 
