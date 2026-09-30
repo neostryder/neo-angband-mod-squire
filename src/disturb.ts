@@ -72,7 +72,7 @@ export interface Watcher {
  * second decision. Cut and stun are present because both are ongoing damage the
  * character took and would have reacted to.
  */
-const AFFLICTIONS: readonly (keyof PlayerStatusView)[] = [
+const AFFLICTIONS = [
   "blind",
   "confused",
   "afraid",
@@ -80,7 +80,7 @@ const AFFLICTIONS: readonly (keyof PlayerStatusView)[] = [
   "cut",
   "stun",
   "paralyzed",
-];
+] as const satisfies readonly (keyof PlayerStatusView)[];
 
 function afflictionsOf(status: PlayerStatusView): string[] {
   return AFFLICTIONS.filter((name) => (status[name] ?? 0) > 0);

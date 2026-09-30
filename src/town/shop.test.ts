@@ -42,7 +42,8 @@ describe("shop choices", () => {
   });
 
   it("skips wares without a shown name or price", () => {
-    const hidden = { ...ware("a Scroll of Word of Recall", 0, 5, 1), name: undefined } as StoreItemView;
+    const hidden = ware("a Scroll of Word of Recall", 0, 5, 1);
+    Reflect.deleteProperty(hidden, "name");
     const need: SupplyNeed = { kind: "recall", name: "Word of Recall", want: 1, have: 0 };
     expect(shoppingList([need], alchemy([hidden]), 50, null)).toEqual([]);
   });
