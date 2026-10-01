@@ -27,6 +27,18 @@ describe("the town survival basket", () => {
     w.setPlayer({ gold: 76 });
     expect(departure.finished(w.view)).toBe(true);
   });
+  /* The soak's Rogue, at 2 gold, took the up staircase it arrived on with one
+   * command, 161 times in ten minutes. */
+  it("runs a trip whose gold goal was already met on the turn limit", () => {
+    const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, gold: 2, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const departure = createDeparture();
+    departure.begin(w.view, 0);
+    w.setPlayer({ depth: 1 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.finished(w.view)).toBe(false);
+    w.advance(1000);
+    expect(departure.finished(w.view)).toBe(true);
+  });
 
   it("buys a first Phase Door before discretionary potion top-ups when only 18 gold remains", () => {
     const w = world({ map: ["@"], player: { depth: 0, gold: 18 }, pack: ["a Potion of Cure Light Wounds", ...PANTRY] });

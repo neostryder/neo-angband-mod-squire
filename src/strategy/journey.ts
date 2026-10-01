@@ -5,7 +5,7 @@ import type { SquireContext } from "../context.js";
 import type { Goal, Offer } from "../brain/goals.js";
 import type { Plan } from "../brain/brain.js";
 import { floorTarget } from "../brain/items.js";
-import { canRead } from "../brain/pack.js";
+import { canRead, hungry } from "../brain/pack.js";
 import { arrivalFeeling } from "../brain/level-feel.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
@@ -74,7 +74,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     departure.observe(view, terrain);
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= supplyMargin(view);
-      else if (departure.finished(view) || supplies(view).food === 0 || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      /* A widened trip can start with no rations and too little gold to buy one,
+       * so an empty pack ends it only once the character is hungry. */
+      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;

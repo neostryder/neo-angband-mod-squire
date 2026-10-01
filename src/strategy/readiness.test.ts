@@ -190,13 +190,33 @@ describe("supply evidence and margins", () => {
     expect(supplies(w.view).phase).toBe(0);
   });
 
-  it("starts the shallow return at one cure, one phase, one food or one fuel", () => {
+  it("starts the level 1 return at one food or one fuel, and never for one cure or one Phase Door", () => {
     const stock = ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door", "2 Rations of Food", "2 Wooden Torches (5000 turns)"];
-    const w = world({ map: ROOM, worn: ["a Wooden Torch (5000 turns)"], pack: stock });
+    const w = world({ map: ROOM, player: { depth: 1 }, worn: ["a Wooden Torch (5000 turns)"], pack: stock });
     expect(supplyMargin(w.view)).toBeNull();
     for (let index = 0; index < stock.length; index += 1) {
       w.setPack(stock.map((name, at) => at === index ? name.replace(/^2 /, "1 ") : name));
-      expect(supplyMargin(w.view)).not.toBeNull();
+      if (index < 2) expect(supplyMargin(w.view)).toBeNull();
+      else expect(supplyMargin(w.view)).not.toBeNull();
     }
+  });
+
+  /* The soak's Ranger read one Phase Door on level 1 at full health and was
+   * sent home by Recall, then waited for it 21 times in a row. */
+  it("keeps the soak Ranger on level 1 with no cure and one Phase Door left", () => {
+    const w = world({ map: ROOM, player: { cls: "Ranger", depth: 1, hp: 26, maxHp: 26 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["a Scroll of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)", "a Scroll of Word of Recall"] });
+    expect(supplyMargin(w.view)).toBeNull();
+    w.setPlayer({ depth: 2 });
+    expect(supplyMargin(w.view)).toBeNull();
+  });
+
+  it.each([[3, 0, 0], [5, 0, 0], [6, 1, 1], [10, 3, 1]] as const)("starts the return at depth %i with %i cures or %i Phase Doors", (depth, cures, phase) => {
+    const rest = ["5 Rations of Food", "3 Wooden Torches (5000 turns)", "4 Scrolls of Teleportation"];
+    const w = world({ map: ROOM, player: { depth }, worn: ["a Wooden Torch (5000 turns)"], pack: [`${String(cures + 1)} Potions of Cure Light Wounds`, `${String(phase + 1)} Scrolls of Phase Door`, ...rest] });
+    expect(supplyMargin(w.view)).toBeNull();
+    w.setPack([...(cures > 0 ? [`${String(cures)} Potions of Cure Light Wounds`] : []), `${String(phase + 1)} Scrolls of Phase Door`, ...rest]);
+    expect(supplyMargin(w.view)).toBe("healing");
+    w.setPack([`${String(cures + 1)} Potions of Cure Light Wounds`, ...(phase > 0 ? [`${String(phase)} Scrolls of Phase Door`] : []), ...rest]);
+    expect(supplyMargin(w.view)).toBe("Phase Door");
   });
 });

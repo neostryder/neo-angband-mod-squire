@@ -9,7 +9,7 @@ import { matchesSupplyName, supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shopEntrances } from "./plan.js";
 import { storesFor } from "./shop.js";
 
-export const EARNING_TURNS = 500;
+export const EARNING_TURNS = 1000;
 export const EARNING_LEASH = 6;
 
 /** Optional stock and gear wait until the whole survival basket is present. */
@@ -44,6 +44,10 @@ export function createDeparture() {
       earning = null;
       shelves.clear();
     }
+    /* The trip's clock starts on level 1. A descent begun in town can be
+     * interrupted by townspeople for hundreds of turns, and the soak's Priest
+     * arrived with the trip already over and climbed straight back up. */
+    if (player.depth > 0 && previousDepth === 0 && earning !== null) earning = { ...earning, turn: view.turn() };
     previousDepth = player.depth;
     const cell = view.cell(player.grid.x, player.grid.y);
     if (player.depth !== 0 || cell === null || !terrain.isShopEntrance(cell.feat)) return;
@@ -83,7 +87,9 @@ export function createDeparture() {
   return {
     status,
     begin(view: AgentView, target: number | null): void {
-      earning = { turn: view.turn(), gold: view.player().gold, target };
+      /* A goal already met would end the trip on arrival; the soak's Rogue, with
+       * 2 gold, climbed straight back 161 times. The turn limit still ends it. */
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null };
     },
     active: () => earning !== null,
     finished(view: AgentView): boolean {

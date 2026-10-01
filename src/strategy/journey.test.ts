@@ -241,15 +241,46 @@ describe("bounded exploration and earning", () => {
     const journey = createJourney(w.terrain);
     const available = journey.apply(offers("descend", "recall_dungeon"), w.view, null, new Set(), false);
     expect(available.map((offer) => offer.goal)).toEqual(["descend"]);
-    expect(available[0]?.criteria).toContain("500 game turns");
+    expect(available[0]?.criteria).toContain("1000 game turns");
     const plan = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
     expect(plan.step(w.view, w.act)?.code).toBe("descend");
     w.setPlayer({ depth: 1 });
     expect(goals(w, journey, false, offers("descend"))).not.toContain("descend");
-    w.advance(500);
+    w.advance(1000);
     expect(goals(w, journey, false, offers("explore"))).toEqual(["leave_level"]);
   });
 
+  /* The soak's Priest began the descent at turn 2900, was held in town by a
+   * battle-scarred veteran, reached level 1 at turn 3330 and took the up
+   * staircase it arrived on at turn 3420 with one command. */
+  it("starts the earning trip's clock on arrival, not when the descent began in town", () => {
+    const w = world({ map: ROOM, player: { cls: "Priest", depth: 0, gold: 0, level: 1, maxLevel: 1, hp: 13, maxHp: 13, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    journey.apply(offers("descend"), w.view, null, new Set(), false);
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.advance(1020);
+    goals(w, journey, false, offers("descend"));
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(90);
+    expect(goals(w, journey, false, offers("explore"))).not.toContain("leave_level");
+    w.advance(1000);
+    expect(goals(w, journey, false, offers("explore"))).toEqual(["leave_level"]);
+  });
+
+  it("keeps a widened trip with no rations on level 1 until the character is hungry", () => {
+    const w = world({ map: ROOM, player: { cls: "Rogue", depth: 0, gold: 2, level: 2, maxLevel: 2, hp: 25, maxHp: 25, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["2 Wooden Torches (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    journey.apply(offers("descend"), w.view, null, new Set(), false, true);
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(110);
+    expect(goals(w, journey, false, offers("explore"))).not.toContain("leave_level");
+    w.setPlayer({ status: { ...w.view.player().status, food: 1000 } });
+    w.advance(10);
+    expect(goals(w, journey, false, offers("explore"))).toEqual(["leave_level"]);
+  });
   it("does not repeat an earning trip that returned with no gold gain", () => {
     const w = world({ map: ROOM, player: { depth: 0, gold: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const journey = createJourney(w.terrain);

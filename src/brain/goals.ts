@@ -42,7 +42,7 @@ import { fleesFromNew, forget, mustPickUp, nudgeUnseen, shiftThreat } from "../p
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
-import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, incomingDamage, inspecting, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, harmlessKind, incomingDamage, inspecting, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -292,10 +292,12 @@ export function swarmOf(monsters: readonly MonsterView[]): { race: string; count
   return best;
 }
 
-function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), stationary: ReadonlySet<number> = new Set(), remembered: readonly MonsterView[] = [], unseenDamage = 0, terrain?: Terrain, speedEnergy?: SpeedEnergy): Situation {
+function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), stationary: ReadonlySet<number> = new Set(), remembered: readonly MonsterView[] = [], unseenDamage = 0, terrain?: Terrain, speedEnergy?: SpeedEnergy, harmless?: (monster: MonsterView) => boolean): Situation {
   const player = view.player();
   const monsters = view.monsters();
-  const awake = awakeInSight(monsters);
+  /* A creature that cannot hurt the character is still a target, but not a
+   * reason to back away or to put off resting. */
+  const awake = awakeInSight(monsters).filter((monster) => harmless?.(monster) !== true);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
   const worst = awake.reduce((max, m) => Math.max(max, assessThreat(m, player, awake, view, dreaded, terrain, speedEnergy).band), -1);
   const swarm = swarmOf(monsters);
@@ -310,7 +312,7 @@ function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), 
     target,
     worst,
     hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1,
-    threats: [...monsters.filter((m) => m.visible), ...remembered.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
+    threats: [...monsters.filter((m) => m.visible && harmless?.(m) !== true), ...remembered.filter((m) => harmless?.(m) !== true && !monsters.some((other) => other.visible && other.id === m.id))],
     unseenDamage,
     lastSeen: new Map(),
     ...(terrain === undefined ? {} : { terrain }),
@@ -963,6 +965,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const rememberedThreats = new Map<number, { monster: MonsterView; turn: number }>();
   let observed: { depth: number; hp: number; grid: Loc } | null = null;
   let unseenHit: UnseenHit | null = null;
+  /* Kinds that have taken hit points from the character, which are never
+   * harmless again, and how many observations each creature on this level has
+   * spent next to the character without a loss. */
+  const hurtBy = new Set<string>();
+  const contacts = new Map<number, number>();
+  function harmlessNow(view: AgentView, monster: MonsterView): boolean {
+    return !hurtBy.has(monster.race) && harmlessKind(monster, view, contacts.get(monster.id) ?? 0);
+  }
   function situationNow(view: AgentView, update = false, observe = update): Situation {
     view = flourishView(view);
     const player = view.player();
@@ -970,6 +980,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     if (observed !== null && observed.depth !== player.depth) {
       rememberedThreats.clear();
       unseenHit = null;
+      contacts.clear();
     }
     const liveIds = new Set(view.monsters().map((m) => m.id));
     for (const id of rememberedThreats.keys()) if (!liveIds.has(id)) rememberedThreats.delete(id);
@@ -985,11 +996,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn, ...(likely === undefined ? {} : { direction: directionToward(player.grid, likely.monster.grid) ?? undefined }) };
       }
       for (const monster of visible) rememberedThreats.set(monster.id, { monster: { ...monster, grid: { ...monster.grid }, visible: false }, turn });
+      const awakeVisible = visible.filter((monster) => !monster.asleep);
+      const adjacent = awakeVisible.filter((monster) => steps(player.grid, monster.grid) <= 1 || observed !== null && steps(observed.grid, monster.grid) <= 1);
+      if (observed !== null && observed.depth === player.depth && observed.hp > player.hp) {
+        const blamed = adjacent.length > 0 ? adjacent : awakeVisible.filter((monster) => monster.spellFlags.length > 0);
+        for (const monster of blamed) hurtBy.add(monster.race);
+      } else {
+        for (const monster of adjacent) contacts.set(monster.id, (contacts.get(monster.id) ?? 0) + 1);
+      }
       observed = { depth: player.depth, hp: player.hp, grid: { ...player.grid } };
     }
     for (const [id, memory] of rememberedThreats) if (turn - memory.turn > 50 || turn < memory.turn) rememberedThreats.delete(id);
     const unseenDamage = unseenDamageAt(unseenHit ?? undefined, player.grid, turn);
-    const situation = situationOf(view, dreadedNow(), stationaryNow(view, update), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy);
+    const situation = situationOf(view, dreadedNow(), stationaryNow(view, update), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy, (monster) => harmlessNow(view, monster));
     return { ...situation, ...(unseenHit === null ? {} : { unseenHit }), breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   /* Goals whose last plan ended without a command, keyed to the game turn it
@@ -1126,7 +1145,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * not news: at night in town that happens every few turns, and treating it
    * as new ended every plan before it got anywhere. */
   let seenDepth = -1;
-  const seenOnLevel = new Set<number>();
+  const seenOnLevel = new Map<number, string>();
   function noteSeen(view: AgentView): void {
     const depth = view.player().depth;
     if (depth !== seenDepth) {
@@ -1135,13 +1154,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       breedersOnLevel.clear();
     }
     /* The game reuses a dead creature's id for the next one it makes, so an id
-     * no longer on the level is forgotten; a summoned creature that takes it is
-     * then news. Forgetting only makes Squire stop for more, never less. */
-    const live = new Set(view.monsters().map((m) => m.id));
-    for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
+     * that comes back as another kind is news. An id missing from the list is
+     * kept: some games list only the creatures in view, and forgetting those
+     * made Farmer Maggot news each time he stepped back into the light. */
     for (const m of view.monsters()) {
       if (!m.visible) continue;
-      seenOnLevel.add(m.id);
+      seenOnLevel.set(m.id, m.race);
       if (m.raceFlags.includes("MULTIPLY")) breedersOnLevel.add(m.race);
     }
   }
@@ -1170,9 +1188,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
-      routine: (monster) => routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...(options.speedEnergy === undefined ? {} : { energy: options.speedEnergy }) }).damage === 0,
+      routine: (monster) => harmlessNow(view, monster) || routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...(options.speedEnergy === undefined ? {} : { energy: options.speedEnergy }) }).damage === 0,
     });
-    for (const id of seenOnLevel) watcher.acknowledge(id);
+    const races = new Map(view.monsters().map((m) => [m.id, m.race]));
+    for (const [id, race] of seenOnLevel) {
+      if ((races.get(id) ?? race) === race) watcher.acknowledge(id);
+      else seenOnLevel.delete(id);
+    }
     return watcher;
   }
 

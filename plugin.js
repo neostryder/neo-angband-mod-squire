@@ -1630,6 +1630,16 @@ function townsperson(monster, depth2) {
 function fastUniqueAtLowLevel(monster, player) {
   return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
 }
+var HARMLESS_CONTACTS = 3;
+var HARMLESS_SPELLS = /* @__PURE__ */ new Set(["BLINK", "TPORT", "HASTE", "HEAL", "SHRIEK"]);
+function harmlessKind(monster, view, contacts = 0) {
+  if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
+  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
+  if (monster.raceFlags.includes("NEVER_BLOW")) return true;
+  if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
+  return contacts >= HARMLESS_CONTACTS || monster.raceFlags.includes("RAND_25") || monster.raceFlags.includes("RAND_50");
+}
 function threatIndex(monster, characterLevel, characterHp = Infinity, dreaded = /* @__PURE__ */ new Set(), town = false) {
   let band;
   if (monster.level * 2 <= characterLevel) band = 0;
@@ -2716,8 +2726,9 @@ function supplyMargin(view) {
   const stock = supplies(view);
   if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
   if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
-  if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (stock.phase <= 1) return "Phase Door";
+  if (player.depth <= 2) return null;
+  if (stock.cures < (player.depth >= 10 ? 4 : player.depth >= 6 ? 2 : 1)) return "healing";
+  if (stock.phase < (player.depth >= 6 ? 2 : 1)) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
   return null;
 }
@@ -3594,7 +3605,7 @@ function aimStores(aim) {
 }
 
 // src/town/departure.ts
-var EARNING_TURNS = 500;
+var EARNING_TURNS = 1e3;
 var EARNING_LEASH = 6;
 function basketNeeds(view, needs) {
   if (missingEssentials(view).length === 0) return [...needs];
@@ -3625,6 +3636,7 @@ function createDeparture() {
       earning = null;
       shelves2.clear();
     }
+    if (player.depth > 0 && previousDepth === 0 && earning !== null) earning = { ...earning, turn: view.turn() };
     previousDepth = player.depth;
     const cell2 = view.cell(player.grid.x, player.grid.y);
     if (player.depth !== 0 || cell2 === null || !terrain.isShopEntrance(cell2.feat)) return;
@@ -3661,7 +3673,7 @@ function createDeparture() {
   return {
     status,
     begin(view, target) {
-      earning = { turn: view.turn(), gold: view.player().gold, target };
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null };
     },
     active: () => earning !== null,
     finished(view) {
@@ -4328,7 +4340,7 @@ function createJourney(terrain, unseenDanger) {
     departure.observe(view, terrain);
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= supplyMargin(view);
-      else if (departure.finished(view) || supplies(view).food === 0 || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;
@@ -4742,10 +4754,10 @@ function swarmOf(monsters) {
   for (const [race, count2] of counts) if (best === null || count2 > best.count) best = { race, count: count2 };
   return best;
 }
-function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered3 = [], unseenDamage = 0, terrain, speedEnergy) {
+function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered3 = [], unseenDamage = 0, terrain, speedEnergy, harmless) {
   const player = view.player();
   const monsters = view.monsters();
-  const awake = awakeInSight(monsters);
+  const awake = awakeInSight(monsters).filter((monster) => harmless?.(monster) !== true);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
   const worst = awake.reduce((max, m) => Math.max(max, assessThreat(m, player, awake, view, dreaded, terrain, speedEnergy).band), -1);
   const swarm = swarmOf(monsters);
@@ -4760,7 +4772,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
     target,
     worst,
     hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1,
-    threats: [...monsters.filter((m) => m.visible), ...remembered3.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
+    threats: [...monsters.filter((m) => m.visible && harmless?.(m) !== true), ...remembered3.filter((m) => harmless?.(m) !== true && !monsters.some((other) => other.visible && other.id === m.id))],
     unseenDamage,
     lastSeen: /* @__PURE__ */ new Map(),
     ...terrain === void 0 ? {} : { terrain },
@@ -5241,6 +5253,11 @@ function createGoalPlanner(options) {
   const rememberedThreats = /* @__PURE__ */ new Map();
   let observed = null;
   let unseenHit = null;
+  const hurtBy = /* @__PURE__ */ new Set();
+  const contacts = /* @__PURE__ */ new Map();
+  function harmlessNow(view, monster) {
+    return !hurtBy.has(monster.race) && harmlessKind(monster, view, contacts.get(monster.id) ?? 0);
+  }
   function situationNow(view, update2 = false, observe = update2) {
     view = flourishView(view);
     const player = view.player();
@@ -5248,6 +5265,7 @@ function createGoalPlanner(options) {
     if (observed !== null && observed.depth !== player.depth) {
       rememberedThreats.clear();
       unseenHit = null;
+      contacts.clear();
     }
     const liveIds = new Set(view.monsters().map((m) => m.id));
     for (const id of rememberedThreats.keys()) if (!liveIds.has(id)) rememberedThreats.delete(id);
@@ -5263,11 +5281,19 @@ function createGoalPlanner(options) {
         unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn, ...likely === void 0 ? {} : { direction: directionToward(player.grid, likely.monster.grid) ?? void 0 } };
       }
       for (const monster of visible) rememberedThreats.set(monster.id, { monster: { ...monster, grid: { ...monster.grid }, visible: false }, turn });
+      const awakeVisible = visible.filter((monster) => !monster.asleep);
+      const adjacent2 = awakeVisible.filter((monster) => steps(player.grid, monster.grid) <= 1 || observed !== null && steps(observed.grid, monster.grid) <= 1);
+      if (observed !== null && observed.depth === player.depth && observed.hp > player.hp) {
+        const blamed = adjacent2.length > 0 ? adjacent2 : awakeVisible.filter((monster) => monster.spellFlags.length > 0);
+        for (const monster of blamed) hurtBy.add(monster.race);
+      } else {
+        for (const monster of adjacent2) contacts.set(monster.id, (contacts.get(monster.id) ?? 0) + 1);
+      }
       observed = { depth: player.depth, hp: player.hp, grid: { ...player.grid } };
     }
     for (const [id, memory] of rememberedThreats) if (turn - memory.turn > 50 || turn < memory.turn) rememberedThreats.delete(id);
     const unseenDamage = unseenDamageAt(unseenHit ?? void 0, player.grid, turn);
-    const situation = situationOf(view, dreadedNow(), stationaryNow(view, update2), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy);
+    const situation = situationOf(view, dreadedNow(), stationaryNow(view, update2), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy, (monster) => harmlessNow(view, monster));
     return { ...situation, ...unseenHit === null ? {} : { unseenHit }, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   const stalled = /* @__PURE__ */ new Map();
@@ -5362,7 +5388,7 @@ function createGoalPlanner(options) {
     return { view: flourishView(view), act, terrain, cfg: with_, progress, log };
   }
   let seenDepth = -1;
-  const seenOnLevel = /* @__PURE__ */ new Set();
+  const seenOnLevel = /* @__PURE__ */ new Map();
   function noteSeen(view) {
     const depth2 = view.player().depth;
     if (depth2 !== seenDepth) {
@@ -5370,11 +5396,9 @@ function createGoalPlanner(options) {
       seenOnLevel.clear();
       breedersOnLevel.clear();
     }
-    const live = new Set(view.monsters().map((m) => m.id));
-    for (const id of seenOnLevel) if (!live.has(id)) seenOnLevel.delete(id);
     for (const m of view.monsters()) {
       if (!m.visible) continue;
-      seenOnLevel.add(m.id);
+      seenOnLevel.set(m.id, m.race);
       if (m.raceFlags.includes("MULTIPLY")) breedersOnLevel.add(m.race);
     }
   }
@@ -5397,9 +5421,13 @@ function createGoalPlanner(options) {
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
-      routine: (monster) => routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...options.speedEnergy === void 0 ? {} : { energy: options.speedEnergy } }).damage === 0
+      routine: (monster) => harmlessNow(view, monster) || routineBreeder(monster) && incomingDamage(view, view.player().grid, 1, terrain, { monsters: [monster], ...options.speedEnergy === void 0 ? {} : { energy: options.speedEnergy } }).damage === 0
     });
-    for (const id of seenOnLevel) watcher.acknowledge(id);
+    const races = new Map(view.monsters().map((m) => [m.id, m.race]));
+    for (const [id, race] of seenOnLevel) {
+      if ((races.get(id) ?? race) === race) watcher.acknowledge(id);
+      else seenOnLevel.delete(id);
+    }
     return watcher;
   }
   function watched(plan, view) {

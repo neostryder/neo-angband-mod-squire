@@ -6,6 +6,7 @@ import { createGoalPlanner, healthBand, RECALL_WAIT_TURNS, recallPending, threat
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
+import { harmlessKind } from "./threat-model.js";
 import { createTally } from "./tally.js";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { gearCandidates } from "../gear/compare.js";
@@ -1658,5 +1659,96 @@ describe("soak findings", () => {
     w.setPlayer({ maxHp: 14 });
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
     expect(w.issued.some((command) => command.code === "descend")).toBe(false);
+  });
+});
+
+describe("harmless creatures", () => {
+  const TOWN = ["############", "#..........#", "#..@.......#", "#..........#", "############"];
+  /* The soak Mage in town: full health, no mana, and Farmer Maggot six steps
+   * away with his attacks not yet known. Each time he came into view the rest
+   * ended and the Mage backed away, 56 times in 12 minutes. */
+  const maggot = (x: number, flags: string[] = ["UNIQUE", "RAND_25"]) => ({ grid: { x, y: 2 }, race: "Farmer Maggot", level: 2, speed: 120, raceFlags: flags });
+  const mage = { level: 1, cls: "Mage", depth: 0, hp: 10, maxHp: 10, sp: 0, maxSp: 2 };
+
+  it("rests with a wandering townsman in view instead of backing away from him", () => {
+    const w = world({ map: TOWN, player: mage, monsters: [maggot(9)] });
+    const goals = offered(planner(w).p.ask(w.view));
+    expect(goals).toContain("rest");
+    expect(goals).not.toContain("retreat");
+    expect(goals).not.toContain("phase");
+    expect(goals).toContain("fight");
+  });
+
+  it("does not end a plan when a wandering townsman comes into view", () => {
+    const w = world({ map: TOWN, player: mage });
+    const { p } = planner(w);
+    const choice = p.choose(pick("rest"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([maggot(9)]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("does not count a creature as new when it steps back into view on the same level", () => {
+    const jackal = { grid: { x: 6, y: 1 }, race: "jackal", level: 1 };
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 1 }, monsters: [jackal] });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.setMonsters([]);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([jackal]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("still stops a plan for a new creature of another kind on a reused id", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 1 }, monsters: [{ grid: { x: 6, y: 1 }, race: "jackal", level: 1, visible: false }] });
+    const { p } = planner(w);
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "jackal", level: 1 }]);
+    p.ask(w.view);
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "cave spider", level: 2, visible: false }]);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "cave spider", level: 2 }]);
+    expect(p.trigger(w.view, choice.plan)).toBe("cave spider came into view.");
+  });
+
+  it("does not end a plan for a creature that never strikes", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 2 } });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "floating eye", level: 1, raceFlags: ["NEVER_MOVE", "NEVER_BLOW"] }]);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("stops backing away from a townsman who has stood beside the character without a blow, until he lands one", () => {
+    const w = world({ map: TOWN, player: { ...mage, cls: "Warrior", hp: 20, maxHp: 20, maxSp: 0 }, monsters: [maggot(5, ["UNIQUE"])] });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).toContain("retreat");
+    w.setMonsters([maggot(4, ["UNIQUE"])]);
+    for (let i = 0; i < 3; i += 1) {
+      w.advance(10);
+      p.ask(w.view);
+    }
+    w.setMonsters([maggot(5, ["UNIQUE"])]);
+    w.advance(10);
+    expect(offered(p.ask(w.view))).not.toContain("retreat");
+    w.setMonsters([maggot(4, ["UNIQUE"])]);
+    w.advance(10);
+    w.setPlayer({ hp: 18 });
+    p.ask(w.view);
+    w.setMonsters([maggot(5, ["UNIQUE"])]);
+    w.advance(10);
+    expect(offered(p.ask(w.view))).toContain("retreat");
+  });
+
+  it("never calls a creature harmless once its recall shows a damaging blow or spell", () => {
+    const bite = world({ map: TOWN, player: mage, monsters: [maggot(9)], monsterRecall: () => "He can bite to hurt (1d3)." });
+    expect(harmlessKind(bite.view.monsters()[0]!, bite.view)).toBe(false);
+    const caster = world({ map: TOWN, player: mage, monsters: [{ ...maggot(9), spellFlags: ["BLIND"] }] });
+    expect(harmlessKind(caster.view.monsters()[0]!, caster.view)).toBe(false);
+    const deep = world({ map: TOWN, player: { ...mage, depth: 1 }, monsters: [maggot(9)] });
+    expect(harmlessKind(deep.view.monsters()[0]!, deep.view)).toBe(false);
+    expect(harmlessKind(deep.view.monsters()[0]!, world({ map: TOWN, player: mage, monsters: [maggot(9)] }).view)).toBe(true);
   });
 });

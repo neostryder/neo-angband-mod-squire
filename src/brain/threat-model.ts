@@ -84,6 +84,29 @@ export function fastUniqueAtLowLevel(monster: MonsterView, player: PlayerView): 
   return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
 }
 
+/** Turns spent next to the character without hurting it before a town creature with unseen blows counts as harmless. */
+export const HARMLESS_CONTACTS = 3;
+/* Spells that only move the caster, or call attention, cannot hurt the character. */
+const HARMLESS_SPELLS: ReadonlySet<string> = new Set(["BLINK", "TPORT", "HASTE", "HEAL", "SHRIEK"]);
+
+/**
+ * A creature that cannot hurt the character, or has had its chances and not:
+ * one with no blows and no harmful spell anywhere, or, in town, one whose
+ * recall shows no damaging blow or spell that either wanders at random or has
+ * stood next to the character for `HARMLESS_CONTACTS` turns without a hit.
+ * Farmer Maggot coming into view ended the soak Mage's rest 56 times and sent
+ * the Warrior backing away from him at full health. A creature that has hurt
+ * the character is never harmless; the caller keeps that record.
+ */
+export function harmlessKind(monster: MonsterView, view: AgentView, contacts = 0): boolean {
+  if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
+  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
+  if (monster.raceFlags.includes("NEVER_BLOW")) return true;
+  if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
+  return contacts >= HARMLESS_CONTACTS || monster.raceFlags.includes("RAND_25") || monster.raceFlags.includes("RAND_50");
+}
+
 /**
  * How a creature compares with the character, from their levels. Uniques count
  * one band worse than their level suggests, hit points the creature could take

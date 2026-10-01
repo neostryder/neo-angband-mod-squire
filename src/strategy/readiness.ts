@@ -147,15 +147,22 @@ export function missingEssentials(view: AgentView): Requirement[] {
   return out;
 }
 
-/** The return starts above the lower stay-on-level floor, leaving supplies for the route. */
+/**
+ * The return starts above the lower stay-on-level floor, leaving supplies for the route.
+ *
+ * The first two levels ask for no potion or Phase Door: their creatures are
+ * the ones a character levels on, and the town floor of two of each meant one
+ * scroll read on level 1 sent the character home, every trip.
+ */
 export function supplyMargin(view: AgentView): string | null {
   const player = view.player();
   if (player.depth === 0) return null;
   const stock = supplies(view);
   if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
   if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
-  if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (stock.phase <= 1) return "Phase Door";
+  if (player.depth <= 2) return null;
+  if (stock.cures < (player.depth >= 10 ? 4 : player.depth >= 6 ? 2 : 1)) return "healing";
+  if (stock.phase < (player.depth >= 6 ? 2 : 1)) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
   return null;
 }
