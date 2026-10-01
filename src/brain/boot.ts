@@ -8,18 +8,11 @@
  * procedural errands when none is.
  */
 
-import type { AgentController } from "@rpgm-tools/neo-angband-core";
+import type { AgentController, ModNetSecrets } from "@rpgm-tools/neo-angband-core";
 import { JEV_KEY_VARIABLES, type Backend } from "./backend.js";
 
-/** What Squire needs from `ctx.net.secrets`. */
-export interface SecretsLike {
-  has(name: string): Promise<{ readonly present: boolean; readonly storage?: string }>;
-  fromEnv(
-    name: string,
-    variables: readonly string[],
-    options: { readonly hosts: readonly string[] },
-  ): Promise<{ readonly ok: true; readonly storage: string } | { readonly ok: false; readonly problem: string }>;
-}
+/** Secret methods used while Squire starts. */
+export type SecretsLike = Pick<ModNetSecrets, "has" | "fromEnv">;
 
 /** Whether `backend` can be asked: it needs no key, or its key is set or can be read from the environment. */
 export async function keyReady(

@@ -1,3 +1,4 @@
+import type { RunReport } from "@rpgm-tools/neo-angband-core";
 import type { Tally, TallyTotals } from "../brain/tally.js";
 import type { LoggedDecision } from "../memory/log.js";
 import { PARAMETERS } from "../persona/catalog.js";
@@ -19,18 +20,7 @@ export interface ApprenticeshipSummary {
   readonly knightRadar: readonly { readonly id: SliderId; readonly value: number; readonly confidence: number }[];
 }
 
-/** The host's end-of-run value, declared here so this mod can build by itself. */
-export interface RunReport {
-  outcome: "death" | "victory" | "retirement";
-  cause: string; key: string | null; name: string; race: string; cls: string;
-  level: number; maxLevel: number; maxDepth: number; depth: number; gold: number; turn: number;
-  score: number; scored: boolean; endedAt: number;
-  history: { kind: "birth" | "level" | "unique" | "artifact" | "artifact-unknown" | "note" | "import" | "other"; text: string; turn: number; depth: number; level: number; lost?: boolean }[];
-  messages: { text: string; count: number; color?: string }[];
-  belongings: unknown[];
-  sheet: unknown | null;
-  birth: { race: string; cls: string; name: string; stats: number[] };
-}
+export type { RunReport };
 
 export interface RunSummary {
   readonly headline: {
@@ -153,7 +143,7 @@ export function summaryForTelemetry(model: RunSummary): TelemetrySummary {
   return {
     persona: { name: model.headline.name, race: model.headline.race, class: model.headline.class },
     outcome: {
-      ended: true, won: model.headline.outcome === "victory", depth_max: model.headline.deepestFeet / 50,
+      ended: true, won: model.headline.outcome === "winner", depth_max: model.headline.deepestFeet / 50,
       turns: model.headline.turns, cause_of_death: model.headline.outcome === "death" ? model.headline.cause : null,
     },
     top_kills: model.topKills.slice(0, 10),

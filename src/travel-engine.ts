@@ -33,19 +33,6 @@ import { flowFrom } from "./flow.js";
 import { isRoutable, isWalkable } from "./map.js";
 import { awakeInSight } from "./threat.js";
 
-/**
- * The engine's route read, which engine 1.8.0's AgentView does not declare.
- * Declared here so the mod still compiles against it, and read only after the
- * typeof check.
- */
-interface RoutingView {
-  travelPath?(to: Loc): { readonly grids: readonly Loc[] } | null;
-}
-
-function routing(view: AgentView): AgentView & RoutingView {
-  return view as AgentView & RoutingView;
-}
-
 /** How the walk should be handed to the engine. */
 export interface EngineTravelOptions {
   /** A stair kind, so the engine's own navigate command picks the target. */
@@ -56,7 +43,7 @@ export interface EngineTravelOptions {
 
 /** Whether this view can answer for the engine's own travel. */
 export function engineTravelAvailable(view: AgentView): boolean {
-  return typeof routing(view).travelPath === "function";
+  return typeof view.travelPath === "function";
 }
 
 /**
@@ -84,7 +71,7 @@ export function engineTravel(ctx: SquireContext, goals: readonly Loc[], options:
   if (near === null) return null;
   /* The engine's own route is the one the command will walk; when it cannot
    * answer, the caller's flow field is the fallback. */
-  const route = routing(ctx.view).travelPath?.({ x: near.x, y: near.y }) ?? null;
+  const route = ctx.view.travelPath?.({ x: near.x, y: near.y }) ?? null;
   if (route === null || route.grids.length === 0) return null;
 
   const first = route.grids[0];

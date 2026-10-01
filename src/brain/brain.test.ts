@@ -119,14 +119,15 @@ describe("brain", () => {
     const release = vi.fn();
     const host: SquireHost = {
       log: () => {},
-      controller: { setStatus: () => {}, markNondeterministic: () => {}, ...(available ? { release } : {}) },
+      /* A game older than the floor has no release; the cast stands in for it. */
+      controller: { setStatus: () => {}, markNondeterministic: () => {}, ...(available ? { release } : {}) } as NonNullable<SquireHost["controller"]>,
       net: {
         transport: "page",
-        request: async () => ({ ok: false, code: "not-allowed", problem: "The test has no server." }),
+        request: async () => ({ ok: false, code: "unreachable", problem: "The test has no server." }),
         secrets: {
           storage: "page", has: async () => ({ present: true }),
           fromEnv: async () => ({ ok: false, problem: "The test has no environment." }),
-          set: async () => ({ ok: true }), delete: async () => ({ ok: true }),
+          set: async () => ({ ok: true, storage: "page" }), delete: async () => ({ ok: true }),
         },
       },
     };

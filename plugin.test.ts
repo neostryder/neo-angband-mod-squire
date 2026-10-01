@@ -52,7 +52,7 @@ function context(options: { noscore?: number; withRegistries?: boolean } = {}): 
       core: { TF } as unknown as typeof Core,
       log: (message: string) => logged.push(message),
       registries: registries as unknown as Core.CoreRegistries,
-      state: { actor: { player: { noscore: options.noscore ?? 0 } } },
+      state: { actor: { player: { noscore: options.noscore ?? 0 } } } as unknown as { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } },
     },
   };
 }

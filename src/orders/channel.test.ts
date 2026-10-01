@@ -108,7 +108,7 @@ describe("collecting viewer orders", () => {
 
   it("logs a failed poll once, never throws, and tries again later", async () => {
     const net = stubNet([
-      { ok: false, code: "network", problem: "connection refused" },
+      { ok: false, code: "unreachable", problem: "connection refused" },
       { ok: true, status: 502, headers: {}, body: "" },
       { ok: true, status: 200, headers: {}, body: "not json" },
       ok([{ text: "rest when wounded", platform: "twitch", user: "Grip" }]),

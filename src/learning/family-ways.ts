@@ -2,7 +2,6 @@ import type { AgentCommand, AgentView, ItemView } from "@rpgm-tools/neo-angband-
 import type { Persona } from "../persona/persona.js";
 import { gearCandidates } from "../gear/compare.js";
 import { PACK_LIMIT } from "../brain/items.js";
-import { inspecting } from "../brain/threat-model.js";
 import { shownName } from "../town/needs.js";
 import { missingPreparation } from "../strategy/readiness.js";
 
@@ -113,7 +112,7 @@ export function observeFlourishes(run: Flourishes, view: AgentView, persona: Per
   for (const item of items) {
     const name = shownName(item);
     if (name === null) continue;
-    const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const text = view.inspectItem?.(item.handle)?.text ?? "";
     const originDepth = /(?:found|dropped)[\s\S]*?\(level (\d+)\)/i.exec(text);
     const bought = /Bought from a store|An inheritance from your family|Created by debug option/i.test(text);
     const depth = bought ? 0 : originDepth === null ? acquired.has(item.handle) ? view.player().depth : 0 : Number(originDepth[1]);

@@ -43,7 +43,7 @@
  */
 
 import type * as Core from "@rpgm-tools/neo-angband-core";
-import type { AgentController } from "@rpgm-tools/neo-angband-core";
+import type { AgentController, ModPluginContext } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
@@ -53,10 +53,7 @@ import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } f
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
 
-interface ControllerCtx extends SquireHost {
-  readonly flags: Readonly<Record<string, boolean>>;
-  /** The live engine namespace, at the version manifest.json requires. */
-  readonly core: typeof Core;
+type ControllerCtx = Pick<ModPluginContext, "flags" | "core" | "log" | "registries"> & SquireHost & {
   readonly log: (msg: string) => void;
   /**
    * The bound content registries (host `ctx.registries`).
@@ -71,22 +68,8 @@ interface ControllerCtx extends SquireHost {
    * surfacing as an errand that never finds a staircase.
    */
   readonly registries: Core.CoreRegistries;
-  /**
-   * The live game state (host `ctx.state`), declared as the narrow shape this
-   * file reads rather than imported: `GameState` is an internal host type and
-   * not part of the published surface.
-   */
-  readonly state: {
-    readonly actor: {
-      /**
-       * The live player, when the host has one. Optional in this declared shape
-       * because a defective test host can omit it; a real controller() call
-       * always has a character by then.
-       */
-      readonly player?: { readonly noscore: number };
-    };
-  };
-}
+  readonly state?: { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } };
+};
 
 /**
  * NOSCORE_BORG (player.h). Mirrors core's NOSCORE.BORG; kept local so the mod
@@ -150,7 +133,7 @@ export default {
     attachSquire(ctx, rt);
     /* The in-game order key needs registry:command and keymap:write; without them the panel's own key still works. */
     registerOrderCommand(host, ctx, rt);
-    /* The title row needs ui:title and profiles:manage; an older Core offers neither and gets no row. */
+    /* The title row needs ui:title and profiles:manage; without both there is no row. */
     registerSquireTitle(ctx, rt.store());
   },
 

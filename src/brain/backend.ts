@@ -11,21 +11,10 @@
  */
 
 import { parseReply, type Answer, type SystemOneRequest, type Usage } from "./systemone.js";
+import type { ModNet } from "@rpgm-tools/neo-angband-core";
 
-/** What Squire needs from `ctx.net`, declared here so the mod builds without the host's source. */
-export interface NetLike {
-  readonly transport: "relay" | "page";
-  request(request: {
-    readonly url: string;
-    readonly method?: string;
-    readonly headers?: Readonly<Record<string, string>>;
-    readonly body?: string;
-    readonly timeoutMs?: number;
-  }): Promise<
-    | { readonly ok: true; readonly status: number; readonly headers: Readonly<Record<string, string>>; readonly body: string }
-    | { readonly ok: false; readonly code: string; readonly problem: string }
-  >;
-}
+/** Network methods used by Squire. */
+export type NetLike = Pick<ModNet, "transport" | "request">;
 
 export type BackendKind = "jev" | "laya" | "custom";
 

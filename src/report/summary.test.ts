@@ -11,7 +11,7 @@ function report(outcome: RunReport["outcome"]): RunReport {
     outcome, cause: outcome === "death" ? "Killed by a troll" : "Won the game", key: null,
     name: "Mira", race: "Elf", cls: "Mage", level: 12, maxLevel: 12, maxDepth: 15, depth: 15,
     gold: 500, turn: 100, score: 1000, scored: true, endedAt: 1000,
-    history: [{ kind: "unique", text: "Bullroarer the Hobbit", turn: 30, depth: 5, level: 6 }],
+    history: [{ kind: "unique", text: "Bullroarer the Hobbit", turn: 30, depth: 5, level: 6, lost: false }],
     messages: [], belongings: [], sheet: null,
     birth: { race: "Elf", cls: "Mage", name: "Mira", stats: [10, 10, 10, 10, 10, 10] },
   };
@@ -63,7 +63,7 @@ describe("run summary", () => {
   });
 
   it("maps a victory and sends no traits or backstory in telemetry", () => {
-    const { chronicleHighlights: _highlights, ...source } = input("victory");
+    const { chronicleHighlights: _highlights, ...source } = input("winner");
     const model = buildRunSummary(source);
     expect(model.deathDecisions).toEqual([]);
     expect(model.chronicleHighlights[0]).toContain("Fell to 2 HP");
@@ -76,7 +76,7 @@ describe("run summary", () => {
   });
 
   it("includes apprenticeship facts only when the notebook has decisions", () => {
-    const source = input("victory");
+    const source = input("winner");
     const model = buildRunSummary({ ...source, apprentice: {
       agreed: 30, total: 40, commands: [{ kind: "heal", turn: 10, hpShare: 0.4 }],
       exams: [{ matched: 14, scored: 18 }], examArmed: false, ghostHint: null, ghostGoal: null,

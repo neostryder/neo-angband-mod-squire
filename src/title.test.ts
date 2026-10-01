@@ -3,25 +3,25 @@ import { memoryStore, type KvStore } from "./memory/kv.js";
 import {
   COPY_PROMPT, FALLBACK_HERE, freshName, PROFILES_KEY, registerSquireTitle, TITLE_KEY, TITLE_LABEL,
   WHERE_HERE, WHERE_PROMPT, WHERE_SEPARATE, WHICH_COPY, WHICH_FRESH, WHICH_PROMPT,
-  type ProfileInfo, type ProfileResult, type ProfilesSeam, type TitleRow, type TitleSeam,
 } from "./title.js";
+import type { ModProfile, ModProfiles, ModTitle, ModTitleRow, ProfileResult } from "@rpgm-tools/neo-angband-core";
 
 interface Fake {
-  readonly title: TitleSeam;
-  readonly profiles: ProfilesSeam;
-  readonly rows: TitleRow[];
+  readonly title: ModTitle;
+  readonly profiles: ModProfiles;
+  readonly rows: ModTitleRow[];
   readonly asked: { title: string; choices: readonly string[] }[];
   readonly calls: string[];
-  readonly profileList: ProfileInfo[];
+  readonly profileList: ModProfile[];
 }
 
 /** A host whose prompts answer from `answers` in order, and whose profile calls can be refused by name. */
-function host(answers: (number | null)[], options: { refuse?: Partial<Record<keyof ProfilesSeam, string>>; profiles?: ProfileInfo[] } = {}): Fake {
-  const rows: TitleRow[] = [];
+function host(answers: (number | null)[], options: { refuse?: Partial<Record<keyof ModProfiles, string>>; profiles?: ModProfile[] } = {}): Fake {
+  const rows: ModTitleRow[] = [];
   const asked: Fake["asked"] = [];
   const calls: string[] = [];
-  const profileList: ProfileInfo[] = options.profiles ?? [{ id: null, name: "Default", active: true }];
-  const refusal = (name: keyof ProfilesSeam): { ok: false; reason: string } | null => {
+  const profileList: ModProfile[] = options.profiles ?? [{ id: null, name: "Default", active: true }];
+  const refusal = (name: keyof ModProfiles): { ok: false; reason: string } | null => {
     const reason = options.refuse?.[name];
     return reason === undefined ? null : { ok: false, reason };
   };

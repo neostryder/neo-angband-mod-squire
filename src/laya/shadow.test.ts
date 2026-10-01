@@ -80,7 +80,7 @@ describe("Laya shadow rows", () => {
     const rows = createRows(store, "run-2");
     const logs: string[] = [];
     let calls = 0;
-    const net: NetLike = { transport: "page", async request() { calls++; return { ok: false, code: "offline", problem: "offline" }; } };
+    const net: NetLike = { transport: "page", async request() { calls++; return { ok: false, code: "unreachable", problem: "offline" }; } };
     const shadow = createShadow({ net, rows, install: Promise.resolve(INSTALL), runId: "run-2", now: () => 0, log: (line) => logs.push(line) });
     await shadow.record({ ...decision(), model: null }, 0, false, URL);
     await shadow.record(decision("Laya"), 1, true, URL);

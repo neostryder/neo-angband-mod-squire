@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, KnownFloorInspectResult, KnownFloorItemDetails, KnownFloorItemRef, KnownFloorItemView } from "@rpgm-tools/neo-angband-core";
 import { suppliedWorld as world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
@@ -15,22 +15,22 @@ import { TV } from "../gear/compare.js";
 import { createGoalPlanner, type GoalDigest } from "./goals.js";
 import type { Question } from "./brain.js";
 import type { Answer } from "./systemone.js";
-import { floorTarget, type KnownFloorDetails, type KnownFloorEntry, type KnownFloorLook, type KnownFloorRef } from "./items.js";
+import { floorTarget } from "./items.js";
 
 const ROOM = ["######", "#@...#", "######"];
 const POTION = 26;
 
 /** One item's details as knownFloorItems reports them. */
-function details(name: string, tval: number): KnownFloorDetails {
-  return { name, tval, pval: 0, number: 1, weight: 4, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, inscription: null } as unknown as KnownFloorDetails;
+function details(name: string, tval: number): KnownFloorItemDetails {
+  return { name, tval, pval: 0, number: 1, weight: 4, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, inscription: null } as unknown as KnownFloorItemDetails;
 }
 
 let nextRef = 1;
-function seen(x: number, y: number, name: string, tval: number, visibility: "seen" | "remembered" = "seen"): KnownFloorEntry {
+function seen(x: number, y: number, name: string, tval: number, visibility: "seen" | "remembered" = "seen"): KnownFloorItemView {
   return { ref: { id: nextRef++ }, grid: { x, y }, visibility, sensed: false, item: details(name, tval) };
 }
 
-function sensed(x: number, y: number, money: boolean): KnownFloorEntry {
+function sensed(x: number, y: number, money: boolean): KnownFloorItemView {
   return { ref: { id: nextRef++ }, grid: { x, y }, visibility: "remembered", sensed: true, money, item: null };
 }
 
@@ -38,7 +38,7 @@ function sensed(x: number, y: number, money: boolean): KnownFloorEntry {
  * The world's view with the player's floor memory added. `memory` is read on
  * every call, so a test changes what the player knows by changing it.
  */
-function remembering(base: AgentView, memory: { entries: KnownFloorEntry[]; look?: (ref: KnownFloorRef) => KnownFloorLook }): AgentView {
+function remembering(base: AgentView, memory: { entries: KnownFloorItemView[]; look?: (ref: KnownFloorItemRef) => KnownFloorInspectResult }): AgentView {
   const at = (x: number, y: number) => memory.entries.filter((entry) => entry.grid.x === x && entry.grid.y === y);
   return {
     ...base,
@@ -47,12 +47,12 @@ function remembering(base: AgentView, memory: { entries: KnownFloorEntry[]; look
       return cell === null ? null : { ...cell, knownObjectCount: at(x, y).length };
     },
     knownFloorItems: at,
-    inspectKnownFloorItem: (ref: KnownFloorRef): KnownFloorLook => {
+    inspectKnownFloorItem: (ref: KnownFloorItemRef): KnownFloorInspectResult => {
       if (memory.look !== undefined) return memory.look(ref);
       const entry = memory.entries.find((e) => e.ref.id === ref.id);
       if (entry === undefined) return { status: "stale", inspection: null };
       if (entry.sensed) return { status: "sensed", inspection: null };
-      return entry.visibility === "seen" ? { status: "seen", inspection: { text: `${entry.item.name}. It would sell for 30 gold.` } } : { status: "stale", inspection: null };
+      return entry.visibility === "seen" ? { status: "seen", inspection: { token: { epoch: 0, revision: 0 }, title: entry.item.name, text: `${entry.item.name}. It would sell for 30 gold.` } } : { status: "stale", inspection: null };
     },
   } as unknown as AgentView;
 }
@@ -143,7 +143,7 @@ describe("floor items as the player knows them", () => {
 
   it("ends the plan quietly when a second look finds the item gone", () => {
     const w = world({ map: ROOM, floor: [{ x: 3, y: 1, name: "a Potion of Cure Light Wounds" }] });
-    const memory: { entries: KnownFloorEntry[]; look?: (ref: KnownFloorRef) => KnownFloorLook } = { entries: [seen(3, 1, "a Potion of Cure Light Wounds", POTION)] };
+    const memory: { entries: KnownFloorItemView[]; look?: (ref: KnownFloorItemRef) => KnownFloorInspectResult } = { entries: [seen(3, 1, "a Potion of Cure Light Wounds", POTION)] };
     const view = remembering(w.view, memory);
     const { plan } = fetchPlan(w, view, defaultPersona());
     expect(plan.step(view, w.act)).toEqual({ code: "walk", dir: 6 });

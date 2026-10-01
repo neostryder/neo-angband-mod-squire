@@ -228,7 +228,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         const loot = floorTarget(view, terrain, false, lastPersona);
         if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at)) return null;
         /* Engine runs can cross the leash before the next planner observation. */
-        const single = { ...view, travelPath: undefined };
+        const single: AgentView = { ...view };
+        delete single.travelPath;
         const command = plan.step(single, act);
         if (command?.code === "walk" || command?.code === "open") {
           const dir = DIRECTIONS.find((entry) => entry.key === command.dir);

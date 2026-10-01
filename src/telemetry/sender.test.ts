@@ -207,12 +207,12 @@ it.each(["off", "summary"] as const)("keeps consent %s for a new finished run af
   let ended: ((report: RunReportLike) => void) | undefined;
   const rt = createRuntime({
     log: vi.fn(),
-    net: { transport: "page", request, secrets: { storage: "page", async has() { return { present: false }; }, async fromEnv() { return { ok: false, problem: "unavailable" }; }, async set() { return { ok: true }; }, async delete() { return { ok: true }; } } },
-    character: { onRunEnd(listener) { ended = listener; return () => {}; } },
+    net: { transport: "page", request, secrets: { storage: "page", async has() { return { present: false }; }, async fromEnv() { return { ok: false, problem: "unavailable" }; }, async set() { return { ok: true, storage: "page" }; }, async delete() { return { ok: true }; } } },
+    character: { key: () => null, onRunEnd(listener) { ended = listener; return () => {}; } },
   }, { store });
   rt.saveConfig({ ...rt.config(), telemetry: { ...rt.config().telemetry, level, endpoint: "https://example.test" } });
   expect((await sender({ transport: "page", request }, store).client.deleteInstall(batch.install_id)).ok).toBe(true);
-  ended!({ outcome: "victory", cause: "winning", key: null, name: "Beren", race: "Human", cls: "Warrior", level: 50, maxLevel: 50, maxDepth: 100, depth: 100, gold: 0, turn: 100, score: 0, scored: false, endedAt: 1, history: [], messages: [], belongings: [], sheet: null, birth: { name: "Beren", race: "Human", cls: "Warrior", stats: [] } });
+  ended!({ outcome: "winner", cause: "winning", key: null, name: "Beren", race: "Human", cls: "Warrior", level: 50, maxLevel: 50, maxDepth: 100, depth: 100, gold: 0, turn: 100, score: 0, scored: false, endedAt: 1, history: [], messages: [], belongings: [], sheet: null, birth: { name: "Beren", race: "Human", cls: "Warrior", stats: [] } });
   await vi.waitFor(async () => expect(await rt.lastSummary()).not.toBeNull());
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   expect(rt.config().telemetry.level).toBe(level);

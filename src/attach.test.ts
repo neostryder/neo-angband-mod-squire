@@ -12,11 +12,14 @@ import type { GoalDigest } from "./brain/goals.js";
 it("persists command evidence and saves an inferred style", async () => {
   const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
   const store = memoryStore();
-  const handlers = new Map<string, (name: string, payload: unknown) => void>();
+  const handlers = new Map<string, (name: string, payload: { code?: string }) => void>();
   const host: AttachHost = {
-    log: () => {}, flags: {}, state: {}, character: { key: () => "Mira" },
+    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, state: {} as NonNullable<AttachHost["state"]>, character: { key: () => "Mira" },
     core: { createAgentView: () => w.view },
-    events: { on: (name, handler) => { handlers.set(name, handler); } },
+    events: {
+      on: (name, handler) => { handlers.set(name, (eventName, payload) => handler(eventName as never, payload as never)); },
+      off: () => {},
+    },
   };
   const rt = createRuntime(host, { store });
   const lessons = attachSquire(host, rt);
@@ -45,7 +48,7 @@ it("stores the exam result after 20 Squire decisions", async () => {
     line: "Noted.", demonstration: false, signature };
   await store.set("squire/apprentice", { entries: Array.from({ length: 40 }, () => entry),
     agreed: 0, total: 40, commands: [], exams: [], examArmed: false, ghostHint: null });
-  const host: AttachHost = { log: () => {}, flags: {} };
+  const host: AttachHost = { log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {} };
   const rt = createRuntime(host, { store });
   const listeners: DecisionListener[] = [];
   const examining = { ...rt, onDecision: (listener: DecisionListener) => { listeners.push(listener); return () => {}; },
@@ -66,7 +69,7 @@ it("stores the exam result after 20 Squire decisions", async () => {
 
 it("saves a Knight's Lessons decision as a Laya row with the knight's goal as its label", async () => {
   const store = memoryStore();
-  const host: AttachHost = { log: () => {}, flags: {} };
+  const host: AttachHost = { log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {} };
   const rt = createRuntime(host, { store });
   const request = { state: { character: "Level 1 Human Mage" }, questions: { goal: { type: "choice" as const, instructions: "Which?", criteria: { fight: "Fight.", retreat: "Back off.", none_of_these: null } } } };
   const answers = { goal: { type: "choice" as const, choice: "fight", confidence: 0.7, probabilities: { fight: 0.8, retreat: 0.2 } } };

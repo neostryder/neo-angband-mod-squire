@@ -68,7 +68,7 @@ describe("epitaphs", () => {
   it.each([true, false])("writes the death through the runtime with Epitaphs %s", async (enabled) => {
     let ended: ((report: RunReportLike) => void) | undefined;
     const logged: string[] = [];
-    const rt = createRuntime({ log: (line) => logged.push(line), character: { onRunEnd: (listener) => { ended = listener; return () => {}; } } }, { store: memoryStore() });
+    const rt = createRuntime({ log: (line) => logged.push(line), character: { key: () => null, onRunEnd: (listener) => { ended = listener; return () => {}; } } }, { store: memoryStore() });
     const p = persona();
     p.toggles.epitaphs = enabled;
     rt.saveCharacter({ ...rt.character(), persona: p });

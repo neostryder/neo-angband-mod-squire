@@ -42,7 +42,7 @@ import { fleesFromNew, forget, mustPickUp, nudgeUnseen, shiftThreat } from "../p
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
-import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, harmlessKind, incomingDamage, inspecting, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, harmlessKind, incomingDamage, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -1289,7 +1289,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return once(label, view, (ctx) => {
       const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
-      if (ball && inspecting(ctx.view).blastArea !== undefined && inspecting(ctx.view).projectionPath !== undefined) {
+      if (ball && ctx.view.blastArea !== undefined && ctx.view.projectionPath !== undefined) {
         const aim = bestBallAim(ctx.view, s.awake, s.target);
         if (aim === null) return null;
         ctx.act.setTargetLocation(aim.x, aim.y);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { writeConfig, readConfig } from "./config.js";
-import { HEIR_KEY, markRollOn, rollOnPresenter, ROLL_ON_WINDOW_MS, takeRollOn, type BirthSessionLike, type MarkStore } from "./birth.js";
+import { HEIR_KEY, markRollOn, rollOnPresenter, ROLL_ON_WINDOW_MS, takeRollOn, type BirthResultLike, type BirthSessionLike, type MarkStore } from "./birth.js";
 import { defaultPersona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
 
@@ -15,7 +15,7 @@ function marks(): MarkStore {
 
 function session(previous: boolean, refuse: string | null = null, previousName = "Amram") {
   const calls: string[] = [];
-  const ok = { ok: true };
+  const ok: BirthResultLike = { ok: true };
   let current = "";
   const s: BirthSessionLike = {
     catalogue: () => ({

@@ -59,6 +59,7 @@ Fixed.
 
 ### Changed
 - [Visible] **Squire plays on until you take the keyboard back or the character dies.** When the model can't be reached or a spend limit is reached, it keeps choosing from its own options and returns to the model when it can. A floor with nothing left to do, a plan the game refuses or a loop that gets nowhere makes it look further afield instead of stopping.
+- [Visible] [Compatibility] **Squire now needs Neo Angband 1.21.0 or later**, the first version with everything it reads from the game: the title-screen row, profiles, and floor items as the player knows them.
 - [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.
 
 ### Removed
@@ -67,6 +68,7 @@ Fixed.
 
 ### Fixed
 - [Visible] [Security] **Deleting your telemetry also clears uploads still waiting to be sent.** A queued run could otherwise upload after the deletion. New uploads follow your consent setting as before.
+- [Visible] [UI] **The Squire panel opens at its intended minimum size.** It passed its size under names the game does not read, so the dock could squeeze it smaller.
 - [Visible] **With Inheritance at nothing, or Blood grudges off for the parent or the heir, no grudge passes down.** The family still remembers what killed its characters.
 - [Visible] [Balance] **Squire can go deeper than 2,300 ft.** Past that depth it descends once the character has the speed, protections and healing each depth calls for, where before it never went further.
 - [Visible] [Balance] **Squire keeps earning experience when it isn't ready to go deeper.** On a cleared floor it takes an up staircase to a fresh level instead of stopping, and it never takes a down staircase to a depth it isn't prepared for.

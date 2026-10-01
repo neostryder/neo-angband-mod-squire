@@ -30,7 +30,7 @@ export function mountReport(body: HTMLElement, rt: Runtime): () => void {
     const card = h("canvas", { width: "1200", height: "630" });
     const g = card.getContext("2d");
     if (g !== null) drawCard(g as unknown as CardContext, model);
-    const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "victory" ? "Won the game." : "Retired."}`;
+    const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "winner" ? "Won the game." : "Retired."}`;
     const links = shareLinks(text);
     const apprenticeship = model.apprenticeship;
     const radar = apprenticeship === undefined ? null : h("canvas", { width: "600", height: "260" });
@@ -48,7 +48,7 @@ export function mountReport(body: HTMLElement, rt: Runtime): () => void {
     fill(
       view,
       h("h3", {}, `${hl.name}, level ${String(hl.level)} ${hl.race} ${hl.class}`),
-      h("p", {}, `${hl.outcome === "death" ? `Killed by ${hl.cause}` : hl.outcome === "victory" ? "Won the game" : "Retired"} at ${String(hl.deepestFeet)} ft after ${hl.turns.toLocaleString()} turns.`),
+      h("p", {}, `${hl.outcome === "death" ? `Killed by ${hl.cause}` : hl.outcome === "winner" ? "Won the game" : "Retired"} at ${String(hl.deepestFeet)} ft after ${hl.turns.toLocaleString()} turns.`),
       model.topKills.length === 0 ? null : h("p", {}, `Most killed: ${model.topKills.slice(0, 5).map((k) => `${k.name} (${String(k.count)})`).join(", ")}`),
       model.uniquesKilled.length === 0 ? null : h("p", {}, `Uniques killed: ${model.uniquesKilled.join(", ")}`),
       h("p", {}, `Went against advice ${String(model.divergence.count)} times. Used ${model.tokens.inputTokens.toLocaleString()} input tokens${model.tokens.usd > 0 ? `, about $${model.tokens.usd.toFixed(3)}` : ""}.`),

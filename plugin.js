@@ -1,4 +1,4 @@
-// squire - generated from plugin.ts by neo-angband-mod-build
+// neo-angband-mod-squire - generated from plugin.ts by neo-angband-mod-build
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
@@ -482,11 +482,8 @@ function autofight() {
 }
 
 // src/travel-engine.ts
-function routing(view) {
-  return view;
-}
 function engineTravelAvailable(view) {
-  return typeof routing(view).travelPath === "function";
+  return typeof view.travelPath === "function";
 }
 function engineTravel(ctx, goals, options = {}) {
   if (goals.length === 0) return null;
@@ -499,7 +496,7 @@ function engineTravel(ctx, goals, options = {}) {
   }
   const near = nearestGoal(ctx, goals);
   if (near === null) return null;
-  const route = routing(ctx.view).travelPath?.({ x: near.x, y: near.y }) ?? null;
+  const route = ctx.view.travelPath?.({ x: near.x, y: near.y }) ?? null;
   if (route === null || route.grids.length === 0) return null;
   const first = route.grids[0];
   if (first === void 0) return null;
@@ -1310,7 +1307,7 @@ function unseenAttacks(view, response, surveyTreasure = false) {
   const aimed = /\b(?:bolts?|balls?|magic missile|stinking cloud|light|dragon's (?:flame|frost|breath))\b/i;
   if (response === "cast_area") {
     for (const spell of canRead(view) ? castable(view) : []) {
-      const info = inspecting(view).spellInfo?.(spell.sidx);
+      const info = view.spellInfo?.(spell.sidx);
       if (area.test(spell.name + " " + (info?.description ?? "")) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
     }
     return out;
@@ -1321,7 +1318,7 @@ function unseenAttacks(view, response, surveyTreasure = false) {
     const how2 = response === "unseen_staff" && /\bStaffs?\b/i.test(name) ? "staff" : response === "unseen_wand" && /\bWands?\b/i.test(name) ? "wand" : response === "unseen_rod" && /\bRods?\b/i.test(name) ? "rod" : null;
     if (how2 === null) continue;
     const shownEffect = /\bof (.+?)(?:\s*\(|$)/i.exec(name)?.[1] ?? "";
-    const inspected = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const inspected = view.inspectItem?.(item.handle)?.text ?? "";
     const effect = shownEffect + " " + (/\bWhen (?:aimed|used|zapped)\b[^.]*\./i.exec(inspected)?.[0] ?? "");
     const reaches = how2 === "staff" ? /\b(?:detect evil|dispel evil|sleep\w*\b[^.]*monsters?|light|illumination|mapping)\b/i.test(effect) : how2 === "wand" ? aimed.test(effect) : /\b(?:detection|illumination|light|bolts?|balls?)\b/i.test(effect);
     const usefulTreasure = how2 === "rod" && /\btreasure location\b/i.test(effect) && surveyTreasure;
@@ -1339,7 +1336,7 @@ function unseenSources(view, response) {
     const name = shownName(item);
     if (name === null || empty(name) || item.timeout > 0 || /\bcharging\b/i.test(name)) continue;
     if (item.activation) {
-      const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+      const text = view.inspectItem?.(item.handle)?.text ?? "";
       const activation = /\bWhen activated\b[^.]*\./i.exec(text)?.[0] ?? "";
       if (effect.test(activation)) out.push({ how: "activate", handle: item.handle, name });
       continue;
@@ -1349,7 +1346,7 @@ function unseenSources(view, response) {
     if (how2 !== null && (how2 !== "read" || reading)) out.push({ how: how2, handle: item.handle, name });
   }
   for (const spell of reading ? castable(view) : []) {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     if (spellName.test(spell.name) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
   }
   return out;
@@ -1617,9 +1614,6 @@ function recallItem(view) {
 // src/brain/threat-model.ts
 var THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"];
 var BAND_RISK = [0.03, 0.15, 0.4, 0.75];
-function inspecting(view) {
-  return view;
-}
 function roundEstimate(level) {
   return 8 + 3 * level;
 }
@@ -1634,7 +1628,7 @@ var HARMLESS_CONTACTS = 3;
 var HARMLESS_SPELLS = /* @__PURE__ */ new Set(["BLINK", "TPORT", "HASTE", "HEAL", "SHRIEK"]);
 function harmlessKind(monster, view, contacts = 0) {
   if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
-  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
   if (monster.raceFlags.includes("NEVER_BLOW")) return true;
   if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
@@ -1706,7 +1700,7 @@ function resistedDamage(damage, attack, player, stats) {
 }
 function attackFacts(view, monster, stats) {
   const player = view.player();
-  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const fallback = townsperson(monster, player.depth) ? TOWN_ROUND : roundEstimate(monster.level);
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
   const melee = monster.raceFlags.includes("NEVER_BLOW") ? 0 : blows.length === 0 ? fallback : blows.reduce((sum, blow) => {
@@ -1722,7 +1716,7 @@ function attackFacts(view, monster, stats) {
 }
 function rangedPath(view, from, to, bolt, monsters, openedDoor) {
   const distance = steps(from, to);
-  const projection = inspecting(view).projectionPath;
+  const projection = view.projectionPath;
   if (projection !== void 0 && key(to) === key(view.player().grid) && openedDoor === void 0) {
     const grids = projection.call(view, from).grids;
     const end = grids.findIndex((grid) => key(grid) === key(from));
@@ -1847,7 +1841,7 @@ function threatWindow(view, at = view.player().grid, terrain, facts = {}) {
 function assessThreat(monster, player, awake, view, dreaded = /* @__PURE__ */ new Set(), terrain, energy) {
   const town = townsperson(monster, player.depth);
   const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
-  const recall = inspecting(view).monsterRecall?.(monster.raceIndex);
+  const recall = view.monsterRecall?.(monster.raceIndex);
   const window2 = threatWindow(view, player.grid, terrain, { monsters: awake.some((m) => m.id === monster.id) ? awake : [...awake, monster], ...energy === void 0 ? {} : { energy } });
   let lethality = player.hp <= window2.one.damage / 2 && window2.one.damage > 0 ? 3 : player.hp <= window2.one.damage && window2.one.damage > 0 ? 2 : player.hp <= window2.two.damage && window2.two.damage > 0 ? 1 : 0;
   if (recall === void 0 || recall === null) {
@@ -1868,7 +1862,7 @@ function same(a, b) {
   return a.x === b.x && a.y === b.y;
 }
 function clearShot(view, target) {
-  const { projectionPath } = inspecting(view);
+  const { projectionPath } = view;
   if (projectionPath === void 0) return true;
   const path = projectionPath.call(view, target.grid).grids;
   const end = path.findIndex((grid) => same(grid, target.grid));
@@ -1879,7 +1873,7 @@ function clearShot(view, target) {
   });
 }
 function bestBallAim(view, monsters, target, radius = 2) {
-  const { blastArea, projectionPath } = inspecting(view);
+  const { blastArea, projectionPath } = view;
   if (blastArea === void 0 || projectionPath === void 0) return target.grid;
   let best = null;
   let count2 = -1;
@@ -1930,7 +1924,7 @@ function escapeMana(view) {
   const pack = readPack(view);
   if (view.player().depth === 0 || pack.phase.length > 0 || pack.teleport.length > 0) return 0;
   const costs = pack.escapeSpell.flatMap((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     const fail = info?.failChance ?? spell.fail;
     const mana = info?.mana ?? spell.mana;
     if (/^(Shadow Shift|Warp)$/i.test(spell.name) || info?.canCastNow === false || fail > 15 || mana > view.player().sp) return [];
@@ -1944,7 +1938,7 @@ function attackOutcome(view, target, kind, source = null) {
   let minimum = null;
   let failure = 0.5;
   let accuracyKnown = false;
-  const text = source === null ? "" : "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? "" : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  const text = source === null ? "" : "sidx" in source ? view.spellInfo?.(source.sidx)?.description ?? "" : view.inspectItem?.(source.handle)?.text ?? "";
   if (kind === "fight") {
     const weapon = view.equipment().find((item) => item !== null && [6, 7, 8, 9].includes(item.tval));
     if (steps(player.grid, target.grid) <= 1 && player.status.afraid === 0 && weapon !== void 0 && weapon !== null) {
@@ -1954,7 +1948,7 @@ function attackOutcome(view, target, kind, source = null) {
       if (dice !== null && player.blows > 0) minimum = Math.max(0, Number(dice[1]) + player.toDam + Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0)) * Math.floor(player.blows / 100);
     }
   } else if (kind === "cast_attack" && source !== null && "sidx" in source) {
-    const info = inspecting(view).spellInfo?.(source.sidx);
+    const info = view.spellInfo?.(source.sidx);
     failure = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
     accuracyKnown = true;
     if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure = 1;
@@ -1963,10 +1957,10 @@ function attackOutcome(view, target, kind, source = null) {
     if (element !== void 0 && !ATTACK_ELEMENTS.some(([pattern]) => pattern.test(text)) && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
     const dice = /\b(\d+)d(\d+)\b/.exec(text);
     if (dice !== null && damage !== null) minimum = Math.min(damage, Number(dice[1]));
-    if (/(?:ball|orb|cloud|storm)/i.test(source.name) && inspecting(view).blastArea !== void 0 && inspecting(view).projectionPath !== void 0) {
+    if (/(?:ball|orb|cloud|storm)/i.test(source.name) && view.blastArea !== void 0 && view.projectionPath !== void 0) {
       const aim = bestBallAim(view, view.monsters().filter((monster) => monster.visible && !monster.asleep), target);
       if (aim === null) failure = 1;
-      else if (!inspecting(view).blastArea(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
+      else if (!view.blastArea(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
     }
   } else if (source !== null && "handle" in source) {
     damage = describedDamage(text, target);
@@ -2011,14 +2005,14 @@ function attackAllowed(view, target, outcome, context = {}) {
   const removesDanger = outcome.minimum !== null && target.hp > 0 && outcome.minimum >= target.hp && outcome.failure <= 0.25 && incomingDamage(view, view.player().grid, 1, context.terrain, { ...context.facts, monsters: (context.facts?.monsters ?? view.monsters().filter((monster) => monster.visible)).filter((monster) => monster.id !== target.id) }).damage < view.player().hp;
   if (removesDanger) return true;
   if (outcome.kind === "cast_attack" && source !== null && "sidx" in source) {
-    const mana = inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana;
+    const mana = view.spellInfo?.(source.sidx)?.mana ?? source.mana;
     return view.player().sp - mana >= outcome.manaReserve;
   }
   if (outcome.kind === "throw_oil" && outcome.fuelReserve > 0) {
     return oilCount(view) > outcome.fuelReserve;
   }
   if (outcome.kind === "aim_wand" && source !== null && "handle" in source) {
-    const text = inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+    const text = view.inspectItem?.(source.handle)?.text ?? "";
     const charges = /\((\d+) charges?\)/i.exec(source.name);
     if (/\bteleport(?:s|ation)?\s+(?:you|the player)\b/i.test(text) && (charges === null || Number(charges[1]) <= 1)) return false;
   }
@@ -2031,7 +2025,7 @@ function oilCount(view) {
 function attackOptions(view, target, kind, context = {}) {
   const pack = readPack(view);
   const sources = kind === "fight" ? [null] : kind === "shoot" ? pack.ammo : kind === "throw_oil" ? pack.oil : kind === "aim_wand" ? pack.attackWand : pack.attackSpell.map((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     return info === void 0 || info === null ? spell : { ...spell, mana: info.mana, fail: info.failChance };
   });
   return sources.map((source) => attackOutcome(view, target, kind, source)).filter((outcome) => attackAllowed(view, target, outcome, context)).sort((a, b) => Number(b.kill) - Number(a.kill) || (b.damage === null ? -1 : b.damage * (1 - b.failure)) - (a.damage === null ? -1 : a.damage * (1 - a.failure)) || a.failure - b.failure);
@@ -2040,12 +2034,12 @@ function attackDescription(outcome, view) {
   const damage = outcome.damage === null ? "Damage per action is unknown" : `Estimated damage per action is ${String(Math.round(outcome.damage * (1 - outcome.failure) * 10) / 10)}`;
   const accuracy = outcome.accuracyKnown ? `${String(Math.round(outcome.failure * 100))}% failure or miss chance` : "accuracy is unknown; the estimate discounts damage by half";
   const source = outcome.source;
-  const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
+  const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (view.spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
   const spendsFuel = outcome.kind === "throw_oil" && outcome.fuelReserve > 0 && oilCount(view) <= outcome.fuelReserve;
   return ` ${damage}; ${accuracy}. ${outcome.kill ? "A hit could kill the target now." : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana and ${String(outcome.fuelReserve)} fuel units.${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
 }
 function healingAmount(view, source) {
-  const text = "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? "" : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  const text = "sidx" in source ? view.spellInfo?.(source.sidx)?.description ?? "" : view.inspectItem?.(source.handle)?.text ?? "";
   const fixed = /\b(?:heal\w*|restor\w*)\s+(?:you\s+for\s+|at least\s+)?((?:\d+\+)?\d+d\d+|\d+)\s+(?:hit\s?points|HP)\b(?:\s+\(or\s+(\d+)%, whichever is greater\))?/i.exec(text);
   const fraction2 = /\b(\d+)%\s+of\s+(?:your\s+)?(?:missing hit points|wounds)\b/i.exec(text);
   const missing = Math.max(0, view.player().maxHp - view.player().hp);
@@ -2066,7 +2060,7 @@ function healingPotion(view, incoming) {
 }
 function healingSpell(view, incoming) {
   const spells = readPack(view).healSpell.flatMap((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     if (info !== void 0 && info !== null && (!info.canCastNow || info.mana > view.player().sp)) return [];
     const known = info === void 0 || info === null ? spell : { ...spell, fail: info.failChance, mana: info.mana };
     return known.fail <= 15 ? [known] : [];
@@ -2138,7 +2132,7 @@ function activationUse(view) {
   return null;
 }
 function breatherInSight(view, monsters) {
-  const recall = inspecting(view).monsterRecall;
+  const recall = view.monsterRecall;
   if (recall === void 0) return null;
   for (const monster of monsters) {
     if (!monster.visible || monster.asleep) continue;
@@ -2152,10 +2146,10 @@ function breatherInSight(view, monsters) {
 
 // src/brain/volley.ts
 function volleyAvailable(view) {
-  return typeof inspecting(view).projectionPath === "function";
+  return typeof view.projectionPath === "function";
 }
 function lineOfFire(view, target) {
-  const path = inspecting(view).projectionPath?.({ x: target.x, y: target.y });
+  const path = view.projectionPath?.({ x: target.x, y: target.y });
   if (path === void 0) return true;
   const grids = path.grids;
   const last = grids[grids.length - 1];
@@ -2855,7 +2849,7 @@ function loadoutView(view, loadout) {
     player: () => ({ ...loadout.player, sp: Math.min(view.player().sp, loadout.player.maxSp) }),
     equipment: () => [...loadout.equipment],
     inventory: () => [...loadout.inventory ?? view.inventory()],
-    inspectItem: () => ({ text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") })
+    inspectItem: () => ({ token: view.inputToken?.() ?? { epoch: 0, revision: 0 }, title: "", text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") })
   };
 }
 function keepsCapacity(view, result) {
@@ -3684,9 +3678,6 @@ function createDeparture() {
 }
 
 // src/brain/items.ts
-function knowing(view) {
-  return view;
-}
 var TV_GOLD = 1;
 var TV_MAGIC = { STAFF: 22, WAND: 23, ROD: 24, SCROLL: 25, POTION: 26, MUSHROOM: 29 };
 var FLAVOURED = [TV.AMULET, TV.RING, ...Object.values(TV_MAGIC)];
@@ -3734,9 +3725,8 @@ function valueIn(text) {
 function itemValue(view, at, item) {
   if (typeof item.value === "number") return item.value;
   const index = item.floorIndex;
-  const v = inspecting(view);
-  if (v.inspectItem === void 0 || index === void 0) return null;
-  const info = v.inspectItem({ floor: { x: at.x, y: at.y, index } });
+  if (view.inspectItem === void 0 || index === void 0) return null;
+  const info = view.inspectItem({ floor: { x: at.x, y: at.y, index } });
   if (info === null) return null;
   return valueIn(info.text);
 }
@@ -3779,7 +3769,7 @@ function floorTarget(view, terrain, saving, persona = null) {
   const bounds = view.mapBounds();
   const routable = (grid) => isRoutable(view, terrain, grid);
   const field = flowFrom({ goals: [at], canEnter: routable });
-  const memory = knowing(view);
+  const memory = view;
   const remembered3 = typeof memory.knownFloorItems === "function";
   let best = null;
   for (let y = 0; y < bounds.height; y++) {
@@ -3817,7 +3807,7 @@ function stillWorthIt(view, loot, saving, persona) {
   if (here.x === loot.at.x && here.y === loot.at.y) {
     return view.floorItems(here.x, here.y).some((item) => keep(judge(view, here, item, true)));
   }
-  const memory = knowing(view);
+  const memory = view;
   const entries = memory.knownFloorItems?.(loot.at.x, loot.at.y) ?? [];
   const same3 = loot.sensed === true ? entries : entries.filter((entry) => !entry.sensed && entry.item.name === loot.name);
   return same3.some((entry) => {
@@ -3903,7 +3893,7 @@ function observeFlourishes(run, view, persona, uniqueKills, acquired) {
   for (const item of items) {
     const name = shownName2(item);
     if (name === null) continue;
-    const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const text = view.inspectItem?.(item.handle)?.text ?? "";
     const originDepth = /(?:found|dropped)[\s\S]*?\(level (\d+)\)/i.exec(text);
     const bought = /Bought from a store|An inheritance from your family|Created by debug option/i.test(text);
     const depth2 = bought ? 0 : originDepth === null ? acquired.has(item.handle) ? view.player().depth : 0 : Number(originDepth[1]);
@@ -4480,7 +4470,8 @@ function createJourney(terrain, unseenDanger) {
       if (goal === "fetch") {
         const loot = floorTarget(view, terrain, false, lastPersona);
         if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at)) return null;
-        const single = { ...view, travelPath: void 0 };
+        const single = { ...view };
+        delete single.travelPath;
         const command = plan.step(single, act);
         if (command?.code === "walk" || command?.code === "open") {
           const dir = DIRECTIONS.find((entry) => entry.key === command.dir);
@@ -5501,7 +5492,7 @@ function createGoalPlanner(options) {
     return once(label, view, (ctx) => {
       const s = situationOf(ctx.view, dreadedNow(), stationaryNow(ctx.view, false));
       if (s.target === null) return null;
-      if (ball && inspecting(ctx.view).blastArea !== void 0 && inspecting(ctx.view).projectionPath !== void 0) {
+      if (ball && ctx.view.blastArea !== void 0 && ctx.view.projectionPath !== void 0) {
         const aim = bestBallAim(ctx.view, s.awake, s.target);
         if (aim === null) return null;
         ctx.act.setTargetLocation(aim.x, aim.y);
@@ -9446,7 +9437,7 @@ function summaryForTelemetry(model) {
     persona: { name: model.headline.name, race: model.headline.race, class: model.headline.class },
     outcome: {
       ended: true,
-      won: model.headline.outcome === "victory",
+      won: model.headline.outcome === "winner",
       depth_max: model.headline.deepestFeet / 50,
       turns: model.headline.turns,
       cause_of_death: model.headline.outcome === "death" ? model.headline.cause : null
@@ -9541,9 +9532,9 @@ function capturingNet(net, adapter) {
         try {
           const raw = JSON.parse(reply.body);
           if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
-            const routing2 = raw["routing"];
-            if (routing2 !== null && typeof routing2 === "object" && !Array.isArray(routing2)) {
-              const named3 = routing2["adapter"];
+            const routing = raw["routing"];
+            if (routing !== null && typeof routing === "object" && !Array.isArray(routing)) {
+              const named3 = routing["adapter"];
               if (typeof named3 === "string") adapter(named3);
             }
           }
@@ -11257,7 +11248,7 @@ function mountReport(body2, rt) {
     const card = h("canvas", { width: "1200", height: "630" });
     const g = card.getContext("2d");
     if (g !== null) drawCard(g, model);
-    const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "victory" ? "Won the game." : "Retired."}`;
+    const text = `${hl.name}, a level ${String(hl.level)} ${hl.race} ${hl.class}, reached ${String(hl.deepestFeet)} ft in Neo Angband with Squire. ${hl.outcome === "death" ? `Killed by ${hl.cause}.` : hl.outcome === "winner" ? "Won the game." : "Retired."}`;
     const links = shareLinks(text);
     const apprenticeship = model.apprenticeship;
     const radar = apprenticeship === void 0 ? null : h("canvas", { width: "600", height: "260" });
@@ -11282,7 +11273,7 @@ function mountReport(body2, rt) {
     fill(
       view,
       h("h3", {}, `${hl.name}, level ${String(hl.level)} ${hl.race} ${hl.class}`),
-      h("p", {}, `${hl.outcome === "death" ? `Killed by ${hl.cause}` : hl.outcome === "victory" ? "Won the game" : "Retired"} at ${String(hl.deepestFeet)} ft after ${hl.turns.toLocaleString()} turns.`),
+      h("p", {}, `${hl.outcome === "death" ? `Killed by ${hl.cause}` : hl.outcome === "winner" ? "Won the game" : "Retired"} at ${String(hl.deepestFeet)} ft after ${hl.turns.toLocaleString()} turns.`),
       model.topKills.length === 0 ? null : h("p", {}, `Most killed: ${model.topKills.slice(0, 5).map((k) => `${k.name} (${String(k.count)})`).join(", ")}`),
       model.uniquesKilled.length === 0 ? null : h("p", {}, `Uniques killed: ${model.uniquesKilled.join(", ")}`),
       h("p", {}, `Went against advice ${String(model.divergence.count)} times. Used ${model.tokens.inputTokens.toLocaleString()} input tokens${model.tokens.usd > 0 ? `, about $${model.tokens.usd.toFixed(3)}` : ""}.`),
@@ -11644,12 +11635,11 @@ function attachSquire(ctx, rt) {
     if (make === void 0 || ctx.state === void 0) return null;
     const base = make(ctx.state);
     const snap = ctx.snapshot?.();
-    const inventory = snap?.core?.inventory ?? [];
-    const equipment = snap?.core?.equipment ?? [];
+    const inventory = [...snap?.core.inventory ?? []];
+    const equipment = [...snap?.core.equipment ?? []];
     return { ...base, inventory: () => inventory, equipment: () => equipment };
   }
-  ctx.events?.on("combat-outcome", (_name, payload) => {
-    const p = payload;
+  ctx.events?.on("combat-outcome", (_name, p) => {
     if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
     const view = viewNow();
     const monster = view?.monsters().find((m) => m.id === p.target);
@@ -11839,8 +11829,7 @@ function attachSquire(ctx, rt) {
       kind: "squire",
       label: "Squire",
       tab: "Squire",
-      minWidth: 260,
-      minHeight: 200,
+      minSize: { width: 260, height: 200 },
       preferredPlacement: { kind: "dock", target: "main", edge: "right" },
       mount: (host) => mountPanel(host, rt, lessons)
     });

@@ -4,46 +4,18 @@
  * profile first and this profile second, and starts character creation with
  * Squire armed in either.
  *
- * The title and profile seams are newer than the Core this mod builds against,
- * so they are declared here and probed at run time. Without them the row is
- * not registered and Squire behaves as it did before.
+ * Without the title and profile seams (an older game) the row is not
+ * registered and Squire behaves as it did before.
  */
 
+import type { ModProfile, ModProfiles, ModTitle, ModTitleRow, ProfileResult } from "@rpgm-tools/neo-angband-core";
 import type { KvStore } from "./memory/kv.js";
-
-export interface TitleRow {
-  readonly label: string;
-  readonly key?: string;
-  run(): void | Promise<void>;
-}
-
-export interface TitleSeam {
-  registerRow(row: TitleRow): () => void;
-  choose(title: string, choices: readonly string[]): Promise<number | null>;
-}
-
-export interface ProfileInfo {
-  readonly id: string | null;
-  readonly name: string;
-  readonly active: boolean;
-}
-
-export type ProfileResult<T = undefined> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly reason: string };
-
-export interface ProfilesSeam {
-  list(): ProfileResult<readonly ProfileInfo[]>;
-  create(name: string, options?: { readonly copyFrom?: string | null }): ProfileResult<ProfileInfo>;
-  setEnabledMods(id: string, mods: readonly string[]): ProfileResult;
-  switchTo(id: string | null, action?: { readonly kind: "create-character"; readonly armController?: boolean }): ProfileResult;
-}
 
 /** The parts of the plugin context the row reads. */
 export interface TitleCtx {
   readonly id?: string;
-  readonly title?: TitleSeam;
-  readonly profiles?: ProfilesSeam;
+  readonly title?: ModTitle;
+  readonly profiles?: ModProfiles;
 }
 
 export const TITLE_LABEL = "New Squire character";
@@ -104,7 +76,7 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
     const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
     const which = await title!.choose(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
     if (which === null) return;
-    let target: ProfileInfo;
+    let target: ModProfile;
     if (which >= 2) {
       const chosen = made[which - 2];
       if (chosen === undefined) return;

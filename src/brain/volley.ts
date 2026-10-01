@@ -23,7 +23,6 @@
 import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import type { SquireContext } from "../context.js";
 import type { Loc } from "../grid.js";
-import { inspecting } from "./threat-model.js";
 import { attackOptions, type AttackContext } from "./combat-kit.js";
 
 /** A ranged attack that can be repeated. */
@@ -31,7 +30,7 @@ export type RangedGoal = "shoot" | "throw_oil" | "aim_wand" | "cast_attack";
 
 /** Whether this view can report the line of fire, so a volley is safe to run. */
 export function volleyAvailable(view: AgentView): boolean {
-  return typeof inspecting(view).projectionPath === "function";
+  return typeof view.projectionPath === "function";
 }
 
 /**
@@ -39,7 +38,7 @@ export function volleyAvailable(view: AgentView): boolean {
  * the read answers true, since the caller only volleys when it has one.
  */
 export function lineOfFire(view: AgentView, target: Loc): boolean {
-  const path = inspecting(view).projectionPath?.({ x: target.x, y: target.y });
+  const path = view.projectionPath?.({ x: target.x, y: target.y });
   if (path === undefined) return true;
   const grids = path.grids;
   const last = grids[grids.length - 1];

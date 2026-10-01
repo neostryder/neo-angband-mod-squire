@@ -322,7 +322,7 @@ describe("runtime and saved flourishes", () => {
 
   it("records a human item use at death and clears it after a later command", async () => {
     let end: ((report: RunReportLike) => void) | undefined;
-    const rt = createRuntime({ log: () => {}, character: { onRunEnd: (fn) => { end = fn; return () => {}; } } }, { store: memoryStore() });
+    const rt = createRuntime({ log: () => {}, character: { key: () => null, onRunEnd: (fn) => { end = fn; return () => {}; } } }, { store: memoryStore() });
     const p = parent();
     rt.saveCharacter({ ...rt.character(), persona: p });
     const w = world({ map: ["@"], player: { light: 0 }, pack: [SCROLL] });

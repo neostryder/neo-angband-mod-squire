@@ -46,8 +46,7 @@ import type {
   SpellbookView,
   TargetView,
 } from "@rpgm-tools/neo-angband-core";
-import { TV } from "@rpgm-tools/neo-angband-core";
-import type { InspectText, ItemRef } from "./brain/threat-model.js";
+import { TV, type InspectResult } from "@rpgm-tools/neo-angband-core";
 import type { Loc } from "./grid.js";
 import type { Terrain } from "./terrain.js";
 import type { SquireContext } from "./context.js";
@@ -419,7 +418,7 @@ export function world(spec: WorldSpec): World {
   if (spec.inspect !== undefined) {
     const read = spec.inspect;
     Object.assign(view, {
-      inspectItem: (ref: ItemRef): InspectText | null => {
+      inspectItem: (ref: Parameters<NonNullable<AgentView["inspectItem"]>>[0]): InspectResult | null => {
         const text = read(ref);
         return text === null ? null : { token: { epoch: 0, revision: 0 }, title: "", text };
       },
@@ -429,7 +428,7 @@ export function world(spec: WorldSpec): World {
   if (spec.monsterRecall !== undefined) {
     const lore = spec.monsterRecall;
     Object.assign(view, {
-      monsterRecall: (raceIndex: number): InspectText | null => {
+      monsterRecall: (raceIndex: number): InspectResult | null => {
         const text = lore(raceIndex);
         return text === null ? null : { token: { epoch: 0, revision: 0 }, title: "", text };
       },

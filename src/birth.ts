@@ -13,29 +13,17 @@
 import { activePersona, readConfig, writeConfig, type RollOn } from "./config.js";
 import { namesakeFor, namesakeLog } from "./learning/flourishes.js";
 import { defaultPersona } from "./persona/persona.js";
+import type { BirthResult, ModBirthSession } from "@rpgm-tools/neo-angband-core";
 
 /** The part of the host's birth session this presenter uses. */
-export interface BirthResultLike {
-  readonly ok: boolean;
-  readonly reason?: string;
-}
-
-export interface BirthSessionLike {
-  catalogue(): {
-    readonly races: readonly { readonly name: string }[];
-    readonly classes: readonly { readonly name: string }[];
-    readonly previous: { readonly race: string; readonly cls: string; readonly name: string } | null;
-    readonly namePinned: boolean;
+export type BirthResultLike = BirthResult;
+export type BirthSessionLike = Pick<ModBirthSession, "usePrevious" | "setName" | "chooseRace" | "chooseClass" | "roll" | "randomName" | "accept"> & {
+  catalogue(): Pick<ReturnType<ModBirthSession["catalogue"]>, "previous" | "namePinned"> & {
+    races: readonly Pick<ReturnType<ModBirthSession["catalogue"]>["races"][number], "name">[];
+    classes: readonly Pick<ReturnType<ModBirthSession["catalogue"]>["classes"][number], "name">[];
   };
-  draft(): { readonly name: string };
-  usePrevious(): BirthResultLike;
-  setName(name: string): BirthResultLike;
-  chooseRace(name: string): BirthResultLike;
-  chooseClass(name: string): BirthResultLike;
-  roll(): BirthResultLike;
-  randomName(): BirthResultLike;
-  accept(): BirthResultLike;
-}
+  draft(): Pick<ReturnType<ModBirthSession["draft"]>, "name">;
+};
 
 /** Somewhere to keep the roll-on mark across the reload into creation. */
 export interface MarkStore {
@@ -131,10 +119,9 @@ export function rollOnBirth(session: BirthSessionLike, mode: Exclude<RollOn, "wa
 }
 
 /** The host context a birth presenter receives, as far as this file reads it. */
-export interface BirthHost {
-  readonly prefs?: { get(): unknown; set?(value: unknown): void };
-  readonly log: (msg: string) => void;
-}
+export type BirthHost = Pick<import("@rpgm-tools/neo-angband-core").ModPluginContext, "log"> & {
+  readonly prefs?: Pick<import("@rpgm-tools/neo-angband-core").ModPluginContext["prefs"], "get"> & Partial<Pick<import("@rpgm-tools/neo-angband-core").ModPluginContext["prefs"], "set">>;
+};
 
 /** The presenter `plugin.birth` returns. */
 export function rollOnPresenter(

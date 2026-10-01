@@ -8,7 +8,7 @@
  * whichever call comes first and lives until the page goes.
  */
 
-import type { AgentCommand, AgentController, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentController, AgentView, InputSnapshot, ModNet, ModPluginContext } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
@@ -45,36 +45,18 @@ import { createRows, countRows, exportRows, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import type { Apprentice } from "./knight.js";
 
-/** The parts of the host's plugin context Squire uses, declared so the mod builds without the host's source. */
-export interface SquireHost {
-  readonly core?: { readonly turnEnergy?: (speed: number) => number };
-  readonly log: (message: string) => void;
-  readonly prefs?: { get(): unknown; set(value: unknown): void };
-  readonly characterStore?: { get(): unknown; set(value: unknown): void };
-  readonly character?: {
-    key?(): string | null;
-    onRunEnd?(listener: (report: RunReportLike) => void): () => void;
-  };
-  readonly net?: NetLike & { readonly secrets: SecretsLike & NetSecretsWrite };
-  readonly snapshot?: () => { readonly token: Token } | null;
-  readonly controller?: {
-    setStatus(status: { readonly label?: string; readonly reason?: string }): void;
-    markNondeterministic(): void;
-    /** Available from Core 1.20.0. */
-    release?(reason?: string): void;
-  };
-  readonly saves?: {
-    create?(options?: { readonly like?: RunReportLike["birth"]; readonly resumeAutoplayer?: boolean }): Promise<{ readonly ok: boolean; readonly reason?: string }>;
-  };
-  /** True when this mod's controller was asked for the new character. Absent from older Core. */
+/** The plugin context fields used by Squire's runtime. */
+export type SquireHost = Pick<ModPluginContext, "log"> & {
+  readonly prefs?: Pick<ModPluginContext["prefs"], "get" | "set">;
+  readonly characterStore?: ModPluginContext["characterStore"];
+  readonly controller?: ModPluginContext["controller"];
+  readonly saves?: ModPluginContext["saves"];
+  readonly character?: Pick<NonNullable<ModPluginContext["character"]>, "key" | "onRunEnd">;
+  readonly net?: ModNet;
+  readonly snapshot?: () => InputSnapshot | null;
+  readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
   readonly controllerArmed?: boolean;
-}
-
-interface NetSecretsWrite {
-  readonly storage: "os" | "page";
-  set(name: string, value: string, options: { readonly hosts: readonly string[] }): Promise<{ readonly ok: boolean; readonly problem?: string }>;
-  delete(name: string): Promise<{ readonly ok: boolean }>;
-}
+};
 
 /** The host's run report. */
 export type RunReportLike = RunReport;

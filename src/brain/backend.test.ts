@@ -26,7 +26,7 @@ function fakeNet(routes: Record<string, Reply>): NetLike & { readonly calls: str
     calls,
     async request(request) {
       calls.push(`${request.method ?? "GET"} ${request.url}`);
-      return routes[`${request.method ?? "GET"} ${request.url}`] ?? { ok: false, code: "network", problem: "connection refused" };
+      return routes[`${request.method ?? "GET"} ${request.url}`] ?? { ok: false, code: "unreachable", problem: "connection refused" };
     },
   };
 }

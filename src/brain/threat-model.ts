@@ -11,50 +11,10 @@ export const BAND_RISK: readonly number[] = [0.03, 0.15, 0.4, 0.75];
 
 type Creature = Pick<MonsterView, "level" | "raceFlags"> & { readonly race?: string };
 
-/** What one spell does and costs, as the engine's spell inspection reports it. */
-export interface SpellInfoRead {
-  readonly description: string;
-  readonly mana: number;
-  readonly failChance: number;
-  readonly canCastNow: boolean;
-}
-
-interface GridList {
-  readonly grids: readonly Loc[];
-}
-
-/**
- * The engine's read-only inspection calls this module uses. They are declared
- * here as well as in the engine because the engine version this repository
- * builds against predates them; each is optional, and every caller falls back
- * to the older behavior when the view lacks it.
- */
-export interface InspectingView {
-  monsterRecall?(raceIndex: number): { readonly text: string } | null;
-  spellInfo?(spellIndex: number): SpellInfoRead | null;
-  projectionPath?(to: Loc): GridList;
-  blastArea?(to: Loc, radius: number, arc?: number): GridList;
-  inspectItem?(ref: ItemRef): InspectText | null;
-}
-
-/** An item inspection's text, as newer engines return it. */
-export interface InspectText {
-  readonly token: { readonly epoch: number; readonly revision: number };
-  readonly title: string;
-  readonly text: string;
-}
-
-/** Where an inspected item is: on the floor at a grid, or elsewhere by the engine's own reference. */
-export type ItemRef = number | { readonly floor: { readonly x: number; readonly y: number; readonly index: number } };
-
-export function inspecting(view: AgentView): AgentView & InspectingView {
-  return view as AgentView & InspectingView;
-}
 
 /** The view's spell inspection bound to it, or undefined when the view has none. */
-export function spellInfoOf(view: AgentView): InspectingView["spellInfo"] {
-  const v = inspecting(view);
-  return v.spellInfo?.bind(v);
+export function spellInfoOf(view: AgentView): AgentView["spellInfo"] {
+  return view.spellInfo?.bind(view);
 }
 
 /**
@@ -100,7 +60,7 @@ const HARMLESS_SPELLS: ReadonlySet<string> = new Set(["BLINK", "TPORT", "HASTE",
  */
 export function harmlessKind(monster: MonsterView, view: AgentView, contacts = 0): boolean {
   if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
-  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
   if (monster.raceFlags.includes("NEVER_BLOW")) return true;
   if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
@@ -198,7 +158,7 @@ export function monsterActions(monster: MonsterView, player: PlayerView, actions
   return Math.max(1, Math.ceil(actions * energyBounds(monster.speed, energy).high / energyBounds(player.speed, energy).low));
 }
 
-const ELEMENTS: readonly [RegExp, string, keyof PlayerView["status"]][] = [
+const ELEMENTS: readonly [RegExp, string, "resAcid" | "resElec" | "resFire" | "resCold" | "resPois"][] = [
   [/\bacid\b/i, "ACID", "resAcid"],
   [/\b(?:lightning|electricity)\b/i, "ELEC", "resElec"],
   [/\bfire\b/i, "FIRE", "resFire"],
@@ -224,7 +184,7 @@ function resistedDamage(damage: number, attack: string, player: PlayerView, stat
 
 function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
   const player = view.player();
-  const text = inspecting(view).monsterRecall?.(monster.raceIndex)?.text ?? "";
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const fallback = townsperson(monster, player.depth) ? TOWN_ROUND : roundEstimate(monster.level);
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
   /* Recall omits method flags, so resistance cannot erase a physical component. */
@@ -244,7 +204,7 @@ function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<No
 
 function rangedPath(view: AgentView, from: Loc, to: Loc, bolt: boolean, monsters: readonly MonsterView[], openedDoor?: Loc): { clear: boolean; uncertain: boolean } {
   const distance = steps(from, to);
-  const projection = inspecting(view).projectionPath;
+  const projection = view.projectionPath;
   if (projection !== undefined && key(to) === key(view.player().grid) && openedDoor === undefined) {
     const grids = projection.call(view, from).grids;
     const end = grids.findIndex((grid) => key(grid) === key(from));
@@ -379,7 +339,7 @@ export function threatWindow(view: AgentView, at: Loc = view.player().grid, terr
 export function effectiveAttack(view: AgentView, target: MonsterView, spell?: CastableSpell): { damage: number; failure: number } {
   const player = view.player();
   if (spell !== undefined) {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     if (info === undefined || info === null || !info.canCastNow) return { damage: 0, failure: 1 };
     const summary = /\baverage of (.+?) damage\b/i.exec(info.description);
     if (summary === null) return { damage: 0, failure: 1 };
@@ -398,7 +358,7 @@ export function effectiveAttack(view: AgentView, target: MonsterView, spell?: Ca
 export function assessThreat(monster: MonsterView, player: PlayerView, awake: readonly MonsterView[], view: AgentView, dreaded: ReadonlySet<string> = new Set(), terrain?: Terrain, energy?: SpeedEnergy): ThreatAssessment {
   const town = townsperson(monster, player.depth);
   const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
-  const recall = inspecting(view).monsterRecall?.(monster.raceIndex);
+  const recall = view.monsterRecall?.(monster.raceIndex);
   const window = threatWindow(view, player.grid, terrain, { monsters: awake.some((m) => m.id === monster.id) ? awake : [...awake, monster], ...(energy === undefined ? {} : { energy }) });
   let lethality = player.hp <= window.one.damage / 2 && window.one.damage > 0 ? 3
     : player.hp <= window.one.damage && window.one.damage > 0 ? 2
@@ -420,7 +380,7 @@ export function assessThreat(monster: MonsterView, player: PlayerView, awake: re
   return { capability, lethality, band, round: known.round, description, enhanced: true };
 }
 
-export function pickAttackSpell(spells: readonly CastableSpell[], info?: InspectingView["spellInfo"]): CastableSpell | undefined {
+export function pickAttackSpell(spells: readonly CastableSpell[], info?: AgentView["spellInfo"]): CastableSpell | undefined {
   if (info === undefined) return spells[0];
   let best: CastableSpell | undefined;
   let fallback: CastableSpell | undefined;
@@ -451,7 +411,7 @@ function same(a: Loc, b: Loc): boolean {
 }
 
 export function clearShot(view: AgentView, target: MonsterView): boolean {
-  const { projectionPath } = inspecting(view);
+  const { projectionPath } = view;
   if (projectionPath === undefined) return true;
   const path = projectionPath.call(view, target.grid).grids;
   const end = path.findIndex((grid) => same(grid, target.grid));
@@ -463,7 +423,7 @@ export function clearShot(view: AgentView, target: MonsterView): boolean {
 }
 
 export function bestBallAim(view: AgentView, monsters: readonly MonsterView[], target: MonsterView, radius = 2): Loc | null {
-  const { blastArea, projectionPath } = inspecting(view);
+  const { blastArea, projectionPath } = view;
   if (blastArea === undefined || projectionPath === undefined) return target.grid;
   let best: Loc | null = null;
   let count = -1;

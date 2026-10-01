@@ -5,6 +5,7 @@
  */
 
 import type { Runtime } from "../runtime.js";
+import type { CommandFacade, ModKeymaps, ModPanel, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
 import { h, STYLE } from "./dom.js";
 import { mountOrders } from "./orders.js";
 
@@ -14,26 +15,17 @@ export const ORDER_VERB = "give an order";
 export const ORDER_KEYS: readonly string[] = ["O", "N"];
 export const ORDER_PANEL_LABEL = "Give Squire an order";
 
-interface PanelLike {
-  readonly root: ShadowRoot | HTMLElement;
-  readonly open: boolean;
-  readonly closed: Promise<void>;
-  close(): void;
-}
+type PanelLike = ModPanel;
 
 /** The registry host `register` receives, as far as this command reads it. */
 export interface OrderCommandHost {
-  readonly commands?: {
-    register(code: string, action: (state: unknown, cmd: unknown) => number): void;
-    setVerb(code: string, verb: string): void;
-  };
+  readonly commands?: Pick<CommandFacade, "register" | "setVerb">;
 }
 
-export interface OrderCommandCtx {
-  readonly ui?: { openPanel?(spec: { readonly id: string; readonly modal?: boolean; readonly label?: string }): PanelLike };
-  readonly keymaps?: { isBindableTriggerKey(trigger: string): boolean; bind(trigger: string, action: string): boolean };
-  readonly log?: (message: string) => void;
-}
+export type OrderCommandCtx = Partial<Pick<ModPluginContext, "log">> & {
+  readonly ui?: Pick<ModUi, "openPanel">;
+  readonly keymaps?: Pick<ModKeymaps, "isBindableTriggerKey" | "bind">;
+};
 
 /** Register the command and bind a key to it. Returns the key bound, or null. */
 export function registerOrderCommand(host: unknown, ctx: OrderCommandCtx, rt: Runtime): string | null {

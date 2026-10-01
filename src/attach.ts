@@ -3,7 +3,7 @@
  * not: the Squire panel, Knight's Lessons, and the kill count.
  */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, ModPluginContext, PanelKindSpec, PanelMount } from "@rpgm-tools/neo-angband-core";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import type { Question } from "./brain/brain.js";
 import { cfgFromFlags } from "./settings.js";
@@ -33,38 +33,15 @@ import { ghostAfterCommand, ghostHint } from "./lessons/ghost.js";
 import { activePersona } from "./config.js";
 import type { Persona } from "./persona/persona.js";
 
-type EventHandler = (name: string, payload: unknown) => void;
-
-/** The host context `register` receives, as far as Squire reads it. */
-export interface AttachHost extends SquireHost {
-  readonly flags: Readonly<Record<string, boolean>>;
-  readonly core?: {
-    createAgentView?(state: unknown): AgentView;
-    readonly TF?: TerrainFlagIndex;
-    readonly turnEnergy?: (speed: number) => number;
-  };
-  readonly registries?: { readonly features?: { allFeatures(): readonly FeatureLike[] } };
-  readonly state?: unknown;
-  readonly events?: { on(name: string, handler: EventHandler): void; off?(name: string, handler: EventHandler): void };
-  readonly ui?: { registerPanelKind?(spec: PanelKindSpecLike): () => void };
-}
-
-/** The host's panel kind spec (MOD_SEAMS 4p), as far as Squire fills it. */
-export interface PanelKindSpecLike {
-  readonly kind: string;
-  readonly label: string;
-  readonly tab?: string;
-  readonly minWidth?: number;
-  readonly minHeight?: number;
-  readonly preferredPlacement?: { readonly kind: "dock"; readonly target: string; readonly edge: "left" | "right" | "top" | "bottom" };
-  mount(host: PanelHostLike): (() => void) | void;
-}
-
-export interface PanelHostLike {
-  readonly root: ShadowRoot | HTMLElement;
-  onStateChange?(listener: (state: { readonly active: boolean }) => void): () => void;
-  requestFocus?(): void;
-}
+/** The plugin context fields used while attaching Squire's panels and events. */
+export type AttachHost = Pick<ModPluginContext, "flags" | "events" | "ui"> & SquireHost & {
+  readonly core?: Pick<ModPluginContext["core"], "createAgentView"> & Partial<Pick<ModPluginContext["core"], "TF" | "turnEnergy">>;
+  readonly registries?: Pick<NonNullable<ModPluginContext["registries"]>, "features">;
+  readonly state?: ModPluginContext["state"];
+  readonly snapshot?: () => import("@rpgm-tools/neo-angband-core").InputSnapshot | null;
+};
+export type PanelHostLike = Pick<PanelMount, "root" | "onStateChange" | "requestFocus">;
+type PanelKindSpecLike = PanelKindSpec;
 
 /** Knight's Lessons, as the panel sees it. */
 export interface Lessons {
@@ -96,16 +73,15 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
   function viewNow(): AgentView | null {
     if (make === undefined || ctx.state === undefined) return null;
     const base = make(ctx.state);
-    const snap = ctx.snapshot?.() as unknown as { readonly core?: { readonly inventory?: ItemView[]; readonly equipment?: (ItemView | null)[] } } | null;
-    const inventory = snap?.core?.inventory ?? [];
-    const equipment = snap?.core?.equipment ?? [];
+    const snap = ctx.snapshot?.();
+    const inventory = [...(snap?.core.inventory ?? [])];
+    const equipment = [...(snap?.core.equipment ?? [])];
     return { ...base, inventory: () => inventory, equipment: () => equipment };
   }
 
   /* Kills, for the report and telemetry. A killing blow fires while the
    * monster still holds its index, so its race can be read then. */
-  ctx.events?.on("combat-outcome", (_name, payload) => {
-    const p = payload as { readonly attacker?: unknown; readonly target?: unknown; readonly died?: unknown };
+  ctx.events?.on("combat-outcome", (_name, p) => {
     if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
     const view = viewNow();
     const monster = view?.monsters().find((m) => m.id === p.target);
@@ -184,8 +160,8 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     rt.observe(view, terrain);
     rt.recordCommand(payload as PlayerCommand, view);
     if (!rt.config().knightsLessons.enabled) return;
-    const knight = goalOfCommand(payload as PlayerCommand, view);
-    const evidence = commandEvidence(payload as PlayerCommand, knight, view);
+    const knight = goalOfCommand(payload, view);
+    const evidence = commandEvidence(payload, knight, view);
     const dangerousNear = evidence?.dangerousNear ?? false;
     if (pendingRest !== null) {
       save({ ...apprentice, commands: apprentice.commands.map((item, index) => index === pendingRest
@@ -287,8 +263,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
       kind: "squire",
       label: "Squire",
       tab: "Squire",
-      minWidth: 260,
-      minHeight: 200,
+      minSize: { width: 260, height: 200 },
       preferredPlacement: { kind: "dock", target: "main", edge: "right" },
       mount: (host) => mountPanel(host, rt, lessons),
     });

@@ -11,7 +11,7 @@
  * older habit of picking up only what it already stands on.
  */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, KnownFloorItemView } from "@rpgm-tools/neo-angband-core";
 import type { Loc } from "../grid.js";
 import { steps } from "../grid.js";
 import { flowFrom } from "../flow.js";
@@ -22,44 +22,6 @@ import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
 import type { Persona } from "../persona/persona.js";
 import { lookReach } from "../persona/quirks.js";
-import { inspecting } from "./threat-model.js";
-
-/** An opaque reference to one floor memory, valid for the view that returned it. */
-export interface KnownFloorRef {
-  readonly id: number;
-}
-
-/** What the player knows of one remembered item, without its kind when the flavour is unknown. */
-export type KnownFloorDetails = Pick<ItemView,
-  "tval" | "pval" | "number" | "weight" | "ac" | "toA" | "toH" | "toD" |
-  "dd" | "ds" | "flags" | "modifiers" | "brands" | "slays" | "resists" |
-  "curses" | "egoName" | "artifactName" | "inscription"
-> & { readonly name: string };
-
-/** One entry of the player's floor memory, as newer engines report it. */
-export type KnownFloorEntry = {
-  readonly ref: KnownFloorRef;
-  readonly grid: { readonly x: number; readonly y: number };
-  readonly visibility: "seen" | "remembered";
-} & (
-  | { readonly sensed: true; readonly money: boolean; readonly item: null }
-  | { readonly sensed: false; readonly item: KnownFloorDetails }
-);
-
-/** A second look at one remembered item. */
-export type KnownFloorLook =
-  | { readonly status: "seen"; readonly inspection: { readonly text: string } }
-  | { readonly status: "stale" | "sensed" | "unavailable"; readonly inspection: null };
-
-/** The floor memory reads, absent from engine 1.8.0's types and from older views. */
-export interface KnownFloorReads {
-  knownFloorItems?(x: number, y: number): KnownFloorEntry[];
-  inspectKnownFloorItem?(ref: KnownFloorRef): KnownFloorLook;
-}
-
-function knowing(view: AgentView): AgentView & KnownFloorReads {
-  return view as AgentView & KnownFloorReads;
-}
 
 /** TV_GOLD, as Angband 4.2 numbers it. */
 const TV_GOLD = 1;
@@ -127,11 +89,9 @@ function valueIn(text: string): number | null {
 /** The object's player-known worth, from the item view or its inspection text. */
 function itemValue(view: AgentView, at: Loc, item: ItemView): number | null {
   if (typeof item.value === "number") return item.value;
-  /* floorIndex and inspectItem are absent from engine 1.8.0's types. */
-  const index = (item as ItemView & { readonly floorIndex?: number }).floorIndex;
-  const v = inspecting(view);
-  if (v.inspectItem === undefined || index === undefined) return null;
-  const info = v.inspectItem({ floor: { x: at.x, y: at.y, index } });
+  const index = item.floorIndex;
+  if (view.inspectItem === undefined || index === undefined) return null;
+  const info = view.inspectItem({ floor: { x: at.x, y: at.y, index } });
   if (info === null) return null;
   return valueIn(info.text);
 }
@@ -166,7 +126,7 @@ function judge(view: AgentView, at: Loc, item: ItemView, strict = false): Verdic
  * What one remembered floor item is worth, from its known details only, or null
  * when the item is in sight and a second look cannot find it.
  */
-function judgeKnown(view: AgentView & KnownFloorReads, entry: KnownFloorEntry): Verdict | null {
+function judgeKnown(view: AgentView, entry: KnownFloorItemView): Verdict | null {
   const look = entry.visibility === "seen" ? view.inspectKnownFloorItem?.(entry.ref) : undefined;
   if (look?.status === "stale") return null;
   if (entry.sensed) {
@@ -207,7 +167,7 @@ export function floorTarget(view: AgentView, terrain: Terrain, saving: boolean, 
   const bounds = view.mapBounds();
   const routable = (grid: Loc): boolean => isRoutable(view, terrain, grid);
   const field = flowFrom({ goals: [at], canEnter: routable });
-  const memory = knowing(view);
+  const memory = view;
   const remembered = typeof memory.knownFloorItems === "function";
   let best: FloorTarget | null = null;
   for (let y = 0; y < bounds.height; y++) {
@@ -249,7 +209,7 @@ export function stillWorthIt(view: AgentView, loot: FloorTarget, saving: boolean
   if (here.x === loot.at.x && here.y === loot.at.y) {
     return view.floorItems(here.x, here.y).some((item) => keep(judge(view, here, item, true)));
   }
-  const memory = knowing(view);
+  const memory = view;
   const entries = memory.knownFloorItems?.(loot.at.x, loot.at.y) ?? [];
   const same = loot.sensed === true ? entries : entries.filter((entry) => !entry.sensed && entry.item.name === loot.name);
   return same.some((entry) => {

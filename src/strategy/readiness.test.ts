@@ -1,3 +1,4 @@
+import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
@@ -83,7 +84,8 @@ describe("prepared depths", () => {
   it("reads a list of inspected elemental resistances and keeps missing inspection conservative", () => {
     const w = suppliedWorld({ map: ROOM, player: { maxLevel: 30, objectFlags: ["SEE_INVIS", "FREE_ACT"] }, pack: ["a Scroll of Word of Recall", "2 Scrolls of Teleportation"], inspect: () => "Provides resistance to acid, lightning, fire and cold." });
     expect(missingPreparation(w.view, 21)).toEqual([]);
-    const missing = { ...w.view, inspectItem: undefined };
+    const missing: AgentView = { ...w.view };
+    delete missing.inspectItem;
     expect(missingPreparation(missing, 21).map((need) => need.reason)).toContain("fire resistance and two other basic resistances");
   });
 
@@ -116,7 +118,8 @@ describe("prepared depths", () => {
   it("requires known deep protections, telepathy, healing and speed at depth 98", () => {
     const w = suppliedWorld({ map: ROOM, player: { ...deepPlayer, speed: 129, objectFlags: ["SEE_INVIS", "FREE_ACT"] }, pack: [...deepPack.slice(0, 2), "a Potion of Healing"], inspect: () => basicResists });
     expect(missingPreparation(w.view, 98).map((need) => need.reason)).toEqual(expect.arrayContaining(["blindness resistance", "chaos and disenchantment resistance", "telepathy", "+20 speed", "two Healing potions or one *Healing* or Life potion"]));
-    const unknown = { ...w.view, inspectItem: undefined };
+    const unknown: AgentView = { ...w.view };
+    delete unknown.inspectItem;
     expect(missingPreparation(unknown, 98).map((need) => need.reason)).toContain("chaos and disenchantment resistance");
   });
 

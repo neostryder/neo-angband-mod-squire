@@ -9,7 +9,7 @@
 
 import type { AgentView, ItemView, MonsterView } from "@rpgm-tools/neo-angband-core";
 import { shownName } from "../town/needs.js";
-import { bestBallAim, incomingDamage, inspecting, type ThreatFacts } from "./threat-model.js";
+import { bestBallAim, incomingDamage, type ThreatFacts } from "./threat-model.js";
 import { readPack, type PackItem, type CastableSpell } from "./pack.js";
 import { steps } from "../grid.js";
 import type { Terrain } from "../terrain.js";
@@ -67,7 +67,7 @@ export function escapeMana(view: AgentView): number {
   const pack = readPack(view);
   if (view.player().depth === 0 || pack.phase.length > 0 || pack.teleport.length > 0) return 0;
   const costs = pack.escapeSpell.flatMap((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     const fail = info?.failChance ?? spell.fail;
     const mana = info?.mana ?? spell.mana;
     /* A self-wounding escape with no known cost cannot support a reserve claim. */
@@ -84,8 +84,8 @@ export function attackOutcome(view: AgentView, target: MonsterView, kind: Attack
   let failure = 0.5;
   let accuracyKnown = false;
   const text = source === null ? "" : "sidx" in source
-    ? inspecting(view).spellInfo?.(source.sidx)?.description ?? ""
-    : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+    ? view.spellInfo?.(source.sidx)?.description ?? ""
+    : view.inspectItem?.(source.handle)?.text ?? "";
   if (kind === "fight") {
     const weapon = view.equipment().find((item) => item !== null && [6, 7, 8, 9].includes(item.tval));
     if (steps(player.grid, target.grid) <= 1 && player.status.afraid === 0 && weapon !== undefined && weapon !== null) {
@@ -95,7 +95,7 @@ export function attackOutcome(view: AgentView, target: MonsterView, kind: Attack
       if (dice !== null && player.blows > 0) minimum = Math.max(0, Number(dice[1]) + player.toDam + Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0)) * Math.floor(player.blows / 100);
     }
   } else if (kind === "cast_attack" && source !== null && "sidx" in source) {
-    const info = inspecting(view).spellInfo?.(source.sidx);
+    const info = view.spellInfo?.(source.sidx);
     failure = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
     accuracyKnown = true;
     if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure = 1;
@@ -104,10 +104,10 @@ export function attackOutcome(view: AgentView, target: MonsterView, kind: Attack
     if (element !== undefined && !ATTACK_ELEMENTS.some(([pattern]) => pattern.test(text)) && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
     const dice = /\b(\d+)d(\d+)\b/.exec(text);
     if (dice !== null && damage !== null) minimum = Math.min(damage, Number(dice[1]));
-    if (/(?:ball|orb|cloud|storm)/i.test(source.name) && inspecting(view).blastArea !== undefined && inspecting(view).projectionPath !== undefined) {
+    if (/(?:ball|orb|cloud|storm)/i.test(source.name) && view.blastArea !== undefined && view.projectionPath !== undefined) {
       const aim = bestBallAim(view, view.monsters().filter((monster) => monster.visible && !monster.asleep), target);
       if (aim === null) failure = 1;
-      else if (!inspecting(view).blastArea!(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
+      else if (!view.blastArea!(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
     }
   } else if (source !== null && "handle" in source) {
     damage = describedDamage(text, target);
@@ -141,14 +141,14 @@ export function attackAllowed(view: AgentView, target: MonsterView, outcome: Att
     incomingDamage(view, view.player().grid, 1, context.terrain, { ...context.facts, monsters: (context.facts?.monsters ?? view.monsters().filter((monster) => monster.visible)).filter((monster) => monster.id !== target.id) }).damage < view.player().hp;
   if (removesDanger) return true;
   if (outcome.kind === "cast_attack" && source !== null && "sidx" in source) {
-    const mana = inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana;
+    const mana = view.spellInfo?.(source.sidx)?.mana ?? source.mana;
     return view.player().sp - mana >= outcome.manaReserve;
   }
   if (outcome.kind === "throw_oil" && outcome.fuelReserve > 0) {
     return oilCount(view) > outcome.fuelReserve;
   }
   if (outcome.kind === "aim_wand" && source !== null && "handle" in source) {
-    const text = inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+    const text = view.inspectItem?.(source.handle)?.text ?? "";
     const charges = /\((\d+) charges?\)/i.exec(source.name);
     if (/\bteleport(?:s|ation)?\s+(?:you|the player)\b/i.test(text) && (charges === null || Number(charges[1]) <= 1)) return false;
   }
@@ -163,7 +163,7 @@ function oilCount(view: AgentView): number {
 export function attackOptions(view: AgentView, target: MonsterView, kind: AttackKind, context: AttackContext = {}): AttackOutcome[] {
   const pack = readPack(view);
   const sources = kind === "fight" ? [null] : kind === "shoot" ? pack.ammo : kind === "throw_oil" ? pack.oil : kind === "aim_wand" ? pack.attackWand : pack.attackSpell.map((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     return info === undefined || info === null ? spell : { ...spell, mana: info.mana, fail: info.failChance };
   });
   return sources.map((source) => attackOutcome(view, target, kind, source)).filter((outcome) => attackAllowed(view, target, outcome, context)).sort((a, b) =>
@@ -174,7 +174,7 @@ export function attackDescription(outcome: AttackOutcome, view: AgentView): stri
   const damage = outcome.damage === null ? "Damage per action is unknown" : `Estimated damage per action is ${String(Math.round(outcome.damage * (1 - outcome.failure) * 10) / 10)}`;
   const accuracy = outcome.accuracyKnown ? `${String(Math.round(outcome.failure * 100))}% failure or miss chance` : "accuracy is unknown; the estimate discounts damage by half";
   const source = outcome.source;
-  const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (inspecting(view).spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
+  const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (view.spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
   const spendsFuel = outcome.kind === "throw_oil" && outcome.fuelReserve > 0 && oilCount(view) <= outcome.fuelReserve;
   return ` ${damage}; ${accuracy}. ${outcome.kill ? "A hit could kill the target now." : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana and ${String(outcome.fuelReserve)} fuel units.${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
 }
@@ -188,8 +188,8 @@ export type CombatUse =
 
 /** The lower healing bound uses visible effect text before the standard cure fallback. */
 export function healingAmount(view: AgentView, source: PackItem | CastableSpell | CombatUse): number {
-  const text = "sidx" in source ? inspecting(view).spellInfo?.(source.sidx)?.description ?? ""
-    : inspecting(view).inspectItem?.(source.handle)?.text ?? "";
+  const text = "sidx" in source ? view.spellInfo?.(source.sidx)?.description ?? ""
+    : view.inspectItem?.(source.handle)?.text ?? "";
   const fixed = /\b(?:heal\w*|restor\w*)\s+(?:you\s+for\s+|at least\s+)?((?:\d+\+)?\d+d\d+|\d+)\s+(?:hit\s?points|HP)\b(?:\s+\(or\s+(\d+)%, whichever is greater\))?/i.exec(text);
   const fraction = /\b(\d+)%\s+of\s+(?:your\s+)?(?:missing hit points|wounds)\b/i.exec(text);
   const missing = Math.max(0, view.player().maxHp - view.player().hp);
@@ -215,7 +215,7 @@ export function healingPotion(view: AgentView, incoming: number): PackItem | und
 
 export function healingSpell(view: AgentView, incoming: number): CastableSpell | undefined {
   const spells = readPack(view).healSpell.flatMap((spell) => {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     if (info !== undefined && info !== null && (!info.canCastNow || info.mana > view.player().sp)) return [];
     const known = info === undefined || info === null ? spell : { ...spell, fail: info.failChance, mana: info.mana };
     return known.fail <= 15 ? [known] : [];
@@ -305,7 +305,7 @@ export function activationUse(view: AgentView): CombatUse | null {
 
 /** A visible, awake creature whose recall says it breathes, and the element. */
 export function breatherInSight(view: AgentView, monsters: readonly MonsterView[]): { readonly race: string; readonly element: string | null } | null {
-  const recall = inspecting(view).monsterRecall;
+  const recall = view.monsterRecall;
   if (recall === undefined) return null;
   for (const monster of monsters) {
     if (!monster.visible || monster.asleep) continue;

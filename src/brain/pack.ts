@@ -9,7 +9,6 @@
  */
 
 import type { AgentView, ItemView, SpellView } from "@rpgm-tools/neo-angband-core";
-import { inspecting } from "./threat-model.js";
 import type { CombatUse } from "./combat-kit.js";
 
 /** The food counter's upper edge for the Hungry grade: grade 15 times food_value 100 (player_timed.txt). */
@@ -63,7 +62,7 @@ export function unseenAttacks(view: AgentView, response: UnseenAttack, surveyTre
   const aimed = /\b(?:bolts?|balls?|magic missile|stinking cloud|light|dragon's (?:flame|frost|breath))\b/i;
   if (response === "cast_area") {
     for (const spell of canRead(view) ? castable(view) : []) {
-      const info = inspecting(view).spellInfo?.(spell.sidx);
+      const info = view.spellInfo?.(spell.sidx);
       if (area.test(spell.name + " " + (info?.description ?? "")) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
     }
     return out;
@@ -76,7 +75,7 @@ export function unseenAttacks(view: AgentView, response: UnseenAttack, surveyTre
       : response === "unseen_rod" && /\bRods?\b/i.test(name) ? "rod" : null;
     if (how === null) continue;
     const shownEffect = /\bof (.+?)(?:\s*\(|$)/i.exec(name)?.[1] ?? "";
-    const inspected = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const inspected = view.inspectItem?.(item.handle)?.text ?? "";
     const effect = shownEffect + " " + (/\bWhen (?:aimed|used|zapped)\b[^.]*\./i.exec(inspected)?.[0] ?? "");
     const reaches = how === "staff" ? /\b(?:detect evil|dispel evil|sleep\w*\b[^.]*monsters?|light|illumination|mapping)\b/i.test(effect)
       : how === "wand" ? aimed.test(effect) : /\b(?:detection|illumination|light|bolts?|balls?)\b/i.test(effect);
@@ -100,7 +99,7 @@ export function unseenSources(view: AgentView, response: UnseenResponse): Combat
     const name = shownName(item);
     if (name === null || empty(name) || item.timeout > 0 || /\bcharging\b/i.test(name)) continue;
     if (item.activation) {
-      const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+      const text = view.inspectItem?.(item.handle)?.text ?? "";
       const activation = /\bWhen activated\b[^.]*\./i.exec(text)?.[0] ?? "";
       if (effect.test(activation)) out.push({ how: "activate", handle: item.handle, name });
       continue;
@@ -111,7 +110,7 @@ export function unseenSources(view: AgentView, response: UnseenResponse): Combat
     if (how !== null && (how !== "read" || reading)) out.push({ how, handle: item.handle, name });
   }
   for (const spell of reading ? castable(view) : []) {
-    const info = inspecting(view).spellInfo?.(spell.sidx);
+    const info = view.spellInfo?.(spell.sidx);
     if (spellName.test(spell.name) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
   }
   return out;

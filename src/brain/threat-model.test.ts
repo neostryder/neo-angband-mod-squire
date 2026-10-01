@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, clearShot, incomingDamage, inspecting, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt, type InspectingView } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, incomingDamage, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 
@@ -224,14 +224,15 @@ describe("combat sense", () => {
       { name: "Fire Ball", sidx: 1, mana: 8, fail: 10, power: 3 },
       { name: "Magic Missile", sidx: 0, mana: 2, fail: 10, power: 1 },
     ];
-    const info: NonNullable<InspectingView["spellInfo"]> = (index) => ({
+    const info: NonNullable<AgentView["spellInfo"]> = (index) => ({
+      token: { epoch: 0, revision: 0 }, name: index === 1 ? "Stinking Cloud" : "Magic Missile", level: 1,
       /* Magic Missile's 3d4 averages 7.5, and the engine writes the decimal. */
       description: `Inflicts an average of ${index === 1 ? "16" : "7.5"} damage.`,
       mana: index === 1 ? 8 : 2, failChance: 10, canCastNow: true,
     });
     expect(pickAttackSpell(spells, info)?.sidx).toBe(1);
     expect(pickAttackSpell(spells)?.sidx).toBe(1);
-    expect(inspecting(w.view).spellInfo).toBeUndefined();
+    expect(w.view.spellInfo).toBeUndefined();
   });
 
   it("rejects a shot through a wall or another creature", () => {
@@ -268,7 +269,7 @@ describe("combat sense", () => {
     const aimed: { x: number; y: number }[] = [];
     const castWorld = world({ map: MAP, player: { sp: 8, maxSp: 8 }, spells: [{ name: "Fire Ball", sidx: 1, mana: 4 }],
       monsters: [3, 5, 6].map((x) => ({ grid: { x, y: 1 } })) });
-    Object.assign(castWorld.view, { projectionPath: inspecting(w.view).projectionPath, blastArea: inspecting(w.view).blastArea });
+    Object.assign(castWorld.view, { projectionPath: w.view.projectionPath, blastArea: w.view.blastArea });
     Object.assign(castWorld.act, { setTargetLocation: (x: number, y: number) => aimed.push({ x, y }) });
     const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: castWorld.terrain, log: () => undefined, reflex: false });
     const q = planner.ask(castWorld.view);

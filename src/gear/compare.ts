@@ -149,7 +149,7 @@ export function loadoutMissileDamage(loadout: LoadoutView, view?: AgentView): nu
 function loadoutView(view: AgentView, loadout: LoadoutView): AgentView {
   return { ...view, player: () => ({ ...loadout.player, sp: Math.min(view.player().sp, loadout.player.maxSp) }),
     equipment: () => [...loadout.equipment], inventory: () => [...(loadout.inventory ?? view.inventory())],
-    inspectItem: () => ({ text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") }) } as AgentView;
+    inspectItem: () => ({ token: view.inputToken?.() ?? { epoch: 0, revision: 0 }, title: "", text: loadout.stats.resistElements.filter((_, i) => (loadout.stats.resists[i] ?? 0) > 0).map((element) => `Provides resistance to ${element === "ELEC" ? "lightning" : element}.`).join(" ") }) } as AgentView;
 }
 
 /** The same readiness guard covers wearing, acquisition weight and removal. */
