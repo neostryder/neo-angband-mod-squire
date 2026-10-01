@@ -9,6 +9,8 @@
  */
 
 import type { AgentView, ItemView, SpellView } from "@rpgm-tools/neo-angband-core";
+import { inspecting } from "./threat-model.js";
+import type { CombatUse } from "./combat-kit.js";
 
 /** The food counter's upper edge for the Hungry grade: grade 15 times food_value 100 (player_timed.txt). */
 export const HUNGRY_BELOW = 1500;
@@ -49,6 +51,39 @@ export interface Pack {
 export type Detection =
   | { readonly kind: "read" | "zap"; readonly handle: number; readonly name: string }
   | { readonly kind: "cast"; readonly sidx: number; readonly name: string };
+
+export type UnseenResponse = "detect" | "see_invisible" | "light_room";
+
+/** Inspection supplies activation effects without guessing from an artifact's name. */
+export function unseenSources(view: AgentView, response: UnseenResponse): CombatUse[] {
+  const pattern = response === "detect" ? /\b(?:Detect Monsters|Detect Invisible|Reveal Monsters|of Detection|Detect Evil)\b/i
+    : response === "see_invisible" ? /\b(?:See Invisible|True Seeing)\b/i : /\b(?:Scrolls?|Rods?|Staffs?) of (?:Light|Illumination)\b/i;
+  const effect = response === "detect" ? /\bdetect\w*\b[^.]*\b(?:monsters?|creatures?|invisible|evil)\b/i
+    : response === "see_invisible" ? /\b(?:see invisible|true seeing|see\b[^.]*\binvisible)\b/i : /\b(?:illuminat\w*|light\w*\b[^.]*\b(?:area|room|nearby))\b/i;
+  const reading = canRead(view);
+  const out: CombatUse[] = [];
+  const spellName = response === "detect" ? /^(?:Detect Monsters|Detect Invisible|Reveal Monsters|Detection|Detect Evil)$/i
+    : response === "see_invisible" ? /^(?:See Invisible|True Seeing)$/i : /^(?:Light Area|Illumination|Light)$/i;
+  for (const item of [...view.inventory(), ...view.equipment().filter((item): item is ItemView => item !== null)]) {
+    const name = shownName(item);
+    if (name === null || empty(name) || item.timeout > 0 || /\bcharging\b/i.test(name)) continue;
+    if (item.activation) {
+      const text = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+      const activation = /\bWhen activated\b[^.]*\./i.exec(text)?.[0] ?? "";
+      if (effect.test(activation)) out.push({ how: "activate", handle: item.handle, name });
+      continue;
+    }
+    if (!pattern.test(name)) continue;
+    const how = /\bPotions? of\b/i.test(name) ? "quaff" : /\bScrolls? of\b/i.test(name) ? "read"
+      : /\bRods? of\b/i.test(name) ? "rod" : /\bStaffs? of\b/i.test(name) ? "staff" : null;
+    if (how !== null && (how !== "read" || reading)) out.push({ how, handle: item.handle, name });
+  }
+  for (const spell of reading ? castable(view) : []) {
+    const info = inspecting(view).spellInfo?.(spell.sidx);
+    if (spellName.test(spell.name) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
+  }
+  return out;
+}
 
 /** Exact spell names in Angband 4.2 class.txt. */
 const DETECTION_SPELLS: readonly string[] = [

@@ -136,9 +136,23 @@ export interface DamageEstimate {
 export interface ThreatFacts {
   readonly monsters?: readonly MonsterView[];
   readonly unseenDamage?: number;
+  readonly unseenHit?: UnseenHit;
   readonly openedDoor?: Loc;
   readonly lastSeen?: ReadonlyMap<number, number>;
   readonly energy?: SpeedEnergy;
+}
+
+export interface UnseenHit {
+  readonly grid: Loc;
+  readonly damage: number;
+  readonly turn: number;
+}
+
+export function unseenDamageAt(hit: UnseenHit | undefined, at: Loc, turn: number): number {
+  if (hit === undefined || turn < hit.turn || turn - hit.turn > 50) return 0;
+  const distance = steps(at, hit.grid);
+  if (distance > 5) return 0;
+  return hit.damage * (1 - (turn - hit.turn) / 51) / (1 + distance / 3);
 }
 
 export type SpeedEnergy = (speed: number) => number;
@@ -272,9 +286,10 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
   const occupied = new Map<string, number>();
   const ticks = Math.ceil(actions * 10 / energyBounds(player.speed, facts.energy).low);
   const statusDamage = ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0));
-  let damage = (facts.unseenDamage ?? 0) * actions + statusDamage;
+  const unseen = facts.unseenHit === undefined ? facts.unseenDamage ?? 0 : unseenDamageAt(facts.unseenHit, at, view.turn());
+  let damage = unseen * actions + statusDamage;
   let status = 0;
-  let uncertainty = (facts.unseenDamage ?? 0) * actions;
+  let uncertainty = unseen * actions;
   if (monsters.length === 0) return { damage, status, uncertainty };
   const stats = view.simulateLoadout?.({}) ?? null;
   const melee: { positions: Map<string, number>; damage: number }[] = [];

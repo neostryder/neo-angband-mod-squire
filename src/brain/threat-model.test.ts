@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, clearShot, incomingDamage, inspecting, knownCapability, monsterActions, pickAttackSpell, threatWindow, type InspectingView } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, incomingDamage, inspecting, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt, type InspectingView } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 
@@ -15,6 +15,19 @@ function recall(view: AgentView, text: string): void {
 }
 
 describe("threat model", () => {
+  it("prices an unseen hit at each candidate square and lets it decay", () => {
+    const w = world({ map: MAP });
+    const hit = { grid: w.at(), damage: 12, turn: w.view.turn() };
+    const facts = { unseenHit: hit };
+    expect(incomingDamage(w.view, w.at(), 2, w.terrain, facts)).toEqual({ damage: 24, uncertainty: 24, status: 0 });
+    expect(incomingDamage(w.view, { x: 3, y: 1 }, 1, w.terrain, facts).damage).toBe(9);
+    w.advance(25);
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain, facts).damage).toBeLessThan(12);
+    expect(unseenDamageAt(hit, { x: 8, y: 1 }, w.view.turn())).toBe(0);
+    expect(unseenDamageAt(hit, w.at(), hit.turn - 1)).toBe(0);
+    w.advance(26);
+    expect(incomingDamage(w.view, w.at(), 2, w.terrain, facts).damage).toBe(0);
+  });
   it("uses known blow dice rather than level and reads known spells and breeding", () => {
     expect(knownCapability("He can hit to hurt (2d8, 50%) and kick to hurt (1d6, 30%), averaging 2 damage on each of his turns. He may breathe fire (22). He breeds explosively.", 0))
       .toEqual({ round: 22, spell: 22, breeds: true, knownBlows: true });

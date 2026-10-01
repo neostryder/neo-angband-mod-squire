@@ -14,6 +14,204 @@ import { healingAmount } from "./combat-kit.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
+describe("unseen attackers", () => {
+  const map = ["#########", "#<.@...,#", "#########"];
+
+  function hit(w: ReturnType<typeof world>, p: ReturnType<typeof createGoalPlanner>, damage = 4) {
+    p.ask(w.view);
+    w.advance(10);
+    w.setPlayer({ hp: w.view.player().hp - damage });
+    return asked(p.ask(w.view));
+  }
+
+  it.each([
+    ["a Scroll of Detect Invisible", "detect", "read"],
+    ["a Rod of Detection", "detect", "zap-rod"],
+    ["a Staff of Detect Evil (3 charges)", "detect", "use"],
+    ["a Potion of True Seeing", "see_invisible", "quaff"],
+    ["a Scroll of See Invisible", "see_invisible", "read"],
+    ["a Rod of Illumination", "light_room", "zap-rod"],
+  ])("offers and uses %s after an unseen hit", (item, goal, code) => {
+    const w = suppliedWorld({ map, pack: [item] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(String(q.request.state["incoming"])).toContain("Up to 4 HP damage in one action and 8 in two");
+    const offer = q.context.offers.find((o) => o.goal === goal);
+    expect(offer?.risk).toBeGreaterThan(0.02);
+    expect(offer?.routine).toBeUndefined();
+    const choice = p.choose(pick(goal), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a response plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code, args: { handle: 1 } });
+  });
+
+  it("casts detection and uses an inspected activation", () => {
+    const w = suppliedWorld({ map, player: { sp: 5, maxSp: 5 }, spells: [{ name: "Detect Monsters", sidx: 8, mana: 1 }] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    const choice = p.choose(pick("detect"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a detection plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "cast", args: { spell: 8 } });
+    const a = suppliedWorld({ map, pack: ["a seeing stone"], activations: ["a seeing stone"], inspect: () => "When activated, it detects invisible creatures nearby." });
+    const other = planner(a).p;
+    const activated = other.choose(pick("detect"), hit(a, other).context, a.view);
+    if (!("plan" in activated)) throw new Error("expected an activation plan");
+    expect(activated.plan.step(a.view, a.act)).toEqual({ code: "activate", args: { handle: 1 } });
+  });
+
+  it("still offers retreat and a checked exit with no revealing source", () => {
+    const w = suppliedWorld({ map });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(offered(q)).toEqual(expect.arrayContaining(["retreat", "leave_level"]));
+    expect(offered(q)).not.toContain("detect");
+    expect(offered(q)).not.toContain("see_invisible");
+    expect(offered(q)).not.toContain("light_room");
+  });
+
+  it.each([{ poisoned: 2 }, { cut: 10 }])("does not mistake ongoing status damage for an unseen attacker: %j", (status) => {
+    const w = suppliedWorld({ map, player: { status }, pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    expect(offered(hit(w, p))).not.toContain("detect");
+  });
+
+  it("offers light, a checked exit and a safer step without detection", () => {
+    const w = suppliedWorld({ map, pack: ["a Staff of Light (2 charges)"] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(offered(q)).not.toContain("detect");
+    expect(offered(q)).toEqual(expect.arrayContaining(["light_room", "leave_level", "retreat", "explore"]));
+    for (const goal of ["leave_level", "retreat"]) {
+      const choice = p.choose(pick(goal), q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected a movement plan");
+      expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+    }
+    expect(q.context.offers.find((o) => o.goal === "retreat")!.risk).toBeLessThan(q.context.offers.find((o) => o.goal === "explore")!.risk);
+  });
+
+  it("clears the memory when an awake visible creature can explain the hits", () => {
+    const w = suppliedWorld({ map, pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    expect(offered(hit(w, p))).toContain("detect");
+    w.setMonsters([{ grid: { x: 4, y: 1 }, level: 1 }]);
+    expect(offered(p.ask(w.view))).not.toContain("detect");
+    w.setMonsters([]);
+    w.advance(51);
+    expect(offered(p.ask(w.view))).toContain("rest");
+  });
+
+  it("keeps the memory when a distant visible creature cannot explain the hits", () => {
+    const w = suppliedWorld({ map: ["#############", "#<.@.......,#", "#############"], pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    hit(w, p);
+    w.setMonsters([{ grid: { x: 10, y: 1 }, level: 1 }]);
+    expect(offered(p.ask(w.view))).toContain("detect");
+  });
+
+  it("keeps the memory when only poison accounts for a visible creature's damage bound", () => {
+    const w = suppliedWorld({ map, pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    hit(w, p, 1);
+    w.setPlayer({ status: { poisoned: 10 } });
+    w.setMonsters([{ grid: { x: 4, y: 1 }, level: 1, raceFlags: ["NEVER_BLOW"] }]);
+    expect(offered(p.ask(w.view))).toContain("detect");
+  });
+
+  it("reduces regional danger with distance and time", () => {
+    const w = suppliedWorld({ map, pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    const risk = (q: Question<GoalDigest>) => q.context.offers.find((o) => o.goal === "detect")!.risk;
+    const fresh = risk(hit(w, p));
+    w.moveTo({ x: 4, y: 1 });
+    const away = risk(asked(p.ask(w.view)));
+    w.advance(25);
+    const older = risk(asked(p.ask(w.view)));
+    expect(away).toBeLessThan(fresh);
+    expect(older).toBeLessThan(away);
+    w.advance(26);
+    expect(offered(p.ask(w.view))).not.toContain("detect");
+    expect(offered(p.ask(w.view))).toContain("rest");
+  });
+
+  it("keeps exploration for small hits and gives the craven persona a stronger leave weight", () => {
+    const weights = (persona: ReturnType<typeof defaultPersona>) => {
+      const w = suppliedWorld({ map });
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, reflex: false, persona, rng: () => 0.5 });
+      const q = hit(w, p, 2);
+      expect(offered(q)).toContain("explore");
+      const answer = { type: "choice" as const, choice: "explore", confidence: 0.5, probabilities: { explore: 0.5, leave_level: 0.5 } };
+      p.choose({ goal: answer, in_character: answer }, q.context, w.view);
+      return q.context.trace!.blended;
+    };
+    const bold = weights(archetype("berserker"));
+    const craven = weights(archetype("coward"));
+    expect(craven["leave_level"]).toBeGreaterThan(bold["leave_level"]!);
+    expect(bold["explore"]).toBeGreaterThan(craven["explore"]!);
+  });
+
+  it("hands lethal two-action damage to survival offers and the safety floor", () => {
+    const w = suppliedWorld({ map, player: { hp: 30, maxHp: 30 }, pack: ["a Rod of Detection"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, reflex: false, persona: archetype("berserker"), rng: () => 0.5 });
+    const q = hit(w, p, 12);
+    expect(offered(q)).toEqual(expect.arrayContaining(["heal", "phase"]));
+    expect(offered(q)).not.toContain("detect");
+    expect(offered(q)).not.toContain("explore");
+    const choice = p.choose(pick("phase"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a survival plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "read" });
+  });
+
+  it("interrupts an exploration plan on the first small unseen hit", () => {
+    const w = suppliedWorld({ map });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exploration plan");
+    w.setPlayer({ hp: 59 });
+    w.advance(10);
+    expect(p.trigger(w.view, choice.plan)).toBeTypeOf("string");
+  });
+
+  it("records the hit where a travelling plan is now standing", () => {
+    const w = suppliedWorld({ map: ["##############", "#<.@........,#", "##############"], pack: ["a Rod of Detection"] });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exploration plan");
+    w.moveTo({ x: 9, y: 1 });
+    w.setPlayer({ hp: 58 });
+    w.advance(10);
+    p.trigger(w.view, choice.plan);
+    expect(offered(p.ask(w.view))).toContain("detect");
+  });
+
+  it("uses the only adequate cure as the existing survival reflex", () => {
+    const w = world({ map, player: { hp: 30, maxHp: 30 }, pack: ["a Potion of Cure Light Wounds", "a Rod of Detection"] });
+    const { p } = planner(w, true);
+    p.ask(w.view);
+    w.advance(10);
+    w.setPlayer({ hp: 9 });
+    const q = reflexed(p.ask(w.view));
+    expect(q.context.offers.find((o) => o.goal === "heal")!.survival).toBeGreaterThan(0);
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "quaff", args: { handle: 1 } });
+  });
+
+  it("preserves persona volatility when unseen harm nudges a blended choice", () => {
+    const weight = (draw: number) => {
+      const w = suppliedWorld({ map });
+      const persona = defaultPersona();
+      persona.sliders.strength = 50;
+      persona.sliders.volatility = 100;
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, reflex: false, persona, rng: () => draw });
+      const q = hit(w, p, 2);
+      p.choose({ ...pick("explore"), in_character: pick("leave_level")["goal"]! }, q.context, w.view);
+      return q.context.trace!;
+    };
+    const low = weight(0);
+    const high = weight(1);
+    expect(low.strength).toBe(0.25);
+    expect(high.strength).toBe(0.75);
+    expect(high.blended["leave_level"]).toBeGreaterThan(low.blended["leave_level"]!);
+  });
+});
+
 describe("third soak survival regressions", () => {
   const grip = { grid: { x: 3, y: 1 }, race: "Grip, Farmer Maggot's Dog", level: 2, speed: 120, raceFlags: ["UNIQUE"] };
   const naga = { grid: { x: 3, y: 1 }, race: "black naga", level: 3, speed: 110 };

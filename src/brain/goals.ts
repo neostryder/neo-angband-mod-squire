@@ -34,15 +34,15 @@ import { autoexplore } from "../missions/autoexplore.js";
 import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question, Reflex } from "./brain.js";
-import { canRead, detectionSource, hungry, readPack, studyable, type Pack } from "./pack.js";
+import { canRead, detectionSource, hungry, readPack, studyable, unseenSources, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
-import { fleesFromNew, forget, mustPickUp, shiftThreat } from "../persona/quirks.js";
+import { fleesFromNew, forget, mustPickUp, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
-import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, incomingDamage, inspecting, threatIndex, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand } from "./threat-model.js";
+import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, incomingDamage, inspecting, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -89,6 +89,8 @@ export type Goal =
   | "study"
   | "wear"
   | "detect"
+  | "see_invisible"
+  | "light_room"
   | "recall_town"
   | "shop"
   | "recall_dungeon"
@@ -268,6 +270,7 @@ interface Situation {
   readonly threats: readonly MonsterView[];
   readonly breederExit?: boolean;
   readonly unseenDamage: number;
+  readonly unseenHit?: UnseenHit;
   readonly lastSeen: ReadonlyMap<number, number>;
   readonly terrain?: Terrain;
   readonly speedEnergy?: SpeedEnergy;
@@ -422,11 +425,11 @@ function damageRisk(damage: number, hp: number): number {
 }
 
 function damageFor(s: Situation, at: Loc = s.view.player().grid, actions = 1, terrain?: Terrain, openedDoor?: Loc) {
-  return incomingDamage(s.view, at, actions, terrain ?? s.terrain, { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }), ...(openedDoor === undefined ? {} : { openedDoor }) });
+  return incomingDamage(s.view, at, actions, terrain ?? s.terrain, { monsters: s.threats, unseenDamage: s.unseenDamage, ...(s.unseenHit === undefined ? {} : { unseenHit: s.unseenHit }), lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }), ...(openedDoor === undefined ? {} : { openedDoor }) });
 }
 
 function combatContext(s: Situation): AttackContext {
-  return { ...(s.terrain === undefined ? {} : { terrain: s.terrain }), facts: { monsters: s.threats, unseenDamage: s.unseenDamage, lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }) } };
+  return { ...(s.terrain === undefined ? {} : { terrain: s.terrain }), facts: { monsters: s.threats, unseenDamage: s.unseenDamage, ...(s.unseenHit === undefined ? {} : { unseenHit: s.unseenHit }), lastSeen: s.lastSeen, ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }) } };
 }
 
 function combatOptions(s: Situation, kind: AttackOutcome["kind"]): AttackOutcome[] {
@@ -512,6 +515,7 @@ function retreatStep(s: Situation, terrain: Terrain, flight: "any" | "down" | "n
   if (pinned(s) || s.view.player().status.confused > 0) return null;
   const at = s.view.player().grid;
   const threats = s.threats.filter((m) => !m.asleep).map((m) => m.grid);
+  if (s.unseenHit !== undefined && s.unseenDamage > 0) threats.push(s.unseenHit.grid);
   const field = flowFrom({ goals: threats, canEnter: (grid) => isRoutable(s.view, terrain, grid) || threats.some((t) => key(t) === key(grid)) });
   const current = damageFor(s).damage;
   const safe = (grid: Loc) => {
@@ -521,6 +525,13 @@ function retreatStep(s: Situation, terrain: Terrain, flight: "any" | "down" | "n
       : damageFor(s, grid, 1, terrain).damage;
     return damage < s.view.player().hp && (current === 0 || damage <= current * (s.view.player().level < 35 ? 0.8 : 0.6));
   };
+  if (s.unseenDamage > 0) {
+    const shelter = (grid: Loc) => (s.view.cell(grid.x, grid.y)?.glow === true ? 1 : 0) +
+      1 / (1 + neighbours(grid).filter((next) => isRoutable(s.view, terrain, next)).length);
+    const next = neighbours(at).filter((grid) => safe(grid) && !isClosedDoor(s.view, terrain, grid))
+      .sort((a, b) => damageFor(s, a).damage - damageFor(s, b).damage || shelter(b) - shelter(a))[0];
+    if (next !== undefined) return { at: next, damage: damageFor(s, next).damage, down: false };
+  }
   const direction = stepAway(field, at, safe);
   if (direction === null) return null;
   const to = { x: at.x + direction.dx, y: at.y + direction.dy };
@@ -638,6 +649,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const exit = leaveStep(s, terrain);
   const addLeave = (criteria: string, _risk: number) => { if (exit !== null && !out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage); };
   const nearDeath = s.hpShare < 0.35;
+  const unseenLethal = s.unseenDamage > 0 && damageFor(s, at, 2, terrain).damage >= player.hp;
   const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
   if (s.breederExit === true || player.level <= 5 && s.swarming) {
     const door = closeDoorStep(s, terrain);
@@ -739,6 +751,16 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   /* Leaving goes down when it can, since going up from the first level is a trip to town and back. */
   const leaveBy = exit?.down === true ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
+  if (s.unseenDamage > 0) {
+    addLeave(`${leaveBy}. Recent unexplained damage still makes this region dangerous even with no attacker in sight. The route has been checked against incoming damage.`, exposure(s));
+    for (const goal of ["detect", "see_invisible", "light_room"] as const) {
+      const source = unseenSources(view, goal)[0];
+      if (source === undefined) continue;
+      const purpose = goal === "detect" ? "look for the creature dealing unexplained damage"
+        : goal === "see_invisible" ? "see an invisible attacker for a while" : "light the room and reveal creatures beyond the carried light";
+      add(goal, `Use ${source.name} to ${purpose}. This spends an action exposed to the unseen threat; success does not prove the region is safe.`, exposure(s));
+    }
+  }
   if (stairsUnderfoot(s, terrain) && (nearDeath || s.worst >= 2)) {
     addLeave("Take the staircase underfoot now to leave the creatures behind.", 0.01);
   }
@@ -781,7 +803,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
    * offering it made a timid persona walk away from every mouse. */
   /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
   /* Low health makes escapes worth offering even against easy creatures. */
-  if (nearDeath || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
+  if (nearDeath || s.unseenDamage > 0 || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
     if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
       const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       const short = s.pack.phase[0] !== undefined || /^(Phase Door|Blink|Shadow Shift)$/i.test(how);
@@ -800,7 +822,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     }
     const flight = retreatStairs(s, terrain, widen);
     const retreat = retreatStep(s, terrain, flight);
-    if (s.awake.length > 0 && retreat !== null) add("retreat", flight === "any"
+    if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add("retreat", s.unseenDamage > 0
+      ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow."
+      : flight === "any"
       ? "Head for the nearest known staircase and take it, leaving the awake creatures behind."
       : flight === "down"
         ? "Head for a known down staircase and take it, leaving the awake creatures behind."
@@ -819,9 +843,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const unlit = gear !== undefined && gear.criteria.includes("has no light");
   if (!bleeding && incoming.damage < player.hp && gear !== undefined && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     /* Changing gear spends a turn, which is as risky as any other turn not spent fighting. */
-    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && gear.safeUpgrade !== false && s.awake.length === 0);
+    add("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && gear.safeUpgrade !== false && s.awake.length === 0 && !immediateDanger(s));
   }
-  if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0) {
+  if (!bleeding && newLevel && player.depth > 0 && s.awake.length === 0 && s.unseenDamage === 0) {
     const source = detectionSource(view);
     if (source !== null) add("detect", `${source.kind === "cast" ? "Cast" : source.kind === "zap" ? "Zap" : "Read"} ${source.name} to survey this new level.`, 0.02, true);
   }
@@ -829,9 +853,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Only a creature close enough to strike this turn makes a turn of study unsafe. */
   /* A new spell costs one turn and is always worth having, so with nothing awake
    * in sight it comes before walking on, the way lighting a torch does. */
-  const learnFirst = study !== null && s.awake.length === 0;
+  const learnFirst = study !== null && s.awake.length === 0 && !immediateDanger(s);
   if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
-    add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0);
+    add("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0 && !immediateDanger(s));
   }
   /* Terrain that hurts or blocks: a visible trap next to the character is
    * disarmed, and rock on the way to the stairs or an unexplored edge is dug
@@ -882,7 +906,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Town explore only looks for the way down, so with a reachable staircase it has nothing to walk to. */
   const townStairsReached = player.depth === 0 && !townNeedsStairs && reachableStairs(view, terrain);
   if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (reachableFrontier(view, terrain) || townNeedsStairs)) {
-    add("explore", "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
+    add("explore", s.unseenDamage > 0 ? "Keep exploring toward unexplored ground despite the recent unexplained hits. Small hits can be endured, but an empty visible list does not prove safety." : "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
@@ -892,6 +916,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
   return out.filter((offer) => {
+    if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
   });
@@ -899,7 +924,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
   const { cfg, terrain, log } = options;
-  const journey = createJourney(terrain);
+  const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
   const flourishesNow = () => options.flourishes?.() ?? emptyFlourishes();
@@ -924,8 +949,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let descentRead: RecallRead | null = null;
   const rememberedThreats = new Map<number, { monster: MonsterView; turn: number }>();
   let observed: { depth: number; hp: number; grid: Loc } | null = null;
-  let unseenHit: { grid: Loc; damage: number; turn: number } | null = null;
-  function situationNow(view: AgentView, update = false): Situation {
+  let unseenHit: UnseenHit | null = null;
+  function situationNow(view: AgentView, update = false, observe = update): Situation {
     view = flourishView(view);
     const player = view.player();
     const turn = view.turn();
@@ -933,19 +958,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       rememberedThreats.clear();
       unseenHit = null;
     }
-    if (update) {
+    if (observe) {
       const visible = view.monsters().filter((m) => m.visible);
-      if (observed !== null && observed.depth === player.depth && observed.hp > player.hp && !visible.some((m) => !m.asleep) && player.status.poisoned === 0 && player.status.cut === 0) {
-        unseenHit = { grid: observed.grid, damage: observed.hp - player.hp, turn };
+      const explains = (grid: Loc, damage: number) => {
+        const background = incomingDamage(view, grid, 2, terrain, { monsters: [], ...(options.speedEnergy === undefined ? {} : { energy: options.speedEnergy }) }).damage;
+        return visible.some((monster) => !monster.asleep && incomingDamage(view, grid, 2, terrain, { monsters: [monster], ...(options.speedEnergy === undefined ? {} : { energy: options.speedEnergy }) }).damage - background >= damage);
+      };
+      if (unseenHit !== null && explains(unseenHit.grid, unseenHit.damage)) unseenHit = null;
+      if (observed !== null && observed.depth === player.depth && observed.hp > player.hp && !explains(observed.grid, observed.hp - player.hp) && !explains(player.grid, observed.hp - player.hp) && player.status.poisoned === 0 && player.status.cut === 0 && !standingOnHarm(view, terrain, observed.grid) && !standingOnHarm(view, terrain, player.grid)) {
+        unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn };
       }
       for (const monster of visible) rememberedThreats.set(monster.id, { monster: { ...monster, grid: { ...monster.grid }, visible: false }, turn });
       observed = { depth: player.depth, hp: player.hp, grid: { ...player.grid } };
     }
     for (const [id, memory] of rememberedThreats) if (turn - memory.turn > 50 || turn < memory.turn) rememberedThreats.delete(id);
-    const unseenDamage = unseenHit !== null && turn - unseenHit.turn <= 50 && turn >= unseenHit.turn && steps(player.grid, unseenHit.grid) <= 5
-      ? Math.ceil(unseenHit.damage * (1 - (turn - unseenHit.turn) / 60)) : 0;
+    const unseenDamage = unseenDamageAt(unseenHit ?? undefined, player.grid, turn);
     const situation = situationOf(view, dreadedNow(), stationaryNow(view, update), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy);
-    return { ...situation, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
+    return { ...situation, ...(unseenHit === null ? {} : { unseenHit }), breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   /* Goals whose last plan ended without a command, keyed to the game turn it
    * ended on. Offering one again before time moves would repeat the same empty
@@ -1121,7 +1150,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * further blow is, so the model is asked again after each one. Poison
        * and bleeding cost a point every turn, which would end every plan at
        * once, so then only the damage-share rule below applies. */
-      stopOnAnyDamage: hurt && player.status.poisoned === 0 && player.status.cut === 0,
+      stopOnAnyDamage: (hurt || !view.monsters().some((monster) => monster.visible && !monster.asleep)) && player.status.poisoned === 0 && player.status.cut === 0,
       stopOnNewCreature: true,
       stopOnLowHealth: !hurt,
       retreatFraction: cfg.retreatFraction,
@@ -1392,6 +1421,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
       }
       case "detect": {
+        const reactive = situationNow(view).unseenDamage > 0;
+        if (reactive) return once("detect", view, (ctx) => {
+          const source = unseenSources(ctx.view, "detect")[0];
+          return source === undefined ? null : useCommand(ctx, source);
+        });
         const source = detectionSource(view);
         return once(`detect with ${source?.name ?? "a known source"}`, view, (ctx) => {
           if (source === null) return null;
@@ -1399,6 +1433,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           return source.kind === "zap" ? ctx.act.zapRod(source.handle) : ctx.act.read(source.handle);
         });
       }
+      case "see_invisible":
+      case "light_room":
+        return once(goal === "see_invisible" ? "see invisible creatures" : "light the room", view, (ctx) => {
+          const source = unseenSources(ctx.view, goal)[0];
+          return source === undefined ? null : useCommand(ctx, source);
+        });
       case "eat": {
         const food = pack.food[0];
         return once("eat", view, (ctx) => (food === undefined ? null : ctx.act.eat(food.handle)));
@@ -1580,7 +1620,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
-    const nudged = holdDescent(grounded, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const unseen = nudgeUnseen(grounded, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
+    const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
@@ -1769,7 +1810,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         const p = view.player();
         const s = situationNow(view);
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        const danger = (hurt && (s.awake.length > 0 || p.status.poisoned > 0 || p.status.cut > 0)) || s.worst >= 2 || digest.offers.some((o) => o.risk > 0.3);
+        const danger = (hurt && (s.awake.length > 0 || p.status.poisoned > 0 || p.status.cut > 0)) || s.unseenDamage > 0 || s.worst >= 2 || digest.offers.some((o) => o.risk > 0.3);
         if (danger) {
           const priority: Goal[] = [
             ...(stairsUnderfoot(s, terrain) ? ["leave_level", "retreat"] as const : []),
@@ -1815,6 +1856,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     trigger(view, plan) {
+      situationNow(view, false, true);
       const exiting = journey.breederExit(view);
       if (exiting && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
       const watched = plan as Partial<WatchedPlan> & { settle?: (v: AgentView) => void };

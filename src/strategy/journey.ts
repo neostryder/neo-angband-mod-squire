@@ -21,7 +21,7 @@ import { missingPreparation, supplies, supplyMargin } from "./readiness.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
 
-export function createJourney(terrain: Terrain) {
+export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView) => boolean) {
   const pacing = createLevelPacing();
   const departure = createDeparture();
   let returnReason: string | null = null;
@@ -81,7 +81,7 @@ export function createJourney(terrain: Terrain) {
   function safeDelay(view: AgentView): boolean {
     const player = view.player();
     if (standingOnHarm(view, terrain, player.grid)) return false;
-    if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || view.turn() <= unseenUntil) return false;
+    if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return false;
     if (view.monsters().some((monster) => monster.visible && (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, player.grid) <= 10 || !monster.asleep || steps(monster.grid, player.grid) <= 8))) return false;
     return ![...remembered.values()].some((entry) => entry.until >= view.turn());
   }
@@ -89,7 +89,7 @@ export function createJourney(terrain: Terrain) {
   function checkedRoute(view: AgentView, goals: readonly Loc[]): Loc[] | null {
     const player = view.player();
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
-    if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || view.turn() <= unseenUntil) return null;
+    if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return null;
     const threats = [...remembered.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
     const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap;
     const field = flowFrom({ goals, canEnter: enter });
@@ -150,7 +150,8 @@ export function createJourney(terrain: Terrain) {
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
       if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
-      if (offer.goal === "leave_level" && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
+      /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
+      if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
       if (offer.goal === "fetch") {
@@ -226,7 +227,7 @@ export function createJourney(terrain: Terrain) {
         }
         return command;
       }
-      if (goal === "leave_level" && (foot || !view.monsters().some((monster) => monster.visible && !monster.asleep))) {
+      if (goal === "leave_level" && !unseenDanger?.(view) && (foot || !view.monsters().some((monster) => monster.visible && !monster.asleep))) {
         const goals = exitTargets(view);
         const route = checkedRoute(view, goals);
         if (route === null) return null;
