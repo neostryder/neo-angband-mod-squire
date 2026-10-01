@@ -17,11 +17,14 @@ import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim }
 import { stillInherited, withAvenge, withInherited, type InheritedAim } from "./heirs.js";
 import type { Feeling } from "../learning/grudges.js";
 import { createLevelPacing } from "./pacing.js";
+import { createStoreMemory, wareName, type StoreMemory } from "../town/memory.js";
+import type { Persona } from "../persona/persona.js";
+import type { Terrain } from "../terrain.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
 
-export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget";
+export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget" | "stock";
 
 const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   arrival: "on reaching a new level",
@@ -29,6 +32,7 @@ const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   level: "after gaining a level",
   periodic: "after 2,000 game turns",
   budget: "when the level's game-turn budget runs out",
+  stock: "after looking in a shop",
 };
 
 /** What the last look at the game showed, and when the last review ran. */
@@ -72,7 +76,7 @@ export function scoreRequest(view: AgentView, aims: readonly Aim[]): SystemOneRe
       instructions: `How worth pursuing right now is this aim: ${aim.label}? Judge it against the character's other aims and its chance of surviving.`,
       criteria: WORTH,
     };
-    described[aim.kind] = aim.detail;
+    described[aim.kind] = aim.stock === undefined ? aim.detail : `${aim.detail} I last saw this item ${String(Math.max(0, view.turn() - aim.stock.turn))} game turns ago. I should check the shop before counting on it.`;
   }
   return {
     state: {
@@ -88,7 +92,7 @@ export function scoreRequest(view: AgentView, aims: readonly Aim[]): SystemOneRe
 export function rankByScore(aims: readonly Aim[], answers: Readonly<Record<string, Answer>>): Aim[] {
   const scoreOf = (aim: Aim): number => {
     const answer = answers[aim.kind];
-    return answer?.type === "score" ? answer.score : 0;
+    return (answer?.type === "score" ? answer.score : 0) * (aim.stock?.confidence ?? 1);
   };
   return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
@@ -102,6 +106,10 @@ export interface StrategyDeps {
   log(message: string): void;
   /** The heir's hatred and fear toward its ancestors' killers. Without it no avenge aim is offered. */
   feelings?(): readonly Feeling[];
+  persona?(): Persona | null;
+  readonly storeMemory?: readonly StoreMemory[];
+  saveStoreMemory?(memory: readonly StoreMemory[]): void;
+  rng?(): number;
 }
 
 export interface ReviewSummary {
@@ -113,6 +121,8 @@ export interface ReviewSummary {
 export interface Strategy {
   /** Look at the game and start a review when one is due. Cheap when none is. */
   observe(view: AgentView): void;
+  remember(view: AgentView, terrain: Terrain): void;
+  shops(): readonly StoreMemory[];
   /** The current aims, best first. Empty until the first review. */
   ranked(): readonly Aim[];
   last(): ReviewSummary | null;
@@ -142,6 +152,9 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let inherited: readonly InheritedAim[] = [];
   let latest = 0;
   let inFlight: Promise<void> = Promise.resolve();
+  const shops = createStoreMemory(deps.storeMemory, deps.saveStoreMemory, deps.rng);
+  let stockReview = false;
+  let answers: Readonly<Record<string, Answer>> | null = null;
 
   function clear(): void {
     memory = null;
@@ -150,14 +163,17 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     last = null;
     tripGold = null;
     generation += 1;
+    answers = null;
+    stockReview = false;
   }
 
   function reset(): void {
     clear();
     inherited = [];
+    shops.reset();
   }
 
-  async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string }> {
+  async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string; readonly answers?: Readonly<Record<string, Answer>> }> {
     const fixed = inFixedOrder(candidates);
     if (candidates.length < 2) return { ranked: fixed, source: "fixed", by: "" };
     const backend = deps.backend();
@@ -172,18 +188,19 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     }
     if (!result.ok) return { ranked: fixed, source: "fixed", by: ` It kept the usual order, because ${backend.label} answered with ${result.failure.kind}.` };
     deps.tally.record(backend, result.usage, deps.now());
-    return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.` };
+    return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.`, answers: result.answers };
   }
 
   async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
     const seq = ++latest;
-    const own = candidateAims(view);
+    const own = candidateAims(view, shops.all());
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
     aims = inFixedOrder(candidates);
     const done = await rank(view, candidates);
     /* A slow answer for an older review must not overwrite the aims of a newer one. */
     if (mine !== generation || seq !== latest) return;
+    answers = done.answers ?? null;
     aims = done.ranked;
     last = { trigger, turn, source: done.source };
     const names = done.ranked.map((aim) => aim.label).join(", ");
@@ -191,15 +208,38 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   }
 
   return {
+    remember(view, terrain) {
+      const seen = shops.observe(view, terrain, deps.persona?.() ?? null);
+      if (!seen.changed) return;
+      for (const aim of aims) {
+        const stock = aim.stock;
+        if (!seen.entered || stock === undefined || stock.feat !== seen.memory?.feat || seen.memory.stock.some((item) => wareName(item.name) === wareName(stock.name))) continue;
+        const owned = [...view.inventory(), ...view.equipment().filter((item) => item !== null)].some((item) => wareName((item as { name?: string }).name ?? "") === wareName(stock.name));
+        if (!owned) deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
+      }
+      const own = candidateAims(view, shops.all());
+      const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
+      aims = answers === null ? inFixedOrder(candidates) : rankByScore(candidates, answers);
+      /* A reply based on an older shelf cannot restore a sold item. */
+      latest += 1;
+      stockReview = true;
+    },
+    shops: shops.all,
     observe(view) {
       const player = view.player();
       if (player.dead) return;
       const turn = view.turn();
-      if (memory !== null && turn < memory.reviewTurn) clear();
+      if (memory !== null && turn < memory.reviewTurn) reset();
+      if (aims.some((aim) => aim.stock !== undefined)) {
+        const fresh = candidateAims(view, shops.all());
+        const updated = aims.flatMap((aim) => aim.stock === undefined ? [aim] : fresh.filter((entry) => entry.kind === aim.kind));
+        aims = answers === null ? inFixedOrder(updated) : rankByScore(updated, answers);
+      }
       const budget = pacing.observe(view);
-      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (budget.review ? "budget" : null);
+      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (stockReview ? "stock" : budget.review ? "budget" : null);
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
       if (trigger === null) return;
+      stockReview = false;
       if (trigger === "town") tripGold = player.gold;
       inFlight = review(view, trigger, turn, generation).catch((error: unknown) => {
         deps.log(`Squire couldn't look over its aims: ${String(error)}`);

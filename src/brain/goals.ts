@@ -51,6 +51,7 @@ import { holdDescent } from "../strategy/hold.js";
 import { createJourney } from "../strategy/journey.js";
 import { missingPreparation } from "../strategy/readiness.js";
 import type { Aim } from "../strategy/aims.js";
+import type { StoreMemory } from "../town/memory.js";
 import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull } from "./items.js";
@@ -636,7 +637,7 @@ export function recallPending(player: object, read: RecallRead | null, turn: num
   return read !== null && read.depth === depth && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes()): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes(), storeMemory?: readonly StoreMemory[]): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -682,10 +683,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
   if (player.depth === 0) {
-    const shops = neededEntrances(view, terrain, persona, visited, aims, flourishes);
+    const shops = neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory);
     if (shops.length > 0) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
-      add("shop", `Visit the shops for ${missing.join(", ") || "surplus gear sales"}.`, townRisk);
+      add("shop", missing.length > 0 ? `Visit the shops for ${missing.join(", ")}.` : `Visit the ${shops[0]!.name} to inspect its stock.`, townRisk);
     } else if (!recallActive && recall !== null && player.maxDepth > 1) {
       add("recall_dungeon", `Read Word of Recall to return to the deepest level reached, ${String(player.maxDepth * 50)} ft.`, townRisk);
     }
@@ -911,7 +912,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while there is gold. */
-    (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes).length === 0)))) {
+    (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory).length === 0)))) {
     add("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
@@ -1306,7 +1307,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow, options.strategy), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -1686,7 +1687,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow());
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory);
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const offered = journey.apply(steered, view, persona, visitedShops, recalling);
       let offers = offered.filter(usable);
@@ -1820,7 +1821,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             "fight", "shoot", "cast_attack", "aim_wand", "throw_oil",
           ];
           /* A refusal cannot turn survival into a loot errand, even when the persona rejected every useful action. */
-          const fresh = offersFor(s, cfg, terrain, personaOf(), visitedShops, triedStudies, false, recallPending(p, recallRead, view.turn()), offeredWiden);
+          const fresh = offersFor(s, cfg, terrain, personaOf(), visitedShops, triedStudies, false, recallPending(p, recallRead, view.turn()), offeredWiden, false, null, options.strategy?.().aims ?? [], [], flourishesNow(), options.strategy?.().storeMemory);
           const candidates = fresh.filter((offer) => priority.includes(offer.goal) && digest.offers.some((old) => old.goal === offer.goal));
           const fallback = candidates.sort((a, b) => {
             const adequate = Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0);

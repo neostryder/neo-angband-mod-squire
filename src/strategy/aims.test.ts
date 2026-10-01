@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { itemNamed, world } from "../harness.js";
-import type { StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { affordable, candidateAims, depthTarget, inFixedOrder, type Aim, type AimKind } from "./aims.js";
+import { readStoreMemory, type StoreMemory } from "../town/memory.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 const SPELLS = [{ name: "Magic Missile", sidx: 0 }];
@@ -13,6 +14,13 @@ function shop(items: readonly [string, number][]): StoreView {
 
 function kinds(aims: readonly Aim[]): AimKind[] {
   return aims.map((a) => a.kind);
+}
+
+function remembered(view: AgentView): StoreMemory[] {
+  return readStoreMemory(view.stores().map((store) => ({
+    feat: store.feat, name: store.featName, owner: store.owner.name, turn: view.turn(), lifetime: 20000,
+    stock: store.stock.map((item) => ({ name: (item as { name?: string }).name, tval: item.tval, price: item.price, count: item.number })),
+  })));
 }
 
 function find(aims: readonly Aim[], kind: AimKind): Aim {
@@ -31,7 +39,7 @@ describe("candidate aims", () => {
 
   it("aims at the next spellbook: save when a store prices it, hunt when it is unknown or not stocked", () => {
     const priced = world({ map: ROOM, player: { level: 1 }, spells: SPELLS, stores: [shop([["Magic for Beginners", 25]])] });
-    const saving = find(candidateAims(priced.view), "spellbook");
+    const saving = find(candidateAims(priced.view, remembered(priced.view)), "spellbook");
     expect(saving.how).toBe("save");
     expect(saving.price).toBe(25);
     const unknown = world({ map: ROOM, player: { level: 1 }, spells: SPELLS });
@@ -53,7 +61,7 @@ describe("candidate aims", () => {
 
   it("aims at a lantern only while a torch is worn and no lantern is", () => {
     const torch = world({ map: ROOM, worn: ["Wooden Torch"], stores: [shop([["Lantern", 100]])] });
-    const aim = find(candidateAims(torch.view), "lantern");
+    const aim = find(candidateAims(torch.view, remembered(torch.view)), "lantern");
     expect(aim.how).toBe("save");
     expect(aim.price).toBe(100);
     const carried = world({ map: ROOM, worn: ["Wooden Torch"], pack: ["Lantern"] });
@@ -66,7 +74,7 @@ describe("candidate aims", () => {
 
   it("aims at empty armour slots and drops the aim when they are filled", () => {
     const bare = world({ map: ROOM, stores: [shop([["Leather Boots", 4]])] });
-    const aim = find(candidateAims(bare.view), "armour");
+    const aim = find(candidateAims(bare.view, remembered(bare.view)), "armour");
     expect(aim.how).toBe("save");
     expect(aim.price).toBe(4);
     const carried = world({ map: ROOM, pack: ["Leather Shield"] });
@@ -77,7 +85,7 @@ describe("candidate aims", () => {
 
   it("aims at a magical weapon: buy one in a store, try a carried unknown one, none when already wielded", () => {
     const store = world({ map: ROOM, worn: ["Dagger (1d4)"], stores: [shop([["Dagger (1d4) of Slay Evil", 900]])] });
-    const buy = find(candidateAims(store.view), "weapon");
+    const buy = find(candidateAims(store.view, remembered(store.view)), "weapon");
     expect(buy.how).toBe("save");
     expect(buy.price).not.toBeNull();
     const carried = world({ map: ROOM, worn: ["Dagger (1d4)"], pack: ["Dagger (1d4) {??}"] });

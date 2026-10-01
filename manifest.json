@@ -21,6 +21,7 @@
     "state:inventory.read",
     "state:spells.read",
     "state:stores.read",
+    "state:constants.read",
     "network:api.typesafe.ai",
     "state:turn.read",
     "state:messages.read",

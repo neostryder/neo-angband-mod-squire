@@ -31,7 +31,7 @@ Squire works out what options make sense right now: fight the nearest creature, 
 Squire only knows what the character knows:
 
 - Items are used by the names your inventory shows, so an unidentified potion stays a mystery to Squire too.
-- It reads a shop's stock only while standing in that shop.
+- It learns a shop's stock only by walking in, and plans from what it remembers, which may be out of date by its next visit.
 - It plans routes only over ground the character remembers. It can walk to a worthwhile item on that ground and pick it up there. The long errand picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 

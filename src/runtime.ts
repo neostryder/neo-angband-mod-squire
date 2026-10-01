@@ -15,6 +15,7 @@ import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
+import { readStoreMemory, type StoreMemory } from "./town/memory.js";
 import { passableAims } from "./strategy/heirs.js";
 import { createOrders, type Orders } from "./orders/book.js";
 import { createChannelPoller } from "./orders/channel.js";
@@ -88,6 +89,7 @@ export interface CharacterData {
   /** Orders and standing instructions, live and ended. */
   readonly orders: readonly Instruction[];
   readonly flourishes?: Flourishes;
+  readonly storeMemory?: readonly StoreMemory[];
 }
 
 const CHARACTER_FORMAT = "neo-angband/squire/character";
@@ -128,6 +130,7 @@ function readCharacter(stored: unknown): CharacterData | null {
     lineage: typeof data["lineage"] === "string" ? data["lineage"] : null,
     orders: readInstructions(data["orders"]),
     flourishes: readWays(data["flourishes"]),
+    storeMemory: readStoreMemory(data["storeMemory"]),
   };
 }
 
@@ -173,7 +176,7 @@ export interface Runtime {
   flourishLines(): readonly string[];
   recordCommand(command: AgentCommand, view: AgentView): void;
   /** Record what changed since the last look at the game. */
-  observe(view: AgentView): void;
+  observe(view: AgentView, terrain?: Terrain): void;
   journal(): Journal;
   /** The aims Squire reviews above its errands. Empty until the first review. */
   strategy(): Strategy;
@@ -235,12 +238,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   /* When Squire last handed the game a command, so the player-command event for it is not taken for the player's. */
   let ownCommandAt: number | null = null;
   const OWN_COMMAND_WINDOW_MS = 2_000;
-  const tracked = (controller: AgentController): AgentController => (view, act) => {
+  const tracked = (controller: AgentController, terrain: Terrain): AgentController => (view, act) => {
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
     observeFamily(view);
     observeWays(view);
+    strategy.remember(view, terrain);
     channel.tick();
     const command = controller(view, act);
     if (command !== null) rememberUse(command, view);
@@ -269,6 +273,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     now,
     log: (message) => host.log(message),
     feelings: () => feelingsNow(),
+    persona: () => character.persona ?? activePersona(config),
+    storeMemory: character.storeMemory ?? [],
+    saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
   });
 
   const orders = createOrders({
@@ -384,7 +391,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const net = host.net;
       if (backend === null || net === undefined || !cfg.useModel) {
         if (cfg.useModel && net === undefined) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
-        return tracked(errands());
+        return tracked(errands(), terrain);
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen: AgentController | null = null;
@@ -404,6 +411,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         journal.observe(view);
         observeFamily(view);
         observeWays(view);
+        strategy.remember(view, terrain);
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
@@ -440,11 +448,12 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     flourishLines: () => flourishLines(character.flourishes ?? emptyFlourishes(), character.persona),
     recordCommand: rememberUse,
-    observe(view) {
+    observe(view, terrain) {
       lastView = view;
       journal.observe(view);
       observeFamily(view);
       observeWays(view);
+      if (terrain !== undefined) strategy.remember(view, terrain);
     },
     journal: () => journal,
     strategy: () => strategy,
@@ -611,7 +620,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         flourishes: () => character.flourishes ?? emptyFlourishes(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold) }),
+        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops() }),
         orders,
       }),
       tally,

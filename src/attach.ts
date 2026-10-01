@@ -181,7 +181,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     const serial = ++decisionSerial;
     /* The journal follows the whole run, including the turns the player
      * plays, so the depth chart and report have no gaps. */
-    rt.observe(view);
+    rt.observe(view, terrain);
     rt.recordCommand(payload as PlayerCommand, view);
     if (!rt.config().knightsLessons.enabled) return;
     const knight = goalOfCommand(payload as PlayerCommand, view);

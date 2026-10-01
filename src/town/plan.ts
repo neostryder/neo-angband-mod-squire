@@ -16,6 +16,8 @@ import { supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
 import { saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
+import { stockConfidence, type StoreMemory } from "./memory.js";
+import type { Steering } from "../strategy/steer.js";
 
 export interface ShopEntrance extends Loc {
   readonly feat: number;
@@ -38,7 +40,7 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
 }
 
 /** Visible needs, affordable aims and mapped entrances determine where to walk, without stores(). */
-export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = [], flourishes: Flourishes = emptyFlourishes()): ShopEntrance[] {
+export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = [], flourishes: Flourishes = emptyFlourishes(), memories?: readonly StoreMemory[]): ShopEntrance[] {
   if (view.player().depth !== 0) return [];
   const pack = readPack(view);
   const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson));
@@ -47,8 +49,9 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
     const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
-    const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && aimStores(aim).includes(entrance.name));
-    return buying || aiming || sales.some((sale) => saleFits(sale.name, entrance.name));
+    const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === undefined ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
+    const exploring = memories !== undefined && entrance.name !== "Home" && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
+    return buying || aiming || exploring || sales.some((sale) => saleFits(sale.name, entrance.name));
   }).sort((a, b) => {
     const rank = (shop: ShopEntrance): number => shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
     return rank(a) - rank(b);
@@ -56,7 +59,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 }
 
 /** Re-read the entered shop after each command; buying can move its stock slots. */
-export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes): Plan {
+export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes, strategy?: () => Steering): Plan {
   const progress = newProgress(0);
   /* An aim is bought for once per trip: its list was ranked before the trip,
    * so after one purchase it would still ask for more of the same. */
@@ -68,7 +71,9 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       if (view.player().depth !== 0) return null;
       const at = view.player().grid;
       const cell = view.cell(at.x, at.y);
-      const first = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
+      const current = strategy?.();
+      const currentAims = current?.aims ?? aims;
+      const first = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory)[0];
       const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
       if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
@@ -98,7 +103,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return act.shopBuy(purchase.index, purchase.quantity);
         }
         /* With the supplies settled, the gold on hand can fund the top aim. */
-        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(aims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
+        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
@@ -109,7 +114,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         log(`shop: done in the ${store.featName} with ${String(view.player().gold)} gold (${shelf})`);
         return act.shopExit();
       }
-      const next = neededEntrances(view, terrain, persona, visited, aims, flourishes())[0];
+      const next = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory)[0];
       if (next === undefined) {
         log("shop: no shop left with anything needed");
         return null;

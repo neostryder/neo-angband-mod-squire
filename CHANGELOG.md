@@ -53,6 +53,7 @@ Fixed.
 - [Visible] **Trophies.** Proud characters keep one item from each slain unique while the pack has room.
 - [Visible] **Favoured grounds.** Heirs favour exploring at the depth of an ancestor's most valuable find once their gear and supplies let them reach it.
 - [Visible] **Squire reacts when something it can't see is hurting it.** After a hit with no creature in view, it counts the squares around that spot as dangerous for the next 50 game turns and considers reading Detect Invisible, quaffing True Seeing, lighting the room, backing into the light or taking the stairs. A bold character keeps exploring through small hits; a craven one leaves sooner.
+- [Visible] **Squire learns what a shop sells by walking in.** It plans purchases from what it saw there, which can be out of date when it returns: a wand it saved for may have been sold, and it says so in its log. A Forgetful persona lets those memories fade. On a town trip it looks into shops it hasn't visited yet.
 
 ### Changed
 - [Visible] **When Squire stops for good, the keyboard comes back to you.** The message says why it stopped and that Ctrl-Z hands control back to Squire. A death still goes through roll-on as before.

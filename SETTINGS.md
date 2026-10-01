@@ -160,7 +160,7 @@ Each quirk starts off, with its strength slider at 50.
 
 | Setting | Default | What it changes |
 | --- | --- | --- |
-| Forgetful | off | Now and then leaves a learned lesson out of what Squire tells the model. |
+| Forgetful | off | Now and then leaves a learned lesson out of what Squire tells the model, and lets what it saw in the shops fade. |
 | Delusional | off | Now and then misjudges how dangerous a creature is. |
 | Compulsive collector | off | Must pick up everything it walks over. |
 | Pyromaniac | off | Reaches for fire in every form. |

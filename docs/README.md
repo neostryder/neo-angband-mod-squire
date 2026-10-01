@@ -24,12 +24,16 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Pick things up on the way | `squire.collect` | on | During the long errand, pick up whatever is lying on a square the character has already walked onto. |
 | Take the stairs down | `squire.descend` | on | During the long errand, walk to a known down staircase and use it once the floor has been walked out. |
 
+## Shop memory
+
+Squire learns a shop's stock when the character enters it. It saves the names, prices and quantities with the character, then plans purchases from those memories. It remembers exactly what it saw, though the shop may have sold the item or restocked by the time it comes back. Only a Forgetful persona lets those memories fade, sooner when it is impulsive and later when it is patient or greedy. A return visit replaces the remembered stock and owner. If an item it saved for has gone, Squire changes the aim and notes the disappointment in its log. Town trips also look into mapped shops whose stock is unknown or forgotten, once per shop during that trip.
+
 ## What it needs
 
 - **Engine:** `>=1.8.0`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
-- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `saves:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
+- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `saves:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
 
 The model, panel and Setup choices (brain, key, personas, telemetry, roll-on, Knight's Lessons) live in the Squire panel rather than on the Mods screen. The errand settings above apply only when no model is choosing.
 

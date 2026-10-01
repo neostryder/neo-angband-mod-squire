@@ -8,11 +8,12 @@
  * model only ranks them (see review.ts).
  */
 
-import type { AgentView, ItemView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
 import { TV } from "../gear/compare.js";
 import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
 import { missingPreparation } from "./readiness.js";
+import { stockConfidence, type StoreMemory } from "../town/memory.js";
 
 export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth" | "avenge";
 
@@ -32,6 +33,7 @@ export interface Aim {
   readonly depth: number | null;
   /** The unique to kill, for the avenge aim. */
   readonly target?: string;
+  readonly stock?: { readonly feat: number; readonly name: string; readonly turn: number; readonly confidence: number };
 }
 
 /** The order aims come in when the model cannot rank them. */
@@ -59,36 +61,32 @@ interface Ware {
   readonly name: string;
   readonly tval: number;
   readonly price: number;
+  readonly stock: NonNullable<Aim["stock"]>;
 }
 
 interface Shelves {
   readonly wares: readonly Ware[];
 }
 
-function shelves(view: AgentView): Shelves {
-  let stores: StoreView[] = [];
-  try {
-    stores = view.stores();
-  } catch {
-    /* A view without store access reads as no stock, and an item nobody sells is hunted. */
-  }
-  const shops = stores.filter((store) => !store.isHome);
-  const wares = shops.flatMap((store) => store.stock.flatMap((item) => {
-    const name = shownName(item);
-    return name !== null && item.price !== undefined && item.price > 0 ? [{ name, tval: item.tval, price: item.price }] : [];
-  }));
+function shelves(view: AgentView, memories: readonly StoreMemory[]): Shelves {
+  const wares = memories.flatMap((memory) => {
+    const confidence = stockConfidence(memory, view.turn());
+    return confidence <= 0 ? [] : memory.stock.filter((item) => item.count > 0 && item.price > 0).map((item) => ({
+      name: item.name, tval: item.tval, price: item.price, stock: { feat: memory.feat, name: item.name, turn: memory.turn, confidence },
+    }));
+  });
   return { wares };
 }
 
 function cheapest(wares: readonly Ware[], match: (ware: Ware) => boolean): Ware | null {
   let best: Ware | null = null;
-  for (const ware of wares) if (match(ware) && (best === null || ware.price < best.price)) best = ware;
+  for (const ware of wares) if (match(ware) && (best === null || ware.price / ware.stock.confidence < best.price / best.stock.confidence)) best = ware;
   return best;
 }
 
 /** Where an aim's item comes from: a priced shop item to save for, or the dungeon. */
-function sourced(ware: Ware | null): { how: AimHow; price: number | null } {
-  return ware === null ? { how: "hunt", price: null } : { how: "save", price: ware.price };
+function sourced(ware: Ware | null): { how: AimHow; price: number | null; stock?: NonNullable<Aim["stock"]> } {
+  return ware === null ? { how: "hunt", price: null } : { how: "save", price: ware.price, stock: ware.stock };
 }
 
 function namesOf(items: readonly ItemView[]): string[] {
@@ -115,7 +113,7 @@ function bookAim(view: AgentView, shelf: Shelves, pack: readonly string[]): Aim 
     return {
       kind: "spellbook",
       label: "next spellbook",
-      detail: `Get the next spellbook, ${book.name}, whose first spell is level ${String(first)}. ${source.how === "save" ? `The stores sell it for ${String(source.price)} gold, so save that much.` : "The stores do not sell it, so hunt for it in the dungeon."}`,
+      detail: `Get the next spellbook, ${book.name}, whose first spell is level ${String(first)}. ${source.how === "save" ? `I remember it at ${String(source.price)} gold, so save that much.` : "I have no shop memory of it, so hunt for it in the dungeon."}`,
       ...source,
       depth: null,
     };
@@ -132,7 +130,7 @@ function lanternAim(shelf: Shelves, pack: readonly string[], worn: readonly Item
   return {
     kind: "lantern",
     label: "lantern over torch",
-    detail: `Use a Lantern instead of a wooden torch: it lights farther and refills from flasks of oil. ${source.how === "try" ? "One is in the pack." : source.how === "save" ? `The stores sell one for ${String(source.price)} gold.` : "None is for sale, so look for one in the dungeon."}`,
+    detail: `Use a Lantern instead of a wooden torch: it lights farther and refills from flasks of oil. ${source.how === "try" ? "One is in the pack." : source.how === "save" ? `I remember one at ${String(source.price)} gold.` : "I have no shop memory of one, so look for one in the dungeon."}`,
     ...source,
     depth: null,
   };
@@ -150,7 +148,7 @@ function armourAim(view: AgentView, shelf: Shelves, packItems: readonly ItemView
   return {
     kind: "armour",
     label: "armour for empty slots",
-    detail: `Nothing is worn on the ${empty.map((slot) => slot.name).join(", ")}. ${source.how === "try" ? "Armour for it is in the pack." : source.how === "save" ? `The cheapest piece in the stores costs ${String(source.price)} gold.` : "None is for sale, so look for some in the dungeon."}`,
+    detail: `Nothing is worn on the ${empty.map((slot) => slot.name).join(", ")}. ${source.how === "try" ? "Armour for it is in the pack." : source.how === "save" ? `I remember a piece at ${String(source.price)} gold.` : "I have no shop memory of any, so look for some in the dungeon."}`,
     ...source,
     depth: null,
   };
@@ -167,7 +165,7 @@ function weaponAim(shelf: Shelves, packItems: readonly ItemView[], worn: readonl
   }
   const ware = cheapest(shelf.wares, (w) => WEAPONS.includes(w.tval) && mightBeSpecial(w.name));
   if (ware === null) return null;
-  return { kind: "weapon", label: "magic weapon", detail: `Buy a magical or ego weapon: the stores have ${ware.name} for ${String(ware.price)} gold.`, how: "save", price: ware.price, depth: null };
+  return { kind: "weapon", label: "magic weapon", detail: `Buy a magical or ego weapon: I remember ${ware.name} at ${String(ware.price)} gold.`, ...sourced(ware), depth: null };
 }
 
 function protectionAim(view: AgentView, kind: "free-action" | "see-invisible", pack: readonly string[]): Aim | null {
@@ -189,9 +187,9 @@ function protectionAim(view: AgentView, kind: "free-action" | "see-invisible", p
 }
 
 /** The aims that apply to the character now, in the fixed order. */
-export function candidateAims(view: AgentView): Aim[] {
+export function candidateAims(view: AgentView, memories: readonly StoreMemory[] = []): Aim[] {
   const player = view.player();
-  const shelf = shelves(view);
+  const shelf = shelves(view, memories);
   const packItems = view.inventory();
   const pack = namesOf(packItems);
   const worn = view.equipment().flatMap((item) => (item === null ? [] : [item]));
@@ -229,7 +227,8 @@ export function candidateAims(view: AgentView): Aim[] {
 
 /** Sort aims into the fixed order. */
 export function inFixedOrder(aims: readonly Aim[]): Aim[] {
-  return [...aims].sort((a, b) => FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
+  const worth = (aim: Aim): number => (FIXED_ORDER.length - FIXED_ORDER.indexOf(aim.kind)) * (aim.stock?.confidence ?? 1);
+  return [...aims].sort((a, b) => worth(b) - worth(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 
 /** Whether the character wields a weapon that may be magical, which is what the weapon aim asks for. */

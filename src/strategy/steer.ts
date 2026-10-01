@@ -9,6 +9,7 @@ import { canRead } from "../brain/pack.js";
 import { gearCandidates, TV } from "../gear/compare.js";
 import { recallItem, shownName } from "../town/needs.js";
 import { affordable, type Aim, type AimKind } from "./aims.js";
+import type { StoreMemory } from "../town/memory.js";
 
 /** What the planner needs from the strategy layer. */
 export interface Steering {
@@ -16,6 +17,7 @@ export interface Steering {
   readonly aims: readonly Aim[];
   /** Whether a town trip for an affordable aim may be offered at this gold. */
   readonly tripAllowed: (gold: number) => boolean;
+  readonly storeMemory?: readonly StoreMemory[];
 }
 
 /** The aim an offer serves, kept on the offer for the nudge. */
