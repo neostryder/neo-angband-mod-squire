@@ -7,7 +7,7 @@ import type { Instruction } from "../orders/types.js";
 import { inheritAims, type InheritedAim } from "../strategy/heirs.js";
 import { feelingKind, feelingsFor, remembered, type Feeling, type Killer } from "./grudges.js";
 import { inheritFlourishes, type Epitaph, type Milestone } from "./flourishes.js";
-import { emptyFamilyFlourishes, inheritWays, type FamilyFlourishes, type Flourishes } from "./family-ways.js";
+import { emptyFamilyFlourishes, inheritWays, mayReplaceMotto, mottoForPersona, type FamilyFlourishes, type Flourishes } from "./family-ways.js";
 
 export interface Ancestor {
   readonly name: string;
@@ -100,6 +100,9 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
     ...(parentLineage.deepest === undefined ? {} : { deepest: parentLineage.deepest }),
     ...(parentLineage.turns === undefined ? {} : { turns: parentLineage.turns }),
   };
+  const family = parentLineage.flourishRecord ?? emptyFamilyFlourishes();
+  const replaced = shaped.toggles.familyMotto && mayReplaceMotto(parentPersona, shaped, family.motto, rng);
+  const nextMotto = replaced && family.motto !== null ? { text: mottoForPersona(shaped, rng), generation: heirGeneration } : family.motto;
   return {
     lineage: {
       name: heirPersona.name, generation: heirGeneration,
@@ -108,8 +111,8 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       aims: inheritAims(parentLineage.aims ?? [], parentPersona, shaped),
       killers, feelings,
       ...inheritFlourishes(parentLineage, parentPersona, shaped),
-      flourishRecord: parentLineage.flourishRecord ?? emptyFamilyFlourishes(),
-      flourishes: inheritWays(parentLineage.flourishRecord ?? emptyFamilyFlourishes(), parentPersona, shaped, rng),
+      flourishRecord: { ...family, motto: nextMotto },
+      flourishes: inheritWays(family, parentPersona, shaped, rng),
     },
     persona: { ...heirPersona, sliders, lists },
   };

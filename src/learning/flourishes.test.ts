@@ -4,12 +4,14 @@ import { defaultPersona, type Persona } from "../persona/persona.js";
 import { readConfig, writeConfig } from "../config.js";
 import { createRuntime, type RunReportLike } from "../runtime.js";
 import { memoryStore } from "../memory/kv.js";
-import { world } from "../harness.js";
+import { itemNamed, world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { createGoalPlanner, type GoalDigest } from "../brain/goals.js";
 import type { Question } from "../brain/brain.js";
 import { inherit, type Lineage } from "./lineage.js";
 import { addMilestone, epitaphFor, familyVoice, inheritFlourishes, milestoneId, namesakeFor, recallMilestones, type Milestone } from "./flourishes.js";
+import { celebrationLine, cursedGroundLine, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, favouredWeapon, firstKillBoast, heirloomNames, heirloomRecognition, inheritWays, mayReplaceMotto, mottoForPersona, mottoLine, nudgeCursedGround, weaponKind, type FamilyFlourishes, type Motto } from "./family-ways.js";
+import { gearCandidates, TV } from "../gear/compare.js";
 
 const GRIP = "Grip, Farmer Maggot's Dog";
 const MAP = ["########", "#.@....#", "########"];
@@ -104,7 +106,8 @@ describe("family milestones", () => {
       { kind: "unique", name: "Mira", generation: 1, depth: 2, fact: GRIP },
       { kind: "depth", name: "Mira", generation: 1, depth: 3, fact: "" },
     ]);
-    expect(logged).toHaveLength(4);
+    expect(logged).toHaveLength(5);
+    expect(logged.some((line) => line.includes("Grip, Farmer Maggot's Dog is dead"))).toBe(true);
     expect(rt.familyMemoryLines().some((line) => line.includes("first artifact: Dethanc"))).toBe(true);
     expect(addMilestone(rt.config().lineages["Mira"]!, persona(), "artifact", 4, "Narthanc")).toBeNull();
   });
@@ -141,6 +144,8 @@ describe("family milestones", () => {
   it("records and recalls nothing with the setting off", () => {
     const p = persona();
     p.toggles.milestones = false;
+    p.toggles.celebrations = false;
+    p.toggles.firstKillBoasts = false;
     const { rt, logged } = runtime(p);
     const w = world({ map: MAP, player: { depth: 2, maxDepth: 2 } });
     rt.observe(w.view);
@@ -277,5 +282,327 @@ describe("saved flourishes and survival", () => {
     }, q.context, w.view);
     expect(q.context.trace?.removed).toContain("fight");
     expect(choice).not.toMatchObject({ plan: { label: "fight" } });
+  });
+});
+
+describe("family motto", () => {
+  it("writes a motto on first death and the heir repeats it at a level-up", () => {
+    const p = persona();
+    p.sliders.boldness = 90;
+    p.sliders.pride = 80;
+    const next = familyAfterDeath(emptyFamilyFlourishes(), emptyFlourishes(), null, p);
+    expect(next.motto?.generation).toBe(1);
+    expect(next.motto?.text).toBeTruthy();
+    const phrases = [mottoForPersona(p, () => 0.1), mottoForPersona(p, () => 0.5), mottoForPersona(p, () => 0.9)];
+    expect(phrases).toContain(next.motto?.text);
+    expect(mottoLine(p, next.motto)).toContain(next.motto!.text);
+    p.toggles.heirlooms = false;
+    expect(mottoLine(p, null)).toBeNull();
+  });
+
+  it("lets two contrasting personas keep different mottos", () => {
+    const bold = persona();
+    bold.sliders.boldness = 90;
+    bold.sliders.pride = 90;
+    const timid = persona();
+    timid.sliders.boldness = 10;
+    timid.sliders.pride = 10;
+    const boldLine = mottoLine(bold, { text: mottoForPersona(bold, () => 0.4), generation: 1 });
+    const timidLine = mottoLine(timid, { text: mottoForPersona(timid, () => 0.4), generation: 1 });
+    expect(boldLine).not.toBeNull();
+    expect(timidLine).not.toBeNull();
+    expect(boldLine).not.toBe(timidLine);
+  });
+
+  it("stays silent and skips replacement when the toggle is off", () => {
+    const p = persona();
+    p.toggles.familyMotto = false;
+    const next = familyAfterDeath(emptyFamilyFlourishes(), emptyFlourishes(), null, p);
+    expect(next.motto).toBeNull();
+    expect(mottoLine(p, { text: "any phrase", generation: 1 })).toBeNull();
+    const parent = persona();
+    parent.sliders.inheritance = 100;
+    const heir = persona();
+    heir.sliders.inheritance = 100;
+    expect(mayReplaceMotto(parent, heir, null, () => 0)).toBe(true);
+  });
+
+  it("gives a deterministic phrase for the same sliders and rng", () => {
+    const p = persona();
+    p.sliders.pride = 90;
+    const a = mottoForPersona(p, () => 0.1);
+    const b = mottoForPersona(p, () => 0.1);
+    const c = mottoForPersona(p, () => 0.9);
+    expect(a).toBe(b);
+    expect(a).not.toBe(c);
+  });
+});
+
+describe("favoured weapon kind", () => {
+  function record(...weapons: { readonly generation: number; readonly kind: string; readonly kills: number }[]): FamilyFlourishes {
+    return { ...emptyFamilyFlourishes(), ancestralWeapons: weapons };
+  }
+
+  it("picks the highest-generation ancestor that actually killed something", () => {
+    const f = record({ generation: 1, kind: "hafted", kills: 8 }, { generation: 2, kind: "blade", kills: 2 });
+    expect(favouredWeapon(f)).toEqual({ generation: 1, kind: "hafted", kills: 8 });
+    const lean = record({ generation: 1, kind: "hafted", kills: 0 }, { generation: 2, kind: "blade", kills: 1 });
+    expect(favouredWeapon(lean)).toEqual({ generation: 2, kind: "blade", kills: 1 });
+    expect(favouredWeapon(record())).toBeNull();
+  });
+
+  it("inherits a kind only when both parent and heir keep the toggle", () => {
+    const f = record({ generation: 1, kind: "polearm", kills: 3 });
+    expect(inheritWays(f, persona(), persona(), () => 0).favouredKind).toBe("polearm");
+    const off = persona();
+    off.toggles.favouredWeapons = false;
+    expect(inheritWays(f, off, persona(), () => 0).favouredKind).toBeNull();
+    const heir = persona();
+    heir.toggles.favouredWeapons = false;
+    expect(inheritWays(f, persona(), heir, () => 0).favouredKind).toBeNull();
+  });
+
+  it("breaks a close tie toward the favoured kind without overriding a clearly better weapon", () => {
+    const twoItems = world({ map: ["@"], pack: ["a Dagger", "a Mace"] });
+    const plain = gearCandidates(twoItems.view, null);
+    const fav = gearCandidates(twoItems.view, "hafted");
+    const plainOrder = plain.map((c) => c.name).join(",");
+    const favOrder = fav.map((c) => c.name).join(",");
+    expect(favOrder).not.toBe(plainOrder);
+    expect(favOrder.toLowerCase()).toContain("mace");
+    const clearer = world({ map: ["@"], pack: ["a Dagger (2d8) (+5,+5)", "a Mace"], worn: ["a Long Sword (2d5) (+0,+0)"] });
+    const clear = gearCandidates(clearer.view, "hafted");
+    const clearPlain = gearCandidates(clearer.view, null);
+    expect(clear.map((c) => c.name)).toEqual(clearPlain.map((c) => c.name));
+    expect(clear[0]?.name).toContain("Dagger");
+  });
+
+  it("names each weapon slot by the persona list scale", () => {
+    expect(weaponKind(TV.SWORD)).toBe("blade");
+    expect(weaponKind(TV.HAFTED)).toBe("hafted");
+    expect(weaponKind(TV.POLEARM)).toBe("polearm");
+    expect(weaponKind(TV.BOW)).toBe("bow");
+    expect(weaponKind(TV.DIGGING)).toBe("hafted");
+    expect(weaponKind(TV.LIGHT)).toBeNull();
+    expect(weaponKind(TV.SHIELD)).toBeNull();
+  });
+});
+
+describe("cursed ground", () => {
+  it("speaks a line when the heir reaches the depth an ancestor died at", () => {
+    const p = persona();
+    p.sliders.boldness = 50;
+    const line = cursedGroundLine(p, 2);
+    expect(line).toContain("100 ft");
+    expect(line).toContain("ancestor");
+  });
+
+  it("gives cautious and bold personas different wording", () => {
+    const cautious = persona();
+    cautious.sliders.boldness = 10;
+    cautious.sliders.paranoia = 80;
+    const bold = persona();
+    bold.sliders.pride = 90;
+    bold.sliders.boldness = 90;
+    const neutral = persona();
+    neutral.sliders.boldness = 50;
+    neutral.sliders.paranoia = 50;
+    neutral.sliders.pride = 50;
+    const c = cursedGroundLine(cautious, 3);
+    const b = cursedGroundLine(bold, 3);
+    const n = cursedGroundLine(neutral, 3);
+    expect(c).not.toBe(b);
+    expect(c).not.toBe(n);
+    expect(b).not.toBe(n);
+    expect(c).toContain("feels wrong");
+    expect(b).toContain("go further");
+  });
+
+  it("leaves the weights alone with the toggle off and outside the cursed depth", () => {
+    const family = { ...emptyFamilyFlourishes(), cursedDepth: 3 };
+    const dist = { descend: 0.4, explore: 0.6, retreat: 0.1 };
+    const offers = [{ goal: "explore", risk: 0.1 }, { goal: "descend", risk: 0.1 }];
+    const w = world({ map: ["@"], player: { depth: 3 } });
+    expect(nudgeCursedGround(dist, family, w.view, persona(), 0.5)).toEqual(dist);
+    const off = persona();
+    off.toggles.cursedGround = false;
+    expect(nudgeCursedGround(dist, family, w.view, off, 0.5)).toEqual(dist);
+    const wrongDepth = world({ map: ["@"], player: { depth: 4 } });
+    expect(nudgeCursedGround(dist, family, wrongDepth.view, persona(), 0.5)).toEqual(dist);
+  });
+
+  it("makes the cautious persona linger and the proud one push deeper", () => {
+    const family = { ...emptyFamilyFlourishes(), cursedDepth: 3 };
+    const dist = { descend: 0.5, explore: 0.5, retreat: 0.5 };
+    const offers = [{ goal: "descend", risk: 0.1 }, { goal: "explore", risk: 0.1 }];
+    const w = world({ map: ["@"], player: { depth: 3 } });
+    const cautious = persona();
+    cautious.sliders.boldness = 10;
+    cautious.sliders.paranoia = 80;
+    const proud = persona();
+    proud.sliders.pride = 90;
+    proud.sliders.boldness = 90;
+    const lower = nudgeCursedGround(dist, family, w.view, cautious, 0.5);
+    const higher = nudgeCursedGround(dist, family, w.view, proud, 0.5);
+    expect(lower.descend).toBeLessThan(dist.descend);
+    expect(higher.descend).toBeGreaterThan(dist.descend);
+  });
+});
+
+describe("celebrations", () => {
+  it("marks a level-up and the first unique kill in the persona's voice", () => {
+    const p = persona();
+    p.sliders.boldness = 90;
+    const level = celebrationLine(p, "level-up", "reached character level 5");
+    const unique = celebrationLine(p, "first-unique", GRIP);
+    expect(level).toContain("level 5");
+    expect(level).toContain(p.name);
+    expect(unique).toContain(GRIP);
+    expect(unique).toContain(p.name);
+  });
+
+  it("contrasts proud, coward and neutral voices", () => {
+    const proud = persona();
+    proud.sliders.pride = 90;
+    proud.sliders.boldness = 50;
+    const coward = persona();
+    coward.sliders.boldness = 10;
+    coward.quirks.cowardice.on = true;
+    const neutral = persona();
+    neutral.sliders.boldness = 50;
+    neutral.sliders.pride = 50;
+    const p = celebrationLine(proud, "first-unique", GRIP);
+    const c = celebrationLine(coward, "first-unique", GRIP);
+    const n = celebrationLine(neutral, "first-unique", GRIP);
+    expect(p).not.toBe(c);
+    expect(c).not.toBe(n);
+    expect(p).not.toBe(n);
+    expect(p).toContain("The line should remember");
+    expect(c).toContain("my hands shake");
+  });
+
+  it("records the first unique through the runtime and stays quiet with the toggle off", () => {
+    const { rt, logged } = runtime();
+    const w = world({ map: MAP, player: { depth: 2, maxDepth: 2 } });
+    rt.recordKill(GRIP, true, w.view);
+    expect(logged.some((line) => line.includes(GRIP))).toBe(true);
+    const off = persona();
+    off.toggles.celebrations = false;
+    off.toggles.milestones = false;
+    const rt2 = createRuntime({ log: (line) => logged.push(line) }, { store: memoryStore() });
+    rt2.saveCharacter({ ...rt2.character(), persona: off, lineage: "Mira" });
+    const before = logged.length;
+    rt2.recordKill(GRIP, true, w.view);
+    expect(logged.slice(before)).toEqual([]);
+  });
+
+  it("never repeats a level-up line for the same level", () => {
+    const p = persona();
+    p.sliders.boldness = 90;
+    const first = celebrationLine(p, "level-up", "reached character level 5");
+    const second = celebrationLine(p, "level-up", "reached character level 5");
+    expect(first).toBe(second);
+    const initial = emptyFlourishes();
+    const after = { ...initial, celebratedLevels: [5] };
+    expect(after.celebratedLevels).toContain(5);
+    const before = emptyFlourishes();
+    expect(before.celebratedLevels).not.toContain(5);
+  });
+});
+
+describe("first-kill boasts", () => {
+  it("brags for a proud persona on the first kill of a creature kind", () => {
+    const p = persona();
+    p.sliders.pride = 90;
+    const line = firstKillBoast(p, "jackal", () => 0.1);
+    expect(line).toContain("jackal");
+    expect(line).toContain(p.name);
+  });
+
+  it("stays silent for an unproud persona and stays silent past the boast threshold", () => {
+    const humble = persona();
+    humble.sliders.pride = 40;
+    expect(firstKillBoast(humble, "jackal", () => 0)).toBeNull();
+    const proud = persona();
+    proud.sliders.pride = 90;
+    expect(firstKillBoast(proud, "jackal", () => 0.9)).toBeNull();
+    expect(firstKillBoast(proud, "jackal", () => Number.NaN)).toBeNull();
+  });
+
+  it("keeps the boast quiet with the toggle off even when proud", () => {
+    const p = persona();
+    p.sliders.pride = 90;
+    p.toggles.firstKillBoasts = false;
+    expect(firstKillBoast(p, "jackal", () => 0)).toBeNull();
+  });
+
+  it("never boasts twice for the same race", () => {
+    const p = persona();
+    p.sliders.pride = 90;
+    const recorded: string[] = [];
+    const draw = () => { recorded.push("used"); return 0.1; };
+    const boast = firstKillBoast(p, "jackal", draw);
+    expect(boast).not.toBeNull();
+    const empty = emptyFlourishes();
+    const after = { ...empty, boastedRaces: ["jackal"] };
+    expect(after.boastedRaces).toEqual(["jackal"]);
+    expect(empty.boastedRaces).toEqual([]);
+    expect(recorded).toHaveLength(1);
+  });
+});
+
+describe("heirloom recognition", () => {
+  it("names a known family artifact the heir sees again", () => {
+    const p = persona();
+    p.sliders.greed = 80;
+    const line = heirloomRecognition(p, "Dethanc", "shop");
+    expect(line).toContain("Dethanc");
+    expect(line).toContain(p.name);
+  });
+
+  it("contrasts greedy, proud and neutral voices", () => {
+    const greedy = persona();
+    greedy.sliders.greed = 90;
+    const proud = persona();
+    proud.sliders.pride = 90;
+    const neutral = persona();
+    neutral.sliders.greed = 50;
+    neutral.sliders.pride = 50;
+    const g = heirloomRecognition(greedy, "Dethanc", "floor");
+    const pr = heirloomRecognition(proud, "Dethanc", "floor");
+    const n = heirloomRecognition(neutral, "Dethanc", "floor");
+    expect(g).not.toBe(pr);
+    expect(g).not.toBe(n);
+    expect(pr).not.toBe(n);
+    expect(g).toContain("I want it back");
+    expect(n).toContain("I want it");
+  });
+
+  it("stays silent with the toggle off and lists the family's heirloom names", () => {
+    const p = persona();
+    p.toggles.heirlooms = false;
+    expect(heirloomRecognition(p, "Dethanc", "floor")).toBeNull();
+    const lin: Lineage = { name: "Mira", generation: 2, ancestors: [], lore: [], grudges: [],
+      milestones: [{ kind: "artifact", name: "Mira", generation: 1, depth: 2, fact: "Dethanc" }] };
+    expect(heirloomNames(lin)).toEqual(["Dethanc"]);
+    expect(heirloomNames(undefined)).toEqual([]);
+  });
+
+  it("never recognises the same artifact name twice on the floor or in a shop", () => {
+    const p = persona();
+    p.sliders.greed = 80;
+    const seen = new Set<string>();
+    const filter = (it: string) => {
+      if (seen.has(it.toLowerCase())) return null;
+      seen.add(it.toLowerCase());
+      return heirloomRecognition(p, it, "shop");
+    };
+    const first = filter("Dethanc");
+    const second = filter("Dethanc");
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+    const shop = heirloomRecognition(p, "Dethanc", "shop");
+    const floor = heirloomRecognition(p, "Dethanc", "floor");
+    expect(shop).not.toBe(floor);
   });
 });

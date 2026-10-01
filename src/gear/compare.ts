@@ -241,7 +241,7 @@ function simulated(view: AgentView, name: string, handle: number, result: Loadou
 }
 
 /** Find wearable upgrades without reading an unfamiliar item's hidden bonuses. */
-export function gearCandidates(view: AgentView): GearCandidate[] {
+export function gearCandidates(view: AgentView, favouredKind: string | null = null): GearCandidate[] {
   const equipment = view.equipment();
   const ammoTypes: readonly number[] = [TV.SHOT, TV.ARROW, TV.BOLT];
   const hasAmmo = view.inventory().some((item) => ammoTypes.includes(item.tval));
@@ -303,5 +303,32 @@ export function gearCandidates(view: AgentView): GearCandidate[] {
     out.push({ handle: item.handle, name, score: visible !== null && oldVisible !== null ? visible - oldVisible : 0, unknown: true,
       criteria: `Try on the unknown ${name} to learn what it does.${detail}` });
   }
-  return out.sort((a, b) => Number(a.unknown) - Number(b.unknown) || b.score - a.score);
+  /* The heir's preferred weapon kind, when set, wins close ties. A candidate that
+   * matches the kind and sits within five percent of the top score sorts before any
+   * other candidate at the same unknown flag and a higher score. */
+  return out.sort((a, b) => {
+    const unknownDiff = Number(a.unknown) - Number(b.unknown);
+    if (unknownDiff !== 0) return unknownDiff;
+    const top = Math.max(a.score, b.score);
+    const floor = top * 0.95;
+    const aMatch = favouredKind !== null && a.score >= floor && slotOf(a.handle, view) === favouredKind ? 1 : 0;
+    const bMatch = favouredKind !== null && b.score >= floor && slotOf(b.handle, view) === favouredKind ? 1 : 0;
+    const matchDiff = bMatch - aMatch;
+    if (matchDiff !== 0) return matchDiff;
+    return b.score - a.score;
+  });
+}
+
+function slotOf(handle: number, view: AgentView): string | null {
+  const item = view.inventory().find((i) => i.handle === handle);
+  return item === undefined ? null : weaponSlot(item.tval);
+}
+
+/** The single word for the kind of weapon an item is, matching the persona list scale. */
+function weaponSlot(tval: number): string | null {
+  if (tval === TV.SWORD) return "blade";
+  if (tval === TV.HAFTED || tval === TV.DIGGING) return "hafted";
+  if (tval === TV.POLEARM) return "polearm";
+  if (tval === TV.BOW) return "bow";
+  return null;
 }

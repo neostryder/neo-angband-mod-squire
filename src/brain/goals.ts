@@ -58,7 +58,7 @@ import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull, stillWorthIt } from "./items.js";
 import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
-import { distrusted, distrustedUse, emptyFlourishes, flourishLines, nudgeGrounds, type Flourishes } from "../learning/family-ways.js";
+import { distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, flourishLines, nudgeCursedGround, nudgeGrounds, type Flourishes, type FamilyFlourishes } from "../learning/family-ways.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -244,6 +244,8 @@ export interface GoalPlannerOptions {
   /** The heir's hatred and fear toward the creatures that killed its ancestors. */
   readonly grudges?: () => readonly Feeling[];
   readonly flourishes?: () => Flourishes;
+  /** The family's cross-generation record. Used for cursed-ground nudges. */
+  readonly familyFlourishes?: () => FamilyFlourishes | null;
   /** Rescale the best-move answer from past outcomes. Never applied to the in-character answer. */
   readonly calibrate?: (probs: Readonly<Record<string, number>>) => Record<string, number>;
   /** Random draws for persona volatility and quirks. */
@@ -667,6 +669,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const out: Offer[] = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
+  const tieBreakKind = persona?.toggles.favouredWeapons === true ? flourishes.favouredKind : null;
   const add = (goal: Goal, criteria: string, risk: number, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp01(risk), survival, ...(routine ? { routine: true as const } : {}), ...(uncertain ? { uncertain: true as const } : {}) });
   /* A level is left once, however many reasons there are to leave it. */
   const exit = leaveStep(s, terrain);
@@ -875,7 +878,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
-  const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+  const gear = gearCandidates(view, tieBreakKind).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   /* Walking in the dark shows nothing, so while a light sits unused in the pack
    * lighting it comes before exploring or the stairs. */
   const unlit = gear !== undefined && gear.criteria.includes("has no light");
@@ -1527,8 +1530,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         });
       }
       case "wear": {
-        const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
-        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
+        const personaNow = personaOf();
+        const tieBreakKind = personaNow?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null;
+        const candidate = gearCandidates(view, tieBreakKind).find((gear) => !gear.unknown || (personaNow?.sliders.curiosity ?? 0) >= 50);
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === undefined || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view, personaOf()?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
       }
       case "detect": {
         const reactive = situationNow(view).unseenDamage > 0;
@@ -1732,7 +1737,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
     const felt = nudgeGrudges(pursued, digest.offers, grudgesNow(), sighted, riskCeiling(persona));
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
-    const unseen = nudgeUnseen(grounded, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
+    const cursed = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
+    const unseen = nudgeUnseen(cursed, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;

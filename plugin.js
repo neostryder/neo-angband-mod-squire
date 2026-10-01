@@ -2283,6 +2283,12 @@ var PARAMETERS = [
   { id: "darkLessons", group: "lineage", name: "Lessons of the dark", kind: "toggle", scale: "on or off", description: "An heir carries extra fuel after an ancestor died without light.", default: true },
   { id: "trophies", group: "lineage", name: "Trophies", kind: "toggle", scale: "on or off", description: "A proud character keeps one item from each unique it kills while the pack has room.", default: true },
   { id: "favouredGrounds", group: "lineage", name: "Favoured grounds", kind: "toggle", scale: "on or off", description: "An heir prefers hunting where the family made its best find, once it is ready for that depth.", default: true },
+  { id: "familyMotto", group: "lineage", name: "Family motto", kind: "toggle", scale: "on or off", description: "The first character's strongest traits are remembered as a motto, and heirs repeat it at moments that fit.", default: true },
+  { id: "favouredWeapons", group: "lineage", name: "Favoured weapon kinds", kind: "toggle", scale: "on or off", description: "An heir prefers the weapon kind its most successful ancestor used when two weapons are close in value.", default: true },
+  { id: "cursedGround", group: "lineage", name: "Cursed ground", kind: "toggle", scale: "on or off", description: "A cautious heir lingers less where an ancestor died; a bold heir wants to go back and avenge it.", default: true },
+  { id: "celebrations", group: "lineage", name: "Celebrations", kind: "toggle", scale: "on or off", description: "A short line marks a level-up and a first unique kill in the character's voice.", default: true },
+  { id: "firstKillBoasts", group: "lineage", name: "First-kill boasts", kind: "toggle", scale: "on or off", description: "A proud character occasionally speaks when it kills a creature kind for the first time.", default: true },
+  { id: "heirlooms", group: "lineage", name: "Heirloom recognition", kind: "toggle", scale: "on or off", description: "An heir recognises by name an artifact an ancestor carried, and wants it more.", default: true },
   { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
   { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
   { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
@@ -2978,7 +2984,7 @@ function simulated(view, name, handle, result) {
   const safeUpgrade = lostFlags.length === 0 && result.delta.resists.every((change) => change >= 0) && after.speed >= before.speed && after.maxSp >= before.maxSp && after.maxHp >= before.maxHp && after.ac >= before.ac && after.toHit >= before.toHit && after.shots >= before.shots && (oldDamage === null && newDamage === null || oldDamage !== null && newDamage !== null && newDamage >= oldDamage) && (oldMissile === null && newMissile === null || oldMissile !== null && newMissile !== null && newMissile >= oldMissile);
   return { handle, name, score, unknown: false, safeUpgrade, criteria: `Wear ${name}: ${changes.join(", ")}.` };
 }
-function gearCandidates(view) {
+function gearCandidates(view, favouredKind = null) {
   const equipment = view.equipment();
   const ammoTypes = [TV.SHOT, TV.ARROW, TV.BOLT];
   const hasAmmo = view.inventory().some((item) => ammoTypes.includes(item.tval));
@@ -3048,7 +3054,28 @@ function gearCandidates(view) {
       criteria: `Try on the unknown ${name} to learn what it does.${detail}`
     });
   }
-  return out.sort((a, b) => Number(a.unknown) - Number(b.unknown) || b.score - a.score);
+  return out.sort((a, b) => {
+    const unknownDiff = Number(a.unknown) - Number(b.unknown);
+    if (unknownDiff !== 0) return unknownDiff;
+    const top = Math.max(a.score, b.score);
+    const floor = top * 0.95;
+    const aMatch = favouredKind !== null && a.score >= floor && slotOf(a.handle, view) === favouredKind ? 1 : 0;
+    const bMatch = favouredKind !== null && b.score >= floor && slotOf(b.handle, view) === favouredKind ? 1 : 0;
+    const matchDiff = bMatch - aMatch;
+    if (matchDiff !== 0) return matchDiff;
+    return b.score - a.score;
+  });
+}
+function slotOf(handle, view) {
+  const item = view.inventory().find((i) => i.handle === handle);
+  return item === void 0 ? null : weaponSlot(item.tval);
+}
+function weaponSlot(tval) {
+  if (tval === TV.SWORD) return "blade";
+  if (tval === TV.HAFTED || tval === TV.DIGGING) return "hafted";
+  if (tval === TV.POLEARM) return "polearm";
+  if (tval === TV.BOW) return "bow";
+  return null;
 }
 
 // src/persona/blend.ts
@@ -4027,7 +4054,7 @@ function junkInPack(view) {
 
 // src/learning/family-ways.ts
 function emptyFlourishes() {
-  return { superstitions: [], darkLesson: false, favouredDepth: null, trophies: [], uniqueKills: [], bestFind: null, lastUse: null };
+  return { superstitions: [], darkLesson: false, favouredDepth: null, trophies: [], uniqueKills: [], bestFind: null, lastUse: null, weaponKills: {}, celebratedLevels: [], boastedRaces: [], favouredKind: null };
 }
 function itemKey(item) {
   return item.kindId ?? `${String(item.tval)}:${String(item.sval)}`;
@@ -4057,12 +4084,72 @@ function learnedSuperstitions(superstitions, view) {
 function inheritWays(family, parent, heir, rng) {
   const share3 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
   const enabled = (id) => parent.toggles[id] && heir.toggles[id];
+  const inheritedFavoured = enabled("favouredWeapons") && share3 > 0 && (share3 === 1 || rng() < share3) ? favouredWeapon(family) : null;
   return {
     ...emptyFlourishes(),
     superstitions: enabled("inheritedSuperstitions") ? family.superstitions.slice(-Math.ceil(6 * share3)).filter(() => share3 > 0) : [],
     darkLesson: enabled("darkLessons") && family.darkDeaths > 0 && share3 > 0 && (share3 === 1 || rng() < share3),
-    favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share3 > 0 && (share3 === 1 || rng() < share3) ? family.bestFind.depth : null
+    favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share3 > 0 && (share3 === 1 || rng() < share3) ? family.bestFind.depth : null,
+    favouredKind: inheritedFavoured === null ? null : inheritedFavoured.kind
   };
+}
+function weaponKind(tval) {
+  if (tval === TV.SWORD) return "blade";
+  if (tval === TV.HAFTED) return "hafted";
+  if (tval === TV.POLEARM) return "polearm";
+  if (tval === TV.BOW) return "bow";
+  if (tval === TV.DIGGING) return "hafted";
+  return null;
+}
+function favouredWeapon(family) {
+  const withKills = family.ancestralWeapons.filter((w) => w.kills > 0);
+  if (withKills.length === 0) return null;
+  return [...withKills].sort((a, b) => b.kills - a.kills || b.generation - a.generation)[0] ?? null;
+}
+var MOTTO_WORDS = {
+  boldness: [{ at: 85, words: ["close the gap and end it", "strike first, before they recover"] }, { at: 65, words: ["hold the line and push on"] }, { at: 35, words: ["hold back and read the room"] }],
+  patience: [{ at: 85, words: ["wait them out, foot by foot"] }, { at: 35, words: ["seize the moment when it comes"] }],
+  pride: [{ at: 85, words: ["leave a name worth telling", "make the depths remember me"] }, { at: 65, words: ["do something worth the climb"] }, { at: 35, words: ["let the deed speak for itself"] }],
+  composure: [{ at: 85, words: ["breathe and cut clean"] }, { at: 35, words: ["trust the gut, even when it shakes"] }],
+  honour: [{ at: 85, words: ["fight fair and face to face"] }, { at: 35, words: ["take any edge they hand me"] }],
+  greed: [{ at: 85, words: ["leave nothing of value on the floor"] }, { at: 35, words: ["travel light and keep moving"] }],
+  curiosity: [{ at: 85, words: ["see what the next room holds"] }, { at: 35, words: ["keep to the proven road"] }],
+  paranoia: [{ at: 85, words: ["trust nothing I cannot name"] }, { at: 35, words: ["trust the footing and press on"] }],
+  ambition: [{ at: 85, words: ["go one level deeper each night"] }, { at: 35, words: ["take what the day gives me"] }],
+  stubbornness: [{ at: 85, words: ["never give a step back"] }, { at: 35, words: ["cut my losses early"] }]
+};
+function mottoForPersona(persona, rng) {
+  const picks = [];
+  for (const [id, table] of Object.entries(MOTTO_WORDS)) {
+    const slider = persona.sliders[id];
+    if (!Number.isFinite(slider)) continue;
+    for (const entry of table) {
+      const distance = Math.abs(slider - 50);
+      const band = entry.at >= 50 ? slider >= entry.at : slider <= entry.at;
+      if (!band) continue;
+      const draw = Math.max(0, Math.min(0.999999, rng()));
+      const phrase = entry.words[Math.floor(draw * entry.words.length)];
+      if (phrase !== void 0) picks.push({ at: distance, phrase });
+    }
+  }
+  picks.sort((a, b) => b.at - a.at);
+  return picks[0]?.phrase ?? "keep moving and keep your head.";
+}
+function mayReplaceMotto(older, persona, motto, rng) {
+  if (motto === null) return true;
+  const roll = rng();
+  if (!Number.isFinite(roll)) return false;
+  if (older === null) return roll < 0.25;
+  const moved = Object.entries(older.sliders).filter(([key2, value]) => {
+    const heirValue = persona.sliders[key2];
+    return heirValue !== void 0 && Math.abs(value - heirValue) >= 30;
+  }).length;
+  const share3 = moved / Object.keys(older.sliders).length;
+  return roll < share3;
+}
+function heirloomNames(lineage) {
+  if (lineage === void 0) return [];
+  return (lineage.milestones ?? []).filter((m) => m.kind === "artifact").map((m) => m.fact);
 }
 function familyAfterDeath(family, run, view, persona) {
   const last = run.lastUse;
@@ -4072,10 +4159,17 @@ function familyAfterDeath(family, run, view, persona) {
   const superstitions = persona.toggles.inheritedSuperstitions && last !== null && !known ? [...remembered3.filter((s) => s.key !== last.key), last].slice(-6) : remembered3;
   const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
   const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
-  return { superstitions, darkDeaths: family.darkDeaths + (persona.toggles.darkLessons && dark ? 1 : 0), bestFind };
+  const kinds = Object.entries(run.weaponKills).filter(([, n]) => typeof n === "number" && n > 0);
+  const topKind = kinds.length === 0 ? null : [...kinds].sort((a, b) => b[1] - a[1])[0];
+  const nextGeneration = family.ancestralWeapons.length === 0 ? 1 : Math.max(...family.ancestralWeapons.map((w) => w.generation)) + 1;
+  const nextWeapon = topKind !== null ? [...family.ancestralWeapons.slice(-12), { generation: nextGeneration, kind: topKind[0], kills: topKind[1] }] : family.ancestralWeapons.slice(-12);
+  const diedDepth = view !== null && view.player().depth > 0 ? view.player().depth : null;
+  const cursedDepthNext = diedDepth !== null ? family.cursedDepth ?? diedDepth : family.cursedDepth;
+  const nextMotto = family.motto ?? (persona.toggles.familyMotto ? { text: mottoForPersona(persona, Math.random), generation: nextGeneration } : null);
+  return { superstitions, darkDeaths: family.darkDeaths + (persona.toggles.darkLessons && dark ? 1 : 0), bestFind, motto: nextMotto, ancestralWeapons: nextWeapon, cursedDepth: cursedDepthNext };
 }
 function emptyFamilyFlourishes() {
-  return { superstitions: [], darkDeaths: 0, bestFind: null };
+  return { superstitions: [], darkDeaths: 0, bestFind: null, motto: null, ancestralWeapons: [], cursedDepth: null };
 }
 function observeFlourishes(run, view, persona, uniqueKills, acquired) {
   const items = view.inventory();
@@ -4107,6 +4201,58 @@ function trophyHandles(run, view, persona) {
   const upgrades = new Set(gearCandidates(view).map((g) => g.handle));
   return new Set(run.trophies.filter((t) => !upgrades.has(t.handle)).map((t) => t.handle));
 }
+function celebrationLine(persona, kind, fact) {
+  const bold = persona.sliders.boldness >= 65;
+  const proud = persona.sliders.pride >= 70;
+  const coward = persona.quirks.cowardice.on || persona.sliders.boldness <= 35;
+  if (kind === "first-unique") {
+    if (coward) return `${persona.name}: my hands shake, but ${fact} is mine.`;
+    if (bold) return `${persona.name}: ${fact} falls. I meant for that.`;
+    if (proud) return `${persona.name}: ${fact} is dead. The line should remember it.`;
+    return `${persona.name}: ${fact} is dead. The deeper dark will be easier now.`;
+  }
+  if (coward) return `${persona.name}: I am still alive at level ${String(levelFor(persona, fact))}.`;
+  if (proud) return `${persona.name}: level ${String(levelFor(persona, fact))}. The climb is mine.`;
+  if (bold) return `${persona.name}: level ${String(levelFor(persona, fact))}. Onwards.`;
+  return `${persona.name}: stronger now, at level ${String(levelFor(persona, fact))}.`;
+}
+function levelFor(persona, fact) {
+  const match = /level\s+(\d+)/.exec(fact);
+  if (match !== null) return Number(match[1]);
+  return Math.round(persona.sliders.levelfeel / 5);
+}
+function firstKillBoast(persona, race, rng) {
+  if (!persona.toggles.firstKillBoasts) return null;
+  if (persona.sliders.pride < 60) return null;
+  const roll = rng();
+  if (!Number.isFinite(roll) || roll > 0.35) return null;
+  if (persona.sliders.boldness >= 65) return `${persona.name}: my first ${race}. Not my last.`;
+  if (persona.sliders.pride >= 80) return `${persona.name}: my first ${race}. The line should remember that.`;
+  return `${persona.name}: first ${race} for me. I will not forget the feel.`;
+}
+function heirloomRecognition(persona, name, where) {
+  if (!persona.toggles.heirlooms) return null;
+  if (persona.sliders.pride >= 70) {
+    const claim = where === "floor" ? "It is mine by right." : "The shopkeeper will hear from me.";
+    return `${persona.name}: ${name}, again. The family has held this. ${claim}`;
+  }
+  if (persona.sliders.greed >= 70) {
+    const claim = where === "floor" ? "I want it back." : "I will buy it.";
+    return `${persona.name}: ${name} again. The family has held this before. ${claim}`;
+  }
+  return `${persona.name}: ${name}, the family's old ${where === "floor" ? "find" : "shelf"}. I want it.`;
+}
+function mottoLine(persona, motto) {
+  if (!persona.toggles.familyMotto || motto === null) return null;
+  return `${persona.name}: ${motto.text}`;
+}
+function cursedGroundLine(persona, depth2) {
+  const cautious = persona.sliders.boldness <= 35 || persona.sliders.paranoia >= 65;
+  const bold = persona.sliders.pride >= 70 || persona.sliders.boldness >= 65;
+  if (bold) return `${persona.name}: back at ${String(depth2 * 50)} ft, where the family fell. This time we go further.`;
+  if (cautious) return `${persona.name}: ${String(depth2 * 50)} ft. The air feels wrong here.`;
+  return `${persona.name}: ${String(depth2 * 50)} ft. An ancestor died here. I feel the weight of it.`;
+}
 function flourishLines(run, persona) {
   if (persona === null) return [];
   return [
@@ -4123,6 +4269,20 @@ function nudgeGrounds(dist, offers, run, view, persona, ceiling) {
   const depth2 = view.player().depth;
   const goal = depth2 < target ? "descend" : depth2 === target ? "explore" : null;
   for (const offer of offers) if (offer.goal === goal && offer.risk <= ceiling && out[offer.goal] !== void 0) out[offer.goal] = out[offer.goal] * 1.1;
+  return out;
+}
+function nudgeCursedGround(dist, family, view, persona, ceiling) {
+  const out = { ...dist };
+  if (!persona?.toggles.cursedGround || family.cursedDepth === null) return out;
+  const depth2 = view.player().depth;
+  if (depth2 !== family.cursedDepth) return out;
+  const cautious = persona.sliders.boldness <= 35 || persona.sliders.paranoia >= 65;
+  const bold = persona.sliders.pride >= 70 || persona.sliders.boldness >= 65;
+  const mult = cautious ? 0.85 : bold ? 1.1 : 1;
+  for (const goal of ["explore", "descend"]) {
+    const current2 = out[goal];
+    if (current2 !== void 0 && ceiling > 0) out[goal] = current2 * mult;
+  }
   return out;
 }
 function record3(raw) {
@@ -4144,7 +4304,22 @@ function find(raw) {
 }
 function readFamilyFlourishes(raw) {
   const r = record3(raw);
-  return { superstitions: strings(r["superstitions"]), darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0, bestFind: find(r["bestFind"]) };
+  const weapons = Array.isArray(r["ancestralWeapons"]) ? r["ancestralWeapons"].slice(-20).flatMap((w) => {
+    const s = record3(w);
+    return typeof s["generation"] === "number" && Number.isInteger(s["generation"]) && s["generation"] >= 1 && typeof s["kind"] === "string" && typeof s["kills"] === "number" && Number.isInteger(s["kills"]) && s["kills"] >= 0 ? [{ generation: s["generation"], kind: s["kind"].slice(0, 20), kills: s["kills"] }] : [];
+  }) : [];
+  const mottoEntry = (() => {
+    const m = record3(r["motto"]);
+    return typeof m["text"] === "string" && typeof m["generation"] === "number" && Number.isInteger(m["generation"]) && m["generation"] >= 1 ? { text: m["text"].slice(0, 120), generation: m["generation"] } : null;
+  })();
+  return {
+    superstitions: strings(r["superstitions"]),
+    darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0,
+    bestFind: find(r["bestFind"]),
+    motto: mottoEntry,
+    ancestralWeapons: weapons,
+    cursedDepth: depth(r["cursedDepth"])
+  };
 }
 function readWays(raw) {
   const r = record3(raw);
@@ -4153,7 +4328,26 @@ function readWays(raw) {
     return typeof s["unique"] === "string" && typeof s["name"] === "string" && typeof s["handle"] === "number" && Number.isInteger(s["handle"]) && s["handle"] > 0 ? [{ unique: s["unique"].slice(0, 100), name: s["name"].slice(0, 100), handle: s["handle"] }] : [];
   }) : [];
   const uniqueKills = Array.isArray(r["uniqueKills"]) ? r["uniqueKills"].filter((s) => typeof s === "string").slice(-200).map((s) => s.slice(0, 100)) : [];
-  return { superstitions: strings(r["superstitions"]), darkLesson: r["darkLesson"] === true, favouredDepth: depth(r["favouredDepth"]), trophies, uniqueKills, bestFind: find(r["bestFind"]), lastUse: strings([r["lastUse"]])[0] ?? null };
+  const weaponKillsRaw = record3(r["weaponKills"]);
+  const weaponKills = {};
+  for (const [kind, value] of Object.entries(weaponKillsRaw)) {
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1e5 && kind.length > 0 && kind.length <= 20) weaponKills[kind] = value;
+  }
+  const celebratedLevels = Array.isArray(r["celebratedLevels"]) ? r["celebratedLevels"].filter((n) => typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 100).slice(-50) : [];
+  const boastedRaces = Array.isArray(r["boastedRaces"]) ? r["boastedRaces"].filter((s) => typeof s === "string").slice(-100).map((s) => s.slice(0, 60)) : [];
+  return {
+    superstitions: strings(r["superstitions"]),
+    darkLesson: r["darkLesson"] === true,
+    favouredDepth: depth(r["favouredDepth"]),
+    trophies,
+    uniqueKills,
+    bestFind: find(r["bestFind"]),
+    lastUse: strings([r["lastUse"]])[0] ?? null,
+    weaponKills,
+    celebratedLevels,
+    boastedRaces,
+    favouredKind: typeof r["favouredKind"] === "string" && r["favouredKind"].length > 0 && r["favouredKind"].length <= 20 ? r["favouredKind"] : null
+  };
 }
 
 // src/town/plan.ts
@@ -5216,6 +5410,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const out = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
+  const tieBreakKind = persona?.toggles.favouredWeapons === true ? flourishes.favouredKind : null;
   const add2 = (goal, criteria, risk, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp012(risk), survival, ...routine ? { routine: true } : {}, ...uncertain ? { uncertain: true } : {} });
   const exit = leaveStep(s, terrain);
   const addLeave = (criteria, _risk) => {
@@ -5378,7 +5573,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hungry(view) && s.pack.food[0] !== void 0) {
     add2("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s));
   }
-  const gear = gearCandidates(view).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
+  const gear = gearCandidates(view, tieBreakKind).find((g) => !g.unknown || (persona?.sliders.curiosity ?? 0) >= 50);
   const unlit = gear !== void 0 && gear.criteria.includes("has no light");
   if (!bleeding && incoming.damage < player.hp && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
     add2("wear", gear.criteria, Math.max(gear.unknown ? 0.05 : 0.02, exposure(s)), !gear.unknown && gear.safeUpgrade !== false && s.awake.length === 0 && !immediateDanger(s));
@@ -5909,8 +6104,10 @@ function createGoalPlanner(options) {
         });
       }
       case "wear": {
-        const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);
-        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
+        const personaNow = personaOf();
+        const tieBreakKind = personaNow?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null;
+        const candidate = gearCandidates(view, tieBreakKind).find((gear) => !gear.unknown || (personaNow?.sliders.curiosity ?? 0) >= 50);
+        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view, personaOf()?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
       }
       case "detect": {
         const reactive = situationNow(view).unseenDamage > 0;
@@ -6098,7 +6295,8 @@ function createGoalPlanner(options) {
     const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
     const felt = nudgeGrudges(pursued, digest.offers, grudgesNow(), sighted, riskCeiling(persona));
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
-    const unseen = nudgeUnseen(grounded, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
+    const cursed2 = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
+    const unseen = nudgeUnseen(cursed2, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
@@ -9110,13 +9308,13 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
   const bloodGrudges = parentPersona.sliders.inheritance > 0 && parentPersona.toggles.grudges && heirPersona.toggles.grudges;
   if (bloodGrudges && death !== null) {
     const race = killerRace(death.cause);
-    const family = familyOf(race);
-    if (family !== "other") {
-      grudges.push({ race, family, generation: parentLineage.generation });
+    const family2 = familyOf(race);
+    if (family2 !== "other") {
+      grudges.push({ race, family: family2, generation: parentLineage.generation });
       const known = killers.find((k) => k.name.toLowerCase() === race.toLowerCase());
       const count3 = known === void 0 ? 1 : Math.max(1, remembered(known, heirGeneration));
       const target = feelingKind(shaped, count3) === "hatred" ? lists.hated : lists.feared;
-      if (!target.includes(family) && target.length < 12) target.push(family);
+      if (!target.includes(family2) && target.length < 12) target.push(family2);
     }
   }
   const feelings = bloodGrudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
@@ -9131,6 +9329,9 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
     ...parentLineage.deepest === void 0 ? {} : { deepest: parentLineage.deepest },
     ...parentLineage.turns === void 0 ? {} : { turns: parentLineage.turns }
   };
+  const family = parentLineage.flourishRecord ?? emptyFamilyFlourishes();
+  const replaced = shaped.toggles.familyMotto && mayReplaceMotto(parentPersona, shaped, family.motto, rng);
+  const nextMotto = replaced && family.motto !== null ? { text: mottoForPersona(shaped, rng), generation: heirGeneration } : family.motto;
   return {
     lineage: {
       name: heirPersona.name,
@@ -9143,8 +9344,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       killers,
       feelings,
       ...inheritFlourishes(parentLineage, parentPersona, shaped),
-      flourishRecord: parentLineage.flourishRecord ?? emptyFamilyFlourishes(),
-      flourishes: inheritWays(parentLineage.flourishRecord ?? emptyFamilyFlourishes(), parentPersona, shaped, rng)
+      flourishRecord: { ...family, motto: nextMotto },
+      flourishes: inheritWays(family, parentPersona, shaped, rng)
     },
     persona: { ...heirPersona, sliders, lists }
   };
@@ -9943,7 +10144,23 @@ function createRuntime(host, options = {}) {
   let lastView = null;
   let unsavedSpend = 0;
   let summary = null;
+  let lastLevel = 0;
+  let lastHpShare = 1;
+  let lastDepth = 0;
+  let firstUniqueCelebrated = false;
+  const cursedDepthsAnnounced = /* @__PURE__ */ new Set();
+  let nearDeathMottoSpoken = false;
   const chronicleListeners = /* @__PURE__ */ new Set();
+  function weaponKindOfEquipment(view) {
+    const weapon = view.equipment().find((item) => item !== null && weaponKind(item.tval) !== null);
+    return weapon === void 0 || weapon === null ? null : weaponKind(weapon.tval);
+  }
+  function recognizeHeirloom(name, where) {
+    const persona = character.persona;
+    if (persona === null) return;
+    const line_ = heirloomRecognition(persona, name, where);
+    if (line_ !== null) host.log(line_);
+  }
   const journal = createJournal(character.journal, {
     persona: () => character.persona,
     setPersona: (persona) => self.saveCharacter({ ...character, persona }),
@@ -10114,9 +10331,27 @@ function createRuntime(host, options = {}) {
       return own;
     },
     recordKill(race, unique, view) {
+      const persona = character.persona;
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       const run = character.flourishes ?? emptyFlourishes();
-      self.saveCharacter({ ...character, kills, ...unique ? { flourishes: { ...run, uniqueKills: [.../* @__PURE__ */ new Set([...run.uniqueKills, race])] } } : {} });
+      const weaponKindName = view === null ? null : weaponKindOfEquipment(view) ?? null;
+      const weaponKills = weaponKindName !== null ? { ...run.weaponKills, [weaponKindName]: (run.weaponKills[weaponKindName] ?? 0) + 1 } : run.weaponKills;
+      let next = { ...run, weaponKills };
+      if (unique) next = { ...next, uniqueKills: [.../* @__PURE__ */ new Set([...run.uniqueKills, race])] };
+      const firstUnique = unique && !firstUniqueCelebrated;
+      if (firstUnique) {
+        firstUniqueCelebrated = true;
+        if (persona !== null && persona.toggles.celebrations) host.log(celebrationLine(persona, "first-unique", race));
+      }
+      const isFirstKillOfKind = (character.kills[race] ?? 0) === 0 && persona !== null;
+      if (!unique && isFirstKillOfKind) {
+        const boast = firstKillBoast(persona, race, Math.random);
+        if (boast !== null) {
+          next = { ...next, boastedRaces: [...run.boastedRaces, race].slice(-100) };
+          host.log(boast);
+        }
+      }
+      self.saveCharacter({ ...character, kills, flourishes: next });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
       if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
@@ -10135,6 +10370,39 @@ function createRuntime(host, options = {}) {
     recordCommand: rememberUse,
     observe(view, terrain) {
       lastView = view;
+      const player = view.player();
+      const hpShare = player.maxHp > 0 ? player.hp / player.maxHp : 1;
+      const persona = character.persona;
+      const line = (text) => host.log(text);
+      const nextLevel = player.level;
+      const nextDepth = player.depth;
+      if (lastLevel !== 0 && nextLevel > lastLevel && persona !== null && persona.toggles.celebrations && !(character.flourishes ?? emptyFlourishes()).celebratedLevels.includes(nextLevel)) {
+        const fact = `reached character level ${String(nextLevel)}`;
+        line(celebrationLine(persona, "level-up", fact));
+        const motto = familyNow()?.flourishRecord?.motto ?? null;
+        const motto_ = mottoLine(persona, motto);
+        if (motto_ !== null) line(motto_);
+        const run = character.flourishes ?? emptyFlourishes();
+        self.saveCharacter({ ...character, flourishes: { ...run, celebratedLevels: [...run.celebratedLevels, nextLevel].slice(-50) } });
+      }
+      if (lastHpShare >= 0.35 && hpShare < 0.2 && !player.dead && !nearDeathMottoSpoken) {
+        const motto = familyNow()?.flourishRecord?.motto ?? null;
+        const motto_ = mottoLine(persona ?? defaultPersona(), motto);
+        if (persona !== null && persona.toggles.familyMotto && motto_ !== null) {
+          line(motto_);
+          nearDeathMottoSpoken = true;
+        }
+      }
+      if (lastDepth !== nextDepth) {
+        const family = familyNow();
+        if (family !== null && persona !== null && persona.toggles.cursedGround && family.flourishRecord?.cursedDepth === nextDepth && nextDepth > 0 && !cursedDepthsAnnounced.has(nextDepth)) {
+          line(cursedGroundLine(persona, nextDepth));
+          cursedDepthsAnnounced.add(nextDepth);
+        }
+      }
+      lastLevel = nextLevel;
+      lastHpShare = hpShare;
+      lastDepth = nextDepth;
       journal.observe(view);
       observeFamily(view);
       observeWays(view);
@@ -10239,6 +10507,8 @@ function createRuntime(host, options = {}) {
     return config.lineages[line]?.feelings ?? [];
   }
   let seenInventory = null;
+  let seenHeirlooms = null;
+  const ancestorNameSets = /* @__PURE__ */ new WeakMap();
   function observeWays(view) {
     const run = character.flourishes ?? emptyFlourishes();
     const handles = new Set(view.inventory().map((i) => i.handle));
@@ -10262,6 +10532,49 @@ function createRuntime(host, options = {}) {
         flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) }
       } } });
     }
+    if (character.persona !== null && character.persona.toggles.heirlooms && lineage !== void 0) {
+      let names = ancestorNameSets.get(lineage);
+      if (names === void 0) {
+        names = new Set(heirloomNames(lineage));
+        ancestorNameSets.set(lineage, names);
+      }
+      if (names.size > 0) {
+        const stores = typeof view.stores === "function" ? view.stores() : [];
+        const onShop = stores.flatMap((store2) => store2.stock.map((it) => it.name === void 0 ? null : { name: it.name, where: "shop" })).filter((it) => it !== null);
+        const onFloor = knownReadableItems(view);
+        if (onFloor.length === 0 && onShop.length === 0) return;
+        const seen = seenHeirlooms ?? /* @__PURE__ */ new Set();
+        const matched = [];
+        for (const item of [...onFloor, ...onShop]) {
+          for (const heirloom of names) {
+            if (item.name.toLowerCase().includes(heirloom.toLowerCase()) && !seen.has(item.name)) matched.push({ name: item.name, where: item.where });
+          }
+        }
+        if (matched.length > 0) {
+          for (const m of matched) recognizeHeirloom(m.name, m.where);
+          seenHeirlooms = /* @__PURE__ */ new Set([...seen, ...matched.map((m) => m.name)]);
+        }
+      }
+    }
+  }
+  function knownReadableItems(view) {
+    const memory = typeof view.knownFloorItems === "function" ? view.knownFloorItems : null;
+    if (memory === null) return [];
+    const bounds = view.mapBounds();
+    const out = [];
+    for (let y = 0; y < bounds.height; y++) {
+      for (let x = 0; x < bounds.width; x++) {
+        for (const entry of memory(x, y)) {
+          if (entry.visibility !== "seen" || entry.sensed) continue;
+          const details = entry.item;
+          if (details === null) continue;
+          if (details.artifactName === null) continue;
+          if (unknownFlavour(details.tval, details.name)) continue;
+          out.push({ name: details.name, where: "floor" });
+        }
+      }
+    }
+    return out;
   }
   function rememberUse(command, view) {
     const run = character.flourishes ?? emptyFlourishes();
@@ -10301,6 +10614,7 @@ function createRuntime(host, options = {}) {
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
+        familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), pursuits: strategy.pursuits() }),

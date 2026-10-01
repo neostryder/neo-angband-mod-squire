@@ -31,7 +31,7 @@ import { dreadedRaces } from "./learning/lessons.js";
 import { feelingLine, feelingLog, remembered, settle, settledLine, type Feeling } from "./learning/grudges.js";
 import { addMilestone, epitaphFor, familyVoice, milestoneFact, milestoneId, recallMilestones, type Milestone } from "./learning/flourishes.js";
 import type { Lineage } from "./learning/lineage.js";
-import { emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, flourishLines, learnedSuperstitions, observeFlourishes, readWays, usedItem, type Flourishes } from "./learning/family-ways.js";
+import { celebrationLine, cursedGroundLine, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, firstKillBoast, flourishLines, heirloomRecognition, heirloomNames, learnedSuperstitions, mottoLine, observeFlourishes, readWays, usedItem, weaponKind, type Flourishes } from "./learning/family-ways.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -43,6 +43,7 @@ import { defaultPersona } from "./persona/persona.js";
 import { createSender } from "./telemetry/sender.js";
 import { createRows, countRows, exportRows, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
+import { unknownFlavour } from "./brain/items.js";
 import type { Apprentice } from "./knight.js";
 
 /** The plugin context fields used by Squire's runtime. */
@@ -242,7 +243,27 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   let lastView: AgentView | null = null;
   let unsavedSpend = 0;
   let summary: RunSummary | null = null;
+  /* Snapshots the runtime uses to detect level-ups, near-death, cursed-ground arrivals and first-unique kills. */
+  let lastLevel = 0;
+  let lastHpShare = 1;
+  let lastDepth = 0;
+  let firstUniqueCelebrated = false;
+  /* Per-run guards so cursed-ground and near-death lines never repeat. */
+  const cursedDepthsAnnounced = new Set<number>();
+  let nearDeathMottoSpoken = false;
   const chronicleListeners = new Set<(line: string) => void>();
+
+  function weaponKindOfEquipment(view: AgentView): string | null {
+    const weapon = view.equipment().find((item) => item !== null && weaponKind(item.tval) !== null);
+    return weapon === undefined || weapon === null ? null : weaponKind(weapon.tval);
+  }
+
+  function recognizeHeirloom(name: string, where: "floor" | "shop"): void {
+    const persona = character.persona;
+    if (persona === null) return;
+    const line_ = heirloomRecognition(persona, name, where);
+    if (line_ !== null) host.log(line_);
+  }
   const journal = createJournal(character.journal, {
     persona: () => character.persona,
     setPersona: (persona) => self.saveCharacter({ ...character, persona }),
@@ -423,9 +444,27 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       return own;
     },
     recordKill(race, unique, view) {
+      const persona = character.persona;
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       const run = character.flourishes ?? emptyFlourishes();
-      self.saveCharacter({ ...character, kills, ...(unique ? { flourishes: { ...run, uniqueKills: [...new Set([...run.uniqueKills, race])] } } : {}) });
+      const weaponKindName = view === null ? null : (weaponKindOfEquipment(view) ?? null);
+      const weaponKills = weaponKindName !== null ? { ...run.weaponKills, [weaponKindName]: (run.weaponKills[weaponKindName] ?? 0) + 1 } : run.weaponKills;
+      let next = { ...run, weaponKills };
+      if (unique) next = { ...next, uniqueKills: [...new Set([...run.uniqueKills, race])] };
+      const firstUnique = unique && !firstUniqueCelebrated;
+      if (firstUnique) {
+        firstUniqueCelebrated = true;
+        if (persona !== null && persona.toggles.celebrations) host.log(celebrationLine(persona, "first-unique", race));
+      }
+      const isFirstKillOfKind = (character.kills[race] ?? 0) === 0 && persona !== null;
+      if (!unique && isFirstKillOfKind) {
+        const boast = firstKillBoast(persona!, race, Math.random);
+        if (boast !== null) {
+          next = { ...next, boastedRaces: [...run.boastedRaces, race].slice(-100) };
+          host.log(boast);
+        }
+      }
+      self.saveCharacter({ ...character, kills, flourishes: next });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
       if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
@@ -444,6 +483,39 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     recordCommand: rememberUse,
     observe(view, terrain) {
       lastView = view;
+      const player = view.player();
+      const hpShare = player.maxHp > 0 ? player.hp / player.maxHp : 1;
+      const persona = character.persona;
+      const line = (text: string): void => host.log(text);
+      const nextLevel = player.level;
+      const nextDepth = player.depth;
+      if (lastLevel !== 0 && nextLevel > lastLevel && persona !== null && persona.toggles.celebrations && !((character.flourishes ?? emptyFlourishes()).celebratedLevels.includes(nextLevel))) {
+        const fact = `reached character level ${String(nextLevel)}`;
+        line(celebrationLine(persona, "level-up", fact));
+        const motto = familyNow()?.flourishRecord?.motto ?? null;
+        const motto_ = mottoLine(persona, motto);
+        if (motto_ !== null) line(motto_);
+        const run = character.flourishes ?? emptyFlourishes();
+        self.saveCharacter({ ...character, flourishes: { ...run, celebratedLevels: [...run.celebratedLevels, nextLevel].slice(-50) } });
+      }
+      if (lastHpShare >= 0.35 && hpShare < 0.2 && !player.dead && !nearDeathMottoSpoken) {
+        const motto = familyNow()?.flourishRecord?.motto ?? null;
+        const motto_ = mottoLine(persona ?? defaultPersona(), motto);
+        if (persona !== null && persona.toggles.familyMotto && motto_ !== null) {
+          line(motto_);
+          nearDeathMottoSpoken = true;
+        }
+      }
+      if (lastDepth !== nextDepth) {
+        const family = familyNow();
+        if (family !== null && persona !== null && persona.toggles.cursedGround && family.flourishRecord?.cursedDepth === nextDepth && nextDepth > 0 && !cursedDepthsAnnounced.has(nextDepth)) {
+          line(cursedGroundLine(persona, nextDepth));
+          cursedDepthsAnnounced.add(nextDepth);
+        }
+      }
+      lastLevel = nextLevel;
+      lastHpShare = hpShare;
+      lastDepth = nextDepth;
       journal.observe(view);
       observeFamily(view);
       observeWays(view);
@@ -549,6 +621,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   }
 
   let seenInventory: ReadonlySet<number> | null = null;
+  let seenHeirlooms: ReadonlySet<string> | null = null;
+  /* Cached ancestor name sets keyed by lineage, so the floor scan does not rebuild them each tick. */
+  const ancestorNameSets = new WeakMap<object, ReadonlySet<string>>();
   function observeWays(view: AgentView): void {
     const run = character.flourishes ?? emptyFlourishes();
     const handles = new Set(view.inventory().map((i) => i.handle));
@@ -570,6 +645,52 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       if (learned.length > 0) self.saveConfig({ ...config, lineages: { ...config.lineages, [lineageName]: { ...lineage,
         flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) } } } });
     }
+    if (character.persona !== null && character.persona.toggles.heirlooms && lineage !== undefined) {
+      let names = ancestorNameSets.get(lineage);
+      if (names === undefined) {
+        names = new Set(heirloomNames(lineage));
+        ancestorNameSets.set(lineage, names);
+      }
+      if (names.size > 0) {
+        const stores = typeof view.stores === "function" ? view.stores() : [];
+        const onShop = stores.flatMap((store) => store.stock.map((it): { readonly name: string; readonly where: "floor" | "shop" } | null => it.name === undefined ? null : { name: it.name, where: "shop" })).filter((it): it is { readonly name: string; readonly where: "floor" | "shop" } => it !== null);
+        const onFloor = knownReadableItems(view);
+        if (onFloor.length === 0 && onShop.length === 0) return;
+        const seen = seenHeirlooms ?? new Set<string>();
+        const matched: { name: string; where: "floor" | "shop" }[] = [];
+        for (const item of [...onFloor, ...onShop]) {
+          for (const heirloom of names) {
+            if (item.name.toLowerCase().includes(heirloom.toLowerCase()) && !seen.has(item.name)) matched.push({ name: item.name, where: item.where });
+          }
+        }
+        if (matched.length > 0) {
+          for (const m of matched) recognizeHeirloom(m.name, m.where);
+          seenHeirlooms = new Set([...seen, ...matched.map((m) => m.name)]);
+        }
+      }
+    }
+  }
+
+  /** Floor items the player can currently see and read the name of. */
+  function knownReadableItems(view: AgentView): { readonly name: string; readonly where: "floor" | "shop" }[] {
+    const memory = typeof view.knownFloorItems === "function" ? view.knownFloorItems : null;
+    if (memory === null) return [];
+    const bounds = view.mapBounds();
+    const out: { readonly name: string; readonly where: "floor" | "shop" }[] = [];
+    for (let y = 0; y < bounds.height; y++) {
+      for (let x = 0; x < bounds.width; x++) {
+        for (const entry of memory(x, y)) {
+          if (entry.visibility !== "seen" || entry.sensed) continue;
+          const details = entry.item;
+          if (details === null) continue;
+          /* An artifact the character has not identified has no name to match. */
+          if (details.artifactName === null) continue;
+          if (unknownFlavour(details.tval, details.name)) continue;
+          out.push({ name: details.name, where: "floor" });
+        }
+      }
+    }
+    return out;
   }
 
   function rememberUse(command: AgentCommand, view: AgentView): void {
@@ -613,6 +734,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
+        familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), pursuits: strategy.pursuits() }),

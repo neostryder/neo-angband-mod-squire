@@ -15,15 +15,20 @@ import { townTripPlan } from "../town/plan.js";
 import { memoryStore } from "../memory/kv.js";
 import { createRuntime, type RunReportLike } from "../runtime.js";
 import { readConfig, writeConfig } from "../config.js";
+import { TV } from "../gear/compare.js";
+import type { Milestone } from "./flourishes.js";
 import {
   distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, flourishLines, inheritWays,
-  nudgeGrounds, observeFlourishes, readFamilyFlourishes, readWays, trophyHandles, unknownUse, usedItem,
+  mayReplaceMotto, nudgeGrounds, observeFlourishes, readFamilyFlourishes, readWays, trophyHandles, unknownUse, usedItem,
+  type FamilyFlourishes,
 } from "./family-ways.js";
+import type { Persona } from "../persona/persona.js";
 
 const GRIP = "Grip, Farmer Maggot's Dog";
 const SCROLL = "a Scroll titled 'FOO BAR'";
 const taboo = unknownUse(itemNamed(SCROLL, 1))!;
-const family = { superstitions: [taboo], darkDeaths: 1, bestFind: { depth: 3, value: 500, name: "a Dagger" } };
+const MAP = ["########", "#.@....#", "########"];
+const family = { superstitions: [taboo], darkDeaths: 1, bestFind: { depth: 3, value: 500, name: "a Dagger" }, motto: null, ancestralWeapons: [], cursedDepth: null };
 const memories = { ...emptyFlourishes(), superstitions: [taboo], darkLesson: true, favouredDepth: 3 };
 const baseLine: Lineage = { name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [], flourishRecord: family };
 
@@ -350,5 +355,195 @@ describe("runtime and saved flourishes", () => {
     expect(rt.character().flourishes?.trophies).toHaveLength(1);
     expect(rt.flourishLines()[0]).toContain("trophy");
     expect(logged.some((s) => s.includes("trophy"))).toBe(true);
+  });
+});
+
+describe("mayReplaceMotto slider bind", () => {
+  function personaWith(sliders: Record<string, number>): Persona {
+    const p = parent();
+    for (const [key, value] of Object.entries(sliders)) (p.sliders as unknown as Record<string, number>)[key] = value;
+    return p;
+  }
+  const motto = { text: "test", generation: 1 };
+
+  it("compares each measured slider with the heir's same slider, not a fixed first one", () => {
+    const older = personaWith({ inheritance: 50, resemblance: 50, boldness: 10, patience: 10 });
+    const heir = personaWith({ inheritance: 50, resemblance: 50, boldness: 80, patience: 10 });
+    /* With one slider of many moved, the share is below 0.05; any normal roll keeps the motto. */
+    expect(mayReplaceMotto(older, heir, motto, () => 0.32)).toBe(false);
+    expect(mayReplaceMotto(older, heir, motto, () => 0.99)).toBe(false);
+  });
+
+  it("does replace when the heir's full slider set has moved", () => {
+    const older = personaWith({ inheritance: 50, resemblance: 50, boldness: 10, patience: 10 });
+    const heir = personaWith({ inheritance: 80, resemblance: 20, boldness: 80, patience: 80 });
+    /* Now four sliders moved by 30+, so share is roughly 4/N. A low roll still keeps the motto;
+     * the bug keyed every comparison at the heir's first slider and would return true here too,
+     * but the more decisive case is when most sliders stayed put yet the first one moved. */
+    expect(mayReplaceMotto(older, heir, motto, () => 0.05)).toBe(true);
+  });
+
+  it("falls back to the bootstrap chance when the older persona is missing", () => {
+    expect(mayReplaceMotto(null, parent(), null, () => 0.5)).toBe(true);
+    /* With no older persona, the roll must beat the bootstrap chance (0.25). */
+    expect(mayReplaceMotto(null, parent(), motto, () => 0.1)).toBe(true);
+    expect(mayReplaceMotto(null, parent(), motto, () => 0.5)).toBe(false);
+  });
+
+  it("returns false for a non-finite random draw and true when no motto is set yet", () => {
+    const older = personaWith({ inheritance: 50, resemblance: 50, boldness: 10 });
+    expect(mayReplaceMotto(older, personaWith({ inheritance: 50, resemblance: 50, boldness: 80 }), motto, () => Number.NaN)).toBe(false);
+    expect(mayReplaceMotto(older, personaWith({ inheritance: 50, resemblance: 50, boldness: 80 }), null, () => 0.99)).toBe(true);
+  });
+});
+
+describe("favoured kind in inheritance", () => {
+  const armed: FamilyFlourishes = { ...family, ancestralWeapons: [{ generation: 1, kind: "sword", kills: 5 }] };
+
+  it("returns null when inheritance is 0, mirroring the other share-gated ways", () => {
+    const p = parent();
+    p.sliders.inheritance = 0;
+    const heir = defaultPersona("Bea");
+    heir.toggles.favouredWeapons = true;
+    expect(inheritWays(armed, p, heir, () => 0).favouredKind).toBeNull();
+  });
+
+  it("returns the kind with full share when the heir opts in", () => {
+    const p = parent();
+    p.sliders.inheritance = 100;
+    const heir = defaultPersona("Bea");
+    heir.toggles.favouredWeapons = true;
+    expect(inheritWays(armed, p, heir, () => 0).favouredKind).toBe("sword");
+  });
+
+  it("returns null when the heir turns the setting off, even with full share", () => {
+    const p = parent();
+    p.sliders.inheritance = 100;
+    const heir = defaultPersona("Bea");
+    heir.toggles.favouredWeapons = false;
+    expect(inheritWays(armed, p, heir, () => 0).favouredKind).toBeNull();
+  });
+});
+
+describe("ancestor superstition forgotten", () => {
+  it("matches each run superstition against the same key in the next observation, not against itself", () => {
+    const logged: string[] = [];
+    const host = { log: (s: string) => logged.push(s), characterStore: { get: () => undefined, set: () => {} } };
+    const rt = createRuntime(host, { store: memoryStore() });
+    /* The family carries two superstitions. When the player identifies only one kind, the other
+     * should still surface as forgotten through observeFlourishes; the prior self-comparison
+     * ("t.key === t.key") silently dropped every forgotten line. */
+    const other = unknownUse(itemNamed("a Smoky Potion", 2))!;
+    const inherited = {
+      ...memories,
+      superstitions: [taboo, other],
+    };
+    rt.saveConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, flourishRecord: family } } });
+    rt.saveCharacter({ ...rt.character(), persona: parent(), lineage: "Ada", flourishes: inherited });
+    const w = world({ map: ["@"], pack: ["a Scroll of Phase Door"] });
+    rt.observe(w.view);
+    expect(rt.character().flourishes?.superstitions).toEqual([other]);
+    expect(logged.some((line) => line.includes("Scroll titled 'FOO BAR'"))).toBe(true);
+    expect(logged.some((line) => line.includes("Smoky Potion"))).toBe(false);
+  });
+});
+
+describe("once-per-run cursed ground and near-death motto", () => {
+  it("announces cursed ground at most once per depth and the near-death motto at most once per run", () => {
+    const logged: string[] = [];
+    const host = { log: (s: string) => logged.push(s), characterStore: { get: () => undefined, set: () => {} } };
+    const rt = createRuntime(host, { store: memoryStore() });
+    const p = parent();
+    p.toggles.familyMotto = true;
+    p.toggles.cursedGround = true;
+    rt.saveConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, flourishRecord: { ...family, cursedDepth: 3, motto: { text: "hold the line and push on", generation: 1 } } } } });
+    rt.saveCharacter({ ...rt.character(), persona: p, lineage: "Ada" });
+    const depthLines = (l: string): boolean => l.includes("150 ft") && l.includes("ancestor");
+    /* First descent to the cursed depth logs the line. */
+    const w = world({ map: ["@"], player: { depth: 3, hp: 80, maxHp: 80 } });
+    rt.observe(w.view);
+    expect(logged.filter(depthLines)).toHaveLength(1);
+    /* A second observe at the same depth does not repeat it. */
+    rt.observe(w.view);
+    expect(logged.filter(depthLines)).toHaveLength(1);
+    /* Returning to the same depth later still does not repeat it. */
+    rt.observe(w.view);
+    expect(logged.filter(depthLines)).toHaveLength(1);
+    /* The first HP plunge below the threshold speaks the motto. */
+    const wounded = world({ map: ["@"], player: { depth: 3, hp: 6, maxHp: 80 } });
+    rt.observe(wounded.view);
+    expect(logged.some((line) => line.includes("hold the line"))).toBe(true);
+    const mottoCount = logged.filter((line) => line.includes("hold the line")).length;
+    /* Recovery and another plunge must not repeat the motto. */
+    const recovered = world({ map: ["@"], player: { depth: 3, hp: 80, maxHp: 80 } });
+    rt.observe(recovered.view);
+    rt.observe(wounded.view);
+    expect(logged.filter((line) => line.includes("hold the line")).length).toBe(mottoCount);
+  });
+});
+
+describe("floor heirloom recognition from known floor items", () => {
+  function floorItem(args: { readonly tval: number; readonly name: string; readonly artifactName: string | null; readonly visibility: "seen" | "remembered" }) {
+    return {
+      ref: { id: 1 },
+      grid: { x: 1, y: 1 },
+      visibility: args.visibility,
+      sensed: false as const,
+      item: { tval: args.tval, name: args.name, artifactName: args.artifactName, pval: 0, number: 1, weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, inscription: null },
+    };
+  }
+  function withKnownFloor(view: AgentView, cells: Record<string, readonly unknown[]>): AgentView {
+    return { ...view, knownFloorItems: ((x: number, y: number) => cells[`${String(x)},${String(y)}`] ?? []) as unknown as AgentView["knownFloorItems"] & (() => never) };
+  }
+
+  it("recognises an artifact name the player can read on the floor in sight", () => {
+    const logged: string[] = [];
+    const host = { log: (s: string) => logged.push(s), characterStore: { get: () => undefined, set: () => {} } };
+    const rt = createRuntime(host, { store: memoryStore() });
+    const p = parent();
+    p.toggles.heirlooms = true;
+    const milestone: Milestone = { kind: "artifact", name: "Ada", generation: 1, depth: 1, fact: "Dethanc" };
+    rt.saveConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, milestones: [milestone] } } });
+    rt.saveCharacter({ ...rt.character(), persona: p, lineage: "Ada" });
+    const w = world({ map: MAP, player: { depth: 2, maxDepth: 2 } });
+    const view = withKnownFloor(w.view, {
+      "1,1": [floorItem({ tval: TV.SWORD, name: "Dethanc (Defender) (2d4)", artifactName: "Dethanc", visibility: "seen" })],
+    });
+    rt.observe(view);
+    expect(logged.some((line) => line.includes("Dethanc"))).toBe(true);
+  });
+
+  it("skips an artifact whose name is not yet known to the player", () => {
+    const logged: string[] = [];
+    const host = { log: (s: string) => logged.push(s), characterStore: { get: () => undefined, set: () => {} } };
+    const rt = createRuntime(host, { store: memoryStore() });
+    const p = parent();
+    p.toggles.heirlooms = true;
+    const milestone: Milestone = { kind: "artifact", name: "Ada", generation: 1, depth: 1, fact: "Dethanc" };
+    rt.saveConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, milestones: [milestone] } } });
+    rt.saveCharacter({ ...rt.character(), persona: p, lineage: "Ada" });
+    const w = world({ map: MAP, player: { depth: 2, maxDepth: 2 } });
+    const view = withKnownFloor(w.view, {
+      "1,1": [floorItem({ tval: TV.SWORD, name: "a Long Sword", artifactName: null, visibility: "seen" })],
+    });
+    rt.observe(view);
+    expect(logged.some((line) => line.includes("Dethanc"))).toBe(false);
+  });
+
+  it("skips items that are remembered but not in sight", () => {
+    const logged: string[] = [];
+    const host = { log: (s: string) => logged.push(s), characterStore: { get: () => undefined, set: () => {} } };
+    const rt = createRuntime(host, { store: memoryStore() });
+    const p = parent();
+    p.toggles.heirlooms = true;
+    const milestone: Milestone = { kind: "artifact", name: "Ada", generation: 1, depth: 1, fact: "Dethanc" };
+    rt.saveConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, milestones: [milestone] } } });
+    rt.saveCharacter({ ...rt.character(), persona: p, lineage: "Ada" });
+    const w = world({ map: MAP, player: { depth: 2, maxDepth: 2 } });
+    const view = withKnownFloor(w.view, {
+      "1,1": [floorItem({ tval: TV.SWORD, name: "Dethanc", artifactName: "Dethanc", visibility: "remembered" })],
+    });
+    rt.observe(view);
+    expect(logged.some((line) => line.includes("Dethanc"))).toBe(false);
   });
 });

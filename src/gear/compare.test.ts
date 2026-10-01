@@ -147,3 +147,29 @@ describe("a light running out", () => {
     expect(gearCandidates(low.view)[0]?.criteria).toContain("nearly out of fuel");
   });
 });
+
+describe("favoured weapon kind in tie-break", () => {
+  it("sorts the matching kind first when the candidates are within five percent of the top", () => {
+    /* Two unknown weapons of the same visible dice: the sword matches "blade", the mace does not.
+     * Both scores sit at the top of the array, so the kind match wins over raw score order. */
+    const w = world({ map: ["@"], pack: ["a Sword (2d5) (+0,+0)", "a Mace (2d5) (+0,+0)"] });
+    expect(gearCandidates(w.view, "blade").map((c) => c.handle)).toEqual([1, 2]);
+    /* Reverse the input order and the sort still puts the sword first. */
+    const reversed = world({ map: ["@"], pack: ["a Mace (2d5) (+0,+0)", "a Sword (2d5) (+0,+0)"] });
+    expect(gearCandidates(reversed.view, "blade").map((c) => c.handle)).toEqual([2, 1]);
+  });
+
+  it("does not promote the matching kind when the score gap is wider than five percent", () => {
+    /* 3d8 vs 1d4: 3d8 = 13.5, 1d4 = 2.5. The mace (hafted) is below the 5% floor of the sword,
+     * so the sword sorts first regardless of the favoured kind. */
+    const w = world({ map: ["@"], pack: ["a Mace (3d8) (+0,+0)", "a Sword (1d4) (+0,+0)"] });
+    const order = gearCandidates(w.view, "hafted").map((c) => c.handle);
+    expect(order[0]).toBe(1);
+  });
+
+  it("leaves the order alone when no favoured kind is set", () => {
+    const w = world({ map: ["@"], pack: ["a Sword (2d5) (+0,+0)", "a Mace (2d5) (+0,+0)"] });
+    /* Same scores; the comparator falls back to insertion order via Array.sort stability. */
+    expect(gearCandidates(w.view, null).map((c) => c.handle)).toEqual([1, 2]);
+  });
+});
