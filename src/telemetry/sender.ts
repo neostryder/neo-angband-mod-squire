@@ -6,6 +6,22 @@ export const DEFAULT_ENDPOINT = "https://squire.rpgm.tools";
 const QUEUE = "squire/telemetry/queue/";
 const BACKOFF = [1_000, 4_000, 15_000, 60_000] as const;
 
+interface UploadQueue {
+  generation: number;
+  pending: Promise<void>;
+  cancelled: Promise<void>;
+  cancel: () => void;
+}
+
+/* Setup and finished runs use separate senders over the same local queue. */
+const queues = new WeakMap<KvStore, UploadQueue>();
+
+function cancellation(): Pick<UploadQueue, "cancelled" | "cancel"> {
+  let cancel = () => {};
+  const cancelled = new Promise<void>((resolve) => { cancel = resolve; });
+  return { cancelled, cancel };
+}
+
 export interface Chronicle {
   readonly run_id: string;
   readonly status: "posted" | "posted_without_name" | "held" | "over_limit" | "waiting";
@@ -58,9 +74,25 @@ function retryAfter(headers: Readonly<Record<string, string>>, now: number): num
 export function createSender(options: SenderOptions) {
   const { net, store, endpoint, now, log } = options;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  let draining: Promise<Map<string, SendResult>> | null = null;
+  let queue = queues.get(store);
+  if (queue === undefined) {
+    queue = { generation: 0, pending: Promise.resolve(), ...cancellation() };
+    queues.set(store, queue);
+  }
+  const uploads = queue;
+  const generations = new Map<string, number>();
   let lastStamp = 0;
   let stampOrder = 0;
+
+  function exclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = uploads.pending.then(operation);
+    uploads.pending = result.then(() => {}, () => {});
+    return result;
+  }
+
+  function deleted(): SendResult {
+    return { ok: false, queued: false, reason: "Deletion removed this batch from the upload queue." };
+  }
 
   async function request(method: string, path: string, payload?: string) {
     return net.request({
@@ -72,8 +104,11 @@ export function createSender(options: SenderOptions) {
     });
   }
 
-  async function post(batch: Batch): Promise<SendResult> {
+  async function post(batch: Batch, generation: number): Promise<SendResult> {
+    const cancelled = uploads.cancelled;
+    const pause = (ms: number) => Promise.race([sleep(ms), cancelled]);
     for (let attempt = 0; attempt <= BACKOFF.length; attempt++) {
+      if (generation !== uploads.generation) return deleted();
       try {
         const reply = await request("POST", "/v1/batches", JSON.stringify(batch));
         if (reply.ok) {
@@ -96,16 +131,16 @@ export function createSender(options: SenderOptions) {
             return { ok: false, queued: true, reason: `Telemetry returned HTTP ${String(reply.status)}. Check the endpoint and try again.` };
           }
           if (attempt < BACKOFF.length) {
-            await sleep(reply.status === 429 ? retryAfter(reply.headers, now()) ?? BACKOFF[attempt]! : BACKOFF[attempt]!);
+            await pause(reply.status === 429 ? retryAfter(reply.headers, now()) ?? BACKOFF[attempt]! : BACKOFF[attempt]!);
             continue;
           }
         } else if (attempt < BACKOFF.length) {
-          await sleep(BACKOFF[attempt]!);
+          await pause(BACKOFF[attempt]!);
           continue;
         }
       } catch {
         if (attempt < BACKOFF.length) {
-          try { await sleep(BACKOFF[attempt]!); } catch { break; }
+          try { await pause(BACKOFF[attempt]!); } catch { break; }
           continue;
         }
       }
@@ -114,17 +149,18 @@ export function createSender(options: SenderOptions) {
     return { ok: false, queued: true, reason: "Telemetry could not be sent. It remains queued for another try." };
   }
 
-  async function drainOnce(): Promise<Map<string, SendResult>> {
+  async function drainOnce(generation: number): Promise<Map<string, SendResult>> {
     const results = new Map<string, SendResult>();
     if (!endpoint) return results;
     try {
       for (const key of (await store.keys(QUEUE)).sort()) {
+        if (generation !== uploads.generation) break;
         const batch = await store.get(key);
         if (object(batch) === null) {
           await store.delete(key);
           continue;
         }
-        const result = await post(batch as Batch);
+        const result = await post(batch as Batch, generation);
         results.set(key, result);
         if (result.ok || !result.queued) await store.delete(key);
         else break;
@@ -135,31 +171,33 @@ export function createSender(options: SenderOptions) {
     return results;
   }
 
-  function drain(): Promise<Map<string, SendResult>> {
-    if (draining !== null) return draining;
-    draining = drainOnce().finally(() => { draining = null; });
-    return draining;
-  }
-
   return {
     async send(batch: Batch): Promise<SendResult> {
       if (!endpoint) return { ok: false, queued: false, reason: "Telemetry is disabled. Set an endpoint to send batches." };
-      try {
-        const stamp = Math.max(now(), lastStamp);
-        stampOrder = stamp === lastStamp ? stampOrder + 1 : 0;
-        lastStamp = stamp;
-        const key = `${QUEUE}${String(stamp).padStart(16, "0")}-${String(stampOrder).padStart(8, "0")}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
-        await store.set(key, batch);
-        let results = await drain();
-        if (!results.has(key) && ![...results.values()].some((result) => !result.ok && result.queued)) {
-          results = await drain();
+      /* A split run's remaining batches were recorded before any later deletion. */
+      const recording = `${batch.run_id}/${batch.sent_at}`;
+      const generation = generations.get(recording) ?? uploads.generation;
+      generations.set(recording, generation);
+      return exclusive(async () => {
+        if (generation !== uploads.generation) return deleted();
+        try {
+          const stamp = Math.max(now(), lastStamp);
+          stampOrder = stamp === lastStamp ? stampOrder + 1 : 0;
+          lastStamp = stamp;
+          const key = `${QUEUE}${String(stamp).padStart(16, "0")}-${String(stampOrder).padStart(8, "0")}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+          await store.set(key, batch);
+          const results = await drainOnce(generation);
+          if (generation !== uploads.generation) return deleted();
+          return results.get(key) ?? { ok: false, queued: true, reason: "Telemetry is queued behind an earlier batch. Try again later." };
+        } catch {
+          return { ok: false, queued: false, reason: "Telemetry could not be saved. Check local storage and try again." };
         }
-        return results.get(key) ?? { ok: false, queued: true, reason: "Telemetry is queued behind an earlier batch. Try again later." };
-      } catch {
-        return { ok: false, queued: false, reason: "Telemetry could not be saved. Check local storage and try again." };
-      }
+      });
     },
-    async drain(): Promise<void> { await drain(); },
+    async drain(): Promise<void> {
+      const generation = uploads.generation;
+      await exclusive(async () => { if (generation === uploads.generation) await drainOnce(generation); });
+    },
     async status(installId: string): Promise<InstallResult> {
       if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to check status." };
       try {
@@ -172,15 +210,21 @@ export function createSender(options: SenderOptions) {
       } catch { return { ok: false, reason: "Telemetry status could not be loaded. Try again later." }; }
     },
     async deleteInstall(installId: string): Promise<InstallResult> {
-      if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to delete an install." };
-      try {
-        const reply = await request("DELETE", `/v1/installs/${encodeURIComponent(installId)}`);
-        if (!reply.ok) return { ok: false, reason: reply.problem };
-        const parsed = body(reply.body);
-        return reply.status === 200 && parsed?.["ok"] === true
-          ? { ok: true, data: parsed }
-          : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...(typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {}) };
-      } catch { return { ok: false, reason: "Telemetry could not be deleted. Try again later." }; }
+      uploads.generation++;
+      uploads.cancel();
+      Object.assign(uploads, cancellation());
+      return exclusive(async () => {
+        try {
+          for (const key of await store.keys(QUEUE)) await store.delete(key);
+          if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to delete an install." };
+          const reply = await request("DELETE", `/v1/installs/${encodeURIComponent(installId)}`);
+          if (!reply.ok) return { ok: false, reason: reply.problem };
+          const parsed = body(reply.body);
+          return reply.status === 200 && parsed?.["ok"] === true
+            ? { ok: true, data: parsed }
+            : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...(typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {}) };
+        } catch { return { ok: false, reason: "Telemetry could not be deleted. Try again later." }; }
+      });
     },
   };
 }

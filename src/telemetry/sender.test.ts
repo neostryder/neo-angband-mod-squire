@@ -1,6 +1,7 @@
 import { expect, it, vi } from "vitest";
 import type { NetLike } from "../brain/backend.js";
 import { memoryStore } from "../memory/kv.js";
+import { createRuntime, type RunReportLike } from "../runtime.js";
 import type { Batch } from "./batch.js";
 import { createSender } from "./sender.js";
 
@@ -96,5 +97,127 @@ it("sends nothing with an empty endpoint", async () => {
   const client = createSender({ net: { transport: "page", request }, store, endpoint: "", now: () => 1, log: vi.fn() });
   expect(await client.send(batch)).toMatchObject({ ok: false, queued: false });
   expect(request).not.toHaveBeenCalled();
+  expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
+});
+
+it("deletes the persistent queue across senders and sends only a new batch afterwards", async () => {
+  const store = memoryStore();
+  await sender(net(503, { ok: false }), store).client.send(batch);
+  const posted: string[] = [];
+  const network: NetLike = {
+    transport: "page",
+    async request(request) {
+      if (request.method === "POST") posted.push((JSON.parse(request.body ?? "{}") as Batch).run_id);
+      return { ok: true, status: request.method === "DELETE" ? 200 : 202, headers: {}, body: JSON.stringify({ ok: true }) };
+    },
+  };
+  expect((await sender(network, store).client.deleteInstall(batch.install_id)).ok).toBe(true);
+  expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
+  const resumed = sender(network, store).client;
+  await resumed.drain();
+  expect(posted).toEqual([]);
+  expect((await resumed.send({ ...batch, run_id: "run-2" })).ok).toBe(true);
+  expect(posted).toEqual(["run-2"]);
+});
+
+it("cancels an older sender's retry and queued sends before deleting server records", async () => {
+  let retryStarted = () => {};
+  const retry = new Promise<void>((resolve) => { retryStarted = resolve; });
+  const methods: string[] = [];
+  const network: NetLike = {
+    transport: "page",
+    async request(request) {
+      methods.push(request.method ?? "");
+      return { ok: true, status: request.method === "POST" ? 503 : 200, headers: {}, body: JSON.stringify({ ok: true }) };
+    },
+  };
+  const store = memoryStore();
+  const old = sender(network, store, vi.fn((_ms: number) => { retryStarted(); return new Promise<void>(() => {}); })).client;
+  const sending = old.send(batch);
+  const waiting = old.send({ ...batch, run_id: "run-2" });
+  await retry;
+  expect((await sender(network, store).client.deleteInstall(batch.install_id)).ok).toBe(true);
+  expect(await sending).toMatchObject({ ok: false, queued: false });
+  expect(await waiting).toMatchObject({ ok: false, queued: false });
+  await old.drain();
+  expect(methods).toEqual(["POST", "DELETE"]);
+  expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
+});
+
+it("waits for an in-flight upload before DELETE and preserves a new send made during deletion", async () => {
+  let started = () => {};
+  const uploading = new Promise<void>((resolve) => { started = resolve; });
+  let finish = () => {};
+  const flight = new Promise<void>((resolve) => { finish = resolve; });
+  const methods: string[] = [];
+  const network: NetLike = {
+    transport: "page",
+    async request(request) {
+      methods.push(request.method ?? "");
+      if (methods.length === 1) { started(); await flight; }
+      return { ok: true, status: request.method === "DELETE" ? 200 : 202, headers: {}, body: JSON.stringify({ ok: true }) };
+    },
+  };
+  const { client, store } = sender(network);
+  const old = client.send(batch);
+  await uploading;
+  const deletion = sender(network, store).client.deleteInstall(batch.install_id);
+  const fresh = client.send({ ...batch, run_id: "run-2" });
+  expect(methods).toEqual(["POST"]);
+  finish();
+  expect(await old).toMatchObject({ ok: false, queued: false });
+  expect((await deletion).ok).toBe(true);
+  expect((await fresh).ok).toBe(true);
+  expect(methods).toEqual(["POST", "DELETE", "POST"]);
+});
+
+it("clears queued uploads even when the server rejects deletion", async () => {
+  const store = memoryStore();
+  await store.set("squire/telemetry/queue/old", batch);
+  const { client } = sender(net(500, { ok: false }), store);
+  expect((await client.deleteInstall(batch.install_id)).ok).toBe(false);
+  expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
+});
+
+it("discards remaining chunks of a run recorded before deletion", async () => {
+  const request = vi.fn(net(200, { ok: true }).request);
+  const { client, store } = sender({ transport: "page", request });
+  expect((await client.send(batch)).ok).toBe(true);
+  expect((await sender({ transport: "page", request }, store).client.deleteInstall(batch.install_id)).ok).toBe(true);
+  expect(await client.send({ ...batch, seq: 1 })).toMatchObject({ ok: false, queued: false });
+  expect((await client.send({ ...batch, run_id: "run-2" })).ok).toBe(true);
+  expect(request.mock.calls.map(([req]) => req.method)).toEqual(["POST", "DELETE", "POST"]);
+});
+
+it("keeps an empty endpoint disabled for new batches after clearing the queue", async () => {
+  const store = memoryStore();
+  await store.set("squire/telemetry/queue/old", batch);
+  const request = vi.fn();
+  const client = createSender({ net: { transport: "page", request }, store, endpoint: "", now: () => 1, log: vi.fn() });
+  expect((await client.deleteInstall(batch.install_id)).ok).toBe(false);
+  expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
+  expect(await client.send({ ...batch, run_id: "run-2" })).toMatchObject({ ok: false, queued: false });
+  expect(request).not.toHaveBeenCalled();
+});
+
+it.each(["off", "summary"] as const)("keeps consent %s for a new finished run after deletion", async (level) => {
+  const store = memoryStore();
+  await store.set("squire/telemetry/queue/old", batch);
+  const request = vi.fn(net(200, { ok: true }).request);
+  let ended: ((report: RunReportLike) => void) | undefined;
+  const rt = createRuntime({
+    log: vi.fn(),
+    net: { transport: "page", request, secrets: { storage: "page", async has() { return { present: false }; }, async fromEnv() { return { ok: false, problem: "unavailable" }; }, async set() { return { ok: true }; }, async delete() { return { ok: true }; } } },
+    character: { onRunEnd(listener) { ended = listener; return () => {}; } },
+  }, { store });
+  rt.saveConfig({ ...rt.config(), telemetry: { ...rt.config().telemetry, level, endpoint: "https://example.test" } });
+  expect((await sender({ transport: "page", request }, store).client.deleteInstall(batch.install_id)).ok).toBe(true);
+  ended!({ outcome: "victory", cause: "winning", key: null, name: "Beren", race: "Human", cls: "Warrior", level: 50, maxLevel: 50, maxDepth: 100, depth: 100, gold: 0, turn: 100, score: 0, scored: false, endedAt: 1, history: [], messages: [], belongings: [], sheet: null, birth: { name: "Beren", race: "Human", cls: "Warrior", stats: [] } });
+  await vi.waitFor(async () => expect(await rt.lastSummary()).not.toBeNull());
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  expect(rt.config().telemetry.level).toBe(level);
+  const posted = request.mock.calls.filter(([req]) => req.method === "POST");
+  expect(posted).toHaveLength(level === "off" ? 0 : 1);
+  if (level === "summary") expect((JSON.parse(posted[0]![0].body ?? "{}") as Batch).run_id).toBe(rt.character().runId);
   expect(await store.keys("squire/telemetry/queue/")).toEqual([]);
 });

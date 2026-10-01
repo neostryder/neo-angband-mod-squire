@@ -43,6 +43,33 @@ describe("lineage", () => {
     expect(result.persona.lists.feared).toEqual(["orc"]);
     expect(heir.lists.feared).toEqual(["orc"]);
   });
+
+  it.each(["inheritance", "parent", "heir"])("keeps killer history without passing grudges when %s disables them", (setting) => {
+    const parent = defaultPersona("Ada");
+    parent.sliders.inheritance = setting === "inheritance" ? 0 : 100;
+    parent.toggles.grudges = setting !== "parent";
+    const heir = defaultPersona("Bea");
+    heir.toggles.grudges = setting !== "heir";
+    heir.lists.hated = ["dragon"];
+    const killers = [{ name: "cave troll", unique: false, deaths: [{ generation: 1, depth: 10, turn: 30 }] }];
+    const base: Lineage = { name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [], killers, died: { depth: 10, cause: "cave troll", turn: 30 } };
+    const result = inherit(base, parent, heir, () => 0.5);
+    expect(result.lineage.killers).toEqual(killers);
+    expect(result.lineage.feelings).toEqual([]);
+    expect(result.lineage.grudges).toEqual([]);
+    expect(result.persona.lists.hated).toEqual(["dragon"]);
+    expect(result.persona.lists.feared).toEqual([]);
+  });
+
+  it("passes named feelings and the killer family when both toggles permit inheritance", () => {
+    const parent = defaultPersona("Ada");
+    parent.sliders.inheritance = 100;
+    const killers = [{ name: "cave troll", unique: false, deaths: [{ generation: 1, depth: 10, turn: 30 }] }];
+    const result = inherit({ name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [], killers, died: { depth: 10, cause: "cave troll", turn: 30 } }, parent, defaultPersona("Bea"), () => 0.5);
+    expect(result.lineage.feelings).toHaveLength(1);
+    expect(result.lineage.feelings?.[0]?.name).toBe("cave troll");
+    expect([...result.persona.lists.hated, ...result.persona.lists.feared]).toContain("troll");
+  });
 });
 
 describe("inherited aims", () => {

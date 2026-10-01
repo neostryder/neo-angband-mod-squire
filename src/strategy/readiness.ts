@@ -108,17 +108,30 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
     /* Only known equipped resistance is evidence; an item's raw hidden resists are not. */
     const inspect = view as AgentView & { inspectItem?: (handle: number) => { readonly text: string } | null };
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
-    const has = (element: string) => texts.some((text) => [...text.matchAll(/Provides (?:resistance|immunity) to ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
+    const has = (element: string) => texts.some((text) => [...text.matchAll(/Provides (?:(?:resistance|immunity) to|protection from) ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
     need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
     need("protection", player.stats.length >= 5 && [0, 3, 4, ...(caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : [])].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
     if (depth >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
+    if (depth >= 56) need("protection", has("blindness"), "blindness resistance");
+    if (depth >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
   }
   if (depth >= 46) {
     need("hp", player.maxHp >= 500, "500 maximum hit points");
-    need("protection", player.speed >= 115, "+5 speed");
+    const speed = depth >= 81 ? 20 : depth >= 60 ? 10 : 5;
+    need("protection", player.speed >= 110 + speed, `+${String(speed)} speed`);
     need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
-    need("protection", depth === 46, "readiness information for depths beyond 46");
+    if (level < 50) need("protection", player.objectFlags.includes("HOLD_LIFE"), "Hold Life before maximum character level 50");
+  }
+  if (depth >= 56) {
+    need("protection", player.objectFlags.includes("TELEPATHY"), "telepathy");
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 2 || namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 1, "two Healing potions or one *Healing* or Life potion");
+  }
+  if (depth >= 100) {
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 5, "five Healing potions");
+    need("healing", namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 15, "fifteen *Healing* or Life potions");
+    need("protection", namedCount(view, /\bPotions? of Speed\b/i) >= 10, "ten Speed potions");
+    if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= 15, "fifteen Restore Mana potions");
   }
   return out;
 }

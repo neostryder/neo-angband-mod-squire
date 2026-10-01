@@ -93,6 +93,55 @@ describe("prepared depths", () => {
     expect(aim?.detail).toContain("30 maximum hit points");
     expect(aim?.detail).toContain("five food units");
   });
+
+  const deepPack = ["a Scroll of Word of Recall", "6 Scrolls of Teleportation", "2 Potions of Healing"];
+  const deepPlayer = { cls: "Warrior", depth: 44, maxLevel: 50, maxHp: 500, light: 2, speed: 130, stats: [18, 18, 18, 18, 18, 18], objectFlags: ["SEE_INVIS", "FREE_ACT", "TELEPATHY"] };
+  const basicResists = "Provides resistance to acid, lightning, fire, cold and poison. Provides protection from confusion.";
+  const deepResists = "Provides resistance to acid, lightning, fire, cold, poison, chaos and disenchantment. Provides protection from blindness and confusion.";
+
+  it.each([45, 47, 98])("allows a prepared character to descend to depth %i", (depth) => {
+    const w = suppliedWorld({ map: ROOM, player: deepPlayer, pack: deepPack, inspect: () => deepResists });
+    expect(missingPreparation(w.view, depth)).toEqual([]);
+  });
+
+  it("starts the HP, speed and large-healing floor after depth 45", () => {
+    const w = suppliedWorld({ map: ROOM, player: { ...deepPlayer, maxHp: 499, speed: 114 }, pack: deepPack.slice(0, 2), inspect: () => basicResists });
+    expect(missingPreparation(w.view, 45)).toEqual([]);
+    expect(missingPreparation(w.view, 47).map((need) => need.reason)).toEqual(["500 maximum hit points", "+5 speed", "large healing"]);
+    w.setPlayer({ maxHp: 500, speed: 115 });
+    w.setPack([...deepPack, "5 Rations of Food", "a Scroll of Phase Door"]);
+    expect(missingPreparation(w.view, 47)).toEqual([]);
+  });
+
+  it("requires known deep protections, telepathy, healing and speed at depth 98", () => {
+    const w = suppliedWorld({ map: ROOM, player: { ...deepPlayer, speed: 129, objectFlags: ["SEE_INVIS", "FREE_ACT"] }, pack: [...deepPack.slice(0, 2), "a Potion of Healing"], inspect: () => basicResists });
+    expect(missingPreparation(w.view, 98).map((need) => need.reason)).toEqual(expect.arrayContaining(["blindness resistance", "chaos and disenchantment resistance", "telepathy", "+20 speed", "two Healing potions or one *Healing* or Life potion"]));
+    const unknown = { ...w.view, inspectItem: undefined };
+    expect(missingPreparation(unknown, 98).map((need) => need.reason)).toContain("chaos and disenchantment resistance");
+  });
+
+  it("requires inspection to report blindness and confusion protection", () => {
+    const w = suppliedWorld({ map: ROOM, player: deepPlayer, pack: deepPack, inspect: () => "Provides resistance to acid, lightning, fire, cold, poison, chaos and disenchantment." });
+    expect(missingPreparation(w.view, 98).map((need) => need.reason)).toEqual(["poison and confusion resistance", "blindness resistance"]);
+  });
+
+  it.each([[55, 115], [56, 115], [59, 115], [60, 120], [80, 120], [81, 130]] as const)("uses attainable cumulative preparation at depth %i", (depth, speed) => {
+    const w = suppliedWorld({ map: ROOM, player: { ...deepPlayer, speed }, pack: [...deepPack.slice(0, 2), "a Potion of *Healing*"], inspect: () => deepResists });
+    expect(missingPreparation(w.view, depth)).toEqual([]);
+    w.setPlayer({ speed: speed - 1 });
+    expect(missingPreparation(w.view, depth).map((need) => need.reason)).toContain(`+${String(speed - 110)} speed`);
+  });
+
+  it("requires a reachable final-depth stockpile and mana only for large mana pools", () => {
+    const w = suppliedWorld({ map: ROOM, player: deepPlayer, pack: deepPack, inspect: () => deepResists });
+    expect(missingPreparation(w.view, 100).map((need) => need.reason)).toEqual(["five Healing potions", "fifteen *Healing* or Life potions", "ten Speed potions"]);
+    w.setPack(["5 Rations of Food", "a Scroll of Phase Door", ...deepPack.slice(0, 2), "5 Potions of Healing", "15 Potions of *Healing*", "10 Potions of Speed"]);
+    expect(missingPreparation(w.view, 100)).toEqual([]);
+    w.setPlayer({ maxSp: 101 });
+    expect(missingPreparation(w.view, 100).map((need) => need.reason)).toEqual(["fifteen Restore Mana potions"]);
+    w.setPack([...w.view.inventory().map((item) => item.label), "15 Potions of Restore Mana"]);
+    expect(missingPreparation(w.view, 100)).toEqual([]);
+  });
 });
 
 describe("supply evidence and margins", () => {

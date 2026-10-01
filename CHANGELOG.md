@@ -62,6 +62,9 @@ Fixed.
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.
 
 ### Fixed
+- [Visible] [Security] **Deleting your telemetry also clears uploads still waiting to be sent.** A queued run could otherwise upload after the deletion. New uploads follow your consent setting as before.
+- [Visible] **With Inheritance at nothing, or Blood grudges off for the parent or the heir, no grudge passes down.** The family still remembers what killed its characters.
+- [Visible] [Balance] **Squire can go deeper than 2,300 ft.** Past that depth it descends once the character has the speed, protections and healing each depth calls for, where before it never went further.
 - [Visible] [Balance] **Squire keeps earning experience when it isn't ready to go deeper.** On a cleared floor it takes an up staircase to a fresh level instead of stopping, and it never takes a down staircase to a depth it isn't prepared for.
 - [Visible] **Squire no longer waits in town for light it already has.** By day the town reports no light radius, so Squire now checks the light it wields and the fuel that light can use: flasks of oil for a lantern, spare torches for a torch.
 - [Visible] **Squire no longer freezes in town.** It keeps exploring until it can actually reach the staircase down, rests instead of opening the shop when it means to wait on a shop entrance, and when it truly has nothing left to try it hands the keyboard back with the reason on the dashboard.

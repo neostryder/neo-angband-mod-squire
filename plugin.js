@@ -2143,17 +2143,30 @@ function missingPreparation(view, depth2) {
   if (depth2 > 20) {
     const inspect = view;
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
-    const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:resistance|immunity) to ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
+    const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:(?:resistance|immunity) to|protection from) ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
     need("protection", has("fire") && basics.length >= (depth2 > 25 ? 4 : 3), depth2 > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
     need("protection", player.stats.length >= 5 && [0, 3, 4, ...caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : []].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
     if (depth2 >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
+    if (depth2 >= 56) need("protection", has("blindness"), "blindness resistance");
+    if (depth2 >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
   }
   if (depth2 >= 46) {
     need("hp", player.maxHp >= 500, "500 maximum hit points");
-    need("protection", player.speed >= 115, "+5 speed");
+    const speed = depth2 >= 81 ? 20 : depth2 >= 60 ? 10 : 5;
+    need("protection", player.speed >= 110 + speed, `+${String(speed)} speed`);
     need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
-    need("protection", depth2 === 46, "readiness information for depths beyond 46");
+    if (level < 50) need("protection", player.objectFlags.includes("HOLD_LIFE"), "Hold Life before maximum character level 50");
+  }
+  if (depth2 >= 56) {
+    need("protection", player.objectFlags.includes("TELEPATHY"), "telepathy");
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 2 || namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 1, "two Healing potions or one *Healing* or Life potion");
+  }
+  if (depth2 >= 100) {
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 5, "five Healing potions");
+    need("healing", namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 15, "fifteen *Healing* or Life potions");
+    need("protection", namedCount(view, /\bPotions? of Speed\b/i) >= 10, "ten Speed potions");
+    if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= 15, "fifteen Restore Mana potions");
   }
   return out;
 }
@@ -6990,6 +7003,15 @@ function readInstructions(value) {
 var DEFAULT_ENDPOINT = "https://squire.rpgm.tools";
 var QUEUE = "squire/telemetry/queue/";
 var BACKOFF = [1e3, 4e3, 15e3, 6e4];
+var queues = /* @__PURE__ */ new WeakMap();
+function cancellation() {
+  let cancel = () => {
+  };
+  const cancelled = new Promise((resolve) => {
+    cancel = resolve;
+  });
+  return { cancelled, cancel };
+}
 function object(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
@@ -7014,9 +7036,25 @@ function retryAfter2(headers, now) {
 function createSender(options) {
   const { net, store, endpoint, now, log } = options;
   const sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
-  let draining = null;
+  let queue = queues.get(store);
+  if (queue === void 0) {
+    queue = { generation: 0, pending: Promise.resolve(), ...cancellation() };
+    queues.set(store, queue);
+  }
+  const uploads = queue;
+  const generations = /* @__PURE__ */ new Map();
   let lastStamp = 0;
   let stampOrder = 0;
+  function exclusive(operation) {
+    const result = uploads.pending.then(operation);
+    uploads.pending = result.then(() => {
+    }, () => {
+    });
+    return result;
+  }
+  function deleted() {
+    return { ok: false, queued: false, reason: "Deletion removed this batch from the upload queue." };
+  }
   async function request2(method, path, payload) {
     return net.request({
       url: `${endpoint.replace(/\/$/, "")}${path}`,
@@ -7026,8 +7064,11 @@ function createSender(options) {
       timeoutMs: 15e3
     });
   }
-  async function post(batch) {
+  async function post(batch, generation) {
+    const cancelled = uploads.cancelled;
+    const pause = (ms) => Promise.race([sleep(ms), cancelled]);
     for (let attempt = 0; attempt <= BACKOFF.length; attempt++) {
+      if (generation !== uploads.generation) return deleted();
       try {
         const reply = await request2("POST", "/v1/batches", JSON.stringify(batch));
         if (reply.ok) {
@@ -7050,17 +7091,17 @@ function createSender(options) {
             return { ok: false, queued: true, reason: `Telemetry returned HTTP ${String(reply.status)}. Check the endpoint and try again.` };
           }
           if (attempt < BACKOFF.length) {
-            await sleep(reply.status === 429 ? retryAfter2(reply.headers, now()) ?? BACKOFF[attempt] : BACKOFF[attempt]);
+            await pause(reply.status === 429 ? retryAfter2(reply.headers, now()) ?? BACKOFF[attempt] : BACKOFF[attempt]);
             continue;
           }
         } else if (attempt < BACKOFF.length) {
-          await sleep(BACKOFF[attempt]);
+          await pause(BACKOFF[attempt]);
           continue;
         }
       } catch {
         if (attempt < BACKOFF.length) {
           try {
-            await sleep(BACKOFF[attempt]);
+            await pause(BACKOFF[attempt]);
           } catch {
             break;
           }
@@ -7071,17 +7112,18 @@ function createSender(options) {
     }
     return { ok: false, queued: true, reason: "Telemetry could not be sent. It remains queued for another try." };
   }
-  async function drainOnce() {
+  async function drainOnce(generation) {
     const results = /* @__PURE__ */ new Map();
     if (!endpoint) return results;
     try {
       for (const key2 of (await store.keys(QUEUE)).sort()) {
+        if (generation !== uploads.generation) break;
         const batch = await store.get(key2);
         if (object(batch) === null) {
           await store.delete(key2);
           continue;
         }
-        const result = await post(batch);
+        const result = await post(batch, generation);
         results.set(key2, result);
         if (result.ok || !result.queued) await store.delete(key2);
         else break;
@@ -7091,33 +7133,33 @@ function createSender(options) {
     }
     return results;
   }
-  function drain() {
-    if (draining !== null) return draining;
-    draining = drainOnce().finally(() => {
-      draining = null;
-    });
-    return draining;
-  }
   return {
     async send(batch) {
       if (!endpoint) return { ok: false, queued: false, reason: "Telemetry is disabled. Set an endpoint to send batches." };
-      try {
-        const stamp = Math.max(now(), lastStamp);
-        stampOrder = stamp === lastStamp ? stampOrder + 1 : 0;
-        lastStamp = stamp;
-        const key2 = `${QUEUE}${String(stamp).padStart(16, "0")}-${String(stampOrder).padStart(8, "0")}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
-        await store.set(key2, batch);
-        let results = await drain();
-        if (!results.has(key2) && ![...results.values()].some((result) => !result.ok && result.queued)) {
-          results = await drain();
+      const recording = `${batch.run_id}/${batch.sent_at}`;
+      const generation = generations.get(recording) ?? uploads.generation;
+      generations.set(recording, generation);
+      return exclusive(async () => {
+        if (generation !== uploads.generation) return deleted();
+        try {
+          const stamp = Math.max(now(), lastStamp);
+          stampOrder = stamp === lastStamp ? stampOrder + 1 : 0;
+          lastStamp = stamp;
+          const key2 = `${QUEUE}${String(stamp).padStart(16, "0")}-${String(stampOrder).padStart(8, "0")}-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
+          await store.set(key2, batch);
+          const results = await drainOnce(generation);
+          if (generation !== uploads.generation) return deleted();
+          return results.get(key2) ?? { ok: false, queued: true, reason: "Telemetry is queued behind an earlier batch. Try again later." };
+        } catch {
+          return { ok: false, queued: false, reason: "Telemetry could not be saved. Check local storage and try again." };
         }
-        return results.get(key2) ?? { ok: false, queued: true, reason: "Telemetry is queued behind an earlier batch. Try again later." };
-      } catch {
-        return { ok: false, queued: false, reason: "Telemetry could not be saved. Check local storage and try again." };
-      }
+      });
     },
     async drain() {
-      await drain();
+      const generation = uploads.generation;
+      await exclusive(async () => {
+        if (generation === uploads.generation) await drainOnce(generation);
+      });
     },
     async status(installId2) {
       if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to check status." };
@@ -7131,15 +7173,21 @@ function createSender(options) {
       }
     },
     async deleteInstall(installId2) {
-      if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to delete an install." };
-      try {
-        const reply = await request2("DELETE", `/v1/installs/${encodeURIComponent(installId2)}`);
-        if (!reply.ok) return { ok: false, reason: reply.problem };
-        const parsed = body(reply.body);
-        return reply.status === 200 && parsed?.["ok"] === true ? { ok: true, data: parsed } : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {} };
-      } catch {
-        return { ok: false, reason: "Telemetry could not be deleted. Try again later." };
-      }
+      uploads.generation++;
+      uploads.cancel();
+      Object.assign(uploads, cancellation());
+      return exclusive(async () => {
+        try {
+          for (const key2 of await store.keys(QUEUE)) await store.delete(key2);
+          if (!endpoint) return { ok: false, reason: "Telemetry is disabled. Set an endpoint to delete an install." };
+          const reply = await request2("DELETE", `/v1/installs/${encodeURIComponent(installId2)}`);
+          if (!reply.ok) return { ok: false, reason: reply.problem };
+          const parsed = body(reply.body);
+          return reply.status === 200 && parsed?.["ok"] === true ? { ok: true, data: parsed } : { ok: false, reason: String(parsed?.["error"] ?? `HTTP ${String(reply.status)}`), ...typeof parsed?.["field"] === "string" ? { field: parsed["field"] } : {} };
+        } catch {
+          return { ok: false, reason: "Telemetry could not be deleted. Try again later." };
+        }
+      });
     }
   };
 }
@@ -8361,7 +8409,8 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
   const killers = parentLineage.killers ?? [];
   const heirGeneration = parentLineage.generation + 1;
   const shaped = { ...heirPersona, sliders };
-  if (parentPersona.toggles.grudges && death !== null) {
+  const bloodGrudges = parentPersona.sliders.inheritance > 0 && parentPersona.toggles.grudges && heirPersona.toggles.grudges;
+  if (bloodGrudges && death !== null) {
     const race = killerRace(death.cause);
     const family = familyOf(race);
     if (family !== "other") {
@@ -8372,7 +8421,7 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       if (!target.includes(family) && target.length < 12) target.push(family);
     }
   }
-  const feelings = parentPersona.toggles.grudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
+  const feelings = bloodGrudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
   const count2 = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
   const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit3(rng) })).sort((a, b) => b.lesson.weight - a.lesson.weight || a.tie - b.tie).slice(0, count2).map(({ lesson }) => ({ ...lesson, weight: lesson.weight / 2 }));
   const parent = {

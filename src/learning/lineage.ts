@@ -76,7 +76,8 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
   const killers = parentLineage.killers ?? [];
   const heirGeneration = parentLineage.generation + 1;
   const shaped = { ...heirPersona, sliders };
-  if (parentPersona.toggles.grudges && death !== null) {
+  const bloodGrudges = parentPersona.sliders.inheritance > 0 && parentPersona.toggles.grudges && heirPersona.toggles.grudges;
+  if (bloodGrudges && death !== null) {
     const race = killerRace(death.cause);
     const family = familyOf(race);
     if (family !== "other") {
@@ -87,7 +88,7 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       if (!target.includes(family) && target.length < 12) target.push(family);
     }
   }
-  const feelings = parentPersona.toggles.grudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
+  const feelings = bloodGrudges ? feelingsFor(killers, heirGeneration, shaped, parentPersona.sliders.inheritance) : [];
 
   const count = Math.min(12, Math.floor(12 * fraction(parentPersona.sliders.inheritance)));
   const lore = parentLineage.lore.map((lesson) => ({ lesson, tie: unit(rng) }))
