@@ -180,16 +180,17 @@ export function itemNamed(name: string, handle: number): ItemView {
     [/\bBoots\b/i, TV.BOOTS], [/\bGloves\b/i, TV.GLOVES], [/\b(Helm|Helmet)\b/i, TV.HELM],
     [/\bCrown\b/i, TV.CROWN], [/\bShield\b/i, TV.SHIELD], [/\bCloak\b/i, TV.CLOAK],
     [/\b(Soft|Leather) Armour\b/i, TV.SOFT_ARMOR], [/\b(Hard|Metal|Chain|Plate) Armour\b/i, TV.HARD_ARMOR],
-    [/\b(Lanterns?|Torch(?:es)?)\b/i, TV.LIGHT], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
+    [/\b(Lanterns?|Torch(?:es)?|Phial|Star|Arkenstone)\b/i, TV.LIGHT], [/\bFlasks? of Oil\b/i, TV.FLASK], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
     [/\bRod\b/i, TV.ROD], [/\bScroll\b/i, TV.SCROLL],
   ];
   const tval = kinds.find(([pattern]) => pattern.test(name))?.[1] ?? 0;
-  return { handle, name, label: name, tval, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact: false, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: 0, inscription: null } as unknown as ItemView;
+  const artifact = tval === TV.LIGHT && /\b(Phial|Star|Arkenstone)\b/i.test(name);
+  return { handle, name, label: name, tval, sval: 0, pval: 0, number: Number(/^(\d+)\s/.exec(name)?.[1] ?? 1), weight: 0, ac: 0, toA: 0, toH: 0, toD: 0, dd: 0, ds: 0, ego: false, artifact, flags: [], modifiers: [], brands: [], slays: [], resists: [], curses: [], egoName: null, artifactName: null, activation: false, timeout: Number(/\((\d+) turns\)/i.exec(name)?.[1] ?? 0), inscription: null } as unknown as ItemView;
 }
 
 /** Planner fixtures that exercise travel rather than shortages need explicit reserves. */
 export function suppliedWorld(spec: WorldSpec): World {
-  const reserves = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
+  const reserves = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"];
   const pack = [...(spec.pack ?? []), ...reserves];
   const worn = [...(spec.worn ?? [])];
   if (spec.player?.light !== 0 && !worn.some((name) => /Torch|Lantern/i.test(name))) worn.push("a Wooden Torch (5000 turns)");

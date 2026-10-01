@@ -76,7 +76,7 @@ export function createDeparture() {
       }
     }
     const stock = supplies(view);
-    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || player.light > 0 && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
+    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
     return { ready: false, earning: canEarn, reason: missing.map((requirement) => requirement.reason).join(", "), target: priced ? total : null };
   }
 

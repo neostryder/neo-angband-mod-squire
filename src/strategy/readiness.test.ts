@@ -102,6 +102,33 @@ describe("supply evidence and margins", () => {
     expect(missingEssentials(w.view).map((need) => need.kind)).not.toContain("healing");
   });
 
+  it("uses equipped light and real fuel when town reports radius zero", () => {
+    const w = world({ map: ROOM, player: { depth: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["2 Wooden Torches (5000 turns)", "a Flask of Oil"] });
+    expect(supplies(w.view)).toMatchObject({ workingLight: true, fuel: 2 });
+    expect(missingEssentials(w.view).map((need) => need.kind)).not.toContain("light");
+    expect(supplyMargin(w.view)).toBeNull();
+  });
+
+  it("counts only the fuel the wielded light can use", () => {
+    const torch = world({ map: ROOM, player: { depth: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["2 Flasks of Oil"] });
+    expect(supplies(torch.view).fuel).toBe(0);
+    expect(missingEssentials(torch.view).map((need) => need.kind)).toContain("light");
+    const lantern = world({ map: ROOM, player: { depth: 0, light: 0 }, worn: ["a Lantern (7500 turns)"], pack: ["2 Flasks of Oil", "a Wooden Torch (5000 turns)"] });
+    expect(supplies(lantern.view)).toMatchObject({ workingLight: true, fuel: 2 });
+  });
+
+  it("does not count a burnt-out torch as working light", () => {
+    const w = world({ map: ROOM, player: { depth: 0, light: 0 }, worn: ["a Wooden Torch (0 turns)"], pack: ["2 Wooden Torches (5000 turns)"] });
+    expect(supplies(w.view).workingLight).toBe(false);
+    expect(missingEssentials(w.view).map((need) => need.kind)).toContain("light");
+  });
+
+  it("accepts a permanent equipped light without fuel", () => {
+    const w = world({ map: ROOM, player: { depth: 0, light: 0 }, worn: ["the Phial"] });
+    expect(supplies(w.view)).toMatchObject({ workingLight: true, lastingLight: true, fuel: 0 });
+    expect(missingEssentials(w.view).map((need) => need.kind)).not.toContain("light");
+  });
+
   it("counts known staff charges but never guesses the charges of an unnamed or uncharged staff", () => {
     const w = world({ map: ROOM, pack: ["a Staff of Teleportation (2 charges)", "a Staff of Teleportation", "a Staff of Teleportation (0 charges)"] });
     expect(supplies(w.view).escapes).toBe(2);
@@ -115,8 +142,8 @@ describe("supply evidence and margins", () => {
   });
 
   it("starts the shallow return at one cure, one phase, one food or one fuel", () => {
-    const stock = ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door", "2 Rations of Food", "2 Wooden Torches"];
-    const w = world({ map: ROOM, pack: stock });
+    const stock = ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door", "2 Rations of Food", "2 Wooden Torches (5000 turns)"];
+    const w = world({ map: ROOM, worn: ["a Wooden Torch (5000 turns)"], pack: stock });
     expect(supplyMargin(w.view)).toBeNull();
     for (let index = 0; index < stock.length; index += 1) {
       w.setPack(stock.map((name, at) => at === index ? name.replace(/^2 /, "1 ") : name));

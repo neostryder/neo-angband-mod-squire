@@ -198,7 +198,7 @@ describe("ranking", () => {
   });
 
   it("does not ask when only one aim applies", async () => {
-    const w = suppliedWorld({ map: ROOM, worn: ["Lantern", "Soft Leather Armour", "Cloak", "Leather Shield", "Hard Helm", "Leather Boots", "Leather Gloves"] });
+    const w = suppliedWorld({ map: ROOM, worn: ["Lantern (5000 turns)", "Soft Leather Armour", "Cloak", "Leather Shield", "Hard Helm", "Leather Boots", "Leather Gloves"] });
     const { strategy, requests } = rig(never);
     strategy.observe(w.view);
     await strategy.settled();

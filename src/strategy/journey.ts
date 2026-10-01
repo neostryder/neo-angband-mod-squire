@@ -72,7 +72,7 @@ export function createJourney(terrain: Terrain) {
     departure.observe(view, terrain);
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= supplyMargin(view);
-      else if (departure.finished(view) || supplies(view).food === 0 || player.light <= 0 && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      else if (departure.finished(view) || supplies(view).food === 0 || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;

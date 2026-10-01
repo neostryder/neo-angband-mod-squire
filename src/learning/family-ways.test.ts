@@ -159,8 +159,8 @@ describe("lessons of the dark", () => {
 
   it.each([false, true])("buys an actual extra fuel unit for a lantern: %s", (lantern) => {
     const wareName = lantern ? "a Flask of Oil" : "a Wooden Torch";
-    const w = world({ map: ["@G"], player: { depth: 0 }, worn: [lantern ? "a Lantern" : "a Wooden Torch"],
-      pack: ["6 Potions of Cure Light Wounds", "5 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches", "10 Flasks of Oil"] });
+    const w = world({ map: ["@G"], player: { depth: 0 }, worn: [lantern ? "a Lantern (7500 turns)" : "a Wooden Torch (5000 turns)"],
+      pack: ["6 Potions of Cure Light Wounds", "5 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)", "10 Flasks of Oil"] });
     w.moveTo({ x: 1, y: 0 });
     w.setStores([{ feat: 6, featName: "General Store", isHome: false, owner: { name: "Shopkeeper", purse: 1000 },
       stock: [{ ...itemNamed(wareName, 0), index: 0, price: 5, number: 10 }] }]);

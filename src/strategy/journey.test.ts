@@ -218,7 +218,7 @@ describe("bounded exploration and earning", () => {
   });
 
   it("offers a six-step depth 1 earning trip with food and fuel when gold cannot buy the missing basket", () => {
-    const w = world({ map: ROOM, player: { depth: 0, gold: 0, level: 1, maxLevel: 1, hp: 20, maxHp: 20 }, pack: ["5 Rations of Food", "2 Wooden Torches"] });
+    const w = world({ map: ROOM, player: { depth: 0, gold: 0, level: 1, maxLevel: 1, hp: 20, maxHp: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const journey = createJourney(w.terrain);
     const available = journey.apply(offers("descend", "recall_dungeon"), w.view, null, new Set(), false);
     expect(available.map((offer) => offer.goal)).toEqual(["descend"]);
@@ -232,7 +232,7 @@ describe("bounded exploration and earning", () => {
   });
 
   it("does not repeat an earning trip that returned with no gold gain", () => {
-    const w = world({ map: ROOM, player: { depth: 0, gold: 0 }, pack: ["5 Rations of Food", "2 Wooden Torches"] });
+    const w = world({ map: ROOM, player: { depth: 0, gold: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const journey = createJourney(w.terrain);
     goals(w, journey, false, offers("descend"));
     journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);

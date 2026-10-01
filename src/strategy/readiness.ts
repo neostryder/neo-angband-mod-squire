@@ -3,6 +3,9 @@
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
+import { TV } from "../gear/compare.js";
+
+const TV_FLASK = 27;
 
 export interface Supplies {
   readonly cures: number;
@@ -14,6 +17,7 @@ export interface Supplies {
   readonly food: number;
   readonly fuel: number;
   readonly lastingLight: boolean;
+  readonly workingLight: boolean;
 }
 
 function namedCount(view: AgentView, pattern: RegExp): number {
@@ -22,10 +26,14 @@ function namedCount(view: AgentView, pattern: RegExp): number {
 
 export function supplies(view: AgentView): Supplies {
   const player = view.player();
-  const lantern = view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName(item) ?? ""));
+  const light = view.equipment().find((item) => item !== null && item.tval === TV.LIGHT) ?? null;
+  const permanent = light !== null && (light.artifact || light.flags.includes("NO_FUEL"));
+  const workingLight = light !== null && (light.timeout > 0 || permanent);
+  /* A lantern refills from flasks of oil; a torch is replaced by a spare torch. */
+  const lantern = light !== null && /\bLantern\b/i.test(shownName(light) ?? "");
   const pack = readPack(view);
   const reliable = pack.escapeSpell.filter((spell) => spell.fail <= 15);
-  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL");
+  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL") || permanent;
   return {
     cures: namedCount(view, /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i),
     critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
@@ -40,10 +48,12 @@ export function supplies(view: AgentView): Supplies {
     food: view.inventory().reduce((sum, item) => sum + (pack.food.some((food) => food.handle === item.handle) ? item.number : 0), 0),
     fuel: view.inventory().reduce((sum, item) => {
       const name = shownName(item) ?? "";
-      const matches = lantern ? /\bFlasks? of Oil\b/i.test(name) : /\bWooden (Torch|Torches)\b/i.test(name) && !/\(0 turns\)/i.test(name);
+      const matches = lantern ? item.tval === TV_FLASK && /\bFlasks? of Oil\b/i.test(name) :
+        item.tval === TV.LIGHT && /\bWooden (Torch|Torches)\b/i.test(name) && item.timeout > 0;
       return sum + (matches ? item.number : 0);
     }, 0),
     lastingLight,
+    workingLight,
   };
 }
 
@@ -79,7 +89,7 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
   const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
   need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
   need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
-  need("light", player.light >= (depth >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
+  need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
   if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
   if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
@@ -120,7 +130,7 @@ export function missingEssentials(view: AgentView): Requirement[] {
   if (stock.cures < 2) out.push({ kind: "healing", reason: "two healing potions" });
   if (stock.phase < 2 || !canRead(view)) out.push({ kind: "phase", reason: "two usable Phase Doors" });
   if (stock.food < 2) out.push({ kind: "food", reason: "two food units" });
-  if (!stock.lastingLight && (view.player().light <= 0 || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
   return out;
 }
 
@@ -130,7 +140,7 @@ export function supplyMargin(view: AgentView): string | null {
   if (player.depth === 0) return null;
   const stock = supplies(view);
   if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
-  if (!stock.lastingLight && (player.light <= 0 || stock.fuel <= 1)) return "light and fuel";
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
   if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
   if (stock.phase <= 1) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";

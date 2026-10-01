@@ -61,6 +61,7 @@ Fixed.
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.
 
 ### Fixed
+- [Visible] **Squire no longer waits in town for light it already has.** By day the town reports no light radius, so Squire now checks the light it wields and the fuel that light can use: flasks of oil for a lantern, spare torches for a torch.
 - [Visible] **Squire no longer freezes in town.** It keeps exploring until it can actually reach the staircase down, rests instead of opening the shop when it means to wait on a shop entrance, and when it truly has nothing left to try it hands the keyboard back with the reason on the dashboard.
 - [Visible] **Squire stops dying while it backs away.** It no longer tries to step away from an adjacent creature as fast as it is, offers healing, teleports and recall near death, and picks an escape or a fight itself when the model turns every option down. It buys Phase Door and healing before anything else in town, and leaves the level when a fast unique like Grip shows up early on.
 - [Visible] **Squire finds the town staircase at night, and buys once per aim on a shopping trip.** In the dark it explores the streets until it has seen the staircase, instead of deciding there is nothing to do. An empty armour slot no longer gets several cloaks in a row.

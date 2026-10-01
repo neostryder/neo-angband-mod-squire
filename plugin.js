@@ -2059,15 +2059,19 @@ function readLauncher(view) {
 }
 
 // src/strategy/readiness.ts
+var TV_FLASK = 27;
 function namedCount(view, pattern) {
   return view.inventory().reduce((sum, item) => sum + (pattern.test(shownName2(item) ?? "") ? item.number : 0), 0);
 }
 function supplies(view) {
   const player = view.player();
-  const lantern = view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName2(item) ?? ""));
+  const light = view.equipment().find((item) => item !== null && item.tval === TV.LIGHT) ?? null;
+  const permanent = light !== null && (light.artifact || light.flags.includes("NO_FUEL"));
+  const workingLight = light !== null && (light.timeout > 0 || permanent);
+  const lantern = light !== null && /\bLantern\b/i.test(shownName2(light) ?? "");
   const pack = readPack(view);
   const reliable = pack.escapeSpell.filter((spell) => spell.fail <= 15);
-  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL");
+  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL") || permanent;
   return {
     cures: namedCount(view, /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i),
     critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
@@ -2082,10 +2086,11 @@ function supplies(view) {
     food: view.inventory().reduce((sum, item) => sum + (pack.food.some((food) => food.handle === item.handle) ? item.number : 0), 0),
     fuel: view.inventory().reduce((sum, item) => {
       const name = shownName2(item) ?? "";
-      const matches = lantern ? /\bFlasks? of Oil\b/i.test(name) : /\bWooden (Torch|Torches)\b/i.test(name) && !/\(0 turns\)/i.test(name);
+      const matches = lantern ? item.tval === TV_FLASK && /\bFlasks? of Oil\b/i.test(name) : item.tval === TV.LIGHT && /\bWooden (Torch|Torches)\b/i.test(name) && item.timeout > 0;
       return sum + (matches ? item.number : 0);
     }, 0),
-    lastingLight
+    lastingLight,
+    workingLight
   };
 }
 function classFloor(cls, depth2) {
@@ -2114,7 +2119,7 @@ function missingPreparation(view, depth2) {
   const levelFloor = Math.max(depth2, classLevel, depth2 >= 10 && caster && level <= 28 ? depth2 + 5 : 0);
   need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
   need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
-  need("light", player.light >= (depth2 >= 10 && player.cls !== "Necromancer" ? 2 : 1) || player.classFlags.includes("UNLIGHT"), depth2 >= 10 ? "light radius 2" : "working light");
+  need("light", (depth2 >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth2 >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
   if (depth2 >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
   if (depth2 >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
@@ -2152,7 +2157,7 @@ function missingEssentials(view) {
   if (stock.cures < 2) out.push({ kind: "healing", reason: "two healing potions" });
   if (stock.phase < 2 || !canRead(view)) out.push({ kind: "phase", reason: "two usable Phase Doors" });
   if (stock.food < 2) out.push({ kind: "food", reason: "two food units" });
-  if (!stock.lastingLight && (view.player().light <= 0 || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
   return out;
 }
 function supplyMargin(view) {
@@ -2160,7 +2165,7 @@ function supplyMargin(view) {
   if (player.depth === 0) return null;
   const stock = supplies(view);
   if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
-  if (!stock.lastingLight && (player.light <= 0 || stock.fuel <= 1)) return "light and fuel";
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
   if (stock.cures <= (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
   if (stock.phase <= 1) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
@@ -3075,7 +3080,7 @@ function createDeparture() {
       }
     }
     const stock = supplies(view);
-    const canEarn = !unknown && !affordable2 && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || player.light > 0 && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
+    const canEarn = !unknown && !affordable2 && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
     return { ready: false, earning: canEarn, reason: missing.map((requirement) => requirement.reason).join(", "), target: priced ? total : null };
   }
   return {
@@ -3683,7 +3688,7 @@ function createJourney(terrain) {
     departure.observe(view, terrain);
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= supplyMargin(view);
-      else if (departure.finished(view) || supplies(view).food === 0 || player.light <= 0 && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      else if (departure.finished(view) || supplies(view).food === 0 || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;

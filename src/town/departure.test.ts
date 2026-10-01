@@ -7,7 +7,7 @@ import { basketNeeds, createDeparture } from "./departure.js";
 import { supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shoppingList } from "./shop.js";
 
-const PANTRY = ["5 Rations of Food", "2 Wooden Torches"];
+const PANTRY = ["5 Rations of Food", "2 Wooden Torches (5000 turns)"];
 const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
   { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 8 },
   { ...itemNamed("a Scroll of Phase Door", 0), index: 1, price: 18, number: 8 },
@@ -15,7 +15,7 @@ const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHom
 
 describe("the town survival basket", () => {
   it("does not leave when an entered shop still sells an affordable missing essential", () => {
-    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20 }, pack: PANTRY, stores: [alchemy] });
+    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY, stores: [alchemy] });
     w.moveTo({ x: 2, y: 1 });
     const departure = createDeparture();
     expect(departure.status(w.view, w.terrain, null, new Set([FEAT.ALCHEMY]))).toMatchObject({ ready: false, earning: false });
