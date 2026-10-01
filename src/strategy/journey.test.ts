@@ -66,6 +66,98 @@ describe("journey offer and execution guards", () => {
     expect(journey.breederExit(w.view)).toBe(true);
   });
 
+  it("searches on foot for a staircase on a marked breeder level with none known", () => {
+    /* Record shape: the breeders left sight, no down staircase was known, and explore was the only offer. */
+    const w = suppliedWorld({ map: ["##########", "#.@,,,,,,#", "##########"], player: { level: 2, hp: 36, maxHp: 36 }, monsters: breeders });
+    const journey = createJourney(w.terrain);
+    expect(journey.breederExit(w.view)).toBe(true);
+    w.setMonsters([]);
+    expect(journey.searching(w.view)).toBe(true);
+    const out = journey.apply(offers("explore"), w.view, null, new Set(), false);
+    expect(out.map((offer) => offer.goal)).toEqual(["explore"]);
+    expect(out[0]?.criteria).toContain("breeders behind");
+  });
+
+  it("searches past the leash for the way down once a ready level knows no down staircase", () => {
+    const row = `#<@${".".repeat(27)}${",".repeat(7)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    const journey = createJourney(w.terrain);
+    expect(journey.searching(w.view)).toBe(true);
+    const out = journey.apply(offers("explore", "rest", "wait"), w.view, null, new Set(), false);
+    expect(out.find((offer) => offer.goal === "explore")?.criteria).toContain("staircase onward");
+  });
+
+  it("keeps the stair search to the leash when hurt or a dangerous creature is in sight", () => {
+    const row = `#<@${".".repeat(27)}${",".repeat(7)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    const journey = createJourney(w.terrain);
+    expect(journey.searching(w.view)).toBe(true);
+    w.setMonsters([{ grid: { x: 27, y: 1 }, race: "ancient multi-hued dragon", level: 40 }]);
+    expect(journey.searching(w.view)).toBe(false);
+    w.setMonsters([]);
+    w.setPlayer({ hp: 18 });
+    expect(journey.searching(w.view)).toBe(false);
+  });
+
+  it("offers the descent and the exit once a ready level knows a down staircase", () => {
+    const row = `#<@${".".repeat(27)}>#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "descend", "leave_level"), w.view, null, new Set(), false);
+    expect(out.map((offer) => offer.goal)).toEqual(expect.arrayContaining(["descend", "leave_level"]));
+  });
+
+  it("walks the stair search to a down staircase it had not seen, then offers the descent and the exit", () => {
+    /* Up stairs left, down stairs right, and no leashed frontier. The down staircase is
+     * outside the character's knowledge until the search reaches it, as on a fresh level. */
+    const row = `#<@${".".repeat(20)}${",".repeat(6)}>#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    const stair = row.indexOf(">");
+    const unseen: AgentView = { ...w.view, cell: (x, y) => {
+      const cell = w.view.cell(x, y);
+      if (cell === null || cell.feat !== FEAT.DOWN_STAIR) return cell;
+      const near = Math.abs(w.view.player().grid.x - x) <= 1 && Math.abs(w.view.player().grid.y - y) <= 1;
+      return near ? cell : { ...cell, known: false, feat: FEAT.FLOOR, passable: true };
+    } };
+    const journey = createJourney(w.terrain);
+    const ctx = { view: unseen, act: w.act, terrain: w.terrain, cfg: defaultCfg(), progress: newProgress(1), log: () => {} };
+    expect(journey.searching(unseen)).toBe(true);
+    for (let step = 0; step < 60 && w.view.player().grid.x < stair - 1; step += 1) {
+      const command = journey.explore(ctx);
+      if (command === null || command.code !== "walk") break;
+      const dir = KEYPAD[(command as { dir?: number }).dir ?? 0];
+      if (dir === undefined) break;
+      w.moveTo({ x: w.view.player().grid.x + dir[0], y: w.view.player().grid.y + dir[1] });
+      const at = w.view.player().grid;
+      for (let dy = -1; dy <= 1; dy += 1) for (let dx = -1; dx <= 1; dx += 1) w.reveal({ x: at.x + dx, y: at.y + dy });
+    }
+    expect(w.view.player().grid.x).toBe(stair - 1);
+    const out = journey.apply(offers("explore", "descend", "leave_level"), unseen, null, new Set(), false);
+    expect(out.map((offer) => offer.goal)).toEqual(expect.arrayContaining(["descend", "leave_level"]));
+  });
+
+  it("lets a breeder exit go down only when the character is ready for the next depth", () => {
+    const w = suppliedWorld({ map: ["###########", "#<.....@.>#", "###########"], player: { depth: 2, maxDepth: 2, level: 5, maxLevel: 5, hp: 36, maxHp: 36 }, monsters: breeders });
+    const journey = createJourney(w.terrain);
+    expect(journey.breederExit(w.view)).toBe(true);
+    w.setMonsters([]);
+    expect(journey.exitWay(w.view)).toBe("up");
+    w.setPlayer({ level: 6, maxLevel: 6, hp: 60, maxHp: 60 });
+    expect(journey.exitWay(w.view)).toBe("down");
+  });
+
+  it("forgets a chosen trip home once the character stands in town", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 2, maxDepth: 2 } });
+    const journey = createJourney(w.terrain);
+    journey.apply(offers("explore"), w.view, null, new Set(), false, false, "the pack is short");
+    w.setPlayer({ depth: 0 });
+    expect(journey.apply(offers("explore", "wait"), w.view, null, new Set(), false).map((offer) => offer.goal)).toContain("explore");
+  });
+
   it("stops an optional plan when the third breeder appears", () => {
     const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 2 }, monsters: breeders.slice(0, 2) });
     const journey = createJourney(w.terrain);

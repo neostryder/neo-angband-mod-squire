@@ -49,6 +49,7 @@ import type { Orders } from "../orders/book.js";
 import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
 import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
+import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney } from "../strategy/journey.js";
 import { missingPreparation } from "../strategy/readiness.js";
 import type { Aim } from "../strategy/aims.js";
@@ -154,6 +155,11 @@ const SAME_SITUATION_TURNS = 50;
 const FORCED_RISK = 0.3;
 /** Upkeep Squire does on its own when nothing awake is in sight, first to last. */
 const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
+
+/** Whether a routine wait has other options beside it that are not upkeep. */
+function waitCompetes(offers: readonly Offer[]): boolean {
+  return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
+}
 const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
 const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
@@ -227,6 +233,10 @@ export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
   /** The ranked aims and town-trip gate. Without it no aim steers anything. */
   readonly strategy?: () => Steering;
+  /** Why the persona chose to head home before the supply margin forced it, or null. */
+  readonly townCall?: () => string | null;
+  /** The buying order the persona chose for this town visit, or null for the fixed order. */
+  readonly purchaseOrder?: () => readonly PurchaseKind[] | null;
   /** The player's orders and standing instructions. Without it none weigh on a decision. */
   readonly orders?: Orders;
   readonly terrain: Terrain;
@@ -1406,7 +1416,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return watched(recallPlan(item), view);
       }
       case "shop":
-        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow, options.strategy), view);
+        return watched(townTripPlan(terrain, personaOf(), visitedShops, log, options.strategy?.().aims ?? [], flourishesNow, options.strategy, options.purchaseOrder), view);
       case "fight":
         return missionPlan("fight", autofight(), view, fightCfg);
       case "shoot": {
@@ -1622,8 +1632,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true }), view)
           : (() => { const wide = offeredWiden; return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide)); })();
       case "leave_level": {
-        const down = leaveStep(situationNow(view), terrain)?.down === true;
-        return stepsPlan(down ? "take the stairs down" : "take the nearest stairs", view, (ctx) => {
+        /* The journey reroutes the walk to its own exit, often the up stairs, so the label names the stairs it will take. */
+        const way = journey.exitWay(view) ?? (leaveStep(situationNow(view), terrain)?.down === true ? "down" : null);
+        return stepsPlan(way === "down" ? "take the stairs down" : way === "up" ? "take the stairs up" : "take the nearest stairs", view, (ctx) => {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
@@ -1757,7 +1768,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       !(offer.goal === "retreat" && stairsUnderfoot(s, terrain) && offers.some((other) => other.goal === "leave_level")));
     if (incoming > 0 && incoming >= s.view.player().hp && viable.length === 1) return { goal: viable[0]!.goal, why: viable[0]!.uncertain === true ? "the only feasible immediate escape" : "the only immediate survival option" };
     const routine = ROUTINE.map((goal) => offers.find((o) => o.goal === goal && o.routine === true)).find((o) => o !== undefined);
-    if (routine !== undefined) return { goal: routine.goal, why: "routine upkeep" };
+    /* A wait that competes with other options is the persona's call, drawn from its Patience slider. */
+    if (routine !== undefined) {
+      /* With no persona there is no Patience to draw from, so the wait stays the routine it always was. */
+      if (routine.goal !== "wait" || byRules || persona === null || !waitCompetes(offers)) return { goal: routine.goal, why: "routine upkeep" };
+      if (rng() < persona.sliders.patience / 100) return { goal: "wait", why: "routine upkeep" };
+    }
     const only = offers.length === 1 ? offers[0] : undefined;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
     if (only !== undefined && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
@@ -1793,13 +1809,22 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
   }
 
+  /* True while Squire picks by its own rules, which keep today's reflexes. */
+  let byRules = false;
+
   const planner: Planner<GoalDigest> = {
     rules(view, reason, stuck = false) {
       if (stuck) {
         lastAnswer = null;
         for (const goal of sameTurn.keys()) stalled.set(goal, view.turn());
       }
-      const question = planner.ask(view);
+      byRules = true;
+      let question: ReturnType<typeof planner.ask>;
+      try {
+        question = planner.ask(view);
+      } finally {
+        byRules = false;
+      }
       if ("handBack" in question || "reflex" in question) return question;
       const choice = ownChoice(question.context, view);
       if ("handBack" in choice) return choice;
@@ -1840,7 +1865,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory);
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
-      const offered = journey.apply(steered, view, persona, visitedShops, recalling);
+      const chosenHome = options.townCall?.() ?? null;
+      const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
       let offers = offered.filter(usable);
       /* Everything tried this turn came to nothing, cornered in a corridor
        * perhaps. Letting a turn pass changes the situation where asking again
@@ -1856,7 +1882,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims);
         if (reachableFrontier(view, terrain) && !wider.some((o) => o.goal === "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
         if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
-        offers = journey.apply(wider, view, persona, visitedShops, recalling, true).filter(usable);
+        offers = journey.apply(wider, view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
         if (offers.length === 0) {
           if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && damageFor(s, grid, 1, terrain).damage < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
           if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
@@ -2009,7 +2035,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     trigger(view, plan) {
       situationNow(view, false, true);
       const exiting = journey.breederExit(view);
-      if (exiting && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
+      /* A search for the missing staircase has to run; interrupting it every step was the loop. */
+      if (exiting && !(plan.label === "explore" && journey.searchingNow(view)) && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
       const watched = plan as Partial<WatchedPlan> & { settle?: (v: AgentView) => void };
       watched.settle?.(view);
       const stopped = watched.watcher?.check(view) ?? null;

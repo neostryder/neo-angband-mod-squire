@@ -12,6 +12,7 @@
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import type { Feeling } from "../learning/grudges.js";
 import type { Persona } from "../persona/persona.js";
+import { jitteredStrength } from "../persona/blend.js";
 
 export type PursuitKind = "win" | "riches" | "treasure" | "sights" | "uniques" | "grudge" | "record" | "depth" | "lineage";
 
@@ -22,6 +23,8 @@ export interface Pursuit {
   /** 0 to 1: how much this goal matters to the character. */
   readonly weight: number;
   readonly detail: string;
+  /** The creature a grudge names, as the game names it. */
+  readonly target?: string;
 }
 
 /** What the family line knows that shapes an heir's goals. */
@@ -78,18 +81,72 @@ export function paceFactor(persona: Persona | null): number {
   return ambition <= 0.5 ? 0.75 + ambition * 0.5 : 1 + (ambition - 0.5) * 0.7;
 }
 
-/** The goals the persona holds, most wanted first. */
-export function pursuitsFor(persona: Persona | null, maxDepth: number, feelings: readonly Feeling[] = [], family: FamilyFacts | null = null): Pursuit[] {
+/**
+ * How hard the persona pushes on: mostly Ambition, then Boldness, then how
+ * little it cares for its own skin. 0.46 at the default persona.
+ */
+export function drive(persona: Persona | null): number {
+  if (persona === null) return 0.46;
+  const s = persona.sliders;
+  return 0.5 * unit(s.ambition) + 0.3 * unit(s.boldness) + 0.2 * (1 - unit(s.selfpreservation));
+}
+
+/**
+ * Supplies the town basket asks for above its death-safety floor: none for a
+ * driven persona, one for the default, two for a cautious one.
+ */
+export function readinessExtra(persona: Persona | null): number {
+  const d = drive(persona);
+  return d >= 0.62 ? 0 : d <= 0.38 ? 2 : 1;
+}
+
+const PURSUIT_KINDS: readonly PursuitKind[] = ["win", "riches", "treasure", "sights", "uniques", "grudge", "record", "depth", "lineage"];
+
+function hashSeed(seed: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < seed.length; i += 1) h = Math.imul(h ^ seed.charCodeAt(i), 16777619);
+  return h >>> 0;
+}
+
+function seededRng(seed: string): () => number {
+  let s = hashSeed(seed);
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * A small offset per goal, drawn once from the character's own seed through
+ * the persona's strength jitter, so two characters built from one persona
+ * want the same things a little differently and one character keeps its
+ * offsets for life. At most a quarter of the strength jitter, which Volatility sets.
+ */
+export function pursuitJitter(persona: Persona, seed: string): Record<PursuitKind, number> {
+  const rng = seededRng(seed);
+  const centre = Math.max(0, Math.min(1, persona.sliders.strength / 100));
+  const out = {} as Record<PursuitKind, number>;
+  for (const kind of PURSUIT_KINDS) out[kind] = Math.round((jitteredStrength(persona, rng) - centre) * 0.5 * 1000) / 1000;
+  return out;
+}
+
+/** The goals the persona holds, most wanted first. A seed adds the character's own small jitter. */
+export function pursuitsFor(persona: Persona | null, maxDepth: number, feelings: readonly Feeling[] = [], family: FamilyFacts | null = null, seed: string | null = null): Pursuit[] {
   const step = winStep(maxDepth);
+  const jitter = persona === null || seed === null ? null : pursuitJitter(persona, seed);
   const win: Pursuit = {
-    kind: "win", label: "win the game", weight: winWeight(persona),
+    kind: "win", label: "win the game", weight: Math.max(WIN_FLOOR, rounded(winWeight(persona) + (jitter?.win ?? 0))),
     detail: `Defeat Sauron on dungeon level 99 and then Morgoth on dungeon level 100. The next step is to ${step.text}.`,
   };
   if (persona === null) return [win];
   const s = persona.sliders;
   const out: Pursuit[] = [win];
-  const add = (kind: PursuitKind, label: string, weight: number, detail: string) => {
-    if (weight >= PURSUIT_FLOOR) out.push({ kind, label, weight: rounded(weight), detail });
+  const add = (kind: PursuitKind, label: string, raw: number, detail: string, target?: string) => {
+    const weight = raw + (jitter?.[kind] ?? 0);
+    if (weight >= PURSUIT_FLOOR) out.push({ kind, label, weight: rounded(weight), detail, ...(target === undefined ? {} : { target }) });
   };
   add("riches", "get rich", 0.8 * unit(s.greed) + 0.2 * unit(s.savings), "Pick up gold and sellable loot, and detour for it when the detour is safe.");
   add("treasure", "collect artifacts and fine gear", 0.4 * unit(s.greed) + 0.3 * unit(s.curiosity) + 0.3 * unit(s.hoarding) + (persona.quirks.compulsive.on ? 0.15 : 0),
@@ -98,7 +155,7 @@ export function pursuitsFor(persona: Persona | null, maxDepth: number, feelings:
     "Explore each level and learn its feeling before taking the stairs.");
   add("uniques", "hunt uniques", 0.6 * unit(s.pride) + 0.4 * unit(s.glory), "Fight uniques that can be beaten within the risk the character accepts.");
   const hated = persona.toggles.grudges ? feelings.filter((f) => f.unique && f.kind === "hatred").sort((a, b) => b.count - a.count)[0] : undefined;
-  if (hated !== undefined) add("grudge", `settle the grudge with ${hated.name}`, 0.45 + 0.3 * unit(s.stubbornness) + 0.15 * unit(s.boldness), `${hated.name} killed some of the family. Kill it when the fight can be won.`);
+  if (hated !== undefined) add("grudge", `settle the grudge with ${hated.name}`, 0.45 + 0.3 * unit(s.stubbornness) + 0.15 * unit(s.boldness), `${hated.name} killed some of the family. Kill it when the fight can be won.`, hated.name);
   if (family !== null && family.heir && family.deepest !== null && family.deepest > maxDepth) {
     add("record", "beat the family's deepest level", 0.3 + 0.4 * unit(s.pride) + 0.3 * unit(s.ambition), `Go below dungeon level ${String(family.deepest)}, the deepest any ancestor reached.`);
   }
@@ -120,6 +177,11 @@ export function pursuitFacts(pursuits: readonly Pursuit[]): Record<string, strin
     goals: `Goals, most wanted first: ${pursuits.map((p) => `${p.label} (${p.weight >= 0.7 ? "strongly" : p.weight >= 0.5 ? "clearly" : "somewhat"} wanted)`).join(", ")}.`,
     ...(win === undefined ? {} : { win_urgency: `Winning the game matters ${winUrgency(win.weight) === "driven" ? "above everything" : winUrgency(win.weight) === "high" ? "a great deal" : winUrgency(win.weight) === "moderate" ? "somewhat" : "little"} to this character. ${win.detail}` }),
   };
+}
+
+/** A race and a grudge's target name one creature when they match whole, ignoring case. */
+export function sameRace(race: string, target: string): boolean {
+  return race.trim().toLowerCase() === target.trim().toLowerCase();
 }
 
 const ATTACKS: ReadonlySet<string> = new Set(["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"]);
@@ -149,7 +211,7 @@ export function nudgePursuits(
   const player = view.player();
   const uniqueInSight = view.monsters().some((m) => m.visible && m.raceFlags.includes("UNIQUE"));
   const grudge = pursuits.find((p) => p.kind === "grudge");
-  const grudgeInSight = grudge !== undefined && view.monsters().some((m) => m.visible && grudge.label.endsWith(m.race));
+  const grudgeInSight = grudge?.target !== undefined && view.monsters().some((m) => m.visible && sameRace(m.race, grudge.target!));
   const awake = view.monsters().some((m) => m.visible && !m.asleep);
   for (const offer of offers) {
     if (offer.risk > ceiling) continue;

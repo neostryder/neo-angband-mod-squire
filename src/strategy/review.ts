@@ -21,6 +21,7 @@ import { createStoreMemory, wareName, type StoreMemory } from "../town/memory.js
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { pursuitFacts, pursuitsFor, type FamilyFacts, type Pursuit } from "./pursuits.js";
+import { judgmentsFor, purchaseOrder, townChance, type Judgments, type PurchaseKind } from "./judgment.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
@@ -111,6 +112,8 @@ export interface StrategyDeps {
   persona?(): Persona | null;
   /** What the family line knows that shapes an heir's goals. */
   family?(): FamilyFacts | null;
+  /** A seed fixed for the character's life, for its small per-character jitter on goal weights. */
+  seed?(): string;
   readonly storeMemory?: readonly StoreMemory[];
   saveStoreMemory?(memory: readonly StoreMemory[]): void;
   rng?(): number;
@@ -131,6 +134,10 @@ export interface Strategy {
   ranked(): readonly Aim[];
   /** The long goals the persona holds now, most wanted first. */
   pursuits(): readonly Pursuit[];
+  /** Why the persona chose to head home before the supply margin forced it, or null. */
+  townCall(): string | null;
+  /** The buying order the persona chose for this town visit, or null for the fixed order. */
+  purchaseOrder(): readonly PurchaseKind[] | null;
   last(): ReviewSummary | null;
   /**
    * Whether a town trip for an affordable aim may be offered. After a trip the
@@ -162,9 +169,12 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let stockReview = false;
   let answers: Readonly<Record<string, Answer>> | null = null;
   let deepest = 0;
+  /* The persona's own call to go home before the margin forces it, and its buying order for this town visit. */
+  let townCall: string | null = null;
+  let buying: readonly PurchaseKind[] | null = null;
 
   function pursuitsNow(): Pursuit[] {
-    return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null);
+    return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null, deps.seed?.() ?? null);
   }
 
   function clear(): void {
@@ -174,6 +184,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     last = null;
     tripGold = null;
     deepest = 0;
+    townCall = null;
+    buying = null;
     generation += 1;
     answers = null;
     stockReview = false;
@@ -188,14 +200,16 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string; readonly answers?: Readonly<Record<string, Answer>> }> {
     const fixed = inFixedOrder(candidates);
     /* The win is always a candidate, so it alone does not justify a model call. */
-    if (candidates.filter((aim) => aim.kind !== "win").length < 2) return { ranked: fixed, source: "fixed", by: "" };
+    const askAims = candidates.filter((aim) => aim.kind !== "win").length >= 2;
+    if (!askAims) return { ranked: fixed, source: "fixed", by: "" };
     const backend = deps.backend();
     if (backend === null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because no model server is set up." };
     const capped = deps.tally.overCap(backend, deps.now());
     if (capped !== null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the spend limit is reached." };
+    const request: SystemOneRequest = scoreRequest(view, candidates, pursuitsNow());
     let result: AskResult;
     try {
-      result = await deps.send(scoreRequest(view, candidates, pursuitsNow()));
+      result = await deps.send(request);
     } catch {
       return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the request failed." };
     }
@@ -204,16 +218,37 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.`, answers: result.answers };
   }
 
+  /** Read the town answers in code: draw the trip home once, and set the buying order for this visit. */
+  function judge(depth: number, judgments: Judgments): void {
+    const persona = deps.persona?.() ?? null;
+    const pursuits = pursuitsNow();
+    const rng = deps.rng ?? Math.random;
+    if (judgments.town !== null) {
+      const chance = townChance(persona, pursuits, judgments.town.short);
+      const go = rng() < chance;
+      if (go) townCall = "a restock it chose before supplies ran low";
+      deps.log(go ? "Squire turned back for town early to restock, though the pack was not yet low." : "Squire thought about a trip to town and stayed below; the pack can last a while yet.");
+    }
+    if (judgments.purchases.length > 1 && depth === 0) {
+      buying = purchaseOrder(judgments.purchases, persona, pursuits, rng);
+    }
+  }
+
   async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
     const seq = ++latest;
     const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
     aims = inFixedOrder(candidates);
+    const depth = view.player().depth;
+    const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
     const done = await rank(view, candidates);
+    if (mine !== generation) return;
+    /* A level change during the model call makes these judgments stale; the next review makes fresh ones. */
+    if (view.player().depth === depth) judge(depth, judgments);
     /* A slow answer for an older review must not overwrite the aims of a newer one. */
-    if (mine !== generation || seq !== latest) return;
-    answers = done.answers ?? null;
+    if (seq !== latest) return;
+    answers = done.source === "model" ? done.answers ?? null : null;
     aims = done.ranked;
     last = { trigger, turn, source: done.source };
     const names = done.ranked.map((aim) => aim.label).join(", ");
@@ -249,6 +284,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
         aims = answers === null ? inFixedOrder(updated) : rankByScore(updated, answers);
       }
       deepest = Math.max(deepest, player.maxDepth);
+      if (player.depth === 0) townCall = null;
+      else buying = null;
       const budget = pacing.observe(view);
       const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (stockReview ? "stock" : budget.review ? "budget" : null);
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
@@ -261,6 +298,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     },
     ranked: () => aims,
     pursuits: pursuitsNow,
+    townCall: () => townCall,
+    purchaseOrder: () => buying,
     last: () => last,
     tripAllowed: (gold) => tripGold === null || gold >= tripGold * TRIP_GOLD_GROWTH,
     inherit(list) {

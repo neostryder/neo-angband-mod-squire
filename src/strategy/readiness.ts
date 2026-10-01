@@ -4,6 +4,8 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";
+import type { Persona } from "../persona/persona.js";
+import { readinessExtra } from "./pursuits.js";
 
 const TV_FLASK = 27;
 
@@ -136,15 +138,37 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
   return out;
 }
 
-/** Town reserves are independent of the persona's optional stock targets. */
-export function missingEssentials(view: AgentView): Requirement[] {
+/**
+ * The town basket. Its death-safety floor is two healing potions, two Phase
+ * Doors, two food units and working light with one fuel unit; above that floor
+ * the persona's drive sets the extra wants (`readinessExtra`), so a cautious
+ * character stocks higher. With no persona the default extra of one asks the
+ * floor.
+ */
+export function missingEssentials(view: AgentView, persona: Persona | null = null): Requirement[] {
   const stock = supplies(view);
+  const { healing: cures, phase, food, light: fuel } = basketWants(persona);
   const out: Requirement[] = [];
-  if (stock.cures < 2) out.push({ kind: "healing", reason: "two healing potions" });
-  if (stock.phase < 2 || !canRead(view)) out.push({ kind: "phase", reason: "two usable Phase Doors" });
-  if (stock.food < 2) out.push({ kind: "food", reason: "two food units" });
-  if (!stock.lastingLight && (!stock.workingLight || stock.fuel < 2)) out.push({ kind: "light", reason: "working light and two fuel units" });
+  if (stock.cures < cures) out.push({ kind: "healing", reason: `${countWord(cures)} healing potion${cures === 1 ? "" : "s"}` });
+  if (stock.phase < phase || !canRead(view)) out.push({ kind: "phase", reason: `${countWord(phase)} usable Phase Door${phase === 1 ? "" : "s"}` });
+  if (stock.food < food) out.push({ kind: "food", reason: `${countWord(food)} food units` });
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel < fuel)) out.push({ kind: "light", reason: `working light and ${countWord(fuel)} fuel unit${fuel === 1 ? "" : "s"}` });
   return out;
+}
+
+/** How many of each basket item the persona wants before it leaves town. Two healing and two Phase Doors hold for every persona. */
+export function basketWants(persona: Persona | null): { readonly healing: number; readonly phase: number; readonly food: number; readonly light: number } {
+  const extra = readinessExtra(persona);
+  return {
+    healing: Math.max(2, 1 + extra),
+    phase: Math.max(2, 1 + extra),
+    food: Math.max(2, 2 + Math.max(0, extra - 1)),
+    light: Math.max(1, 1 + Math.min(1, extra)),
+  };
+}
+
+function countWord(n: number): string {
+  return ["no", "one", "two", "three", "four"][n] ?? String(n);
 }
 
 /**

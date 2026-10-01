@@ -7,11 +7,12 @@ import type { Plan } from "../brain/brain.js";
 import { floorTarget } from "../brain/items.js";
 import { canRead, hungry } from "../brain/pack.js";
 import { arrivalFeeling } from "../brain/level-feel.js";
+import { assessThreat } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
 import { flowFrom, stepDown, type FlowField } from "../flow.js";
-import { frontiers, hasFloorObject, isRoutable, isWalkable, knownStairs, standingOnHarm } from "../map.js";
+import { frontiers, hasFloorObject, isRoutable, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
@@ -25,6 +26,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   const pacing = createLevelPacing();
   const departure = createDeparture();
   let returnReason: string | null = null;
+  /* Set when the persona chose the trip home; the margin did not force it. */
+  let chosenReturn = false;
   let previousHp: number | null = null;
   let unseenUntil = -1;
   let lastTurn = -1;
@@ -60,10 +63,18 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     breederExit(view);
     leashField = null;
     if (state.fresh) {
-      if (player.depth === 0 || turn < lastTurn) returnReason = null;
+      if (turn < lastTurn) {
+        returnReason = null;
+        chosenReturn = false;
+      }
       previousHp = null;
       unseenUntil = -1;
       remembered.clear();
+    }
+    /* The trip is over the moment the character stands in town, whatever brought it there. */
+    if (player.depth === 0) {
+      returnReason = null;
+      chosenReturn = false;
     }
     for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
@@ -124,15 +135,36 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   /**
-   * An earning trip that must end but knows no way up looks for the up stairs
-   * on foot; a Recall scroll read on the first levels costs more than the trip
-   * makes there.
+   * Whether the journey must look for its staircase on foot.
+   *
+   * An earning trip that can no longer walk a checked route searches for the
+   * up stairs. A level marked for departure by breeders, or a level whose
+   * leashed ground is used up while no down staircase is known, searches for
+   * whichever staircase leads on. A Recall scroll read on the first levels
+   * costs more than the trip makes there.
    */
   function searching(view: AgentView): boolean {
-    const depth = view.player().depth;
-    if (!departure.active() || depth <= 0 || depth >= RECALL_FROM_DEPTH || upStairs(view).length > 0) return false;
-    if (returnReason === null && !expired && !departure.finished(view)) return false;
-    return checkedRoute(view, exitTargets(view)) === null && frontiers(view, terrain).length > 0;
+    const player = view.player();
+    const depth = player.depth;
+    if (depth <= 0 || depth >= RECALL_FROM_DEPTH) return false;
+    const front = frontiers(view, terrain);
+    if (front.length === 0) return false;
+    if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return true;
+    if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return true;
+    /* Ready to descend, no down staircase known, nothing left to explore inside the
+     * leash. A wounded character, or one with a creature rated dangerous or worse in
+     * sight, keeps to the leash: straying far from the up stairs costs the most when
+     * a fight is already close, and the watcher only reacts once a blow lands. */
+    const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
+    const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, undefined, terrain).band >= 2);
+    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1).length === 0 && player.hp >= player.maxHp * 0.35 && !dangerous && !front.some((grid) => leashed(view, grid))) return true;
+    return false;
+  }
+
+  /** Read the journey state from this view before answering, so a caller outside `apply` is not a step behind. */
+  function searchingNow(view: AgentView): boolean {
+    observe(view);
+    return searching(view);
   }
 
   function leashed(view: AgentView, at: Loc): boolean {
@@ -152,23 +184,29 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   function exitTargets(view: AgentView): Loc[] {
+    /* A level marked by breeders takes up or down, whichever is known, since either leaves them behind. Only a character ready for the next depth may descend here. */
+    if (breederLevel && returnReason === null && missingPreparation(view, view.player().depth + 1).length === 0) return knownStairs(view, terrain);
     if (returnReason !== null || missingPreparation(view, view.player().depth + 1).length > 0) return upStairs(view);
     return knownStairs(view, terrain);
   }
 
-  function apply(offers: readonly Offer[], view: AgentView, persona: Persona | null, visited: ReadonlySet<number>, recalling: boolean, widen = false): Offer[] {
+  function apply(offers: readonly Offer[], view: AgentView, persona: Persona | null, visited: ReadonlySet<number>, recalling: boolean, widen = false, chosen: string | null = null): Offer[] {
     widened = widen;
     footOffered = false;
     recallActive = recalling;
     lastPersona = persona;
     observe(view);
     const player = view.player();
+    if (player.depth > 0 && chosen !== null && returnReason === null) {
+      returnReason = chosen;
+      chosenReturn = true;
+    }
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     let out = offers.filter((offer) => {
       if (widen && offer.goal === "explore") return true;
-      if (breederLevel && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
+      if (breederLevel && !(offer.goal === "explore" && searching(view)) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
@@ -188,7 +226,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       return true;
     });
     if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns and stays within ${String(EARNING_LEASH)} path steps of the up stairs.` } : offer);
-    const reason = home ? `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
+    const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
       const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || searching(view));
       if (searching(view)) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
@@ -204,6 +242,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       out.push({ goal: "leave_level", criteria: "Leave this breeder level by the checked staircase. The exit objective lasts until the level changes.", risk: 0.02, survival: player.hp });
     }
     if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
+    /* A stair search that is not the return-to-town search keeps its own wording. */
+    if (searching(view) && !(player.depth > 0 && (home || expired))) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: breederLevel ? `Search this level on foot for a staircase to leave the breeders behind. ${offer.criteria}` : `Search this level on foot for a staircase onward. ${offer.criteria}` } : offer);
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1)[0];
       if (missing !== undefined) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
@@ -302,5 +342,17 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return missing === undefined ? null : `Squire cannot descend yet: it needs ${missing.reason}.`;
   }
 
-  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit };
+  /**
+   * Which way a leave_level walk will go once `guarded` reroutes it to the
+   * journey's exit, or null when the planner's own route stands.
+   */
+  function exitWay(view: AgentView): "up" | "down" | null {
+    if (unseenDanger?.(view) || !footOffered && view.monsters().some((monster) => monster.visible && !monster.asleep)) return null;
+    const route = checkedRoute(view, exitTargets(view));
+    if (route === null) return null;
+    const end = route.length === 0 ? view.player().grid : route[route.length - 1]!;
+    return terrain.isUpStair(view.cell(end.x, end.y)?.feat ?? -1) ? "up" : "down";
+  }
+
+  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow };
 }

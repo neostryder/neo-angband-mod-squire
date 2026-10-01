@@ -289,6 +289,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const depths = lineage.ancestors.map((a) => a.deepest ?? a.died?.depth ?? 0);
       return { deepest: depths.length === 0 ? null : Math.max(...depths), heir: lineage.generation > 1 };
     },
+    seed: () => character.runId,
     storeMemory: character.storeMemory ?? [],
     saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
   });
@@ -738,6 +739,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), pursuits: strategy.pursuits() }),
+        townCall: () => strategy.townCall(),
+        purchaseOrder: () => strategy.purchaseOrder(),
         orders,
       }),
       tally,

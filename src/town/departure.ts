@@ -4,7 +4,7 @@ import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
-import { missingEssentials, supplies } from "../strategy/readiness.js";
+import { basketWants, missingEssentials, supplies } from "../strategy/readiness.js";
 import { matchesSupplyName, supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shopEntrances } from "./plan.js";
 import { storesFor } from "./shop.js";
@@ -13,13 +13,14 @@ export const EARNING_TURNS = 1000;
 export const EARNING_LEASH = 6;
 
 /** Optional stock and gear wait until the whole survival basket is present. */
-export function basketNeeds(view: AgentView, needs: readonly SupplyNeed[]): SupplyNeed[] {
-  if (missingEssentials(view).length === 0) return [...needs];
+export function basketNeeds(view: AgentView, needs: readonly SupplyNeed[], persona: Persona | null = null): SupplyNeed[] {
+  if (missingEssentials(view, persona).length === 0) return [...needs];
   const stock = supplies(view);
+  const wants = basketWants(persona);
   return needs.filter((need) => ["healing", "phase", "food", "light"].includes(need.kind)).map((need) => ({
     ...need,
     have: need.kind === "healing" ? stock.cures : need.kind === "phase" ? stock.phase : need.have,
-    want: 2,
+    want: wants[need.kind as keyof typeof wants],
   }));
 }
 
@@ -62,9 +63,9 @@ export function createDeparture() {
   function status(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number>) {
     observe(view, terrain);
     const player = view.player();
-    const missing = missingEssentials(view);
+    const missing = missingEssentials(view, persona);
     if (missing.length === 0) return { ready: true, earning: false, reason: "", target: null };
-    const needs = basketNeeds(view, supplyNeeds(view, readPack(view), persona)).filter((need) => need.have < need.want);
+    const needs = basketNeeds(view, supplyNeeds(view, readPack(view), persona), persona).filter((need) => need.have < need.want);
     const shops = shopEntrances(view, terrain);
     const unknown = player.gold > 0 && shops.some((shop) => !visited.has(shop.feat) && needs.some((need) => storesFor(need.kind).includes(shop.name)));
     let total = 0;

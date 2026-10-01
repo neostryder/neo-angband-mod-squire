@@ -12,6 +12,8 @@ import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core"
 import { gearCandidates } from "../gear/compare.js";
 import { goalLabel, goalOfCommand } from "../knight.js";
 import { healingAmount } from "./combat-kit.js";
+import { pursuitsFor } from "../strategy/pursuits.js";
+import { createJourney } from "../strategy/journey.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
@@ -1536,6 +1538,53 @@ describe("fear, swarms and refused commands", () => {
     expect(p.trigger(w.view, choice.plan)).not.toBeNull();
   });
 
+  it("does not interrupt the stair search on a marked breeder level", () => {
+    /* Record shape: each explore choice on the marked level was interrupted with 0 commands. */
+    const w = suppliedWorld({ map: ["##########", "#.@,,,,,,#", "##########"], player: { level: 2, hp: 36, maxHp: 36 }, monsters: worms(3) });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.setMonsters([]);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("explore");
+    const choice = p.choose(pick("explore"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+  });
+
+  it("offers a search for the down staircase to a ready Warrior with none known", () => {
+    const row = `#<@${".".repeat(27)}${",".repeat(7)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    expect(createJourney(w.terrain).searching(w.view)).toBe(true);
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toContain("explore");
+    expect(q.context.offers.find((offer) => offer.goal === "explore")?.criteria).toContain("staircase onward");
+  });
+
+  it("walks a ready character to the down stairs and issues the descent", () => {
+    const row = `#<@${".".repeat(27)}>#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 54, maxHp: 54 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    const choice = p.choose(pick("descend"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a descent plan");
+    const step: Readonly<Record<number, readonly [number, number]>> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    while (command !== null && command.code !== "descend" && guard < 60) {
+      if (command.code === "walk") {
+        const dir = step[(command as { readonly dir?: number }).dir ?? 0];
+        if (dir !== undefined) w.moveTo({ x: w.view.player().grid.x + dir[0], y: w.view.player().grid.y + dir[1] });
+      }
+      guard += 1;
+      command = choice.plan.step(w.view, w.act);
+    }
+    expect(command).toEqual({ code: "descend" });
+  });
+
   it("gives up an errand whose commands pass no game time", () => {
     const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 6, y: 1 }, race: "cave orc", level: 3 }] });
     const { p, logged } = planner(w);
@@ -1854,5 +1903,82 @@ describe("harmless creatures", () => {
     const deep = world({ map: TOWN, player: { ...mage, depth: 1 }, monsters: [maggot(9)] });
     expect(harmlessKind(deep.view.monsters()[0]!, deep.view)).toBe(false);
     expect(harmlessKind(deep.view.monsters()[0]!, world({ map: TOWN, player: mage, monsters: [maggot(9)] }).view)).toBe(true);
+  });
+});
+
+describe("a wait the persona weighs", () => {
+  function seeded(seed: number): () => number {
+    let s = seed >>> 0;
+    return () => {
+      s = (s + 0x6d2b79f5) >>> 0;
+      let t = s;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  /* A recall already read, nothing awake, and explore beside it: the routine wait competes. */
+  function pendingRecall(persona: ReturnType<typeof defaultPersona>, rng: () => number) {
+    const w = suppliedWorld({ map: ["#########", "#..@...,#", "#########"], player: { depth: 2, maxDepth: 2, recall: 12 } as never });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: true, persona, rng, strategy: () => ({ aims: [], tripAllowed: () => false, pursuits: pursuitsFor(persona, 2) }) });
+    return { w, p };
+  }
+
+  it("draws a competing routine wait in code, with no wait fact or slider facts in the question", () => {
+    const persona = archetype("scholar");
+    const { w, p } = pendingRecall(persona, () => 1);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("wait");
+    expect(q.context.offers.some((o) => o.goal !== "wait" && o.routine !== true)).toBe(true);
+    expect(q.request.state["wait"]).toBeUndefined();
+    expect((q.request.state["persona"] as Record<string, unknown> | undefined)?.["patience"]).toBeUndefined();
+    const own = reflexed(p.rules!(w.view, "own rules"));
+    expect(own.reflex).toBe("routine upkeep");
+    expect(own.answers["goal"]).toMatchObject({ choice: "wait" });
+  });
+
+  it("lets a patient persona wait more often than a restless one with a seeded rng", () => {
+    const waits = (persona: ReturnType<typeof defaultPersona>, seed: number) => {
+      const { w, p } = pendingRecall(persona, seeded(seed));
+      let n = 0;
+      for (let i = 0; i < 300; i += 1) {
+        w.advance(1);
+        const q = p.ask(w.view);
+        const goal = "reflex" in q ? q.answers["goal"] : undefined;
+        if ("reflex" in q && q.reflex === "routine upkeep" && goal?.type === "choice" && goal.choice === "wait") n += 1;
+      }
+      return n;
+    };
+    const patient = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, patience: 90 } };
+    const restless = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, patience: 10 } };
+    expect(waits(patient, 7)).toBeGreaterThan(waits(restless, 7));
+  });
+
+  it("keeps the competing wait as routine upkeep when there is no persona to draw from", () => {
+    const { w, p } = pendingRecall(null as never, () => 1);
+    const q = p.ask(w.view);
+    expect(reflexed(q).reflex).toBe("routine upkeep");
+    expect(reflexed(q).answers["goal"]).toMatchObject({ choice: "wait" });
+  });
+
+  it("keeps the routine wait when nothing else is on offer", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 1, recall: 12 } as never });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: true });
+    const q = p.ask(w.view);
+    expect(reflexed(q).answers["goal"]).toMatchObject({ choice: "wait" });
+  });
+});
+
+describe("the leave_level label", () => {
+  it("names the up stairs when the journey reroutes the walk away from nearer down stairs", () => {
+    const w = world({ map: ["##########", "#<....@.>#", "##########"], player: { level: 1, maxLevel: 1, depth: 2, maxDepth: 2, hp: 10, maxHp: 10 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    const choice = p.choose(pick("leave_level"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.label).toBe("take the stairs up");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
   });
 });

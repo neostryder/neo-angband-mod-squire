@@ -18,6 +18,7 @@ import { saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
 import { stockConfidence, type StoreMemory } from "./memory.js";
 import type { Steering } from "../strategy/steer.js";
+import type { PurchaseKind } from "../strategy/judgment.js";
 
 export interface ShopEntrance extends Loc {
   readonly feat: number;
@@ -43,7 +44,7 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
 export function neededEntrances(view: AgentView, terrain: Terrain, persona: Persona | null, visited: ReadonlySet<number> = new Set(), aims: readonly Aim[] = [], flourishes: Flourishes = emptyFlourishes(), memories?: readonly StoreMemory[]): ShopEntrance[] {
   if (view.player().depth !== 0) return [];
   const pack = readPack(view);
-  const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson));
+  const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson), persona);
   const sales = sellList(pack, view, persona, trophyHandles(flourishes, view, persona));
   const gold = view.player().gold;
   return shopEntrances(view, terrain).filter((entrance) => {
@@ -59,7 +60,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
 }
 
 /** Re-read the entered shop after each command; buying can move its stock slots. */
-export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes, strategy?: () => Steering): Plan {
+export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes, strategy?: () => Steering, purchaseOrder?: () => readonly PurchaseKind[] | null): Plan {
   const progress = newProgress(0);
   /* An aim is bought for once per trip: its list was ranked before the trip,
    * so after one purchase it would still ask for more of the same. */
@@ -97,13 +98,16 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           log(`shop: selling ${sale.name} in the ${store.featName}`);
           return act.shopSell(sale.handle, sale.quantity);
         }
-        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson)), store, view.player().gold, persona)[0];
-        if (purchase !== undefined) {
+        const order = purchaseOrder?.() ?? null;
+        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order)[0];
+        /* With the supplies settled, the gold on hand can fund the top aim, unless the persona chose to keep it. */
+        const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
+        const aimed = missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
+        const gearFirst = aimed !== null && order !== null && purchase !== undefined && order.includes("gear") && order.indexOf("gear") < (order.includes(purchase.kind) ? order.indexOf(purchase.kind) : order.length);
+        if (purchase !== undefined && !gearFirst) {
           log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
           return act.shopBuy(purchase.index, purchase.quantity);
         }
-        /* With the supplies settled, the gold on hand can fund the top aim. */
-        const aimed = missingEssentials(view).length > 0 ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);

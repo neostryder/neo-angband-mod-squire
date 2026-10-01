@@ -26,8 +26,12 @@ export function storesFor(kind: SupplyKind): readonly string[] {
   return kind === "healing" || kind === "phase" || kind === "escape" || kind === "recall" ? ["Alchemy Shop"] : ["General Store"];
 }
 
-/** A small survival reserve takes precedence over savings and larger supply stacks. */
-export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gold: number, persona: Persona | null): Purchase[] {
+/**
+ * A small survival reserve takes precedence over savings and larger supply
+ * stacks. Beyond it, `order` is the buying order the persona chose for this
+ * visit; kinds it ranks below keeping the gold are not bought.
+ */
+export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gold: number, persona: Persona | null, order: readonly string[] | null = null): Purchase[] {
   if (store.isHome) return [];
   const reserve = Math.floor(gold * Math.max(0, (persona?.sliders.savings ?? 50) - 50) / 200);
   let left = Math.max(0, gold);
@@ -54,7 +58,10 @@ export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gol
   }
   if (out.length > 0) return out;
   const bought = new Set<number>();
-  for (const kind of PRIORITY) {
+  const saveAt = order === null ? -1 : order.indexOf("save");
+  const kinds = order === null ? PRIORITY : [...PRIORITY].filter((kind) => saveAt === -1 || !order.includes(kind) || order.indexOf(kind) < saveAt)
+    .sort((a, b) => (order.includes(a) ? order.indexOf(a) : order.length) - (order.includes(b) ? order.indexOf(b) : order.length));
+  for (const kind of kinds) {
     const need = needs.find((entry) => entry.kind === kind);
     if (need === undefined || need.have >= need.want || !storesFor(kind).includes(store.featName)) continue;
     const ware = store.stock.find((item) => {
