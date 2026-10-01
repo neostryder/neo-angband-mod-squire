@@ -1479,6 +1479,19 @@ function studyable(view, tried = /* @__PURE__ */ new Set()) {
   }
   return null;
 }
+function attackSpellsOutOfMana(view) {
+  if (view.player().maxSp <= 0) return false;
+  const sp = view.player().sp;
+  let known = false;
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (!spell.learned || spell.forgotten || rank(spell.name, ATTACK_SPELLS) === null) continue;
+      known = true;
+      if ((view.spellInfo?.(spell.sidx)?.mana ?? spell.mana) <= sp) return false;
+    }
+  }
+  return known;
+}
 function canRead(view) {
   const player = view.player();
   const status = player.status;
@@ -4913,6 +4926,7 @@ function healthBand(hp, maxHp) {
 var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
 var DAMAGE_SHARE_REDECIDE = 0.1;
+var MANA_STRANDED_MELEE = 3;
 var BAD_CUT = 25;
 var NASTY_CUT = 50;
 var STATIONARY_DECISIONS = 3;
@@ -5042,6 +5056,13 @@ function combatContext(s) {
 }
 function combatOptions(s, kind) {
   return s.target === null ? [] : attackOptions(s.view, s.target, kind, combatContext(s));
+}
+function hurtsOnTouch(view, monster) {
+  return /\btouch/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
+}
+function killsQuickly(target, melee) {
+  if (melee.kill) return true;
+  return melee.damage !== null && melee.damage * 2 >= target.hp;
 }
 function safeRecovery(s, terrain) {
   const player = s.view.player();
@@ -5203,13 +5224,16 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const nearDeath = s.hpShare < 0.35;
   const unseenLethal = s.unseenDamage > 0 && damageFor(s, at, 2, terrain).damage >= player.hp;
   const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
+  const melee = s.target === null ? void 0 : combatOptions(s, "fight")[0];
+  const strandedMelee = s.target !== null && !s.target.asleep && melee !== void 0 && attackSpellsOutOfMana(view) && (hurtsOnTouch(view, s.target) || !killsQuickly(s.target, melee));
+  const meleeDanger = strandedMelee && s.target !== null && steps(at, s.target.grid) <= 1;
   if (s.breederExit === true || player.level <= 5 && s.swarming) {
     const door = closeDoorStep(s, terrain);
     if (door !== null) add2("close_door", "Close the adjacent open door to separate the breeders from the exit route. The closing action is survivable and the door reduces incoming damage over two actions.", damageRisk(incoming.damage, player.hp));
   }
-  const addAttack = (goal, criteria, attack) => {
+  const addAttack = (goal, criteria, attack, weight = 1) => {
     const remaining = attack.kill && s.target !== null ? damageFor({ ...s, threats: s.threats.filter((monster) => monster.id !== s.target.id) }, at, 1, terrain).damage : incoming.damage;
-    add2(goal, criteria + attackDescription(attack, view), attackRisk(s, attack), false, player.hp - remaining, attack.failure > 0 && attack.kill);
+    add2(goal, criteria + attackDescription(attack, view), attackRisk(s, attack) * weight, false, player.hp - remaining, attack.failure > 0 && attack.kill);
   };
   const needs = supplyNeeds(view, s.pack, persona, flourishes.darkLesson);
   const recall = canRead(view) ? recallItem(view) : null;
@@ -5238,10 +5262,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (s.target !== null) {
     const adjacent2 = steps(at, s.target.grid) <= 1;
     const walkUp = !adjacent2 && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
-    const melee = combatOptions(s, "fight")[0];
     if ((adjacent2 || walkUp) && player.status.afraid === 0 && melee !== void 0) {
       const away = steps(at, s.target.grid);
-      addAttack("fight", adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`, melee);
+      const touch = hurtsOnTouch(view, s.target);
+      const warning = strandedMelee ? ` The character is out of mana for its attack spells and this creature ${touch ? "hurts on touch" : "cannot be killed quickly"}, so resting, retreating or leaving the level is safer.` : "";
+      addAttack("fight", (adjacent2 ? `Fight the ${s.target.race} in melee until it dies or something changes.` : `Walk ${String(away)} steps to the ${s.target.race}${s.target.asleep ? ", waking it," : ""} and fight it in melee; it can strike first while the character closes in.`) + warning, melee, strandedMelee ? MANA_STRANDED_MELEE : 1);
     }
     const ranged = within(s, MISSILE_RANGE);
     const clear = clearShot(view, s.target);
@@ -5329,7 +5354,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && missingPreparation(view, player.depth + 1).length > 0) {
     addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
-  if (nearDeath || s.unseenDamage > 0 || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
+  if (nearDeath || s.unseenDamage > 0 || meleeDanger || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
       const how2 = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       const short2 = s.pack.phase[0] !== void 0 || /^(Phase Door|Blink|Shadow Shift)$/i.test(how2);
@@ -5364,7 +5389,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   const study = studyable(view, triedStudies);
   const learnFirst = study !== null && s.awake.length === 0 && !immediateDanger(s);
-  if (!bleeding && study !== null && !s.awake.some((m) => steps(at, m.grid) <= 2)) {
+  if (!bleeding && study !== null && incoming.status === 0 && incoming.damage < player.hp * cfg.retreatFraction) {
     add2("study", `Learn the spell ${study.spell} from a carried book. It takes one turn.`, exposure(s), s.awake.length === 0 && !immediateDanger(s));
   }
   if (!bleeding) {
@@ -5878,8 +5903,10 @@ function createGoalPlanner(options) {
       case "study": {
         const study = studyable(view, triedStudies);
         if (study === null) return once("nothing to study", view, () => null);
-        triedStudies.add(`${String(view.player().level)}:${String(study.sidx)}`);
-        return once("study", view, (ctx) => ctx.act.raw("study", { handle: study.handle, spell: study.sidx }));
+        return once("study", view, (ctx) => {
+          triedStudies.add(`${String(ctx.view.player().level)}:${String(study.sidx)}`);
+          return ctx.act.raw("study", { handle: study.handle, spell: study.sidx });
+        });
       }
       case "wear": {
         const candidate = gearCandidates(view).find((gear) => !gear.unknown || (personaOf()?.sliders.curiosity ?? 0) >= 50);

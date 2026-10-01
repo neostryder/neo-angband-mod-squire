@@ -73,6 +73,7 @@ Fixed.
 
 ### Fixed
 - [Visible] [Security] **Deleting your telemetry also clears uploads still waiting to be sent.** A queued run could otherwise upload after the deletion. New uploads follow your consent setting as before.
+- [Visible] [Balance] **A spellcaster learns new spells in a swarm of weak creatures and stops meleeing with no mana left.** It studies when the creatures that can reach it this turn would cost little of its hit points and none can paralyse, confuse or slow it. With no mana for its attack spells, it backs away from creatures that hurt on touch or that it cannot kill quickly.
 - [Visible] **Squire no longer reads Word of Recall on dungeon level 1 when it doesn't know where the up staircase is.** It looks for the way up on foot.
 - [Visible] **Waiting for Word of Recall to take effect is one plan instead of a decision every game turn.**
 - [Visible] [UI] **The Squire panel opens at its intended minimum size.** It passed its size under names the game does not read, so the dock could squeeze it smaller.

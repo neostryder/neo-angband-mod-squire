@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { suppliedWorld, world } from "../harness.js";
+import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import { createGoalPlanner, healthBand, RECALL_WAIT_TURNS, recallPending, threatIndex, type GoalDigest } from "./goals.js";
@@ -1123,6 +1123,89 @@ describe("items and spells", () => {
   it("offers food only when hungry", () => {
     const w = world({ map: CORRIDOR, pack: ["2 Rations of Food"], player: { status: { food: 900 } } });
     expect(offered(planner(w).p.ask(w.view))).toContain("eat");
+  });
+});
+
+describe("spellcasters use study and mana", () => {
+  /* A room with a down staircase, so leaving the level is on offer beside the fight. */
+  const LAIR = ["##########", "#..@....>#", "#........#", "##########"];
+  const WORMS = [
+    { grid: { x: 2, y: 1 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] },
+    { grid: { x: 4, y: 1 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] },
+    { grid: { x: 3, y: 2 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] },
+  ];
+  const BOOK = ["a Book of Magic Spells [Magic for Beginners]"];
+  const UNKNOWN = [{ name: "Magic Missile", sidx: 0, mana: 2, learned: false }];
+  const KNOWN = [{ name: "Magic Missile", sidx: 0, mana: 2 }];
+  const ACID = "It touches you to burn with acid (1d4).";
+
+  it("offers study while a swarm is adjacent when the turn is survivable", () => {
+    const w = suppliedWorld({ map: LAIR, pack: BOOK, spells: UNKNOWN, monsters: WORMS, monsterRecall: () => ACID });
+    expect(offered(planner(w).p.ask(w.view))).toContain("study");
+  });
+
+  it("keeps study out when the swarm would deal a lethal share", () => {
+    const w = suppliedWorld({ map: LAIR, pack: BOOK, spells: UNKNOWN, monsters: WORMS, monsterRecall: () => "It touches you to burn with acid (4d8)." });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("study");
+  });
+
+  it("makes a mana-stuck caster's melee against a touch creature heavier than a warrior's", () => {
+    const fightOffer = (player: NonNullable<WorldSpec["player"]>, spells: NonNullable<WorldSpec["spells"]>) => {
+      const w = suppliedWorld({ map: LAIR, player, spells, monsters: WORMS, monsterRecall: () => ACID, worn: ["a Dagger (1d4) (+0,+0)"] });
+      const q = asked(planner(w).p.ask(w.view));
+      return q.context.offers.find((o) => o.goal === "fight");
+    };
+    const warrior = fightOffer({ cls: "Warrior", level: 5, sp: 0, maxSp: 0 }, []);
+    const empty = fightOffer({ cls: "Mage", level: 5, sp: 0, maxSp: 5 }, KNOWN);
+    const full = fightOffer({ cls: "Mage", level: 5, sp: 5, maxSp: 5 }, KNOWN);
+    expect(empty?.criteria).toContain("out of mana");
+    expect(empty?.risk ?? 0).toBeGreaterThan(warrior?.risk ?? 0);
+    expect(full?.risk).toBe(warrior?.risk);
+  });
+
+  it("offers a mana-stuck caster an escape the warrior does not need", () => {
+    const mage = suppliedWorld({ map: LAIR, player: { cls: "Mage", level: 5, sp: 0, maxSp: 5 }, spells: KNOWN, monsters: WORMS, monsterRecall: () => ACID });
+    expect(offered(planner(mage).p.ask(mage.view))).toContain("phase");
+    const warrior = suppliedWorld({ map: LAIR, player: { cls: "Warrior", level: 5, sp: 0, maxSp: 0 }, spells: [], monsters: WORMS, monsterRecall: () => ACID });
+    expect(offered(planner(warrior).p.ask(warrior.view))).not.toContain("phase");
+  });
+
+  it("does not treat a caster that can afford its attack spell as stranded", () => {
+    const w = suppliedWorld({ map: LAIR, player: { cls: "Mage", level: 5, sp: 2, maxSp: 5 }, spells: KNOWN, monsters: WORMS, monsterRecall: () => ACID, worn: ["a Dagger (1d4) (+0,+0)"] });
+    const fight = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "fight");
+    expect(fight?.criteria).not.toContain("out of mana");
+  });
+
+  it("does not treat a caster with no attack spells as stranded", () => {
+    const w = suppliedWorld({ map: LAIR, player: { cls: "Priest", level: 5, sp: 0, maxSp: 5 }, spells: [{ name: "Cure Light Wounds", sidx: 3, mana: 2 }], monsters: WORMS, monsterRecall: () => ACID, worn: ["a Dagger (1d4) (+0,+0)"] });
+    const fight = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "fight");
+    expect(fight?.criteria).not.toContain("out of mana");
+  });
+
+  it("falls back to the cannot-kill-quickly arm when the creature has no recall", () => {
+    const w = suppliedWorld({ map: LAIR, player: { cls: "Mage", level: 5, sp: 0, maxSp: 5 }, spells: KNOWN, monsters: WORMS, worn: ["a Dagger (1d4) (+0,+0)"] });
+    const fight = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "fight");
+    expect(fight?.criteria).toContain("out of mana");
+    expect(fight?.criteria).toContain("cannot be killed quickly");
+  });
+
+  it("weighs melee for a stranded caster among breeders and keeps the escapes", () => {
+    const BREEDERS = [
+      { grid: { x: 2, y: 1 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] },
+      { grid: { x: 4, y: 1 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] },
+    ];
+    const w = suppliedWorld({ map: LAIR, player: { cls: "Mage", level: 5, sp: 0, maxSp: 5 }, spells: KNOWN, monsters: BREEDERS, monsterRecall: () => ACID, worn: ["a Dagger (1d4) (+0,+0)"] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((o) => o.goal === "fight")?.criteria).toContain("out of mana");
+    expect(offered(q)).toContain("phase");
+  });
+
+  it("warns on a walk-up fight without adding escapes at range", () => {
+    const DISTANT = [{ grid: { x: 5, y: 1 }, race: "clear worm mass", level: 1, raceFlags: ["MULTIPLY"] }];
+    const w = suppliedWorld({ map: LAIR, player: { cls: "Mage", level: 5, sp: 0, maxSp: 5 }, spells: KNOWN, monsters: DISTANT, monsterRecall: () => ACID, worn: ["a Dagger (1d4) (+0,+0)"] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((o) => o.goal === "fight")?.criteria).toContain("out of mana");
+    expect(offered(q)).not.toContain("phase");
   });
 });
 

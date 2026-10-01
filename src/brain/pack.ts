@@ -245,6 +245,25 @@ export function studyable(view: AgentView, tried: ReadonlySet<string> = new Set(
 }
 
 /**
+ * A character whose learned attack spells are its useful attacks and whose
+ * current mana is short of every one of them. It cannot cast until it rests, so
+ * melee is the only attack it has left.
+ */
+export function attackSpellsOutOfMana(view: AgentView): boolean {
+  if (view.player().maxSp <= 0) return false;
+  const sp = view.player().sp;
+  let known = false;
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      if (!spell.learned || spell.forgotten || rank(spell.name, ATTACK_SPELLS) === null) continue;
+      known = true;
+      if ((view.spellInfo?.(spell.sidx)?.mana ?? spell.mana) <= sp) return false;
+    }
+  }
+  return known;
+}
+
+/**
  * Whether the character can read a scroll or cast a spell right now. The game
  * refuses both while blind or confused, without using a turn, so offering them
  * then only loops.
