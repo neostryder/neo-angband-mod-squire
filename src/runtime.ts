@@ -248,6 +248,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     observeWays(view);
     strategy.remember(view, terrain);
     channel.tick();
+    if (brain !== null) {
+      strategy.observe(view);
+      orders.observe(view);
+    }
     const command = controller(view, act);
     if (command !== null) rememberUse(command, view);
     if (command !== null) ownCommandAt = Date.now();
@@ -392,8 +396,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       const backend = backendFor(config);
       const net = host.net;
       if (backend === null || net === undefined || !cfg.useModel) {
-        if (cfg.useModel && net === undefined) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
-        return tracked(errands(), terrain);
+        if (cfg.useModel && net === undefined) host.log("This game cannot send model requests. Squire chooses from its own offers.");
+        return tracked(!cfg.useModel && !cfg.errandCampaign ? errands() : startBrain(backend ?? JEV, cfg, terrain, true) ?? errands(), terrain);
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen: AgentController | null = null;
@@ -406,7 +410,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         channel.tick();
         if (chosen === null) {
           if (picked === null) return null;
-          chosen = picked ? startBrain(backend, cfg, terrain) ?? errands() : errands();
+          chosen = startBrain(backend, cfg, terrain) ?? errands();
         }
         lastTurn = view.turn();
         lastView = view;
@@ -600,16 +604,17 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     host.log(settledLine(character.persona?.name ?? "Squire", before.name, remembered(before, lineage.generation)));
   }
 
-  function startBrain(backend: Backend, cfg: SquireCfg, terrain: Terrain): AgentController | null {
+  function startBrain(backend: Backend, cfg: SquireCfg, terrain: Terrain, rulesOnly = false): AgentController | null {
     const mark = host.controller?.markNondeterministic;
-    if (mark === undefined) {
-      host.log("This version of the game cannot mark the save for a model, so Squire runs its errands");
-      return null;
+    if (!rulesOnly && mark === undefined) {
+      host.log("This game cannot mark a save for model decisions. Squire chooses from its own offers.");
+      rulesOnly = true;
     }
-    mark.call(host.controller);
+    if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
     brain = createBrain<GoalDigest>({
       backend,
+      rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
@@ -631,7 +636,6 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
-      ...(host.controller?.release === undefined ? {} : { release: (reason?: string) => host.controller?.release?.(reason) }),
       onDecision: (record) => {
         void logLoaded.then(() => logDecision(record));
         for (const listener of listeners) listener(record, lastTurn);
@@ -641,7 +645,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       },
       gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }),
     });
-    host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
+    host.log(rulesOnly ? "Squire has the keyboard and chooses from its current fight and travel offers." : `Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;
   }
 

@@ -4,7 +4,7 @@ Squire has settings in three places: the switches on the game's Mods screen, the
 
 ## Mods screen
 
-Open the Escape menu, then **Mods**, then Squire. The errand switches matter when a handover runs the errands: with no model set up, or with "Let a model choose what to do" off. "Take the stairs down" also applies while a model is playing.
+Open the Escape menu, then **Mods**, then Squire. The short errand switches apply when "Let a model choose what to do" is off. With no model set up, a normal handover keeps playing by Squire's own rules. "Take the stairs down" also applies while a model is playing.
 
 | Switch | Flag | Default | What it does |
 | --- | --- | --- | --- |
@@ -26,10 +26,10 @@ The Setup tab is the first tab of the Squire panel. Its sections appear in this 
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Brain | Jev | Which model Squire asks: Jev, Laya, another server, or no model. Pick no model, or pick Jev without saving a key, and a handover runs the errands instead. A new pick takes over at the next handover. |
+| Brain | Jev | Which model Squire asks: Jev, Laya, another server, or no model. With no model or usable key, Squire chooses an action from its current offers. A new pick takes over at the next handover. |
 | Jev API key | none | Shown when Jev is picked. Squire comes with no key. Paste yours and press "Save key". Save an empty field to remove it. In the desktop app, "Use key from environment" reads `TYPESAFE_API_KEY` or `JEV_API_KEY` once you agree. |
-| Per session ($) | 0 | Shown when Jev is picked. Squire pauses when this session's spend reaches the limit. 0 means no limit. A change takes effect after a reload. |
-| Per day ($) | 0 | Shown when Jev is picked. Squire pauses when today's spend reaches the limit. 0 means no limit. A change takes effect after a reload. |
+| Per session ($) | 0 | Shown when Jev is picked. Squire keeps playing by its own rules when this session's spend reaches the limit. 0 means no limit. A change takes effect after a reload. |
+| Per day ($) | 0 | Shown when Jev is picked. Squire keeps playing by its own rules when today's spend reaches the limit. 0 means no limit. A change takes effect after a reload. |
 | Server address | `http://localhost:8010/v1/systemone` | Shown for Laya or another server. The server Squire asks. Use localhost or an IP address on your home network. Squire can't reach a name such as `laya.lan`. |
 | Backup server addresses | empty | Shown for Laya or another server. Up to eight more addresses, separated by commas, tried in order when the first server is busy or not answering. |
 | Model name | empty | Shown for Laya or another server. The model name sent with each request. Empty uses the server's default. |
@@ -51,7 +51,7 @@ The Setup tab is the first tab of the Squire panel. Its sections appear in this 
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| When a character dies | Stop and wait for you to make the next character | The other choices start a new character like the last one, or one of a random race and class, and hand it to Squire. This applies only when a character dies while a model is playing it. Your own characters are never replaced. |
+| When a character dies | Stop and wait for you to make the next character | The other choices start a new character like the last one, or one of a random race and class, and hand it to Squire. This applies when a character dies while Squire is playing it. Your own characters are never replaced. |
 
 ### Knight's Lessons
 

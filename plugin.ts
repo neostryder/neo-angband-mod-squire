@@ -186,7 +186,6 @@ export default {
 
     const errands = () => createSquire({ cfg, terrain, log: ctx.log }).controller;
     /* An older game has no ctx.net and expects a bare controller back. */
-    if (ctx.net === undefined) return errands();
     return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
   },
 };

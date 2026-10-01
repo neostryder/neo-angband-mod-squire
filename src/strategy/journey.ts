@@ -34,6 +34,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   let footOffered = false;
   let recallActive = false;
   let lastPersona: Persona | null = null;
+  let widened = false;
   let anchor: Loc = { x: 0, y: 0 };
   let leashField: FlowField | null = null;
   let breederLevel = false;
@@ -135,7 +136,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return knownStairs(view, terrain);
   }
 
-  function apply(offers: readonly Offer[], view: AgentView, persona: Persona | null, visited: ReadonlySet<number>, recalling: boolean): Offer[] {
+  function apply(offers: readonly Offer[], view: AgentView, persona: Persona | null, visited: ReadonlySet<number>, recalling: boolean, widen = false): Offer[] {
+    widened = widen;
     footOffered = false;
     recallActive = recalling;
     lastPersona = persona;
@@ -145,13 +147,14 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const home = returnReason !== null;
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     let out = offers.filter((offer) => {
+      if (widen && offer.goal === "explore") return true;
       if (breederLevel && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
+      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
@@ -188,9 +191,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function guarded(goal: Goal | null, plan: Plan): Plan {
     const foot = goal === "leave_level" && footOffered;
     const recalling = recallActive;
+    const wide = widened;
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
+      if (wide && goal === "explore") return plan.step(view, act);
       if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
       if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
         const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
@@ -201,8 +206,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (player.depth === 0 && !town.ready && !town.earning || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
-        if (player.depth === 0 && town.earning && !departure.active()) departure.begin(view, town.target);
+        if (player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
+        if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
       }
       if (goal === null) {
         /* A rejected judgment cannot let the errand ladder bypass the guards. */
@@ -244,21 +249,22 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     } };
   }
 
-  function explore(ctx: SquireContext): AgentCommand | null {
+  function explore(ctx: SquireContext, wide = widened): AgentCommand | null {
     observe(ctx.view);
-    if (expired || returnReason !== null || departure.finished(ctx.view)) return null;
-    const goals = frontiers(ctx.view, terrain).filter((grid) => leashed(ctx.view, grid));
+    if (!wide && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
+    const allowed = (grid: Loc) => wide || leashed(ctx.view, grid);
+    const goals = frontiers(ctx.view, terrain).filter(allowed);
     const at = ctx.view.player().grid;
     if (!goals.some((grid) => key(grid) === key(at))) {
-      const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && leashed(ctx.view, grid) });
-      const direction = stepDown(field, at, (grid) => isWalkable(ctx.view, terrain, grid) && leashed(ctx.view, grid));
+      const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && allowed(grid) });
+      const direction = stepDown(field, at, (grid) => isWalkable(ctx.view, terrain, grid) && allowed(grid));
       return direction === null ? null : ctx.act.move(direction.key);
     }
     /* An unknown square has no proved stair distance, so it stays inside the leash's remaining margin. */
     const direction = DIRECTIONS.find((dir) => {
       const next = { x: at.x + dir.dx, y: at.y + dir.dy };
       const cell = ctx.view.cell(next.x, next.y);
-      return cell !== null && !cell.known && leashed(ctx.view, next);
+      return cell !== null && !cell.known && allowed(next);
     });
     return direction === undefined ? null : ctx.act.move(direction.key);
   }

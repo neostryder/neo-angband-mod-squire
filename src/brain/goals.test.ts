@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
@@ -23,6 +23,106 @@ describe("unseen attackers", () => {
     w.setPlayer({ hp: w.view.player().hp - damage });
     return asked(p.ask(w.view));
   }
+
+  it.each([
+    ["a Staff of Dispel Evil (3 charges)", "unseen_staff", "use"],
+    ["a Staff of Sleep Monsters (3 charges)", "unseen_staff", "use"],
+    ["a Staff of Mapping (3 charges)", "unseen_staff", "use"],
+    ["a Wand of Fire Ball (3 charges)", "unseen_wand", "aim"],
+    ["a Wand of Fire Balls (3 charges)", "unseen_wand", "aim"],
+    ["a Wand of Magic Missile (3 charges)", "unseen_wand", "aim"],
+    ["a Rod of Detection", "unseen_rod", "zap-rod"],
+    ["a Rod of Illumination", "unseen_rod", "zap-rod"],
+    ["a Rod of Light", "unseen_rod", "zap-rod"],
+    ["a Rod of Frost Bolt", "unseen_rod", "zap-rod"],
+    ["a Rod of Frost Bolts", "unseen_rod", "zap-rod"],
+    ["a Rod of Fire Ball", "unseen_rod", "zap-rod"],
+    ["a Rod of Fire Balls", "unseen_rod", "zap-rod"],
+  ])("offers %s without a visible target", (item, goal, code) => {
+    const w = suppliedWorld({ map, pack: [item] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(q.context.offers.find((o) => o.goal === goal)).toMatchObject({ uncertain: true, survival: 52 });
+    const choice = p.choose(pick(goal), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an unseen response");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code, args: { handle: 1 } });
+  });
+
+  it("casts an area spell at a guessed adjacent position", () => {
+    const w = suppliedWorld({ map, player: { sp: 10, maxSp: 10 }, spells: [{ name: "Stinking Cloud", sidx: 8, mana: 2 }] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, rng: () => 0 });
+    const q = hit(w, p);
+    const target = vi.spyOn(w.act, "setTargetLocation");
+    const choice = p.choose(pick("cast_area"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an area spell");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "cast", args: { spell: 8 } });
+    expect(target).toHaveBeenCalledWith(3, 2);
+  });
+
+  it("keeps aggression and caution in its own unseen-attacker choices", () => {
+    const choose = (persona: ReturnType<typeof defaultPersona>) => {
+      const w = suppliedWorld({ map, pack: ["a Rod of Detection"] });
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, persona, rng: () => 0.5 });
+      hit(w, p, 2);
+      return reflexed(p.rules!(w.view, "own rules")).answers["goal"];
+    };
+    expect(choose(archetype("berserker"))).toMatchObject({ choice: "swing_unseen" });
+    expect(choose({ ...defaultPersona(), sliders: { ...defaultPersona().sliders, boldness: 0 } })).toMatchObject({ choice: "detect" });
+    expect(choose(archetype("coward"))).toMatchObject({ choice: expect.stringMatching(/^(?:phase|teleport|retreat|leave_level)$/) });
+  });
+
+  it.each([[0, 2], [0.5, 3], [0.99, 7]])("swings in a random adjacent direction for draw %s", (draw, dir) => {
+    const w = suppliedWorld({ map });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, rng: () => draw });
+    const q = hit(w, p);
+    const choice = p.choose(pick("swing_unseen"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a swing");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "melee", dir });
+  });
+
+  it("prefers the last observed attacker direction for swings and wands", () => {
+    const w = suppliedWorld({ map, pack: ["a Wand of Frost Bolt (2 charges)"], monsters: [{ grid: { x: 4, y: 1 } }] });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.advance(10);
+    w.setMonsters([{ grid: { x: 4, y: 1 }, visible: false }]);
+    w.setPlayer({ hp: 56 });
+    const q = asked(p.ask(w.view));
+    const target = vi.spyOn(w.act, "setTargetLocation");
+    for (const goal of ["swing_unseen", "unseen_wand"]) {
+      const choice = p.choose(pick(goal), q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected an aimed response");
+      const command = choice.plan.step(w.view, w.act);
+      expect(command).toMatchObject(goal === "swing_unseen" ? { code: "melee", dir: 6 } : { code: "aim" });
+    }
+    expect(target).toHaveBeenCalledWith(4, 1);
+  });
+
+  it("does not invent unidentified or unavailable effects", () => {
+    const w = suppliedWorld({ map, pack: ["a Silver Wand", "an Ash Staff", "a Copper Rod", "a Wand of Fire Ball (0 charges)", "a Rod of Detection (charging)"], player: { sp: 0, maxSp: 10 }, spells: [{ name: "Fire Ball", sidx: 9, mana: 5 }] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(offered(q)).not.toEqual(expect.arrayContaining(["unseen_staff", "unseen_wand", "unseen_rod", "cast_area"]));
+    for (const goal of ["unseen_staff", "unseen_wand", "unseen_rod", "cast_area"]) expect(offered(q)).not.toContain(goal);
+  });
+
+  it("reads a device effect from inspection and leaves treasure detection out when it adds nothing", () => {
+    const w = suppliedWorld({ map, pack: ["an Ash Staff", "a Rod of Treasure Location"], inspect: () => "When used, it sleeps monsters nearby." });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(offered(q)).toContain("unseen_staff");
+    expect(offered(q)).not.toContain("unseen_rod");
+  });
+
+  it("offers Treasure Location only as an earning lead on an unexplored floor with no known exit", () => {
+    const w = suppliedWorld({ map: ["#########", "#..@...,#", "#########"], player: { gold: 0, depth: 1 }, pack: ["a Rod of Treasure Location"] });
+    const { p } = planner(w);
+    const q = hit(w, p);
+    expect(q.context.offers.find((o) => o.goal === "unseen_rod")?.criteria).toContain("cannot reveal the attacker");
+    const choice = p.choose(pick("unseen_rod"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a treasure survey");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "zap-rod", args: { handle: 1 } });
+  });
 
   it.each([
     ["a Scroll of Detect Invisible", "detect", "read"],
@@ -575,16 +675,16 @@ describe("goal planner", () => {
 
   it("does not offer to explore ground it cannot reach", () => {
     const w = world({ map: ["######", "#@#. #", "######"] });
-    expect(planner(w).p.ask(w.view)).toHaveProperty("handBack");
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("explore");
   });
 
-  it("hands back when there is nothing to do", () => {
+  it("waits when there is nothing reachable to do", () => {
     const w = world({ map: ["###", "#@#", "###"] });
     const { p } = planner(w);
-    expect(p.ask(w.view)).toHaveProperty("handBack");
+    expect(offered(p.ask(w.view))).toContain("wait");
   });
 
-  it("waits a turn when nothing offered can act, then hands back with the reason and a record once the wait is refused too", () => {
+  it("tries another safe step after rest and wait are refused", () => {
     const w = suppliedWorld({ map: ["#####", "#.@.#", "#####"], player: { hp: 20, maxHp: 40, level: 5, maxLevel: 5 } });
     const { p, logged } = planner(w);
     const run = (goal: string) => {
@@ -598,16 +698,16 @@ describe("goal planner", () => {
     run("rest");
     run("wait");
     const last = p.ask(w.view);
-    expect(last).toMatchObject({
-      handBack: "Squire has nothing left to try here: rest came to nothing this turn, and the game refused to let it wait a turn here.",
-      context: { offers: [], reflex: "nothing to offer" },
-    });
-    expect(logged.at(-1)).toContain("offered: rest");
+    expect(offered(last)).toContain("step_aside");
+    const choice = p.choose({}, asked(last).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected another move");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+    expect(logged.some((line) => line.includes("widens its choices"))).toBe(true);
   });
 
-  it("names a known staircase that no remembered ground reaches when it hands back", () => {
+  it("tries another step when remembered ground cannot reach a known staircase", () => {
     const w = suppliedWorld({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 0, maxDepth: 0, gold: 0 } });
-    expect(planner(w).p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("a down staircase is known, but no remembered ground leads to it") });
+    expect(offered(planner(w).p.ask(w.view))).toContain("step_aside");
   });
 
   it("waits on a shop entrance by resting, since holding there opens the shop", () => {
@@ -656,7 +756,7 @@ describe("goal planner", () => {
 
   it("does not offer stairs it cannot walk to", () => {
     const walled = suppliedWorld({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 2, maxDepth: 2 } });
-    expect(planner(walled).p.ask(walled.view)).toHaveProperty("handBack");
+    expect(offered(planner(walled).p.ask(walled.view))).not.toContain("descend");
     const open = suppliedWorld({ map: ["#######", "#.@..>#", "#######"], player: { depth: 2, maxDepth: 2 } });
     expect(offered(planner(open).p.ask(open.view))).toContain("descend");
   });
@@ -675,18 +775,20 @@ describe("goal planner", () => {
     expect(goals).not.toContain("explore");
   });
 
-  it("takes the likeliest offer once the errand order has nothing to do", () => {
+  it("takes an offered rest immediately when the model refuses every option", () => {
     const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 15, maxHp: 20 } });
-    const { p, logged } = planner(w);
+    const { p } = planner(w);
     const none = (): Readonly<Record<string, Answer>> => ({ goal: { type: "choice", choice: "none_of_these", confidence: 0.9, probabilities: { rest: 0.3, none_of_these: 0.7 } } });
     const first = p.choose(none(), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in first)) throw new Error("expected a plan");
+    expect(first.plan.step(w.view, w.act)).toEqual({ code: "rest" });
+    w.advance(10);
     expect(first.plan.step(w.view, w.act)).toBeNull();
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toContain("rest");
     const second = p.choose(none(), q.context, w.view);
     if (!("plan" in second)) throw new Error("expected a plan");
-    expect(logged.at(-1)).toContain("taking rest");
+    expect(second.plan.step(w.view, w.act)).toEqual({ code: "rest" });
   });
 
   it("fights when the model chose it while already under the retreat line", () => {
@@ -722,17 +824,17 @@ describe("goal planner", () => {
 
   it("does not offer a melee fight with a creature it cannot walk to", () => {
     const w = world({ map: ["#######", "#.@#..#", "#.###.#", "#######"], monsters: [{ grid: { x: 4, y: 1 }, race: "cave orc" }] });
-    expect(planner(w).p.ask(w.view)).toHaveProperty("handBack");
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("fight");
   });
 
-  it("falls back to the errand order on none_of_these, and hands back on a goal it did not offer", () => {
+  it("uses its own offered choice for none_of_these or an unoffered goal", () => {
     const w = suppliedWorld({ map: CORRIDOR });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const fallback = p.choose(pick("none_of_these"), q.context, w.view);
     if (!("plan" in fallback)) throw new Error("expected a plan");
     expect(fallback.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
-    expect(p.choose(pick("fight"), q.context, w.view)).toHaveProperty("handBack");
+    expect(p.choose(pick("fight"), q.context, w.view)).toHaveProperty("plan");
   });
 
   it("offers a fight against a sleeping creature", () => {
@@ -1347,6 +1449,48 @@ describe("fear, swarms and refused commands", () => {
 });
 
 describe("soak findings", () => {
+  it("passes a turn when a frightened character has no usable attack or escape", () => {
+    const w = world({ map: ["#####", "#@.##", "#####"], player: { hp: 3, maxHp: 20, status: { afraid: 10 } }, monsters: [{ grid: { x: 2, y: 1 }, level: 30, speed: 140 }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("endure");
+    const choice = p.choose({}, q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a last resort wait");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "hold" });
+  });
+  it.each(["Rogue", "Mage"])("explores beyond the initial stair leash when a level 1 %s cannot descend", (cls) => {
+    const w = suppliedWorld({ map: ["#######################", "#<@..................,#", "#######################"], player: { cls, level: 1, maxLevel: 1, depth: 1, maxDepth: 1 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("explore");
+    expect(offered(q)).not.toContain("descend");
+    const choice = p.choose({}, q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected wider exploration");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 17, y: 1 });
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("lets the town Warrior walk to the stairs after refusing every offer", () => {
+    const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { cls: "Warrior", level: 1, maxLevel: 1, depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    const choice = p.choose(pick("none_of_these"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a trip to the stairs");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("drops damage from a creature that disappeared after a fight", () => {
+    const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { depth: 0, maxDepth: 0 }, monsters: [{ grid: { x: 3, y: 1 }, race: "singing, happy drunk" }] });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.setMonsters([]);
+    w.advance(10);
+    const q = asked(p.ask(w.view));
+    expect(String(q.request.state["incoming"])).toContain("Up to 0 HP damage in one action and 0 in two");
+  });
+
   const BREEDER_DOOR = ["##########", "#<.@/....#", "##########"];
   const doorBreeders = [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
 
@@ -1371,7 +1515,7 @@ describe("soak findings", () => {
     const passing = suppliedWorld({ map: BREEDER_DOOR, player: { level: 2 }, monsters: doorBreeders.map((monster) => ({ ...monster, raceFlags: ["MULTIPLY", "PASS_WALL"] })) });
     expect(offered(planner(passing).p.ask(passing.view))).not.toContain("close_door");
     const blockedExit = suppliedWorld({ map: ["##########", "###@/.>..#", "##########"], player: { level: 2 }, monsters: doorBreeders });
-    expect(planner(blockedExit).p.ask(blockedExit.view)).toMatchObject({ handBack: expect.stringContaining("no checked exit") });
+    expect(offered(planner(blockedExit).p.ask(blockedExit.view))).toContain("phase");
   });
 
   it("rechecks door safety before executing an already chosen closure", () => {
@@ -1501,7 +1645,8 @@ describe("soak findings", () => {
 
   it("does not offer an exit through blocked down stairs when no up stairs are known", () => {
     const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1 } });
-    expect(planner(w).p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("maximum character level 2") });
+    expect(offered(planner(w).p.ask(w.view))).toContain("step_aside");
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("descend");
   });
 
   it("rechecks readiness before taking the down stairs in a leave plan", () => {

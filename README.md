@@ -15,7 +15,7 @@ Squire is a mod. It installs and uninstalls in the game's mod manager and reache
    - **Jev**, a hosted model from TypeSafe. It needs an API key from typesafe.ai and costs about three cents per thousand decisions. In the desktop app you can paste the key once, or let Squire read it from the `TYPESAFE_API_KEY` or `JEV_API_KEY` environment variable after you agree.
    - **Laya**, an open model you run on your own computer or home network. It is free, but it plays worse than Jev until it has been trained on Squire's decisions.
    - **Another server** that answers the same System One requests.
-   - **No model**, and Squire runs short errands instead (see below).
+   - **No model**, and Squire plays by its own rules. You can also pick a short errand (see below).
 3. **Press Test connection.** Squire sends one small request and tells you what came back, or what went wrong and what to try.
 4. **Pick a persona** on the Persona tab, or keep the default.
 5. **Press Ctrl-Z in play.** The game warns you, asks you to confirm, and Squire takes over from the next turn.
@@ -45,7 +45,7 @@ Before going deeper on purpose, Squire checks that the character is ready for th
 
 It heads home while it still has enough to get there, not when the last potion is gone, and walks back up if it has no Recall. It reads Recall only somewhere quiet, and while waiting for it to work it won't rest near anything dangerous.
 
-While the character is young, it explores and picks up loot only within a leash of the up stairs that grows with its level. When a level stops paying off in experience, gold or new ground, Squire reconsiders: a fresh level, a deeper one if it is ready, or a trip to town.
+Up to character level 19, Squire first searches within three times its level plus nine path steps of the up stairs. If it cannot act within that distance, it explores reachable unknown ground farther out. It keeps earning at the current dungeon depth until the readiness check permits deeper stairs.
 
 When a floor has nothing reachable left to explore and the character is not ready to go deeper, Squire takes the up stairs to keep earning on a fresh floor. From the first dungeon level it returns to town, where it prepares for the next trip. A plan to leave a level never takes down stairs into a depth the character is not ready for.
 
@@ -59,9 +59,11 @@ It heals with the smallest potion that outpaces the damage coming in. A weaker p
 
 Near death, Squire offers whatever healing and teleports the character carries, and Word of Recall even with no gold to restock, though Recall's delay can't stop the next blow. Deep Descent is offered only when there is time to wait, since it drops the character several levels deeper. If the model turns every option down in danger, Squire picks the best escape or attack itself. A fast unique is treated as deadly to a character of level 1 to 3: Squire looks for a safe way off the level and never walks up to fight it.
 
-If the model can't be reached, Squire finishes the step it is on, stops, and tries again a few times, showing how long it will wait. After that it gives you the keyboard and says how to resume.
+If the model fails or reaches your spend limit, Squire keeps playing by its own rules and says so in the log and status. It retries failed requests with longer waits between attempts and uses the model again when it answers. A spend limit keeps it on its own rules until requests are allowed again. If an answer gives it no usable choice, Squire picks from its offers itself.
 
-When the game supports releasing the keyboard, a final stop gives it back straight away and hides Squire's banner. Ctrl-Z starts Squire again. On older games, press any key to take the keyboard back first. Death stays with the game's death and next-character flow.
+Squire plays on until you take the keyboard back, the character wins or the character dies. Press any key, including Ctrl-Z, to take control. If a plan fails, Squire chooses another offered action or tries a safe step. After 30 seconds without a game turn or depth change, it pauses for one second and tries again. Your roll-on setting decides whether Squire starts another character after a death.
+
+After a hit from an unseen attacker, Squire can detect or light the area, gain See Invisible, swing at an adjacent square, cast an area spell, use a known staff, aim a wand or zap a rod. It uses the last observed direction when one is known, otherwise it guesses an adjacent square. Each offer accounts for another hit while acting. An aggressive persona favours swings and blasts, a cautious one favours detection and light, and a craven one favours an exit.
 
 ## Personas
 
@@ -124,15 +126,15 @@ If you stream your game, Squire Link can also read your Twitch chat or a Discord
 
 ## Without a model: errands
 
-With no model set up, or with "Let a model choose what to do" switched off, a handover runs one short errand and then waits for you. Which errand runs depends on what the character sees.
+With no model set up, a normal handover plays on using Squire's own rules. To ask for a short errand, switch off "Let a model choose what to do" and enable the errand you want under Mods, then Squire. "Play on until I take the keyboard back" takes precedence over both short errands.
 
 | Errand | What it does | What ends it |
 | --- | --- | --- |
 | **Clear what is in front of me** | Picks one creature, walks to it, and fights until it is down. | The target falls or leaves, something new arrives, hit points cross the retreat line, a status effect lands, or the way is blocked. |
 | **Explore this floor** | Walks toward the nearest unmapped ground until the floor is walked out. | The floor is finished, anything comes into view, any hit lands, a status effect lands, or the character stops making progress. |
-| **Play on until I take the keyboard back** | Carries the character: survive, fight, collect, explore, descend. | Death, or nothing left to do on the floor. |
+| **Play on until I take the keyboard back** | Plays by Squire's own rules and keeps looking for a way on. | You take the keyboard back, the character wins or the character dies. |
 
-When an errand ends, Squire waits, and the next key takes the keyboard back. Each errand can be switched off under Mods, then Squire. [SETTINGS.md](SETTINGS.md) lists every setting.
+When a short errand ends, Squire waits for you to take the keyboard back with a keypress. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
 
 The fighting errand leaves sleeping creatures alone unless you switch that on or target one first with the game's own targeting command. The exploring errand stops at the first point of damage, because damage while walking about means something caught the character off guard.
 

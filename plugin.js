@@ -650,6 +650,7 @@ function campaign() {
       const at = player.grid;
       advance(ctx.progress, at);
       if (player.dead) return stop("dead", "The character died.");
+      if (player.winner) return stop("done", "The character has won.");
       if (lastDepth !== null && player.depth !== lastDepth) {
         ctx.progress.collected.clear();
         ctx.progress.idle = 0;
@@ -696,26 +697,31 @@ function campaign() {
         }
       }
       if (ctx.cfg.descend) {
-        const stairs = knownDownStairs(ctx.view, ctx.terrain);
-        if (stairs.some((grid) => grid.x === at.x && grid.y === at.y)) {
+        const stairs2 = knownDownStairs(ctx.view, ctx.terrain);
+        if (stairs2.some((grid) => grid.x === at.x && grid.y === at.y)) {
           return issue(ctx.act.descend());
         }
-        if (stairs.length > 0 && ctx.progress.idle < ctx.cfg.idleSteps) {
-          const travel = travelTo(ctx, stairs);
+        if (stairs2.length > 0 && ctx.progress.idle < ctx.cfg.idleSteps) {
+          const travel = travelTo(ctx, stairs2);
           if (travel.kind === "step") return issue(travel.command);
         }
       }
-      return stop(
-        "done",
-        ctx.progress.idle >= ctx.cfg.idleSteps ? "The character has stopped making progress." : "There is nothing left to do on this floor."
-      );
+      ctx.progress.idle = 0;
+      const stairs = knownStairs(ctx.view, ctx.terrain).filter((grid) => ctx.terrain.isUpStair(ctx.view.cell(grid.x, grid.y)?.feat ?? -1));
+      if (stairs.some((grid) => grid.x === at.x && grid.y === at.y)) return issue(ctx.act.ascend());
+      const home = travelTo(ctx, stairs);
+      if (home.kind === "step") return issue(home.command);
+      const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, ctx.terrain, grid) && !standingOnHarm(ctx.view, ctx.terrain, grid) && !awake.some((m) => adjacent(grid, m.grid)));
+      const next = safe[Math.floor(Math.random() * safe.length)];
+      const dir = next === void 0 ? null : directionToward(at, next);
+      return issue(dir === null ? ctx.act.hold() : ctx.act.move(dir));
     }
   };
 }
 
 // src/squire.ts
 function chooseMission(cfg, at, monsters) {
-  if (cfg.errandCampaign) return campaign();
+  if (cfg.useModel || cfg.errandCampaign) return campaign();
   const target = pickTarget(monsters, at, {
     wakeSleepers: cfg.wakeSleepers,
     reach: AUTOFIGHT_REACH
@@ -732,7 +738,7 @@ function createSquire(options) {
   function finish(stop2) {
     finished = stop2;
     log(`errand ended (${stop2.reason}): ${stop2.detail}`);
-    log("the keyboard is yours again; press any key to take it back from Squire");
+    if (mission?.id !== "campaign") log("the keyboard is yours again; press any key to take it back from Squire");
     return null;
   }
   const controller = (view, act) => {
@@ -1049,7 +1055,6 @@ var MAX_RETRY_AFTER_MS = 6e4;
 var MAX_EMPTY_DECISIONS = 4;
 var MAX_PLAN_IDLE_MS = 3e4;
 var MAX_PLAN_MS = 6e4;
-var RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 function createBrain(deps) {
   const { backend, planner, tally } = deps;
   let state = { kind: "idle" };
@@ -1057,6 +1062,18 @@ function createBrain(deps) {
   let attempt = 0;
   let emptyDecisions = 0;
   const emptyLabels = /* @__PURE__ */ new Set();
+  let rulesReason = null;
+  let retryAt = 0;
+  let breakLoop = false;
+  let progressGauge = null;
+  let progressAt = deps.now();
+  function useRules(reason) {
+    if (rulesReason === null) deps.log(`${reason} Squire plays by its own rules, choosing from its current offers.`);
+    rulesReason = reason;
+  }
+  function runningStatus(plan) {
+    deps.status(plan.label, rulesReason === null ? deps.rulesOnly === true ? "Squire plays by its own rules." : void 0 : `Squire plays by its own rules. ${rulesReason}`);
+  }
   function newRun(view) {
     const gauge = deps.gauge?.(view);
     return {
@@ -1072,33 +1089,33 @@ function createBrain(deps) {
     };
   }
   function stopWith(message, view) {
-    const release = view.player?.().dead === true ? void 0 : deps.release;
-    if (release !== void 0) {
-      const hint = "Press Ctrl-Z to hand the keyboard to Squire again.";
-      message = message.endsWith(RESUME_HINT) ? message.slice(0, -RESUME_HINT.length) + hint : `${message} ${hint}`;
+    if (view.player?.().dead !== true && view.player?.().winner !== true) {
+      useRules(message);
+      breakLoop = true;
+      state = { kind: "waiting", until: deps.now() + 1e3 };
+      deps.status("trying another move", message);
+      return null;
     }
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
-    release?.(message);
     return null;
   }
   function failed(failure, view) {
-    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`, view);
-    const wait = attempt >= BACKOFF_MS.length ? void 0 : failure.retryAfterMs ?? BACKOFF_MS[attempt];
-    if (wait === void 0 || wait > MAX_RETRY_AFTER_MS) {
-      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`, view);
-    }
+    const wait = Math.min(MAX_RETRY_AFTER_MS, failure.retryAfterMs ?? BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
     attempt += 1;
-    state = { kind: "waiting", until: deps.now() + wait };
-    deps.log(`${failure.message} Trying again in ${String(Math.ceil(wait / 1e3))} s.`);
-    deps.status("waiting", failure.message);
+    retryAt = deps.now() + wait;
+    useRules(failure.message);
+    state = { kind: "idle" };
+    startAsking(view);
     return null;
   }
   function startAsking(view) {
-    const capped = tally.overCap(backend, deps.now());
-    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`, view);
-    const question = planner.ask(view);
+    const capped = deps.rulesOnly === true ? null : tally.overCap(backend, deps.now());
+    if (capped !== null) useRules(capped.message);
+    const own = deps.rulesOnly === true || capped !== null || rulesReason !== null && deps.now() < retryAt || breakLoop;
+    const question = own && planner.rules !== void 0 ? planner.rules(view, rulesReason ?? (deps.rulesOnly === true ? "Squire plays by its own rules." : "Squire is trying another move."), breakLoop) : planner.ask(view);
+    breakLoop = false;
     if ("handBack" in question) {
       if (question.context !== void 0) {
         deps.onDecision?.({
@@ -1110,11 +1127,11 @@ function createBrain(deps) {
           usage: { inputTokens: 0, outputTokens: 0, estimated: false },
           model: null,
           latencyMs: 0,
-          outcome: `hand back: ${question.handBack}`,
+          outcome: `try again: ${question.handBack}`,
           reflex: "nothing to offer"
         });
         const hp = deps.gauge?.(view).hp ?? null;
-        deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+        deps.onPlanEnd?.({ stop: "interrupted", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       }
       return stopWith(question.handBack, view);
     }
@@ -1132,7 +1149,14 @@ function createBrain(deps) {
         reflex: question.reflex
       });
       state = { kind: "running", plan: question.plan, run: newRun(view) };
-      deps.status(question.plan.label);
+      runningStatus(question.plan);
+      return null;
+    }
+    if (own) {
+      const choice2 = planner.choose({}, question.context, view);
+      if ("handBack" in choice2) return stopWith(choice2.handBack, view);
+      state = { kind: "running", plan: choice2.plan, run: newRun(view) };
+      runningStatus(choice2.plan);
       return null;
     }
     const token = deps.token();
@@ -1166,12 +1190,14 @@ function createBrain(deps) {
     }
     tally.record(backend, result.usage, deps.now());
     attempt = 0;
+    if (rulesReason !== null) deps.log("Squire resumes model decisions.");
+    rulesReason = null;
     if (!sameToken(token, deps.token())) {
       state = { kind: "idle" };
       return null;
     }
     const choice2 = planner.choose(result.answers, question.context, view);
-    const outcome = "plan" in choice2 ? choice2.plan.label : `hand back: ${choice2.handBack}`;
+    const outcome = "plan" in choice2 ? choice2.plan.label : `try again: ${choice2.handBack}`;
     deps.onDecision?.({
       token,
       backend: backend.label,
@@ -1186,16 +1212,30 @@ function createBrain(deps) {
     });
     const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice2) {
-      deps.onPlanEnd?.({ stop: "handed back", reason: choice2.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+      deps.onPlanEnd?.({ stop: "interrupted", reason: choice2.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       stopWith(choice2.handBack, view);
       return null;
     }
     state = { kind: "running", plan: choice2.plan, run: newRun(view) };
-    deps.status(choice2.plan.label);
+    runningStatus(choice2.plan);
     return "planned";
   }
   const controller = (view, act) => {
+    if (view.player?.().dead === true || view.player?.().winner === true) return state.kind === "stopped" ? null : stopWith(view.player().dead ? "The character has died." : "The character has won.", view);
     if (state.kind === "stopped") return null;
+    const current2 = deps.gauge?.(view);
+    if (current2 !== void 0) {
+      if (progressGauge === null || current2.turn !== progressGauge.turn || current2.depth !== progressGauge.depth) progressAt = deps.now();
+      progressGauge = current2;
+      if ((state.kind === "running" || state.kind === "idle") && deps.now() - progressAt >= MAX_PLAN_IDLE_MS) {
+        if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, hpBefore: state.run.hpBefore, hpAfter: current2.hp });
+        progressAt = deps.now();
+        breakLoop = true;
+        state = { kind: "waiting", until: deps.now() + 1e3 };
+        deps.status("trying another move", "Squire made no progress. It will pause briefly and try another move.");
+        return null;
+      }
+    }
     if (state.kind === "asking") {
       if (takeLanded(view) === null) return null;
     }
@@ -1243,7 +1283,12 @@ function createBrain(deps) {
         else emptyLabels.add(plan.label);
       }
       if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`, view);
+        emptyDecisions = 0;
+        emptyLabels.clear();
+        breakLoop = true;
+        state = { kind: "waiting", until: deps.now() + 1e3 };
+        deps.status("trying another move", "Squire's plans issued no commands. It will wait one second and choose another action.");
+        return null;
       }
       state = { kind: "idle" };
     }
@@ -1259,6 +1304,31 @@ function createBrain(deps) {
 
 // src/brain/pack.ts
 var HUNGRY_BELOW = 1500;
+function unseenAttacks(view, response, surveyTreasure = false) {
+  const out = [];
+  const area = /\b(?:balls?|orbs?|cloud|storm|swarm|dispel evil|sleep monsters)\b/i;
+  const aimed = /\b(?:bolts?|balls?|magic missile|stinking cloud|light|dragon's (?:flame|frost|breath))\b/i;
+  if (response === "cast_area") {
+    for (const spell of canRead(view) ? castable(view) : []) {
+      const info = inspecting(view).spellInfo?.(spell.sidx);
+      if (area.test(spell.name + " " + (info?.description ?? "")) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
+    }
+    return out;
+  }
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null || empty(name) || item.timeout > 0 || /\bcharging\b/i.test(name)) continue;
+    const how2 = response === "unseen_staff" && /\bStaffs?\b/i.test(name) ? "staff" : response === "unseen_wand" && /\bWands?\b/i.test(name) ? "wand" : response === "unseen_rod" && /\bRods?\b/i.test(name) ? "rod" : null;
+    if (how2 === null) continue;
+    const shownEffect = /\bof (.+?)(?:\s*\(|$)/i.exec(name)?.[1] ?? "";
+    const inspected = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const effect = shownEffect + " " + (/\bWhen (?:aimed|used|zapped)\b[^.]*\./i.exec(inspected)?.[0] ?? "");
+    const reaches = how2 === "staff" ? /\b(?:detect evil|dispel evil|sleep\w*\b[^.]*monsters?|light|illumination|mapping)\b/i.test(effect) : how2 === "wand" ? aimed.test(effect) : /\b(?:detection|illumination|light|bolts?|balls?)\b/i.test(effect);
+    const usefulTreasure = how2 === "rod" && /\btreasure location\b/i.test(effect) && surveyTreasure;
+    if (reaches || usefulTreasure) out.push({ how: how2, handle: item.handle, name });
+  }
+  return out;
+}
 function unseenSources(view, response) {
   const pattern = response === "detect" ? /\b(?:Detect Monsters|Detect Invisible|Reveal Monsters|of Detection|Detect Evil)\b/i : response === "see_invisible" ? /\b(?:See Invisible|True Seeing)\b/i : /\b(?:Scrolls?|Rods?|Staffs?) of (?:Light|Illumination)\b/i;
   const effect = response === "detect" ? /\bdetect\w*\b[^.]*\b(?:monsters?|creatures?|invisible|evil)\b/i : response === "see_invisible" ? /\b(?:see invisible|true seeing|see\b[^.]*\binvisible)\b/i : /\b(?:illuminat\w*|light\w*\b[^.]*\b(?:area|room|nearby))\b/i;
@@ -2100,6 +2170,431 @@ function readLauncher(view) {
   return view.equipment().some((item) => item?.tval === 5);
 }
 
+// src/persona/catalog.ts
+var GROUPS = [
+  "temperament",
+  "values",
+  "affinities",
+  "habits",
+  "tactics",
+  "economy",
+  "quirks",
+  "lineage",
+  "patron",
+  "meta"
+];
+var PARAMETERS = [
+  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off." },
+  { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
+  { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
+  { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
+  { id: "stubbornness", group: "temperament", name: "Stubbornness", kind: "slider", scale: "flexible to never backs down", description: "How hard it is to abandon a chosen fight or goal." },
+  { id: "curiosity", group: "temperament", name: "Curiosity", kind: "slider", scale: "incurious to must know", description: "Trying unknown items and exploring every corner." },
+  { id: "paranoia", group: "temperament", name: "Paranoia", kind: "slider", scale: "trusting to sees danger everywhere", description: "Detecting, avoiding unknown monsters, and keeping escapes." },
+  { id: "optimism", group: "temperament", name: "Optimism", kind: "slider", scale: "expects the worst to expects the best", description: "Shifts perceived threat bands by one step." },
+  { id: "volatility", group: "temperament", name: "Volatility", kind: "slider", scale: "steady to mood swings", description: "How much persona strength wanders between decisions." },
+  { id: "pride", group: "temperament", name: "Pride", kind: "slider", scale: "humble to glory-seeking", description: "Hunting uniques and chasing depth records." },
+  { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 70 },
+  { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to driven to win", description: "Controls the dive rate." },
+  { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
+  { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
+  { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
+  { id: "hated", group: "affinities", name: "Hated monster families", kind: "list", scale: "orcs, dragons, undead", description: "Fights these on sight and takes more risk against them." },
+  { id: "feared", group: "affinities", name: "Feared monster families", kind: "list", scale: "spiders, ghosts", description: "Avoids these and leaves levels early when they appear." },
+  { id: "weapons", group: "affinities", name: "Favoured weapons", kind: "list", scale: "blades, hafted, polearms, bows", description: "Keeps a favoured type when another is slightly better." },
+  { id: "distrusted", group: "affinities", name: "Distrusted things", kind: "list", scale: "magic devices, unknown scrolls", description: "Uses these only when necessary." },
+  { id: "elements", group: "affinities", name: "Favoured spells or elements", kind: "list", scale: "fire, lightning, healing", description: "Prefers these spells when several work." },
+  { id: "superstitions", group: "affinities", name: "Superstitions", kind: "list", scale: "never reads scrolls at 1300 ft", description: "Harmless rules the character keeps." },
+  { id: "hoarding", group: "habits", name: "Pack weight", kind: "slider", scale: "travels light to carries everything", description: "How much the character carries." },
+  { id: "tidiness", group: "habits", name: "Tidiness", kind: "slider", scale: "ignores junk rules to ignores aggressively", description: "How eagerly it sets ignore rules." },
+  { id: "home", group: "habits", name: "Home use", kind: "slider", scale: "never uses the home to stashes treasures", description: "Whether spare gear goes home." },
+  { id: "towntrips", group: "habits", name: "Town trips", kind: "slider", scale: "rarely returns to returns often", description: "When low supplies prompt a return to town." },
+  { id: "detection", group: "habits", name: "Detection habit", kind: "slider", scale: "never detects to detects on arrival", description: "Use of detection and mapping on a new level." },
+  { id: "levelfeel", group: "habits", name: "Level thoroughness", kind: "slider", scale: "takes the first stairs to clears every level", description: "How much ground is explored before descending." },
+  { id: "range", group: "tactics", name: "Engagement range", kind: "slider", scale: "melee to ranged and kiting", description: "Closing to melee versus firing from afar." },
+  { id: "escapes", group: "tactics", name: "Escape readiness", kind: "slider", scale: "keeps none to keeps many", description: "How many escapes to keep before descending." },
+  { id: "healat", group: "tactics", name: "Heal threshold", kind: "slider", scale: "heals late to heals early", description: "Hit-point level at which healing becomes an option." },
+  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds to the end to leaves early", description: "Hit-point level at which fleeing becomes an option." },
+  { id: "targets", group: "tactics", name: "Target priority", kind: "slider", scale: "weakest first to most dangerous first", description: "Which monster in a group is attacked first." },
+  { id: "consumables", group: "tactics", name: "Consumable use", kind: "slider", scale: "saves for emergencies to uses freely", description: "How readily potions, scrolls, and charges are spent." },
+  { id: "corridors", group: "tactics", name: "Corridor discipline", kind: "slider", scale: "fights in the open to always backs into a corridor", description: "Pulling groups into corridors before fighting." },
+  { id: "pricesense", group: "economy", name: "Price sense", kind: "slider", scale: "pays anything to buys only bargains", description: "How prices weigh against want in stores." },
+  { id: "savings", group: "economy", name: "Savings goal", kind: "slider", scale: "spends it all to saves for the big item", description: "Whether gold is held for an expensive purchase." },
+  { id: "selling", group: "economy", name: "Selling", kind: "slider", scale: "keeps everything to sells everything", description: "Selling where birth options permit it." },
+  { id: "forgetful", group: "quirks", name: "Forgetful", kind: "quirk", scale: "on or off, with strength", description: "Randomly drops a lesson, and lets what it saw in the shops fade." },
+  { id: "delusional", group: "quirks", name: "Delusional", kind: "quirk", scale: "on or off, with strength", description: "Randomly reads some threat bands wrong." },
+  { id: "compulsive", group: "quirks", name: "Compulsive collector", kind: "quirk", scale: "on or off", description: "Must pick up everything it walks over." },
+  { id: "pyromaniac", group: "quirks", name: "Pyromaniac", kind: "quirk", scale: "on or off", description: "Reaches for fire in every form." },
+  { id: "deathwish", group: "quirks", name: "Death wish", kind: "quirk", scale: "on or off", description: "Allows options above the safety ceiling." },
+  { id: "cowardice", group: "quirks", name: "Craven", kind: "quirk", scale: "on or off", description: "Flees from anything new, then circles back." },
+  { id: "inheritance", group: "lineage", name: "Inheritance", kind: "slider", scale: "nothing passes to everything passes", description: "How much ancestral lore an heir starts with." },
+  { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An heir hates or fears whatever killed its ancestors, and the feeling grows with each one it killed.", default: true },
+  { id: "epitaphs", group: "lineage", name: "Epitaphs", kind: "toggle", scale: "on or off", description: "Squire writes an epitaph naming the killer and the character's last choice.", default: true },
+  { id: "milestones", group: "lineage", name: "Family milestones", kind: "toggle", scale: "on or off", description: "The family remembers depth records, unique kills and its first artifact.", default: true },
+  { id: "namesakes", group: "lineage", name: "Namesakes", kind: "toggle", scale: "on or off", description: "An heir can take an ancestor's name with a number.", default: true },
+  { id: "inheritedSuperstitions", group: "lineage", name: "Inherited superstitions", kind: "toggle", scale: "on or off", description: "An heir avoids the scroll, potion or wand its ancestor used just before dying, until that kind is identified.", default: true },
+  { id: "darkLessons", group: "lineage", name: "Lessons of the dark", kind: "toggle", scale: "on or off", description: "An heir carries extra fuel after an ancestor died without light.", default: true },
+  { id: "trophies", group: "lineage", name: "Trophies", kind: "toggle", scale: "on or off", description: "A proud character keeps one item from each unique it kills while the pack has room.", default: true },
+  { id: "favouredGrounds", group: "lineage", name: "Favoured grounds", kind: "toggle", scale: "on or off", description: "An heir prefers hunting where the family made its best find, once it is ready for that depth.", default: true },
+  { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
+  { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
+  { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
+  { id: "resentment", group: "patron", name: "Resentment", kind: "slider", scale: "forgives trials to holds a grudge", description: "How much a trial lowers Devotion." },
+  { id: "strength", group: "meta", name: "Persona strength", kind: "slider", scale: "plays by advice to plays in character", description: "Blends the best move and in-character answers.", default: 35 },
+  { id: "backstory", group: "meta", name: "Backstory weight", kind: "slider", scale: "ignored to rules everything", description: "How much backstory the state carries." },
+  { id: "backstorycap", group: "meta", name: "Backstory cap", kind: "number", scale: "tokens", description: "Maximum backstory tokens per decision.", default: 600 },
+  { id: "learning", group: "meta", name: "Learning rate", kind: "slider", scale: "slow to quick", description: "How fast lessons form and fade." },
+  { id: "drift", group: "meta", name: "Trait drift", kind: "slider", scale: "fixed to shaped by experience", description: "How far experience moves traits.", default: 30 },
+  { id: "confidence", group: "meta", name: "Confidence gate", kind: "slider", scale: "acts on anything to asks again when unsure", description: "When the brain asks a second question." },
+  { id: "depth", group: "meta", name: "Thinking depth", kind: "slider", scale: "fast to thorough", description: "How many questions a decision asks." },
+  { id: "chronicle", group: "meta", name: "Chronicle voice", kind: "slider", scale: "terse to chatty", description: "How many events reach the Chronicle." }
+];
+
+// src/persona/persona.ts
+function record(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+function bounded(value, fallback, high = 100) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(high, Math.round(value))) : fallback;
+}
+function defaultPersona(name = "Squire") {
+  const sliders = {};
+  const lists = {};
+  const quirks = {};
+  const toggles = {};
+  for (const parameter of PARAMETERS) {
+    switch (parameter.kind) {
+      case "slider":
+        sliders[parameter.id] = "default" in parameter ? parameter.default : 50;
+        break;
+      case "list":
+        lists[parameter.id] = [];
+        break;
+      case "quirk":
+        quirks[parameter.id] = { on: false, strength: 50 };
+        break;
+      case "toggle":
+        toggles[parameter.id] = parameter.default;
+        break;
+      case "number":
+        break;
+    }
+  }
+  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
+}
+function normalize(input) {
+  try {
+    const raw = record(input);
+    const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
+    const sliders = record(raw["sliders"]);
+    const lists = record(raw["lists"]);
+    const quirks = record(raw["quirks"]);
+    const toggles = record(raw["toggles"]);
+    for (const parameter of PARAMETERS) {
+      switch (parameter.kind) {
+        case "slider":
+          result.sliders[parameter.id] = bounded(sliders[parameter.id], result.sliders[parameter.id]);
+          break;
+        case "list": {
+          const value = lists[parameter.id];
+          result.lists[parameter.id] = Array.isArray(value) ? value.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
+          break;
+        }
+        case "quirk": {
+          const value = record(quirks[parameter.id]);
+          result.quirks[parameter.id] = {
+            on: typeof value["on"] === "boolean" ? value["on"] : false,
+            strength: bounded(value["strength"], 50)
+          };
+          break;
+        }
+        case "toggle": {
+          const value = toggles[parameter.id];
+          result.toggles[parameter.id] = typeof value === "boolean" ? value : result.toggles[parameter.id];
+          break;
+        }
+        case "number":
+          break;
+      }
+    }
+    result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
+    result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
+    return result;
+  } catch {
+    return defaultPersona();
+  }
+}
+function unit(rng) {
+  const value = rng();
+  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0;
+}
+function randomPersona(rng, name = "Squire") {
+  const result = defaultPersona(name);
+  for (const parameter of PARAMETERS) {
+    if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
+  }
+  const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
+  const count2 = 1 + Math.floor(unit(rng) * 2);
+  for (let i = 0; i < count2; i += 1) {
+    const index = Math.floor(unit(rng) * pool.length);
+    const id = pool.splice(index, 1)[0];
+    if (id !== void 0) result.quirks[id].on = true;
+  }
+  return result;
+}
+var ARCHETYPES = {
+  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
+  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
+  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
+  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
+  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
+};
+function archetype(id) {
+  const override = ARCHETYPES[id];
+  return normalize({
+    ...defaultPersona(),
+    name: id[0].toUpperCase() + id.slice(1),
+    sliders: { ...defaultPersona().sliders, ...override.sliders },
+    lists: { ...defaultPersona().lists, ...override.lists },
+    quirks: { ...defaultPersona().quirks, ...override.quirks }
+  });
+}
+
+// src/learning/ranks.ts
+function rankFor(agreementShare, examples) {
+  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
+  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
+  return "Page";
+}
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+function mean(values) {
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+function inferPersona(examples, commands) {
+  const persona = defaultPersona("Player");
+  const confidence = {};
+  for (const key2 of Object.keys(persona.sliders)) {
+    persona.sliders[key2] = 50;
+    confidence[key2] = 0;
+  }
+  function set(key2, count2, value) {
+    if (count2 === 0) return;
+    persona.sliders[key2] = Math.round(clamp01(value) * 100);
+    confidence[key2] = clamp01(count2 / 20);
+  }
+  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
+  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
+  const dangerValues = [
+    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
+    ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
+  ];
+  set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);
+  const rests = commands.filter((command) => command.kind === "rest" && command.restedToFull !== void 0);
+  set("patience", rests.length, rests.length ? rests.filter((command) => command.restedToFull).length / rests.length : 0.5);
+  const heals = commands.filter((command) => command.kind === "heal" && command.hpShare !== void 0);
+  set("healat", heals.length, heals.length ? mean(heals.map((command) => command.hpShare)) : 0.5);
+  const retreats = commands.filter((command) => command.kind === "retreat" && command.hpShare !== void 0);
+  set("retreatat", retreats.length, retreats.length ? mean(retreats.map((command) => command.hpShare)) : 0.5);
+  const duration = commands.length < 2 ? 0 : Math.max(...commands.map((command) => command.turn)) - Math.min(...commands.map((command) => command.turn));
+  const consumed = commands.filter((command) => command.kind === "consumable");
+  if (duration > 0) set("consumables", commands.length, consumed.length * 1e3 / duration / 10);
+  const descents = commands.filter((command) => command.kind === "descend" && command.exploredShare !== void 0);
+  set("levelfeel", descents.length, descents.length ? mean(descents.map((command) => command.exploredShare)) : 0.5);
+  const attacks = commands.filter((command) => command.kind === "ranged" || command.kind === "melee");
+  set("range", attacks.length, attacks.length ? attacks.filter((command) => command.kind === "ranged").length / attacks.length : 0.5);
+  return { persona, confidence };
+}
+
+// src/knight.ts
+var DIR_DELTA = {
+  1: [-1, 1],
+  2: [0, 1],
+  3: [1, 1],
+  4: [-1, 0],
+  6: [1, 0],
+  7: [-1, -1],
+  8: [0, -1],
+  9: [1, -1]
+};
+function goalOfCommand(command, view) {
+  const player = view.player();
+  const at = player.grid;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
+  const pack = readPack(view);
+  const detection = detectionSources(view);
+  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
+  switch (command.code) {
+    case "walk":
+    case "run":
+    case "pathfind": {
+      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
+      if (delta !== void 0) {
+        const to = { x: at.x + delta[0], y: at.y + delta[1] };
+        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
+        if (awake.length > 0) {
+          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
+          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
+          if (nearestAfter > nearestNow) return "retreat";
+          if (nearestAfter < nearestNow) return "fight";
+        }
+      }
+      return "explore";
+    }
+    case "descend":
+      return "descend";
+    case "close":
+      return "close_door";
+    case "rest":
+      return "rest";
+    case "pickup":
+      return "pick_up";
+    case "eat":
+      return "eat";
+    case "study":
+      return "study";
+    case "wield":
+    case "wear":
+      return "wear";
+    case "zap-rod":
+    case "zap":
+      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
+    case "fire":
+      return "shoot";
+    case "throw":
+      return has(pack.oil) ? "throw_oil" : null;
+    case "aim-wand":
+      return "aim_wand";
+    case "quaff":
+      return has(pack.heal) ? "heal" : null;
+    case "read":
+      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
+      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
+      if (has(pack.phase)) return "phase";
+      if (has(pack.teleport)) return "teleport";
+      if (has(pack.descent)) return "deep_descent";
+      return null;
+    case "use-staff":
+      return has(pack.teleport) ? "teleport" : null;
+    case "shop-buy":
+    case "shop-sell":
+      return "shop";
+    case "cast": {
+      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
+      if (spell === null) return null;
+      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
+      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
+      return null;
+    }
+    default:
+      return null;
+  }
+}
+function proceduralPick(offers, hpShare) {
+  const has = (g) => offers.find((o) => o.goal === g);
+  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
+  const fight = has("fight");
+  if (fight !== void 0 && fight.risk > 0.45) {
+    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+  }
+  if (hpShare < 0.35) {
+    const safe = first("heal", "cast_heal");
+    if (safe !== null) return safe;
+  }
+  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
+  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
+}
+var LABEL = {
+  swing_unseen: "swing at an unseen attacker",
+  cast_area: "cast an area spell",
+  unseen_staff: "use a staff against an unseen attacker",
+  unseen_wand: "aim a wand at an unseen attacker",
+  unseen_rod: "zap a rod against an unseen attacker",
+  step_aside: "try another safe step",
+  endure: "wait for an opening",
+  fight: "fight in melee",
+  shoot: "shoot",
+  throw_oil: "throw oil",
+  aim_wand: "aim a wand",
+  cast_attack: "cast an attack spell",
+  heal: "drink a healing potion",
+  cast_heal: "cast a healing spell",
+  phase: "phase away",
+  teleport: "teleport away",
+  deep_descent: "read Deep Descent",
+  retreat: "back away",
+  rest: "rest",
+  eat: "eat",
+  study: "learn a spell",
+  wear: "wear gear",
+  detect: "survey the level",
+  see_invisible: "see invisible creatures",
+  light_room: "light the room",
+  pick_up: "pick it up",
+  fetch: "fetch an item",
+  drop_junk: "drop junk",
+  buff: "use a combat buff",
+  resist: "drink a resist potion",
+  device: "use a curing device",
+  activate: "activate an item",
+  disarm: "disarm a trap",
+  tunnel: "tunnel through rubble",
+  explore: "explore",
+  descend: "take the stairs",
+  leave_level: "leave the level",
+  close_door: "close a door",
+  recall_town: "recall to town",
+  shop: "shop for supplies",
+  recall_dungeon: "recall into the dungeon",
+  wait: "wait a turn"
+};
+function goalLabel(goal) {
+  return LABEL[goal];
+}
+function noteLine(squire, knight, hpShare) {
+  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
+  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
+  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
+}
+var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
+function emptyApprentice() {
+  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
+}
+function note(apprentice, entry) {
+  const weight = entry.demonstration ? 2 : 1;
+  return {
+    entries: [...apprentice.entries, entry].slice(-200),
+    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
+    total: apprentice.total + weight,
+    commands: apprentice.commands,
+    exams: apprentice.exams,
+    examArmed: apprentice.examArmed,
+    ghostHint: apprentice.ghostHint,
+    ghostGoal: apprentice.ghostGoal
+  };
+}
+function rankOf(apprentice) {
+  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
+}
+function momentOf(view) {
+  const p = view.player();
+  const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
+  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
+  return { awake, hpBand: share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3, depth: p.depth };
+}
+function isDecisionPoint(previous, now, goal) {
+  if (goal === null) return false;
+  if (previous === null) return true;
+  if (goal !== "explore") return true;
+  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
+}
+
 // src/strategy/readiness.ts
 var TV_FLASK = 27;
 function namedCount(view, pattern) {
@@ -2602,93 +3097,12 @@ function nudgeUnseen(dist, offers, persona, damage, hp, ceiling) {
   const pressure = Math.min(1, damage / Math.max(1, hp)) * strength / 100;
   for (const offer of offers) {
     if (offer.risk > ceiling) continue;
-    const response = ["detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
-    const advance2 = ["explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
+    const response = ["unseen_staff", "unseen_rod", "detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
+    const advance2 = ["swing_unseen", "cast_area", "unseen_wand", "explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
     if (response || advance2) result[offer.goal] = (result[offer.goal] ?? 0) * Math.exp(pressure * (response ? fear * 2 : 1 - fear * 2));
   }
   return result;
 }
-
-// src/persona/catalog.ts
-var GROUPS = [
-  "temperament",
-  "values",
-  "affinities",
-  "habits",
-  "tactics",
-  "economy",
-  "quirks",
-  "lineage",
-  "patron",
-  "meta"
-];
-var PARAMETERS = [
-  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off." },
-  { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
-  { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
-  { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
-  { id: "stubbornness", group: "temperament", name: "Stubbornness", kind: "slider", scale: "flexible to never backs down", description: "How hard it is to abandon a chosen fight or goal." },
-  { id: "curiosity", group: "temperament", name: "Curiosity", kind: "slider", scale: "incurious to must know", description: "Trying unknown items and exploring every corner." },
-  { id: "paranoia", group: "temperament", name: "Paranoia", kind: "slider", scale: "trusting to sees danger everywhere", description: "Detecting, avoiding unknown monsters, and keeping escapes." },
-  { id: "optimism", group: "temperament", name: "Optimism", kind: "slider", scale: "expects the worst to expects the best", description: "Shifts perceived threat bands by one step." },
-  { id: "volatility", group: "temperament", name: "Volatility", kind: "slider", scale: "steady to mood swings", description: "How much persona strength wanders between decisions." },
-  { id: "pride", group: "temperament", name: "Pride", kind: "slider", scale: "humble to glory-seeking", description: "Hunting uniques and chasing depth records." },
-  { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 70 },
-  { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
-  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to driven to win", description: "Controls the dive rate." },
-  { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
-  { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
-  { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
-  { id: "hated", group: "affinities", name: "Hated monster families", kind: "list", scale: "orcs, dragons, undead", description: "Fights these on sight and takes more risk against them." },
-  { id: "feared", group: "affinities", name: "Feared monster families", kind: "list", scale: "spiders, ghosts", description: "Avoids these and leaves levels early when they appear." },
-  { id: "weapons", group: "affinities", name: "Favoured weapons", kind: "list", scale: "blades, hafted, polearms, bows", description: "Keeps a favoured type when another is slightly better." },
-  { id: "distrusted", group: "affinities", name: "Distrusted things", kind: "list", scale: "magic devices, unknown scrolls", description: "Uses these only when necessary." },
-  { id: "elements", group: "affinities", name: "Favoured spells or elements", kind: "list", scale: "fire, lightning, healing", description: "Prefers these spells when several work." },
-  { id: "superstitions", group: "affinities", name: "Superstitions", kind: "list", scale: "never reads scrolls at 1300 ft", description: "Harmless rules the character keeps." },
-  { id: "hoarding", group: "habits", name: "Pack weight", kind: "slider", scale: "travels light to carries everything", description: "How much the character carries." },
-  { id: "tidiness", group: "habits", name: "Tidiness", kind: "slider", scale: "ignores junk rules to ignores aggressively", description: "How eagerly it sets ignore rules." },
-  { id: "home", group: "habits", name: "Home use", kind: "slider", scale: "never uses the home to stashes treasures", description: "Whether spare gear goes home." },
-  { id: "towntrips", group: "habits", name: "Town trips", kind: "slider", scale: "rarely returns to returns often", description: "When low supplies prompt a return to town." },
-  { id: "detection", group: "habits", name: "Detection habit", kind: "slider", scale: "never detects to detects on arrival", description: "Use of detection and mapping on a new level." },
-  { id: "levelfeel", group: "habits", name: "Level thoroughness", kind: "slider", scale: "takes the first stairs to clears every level", description: "How much ground is explored before descending." },
-  { id: "range", group: "tactics", name: "Engagement range", kind: "slider", scale: "melee to ranged and kiting", description: "Closing to melee versus firing from afar." },
-  { id: "escapes", group: "tactics", name: "Escape readiness", kind: "slider", scale: "keeps none to keeps many", description: "How many escapes to keep before descending." },
-  { id: "healat", group: "tactics", name: "Heal threshold", kind: "slider", scale: "heals late to heals early", description: "Hit-point level at which healing becomes an option." },
-  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds to the end to leaves early", description: "Hit-point level at which fleeing becomes an option." },
-  { id: "targets", group: "tactics", name: "Target priority", kind: "slider", scale: "weakest first to most dangerous first", description: "Which monster in a group is attacked first." },
-  { id: "consumables", group: "tactics", name: "Consumable use", kind: "slider", scale: "saves for emergencies to uses freely", description: "How readily potions, scrolls, and charges are spent." },
-  { id: "corridors", group: "tactics", name: "Corridor discipline", kind: "slider", scale: "fights in the open to always backs into a corridor", description: "Pulling groups into corridors before fighting." },
-  { id: "pricesense", group: "economy", name: "Price sense", kind: "slider", scale: "pays anything to buys only bargains", description: "How prices weigh against want in stores." },
-  { id: "savings", group: "economy", name: "Savings goal", kind: "slider", scale: "spends it all to saves for the big item", description: "Whether gold is held for an expensive purchase." },
-  { id: "selling", group: "economy", name: "Selling", kind: "slider", scale: "keeps everything to sells everything", description: "Selling where birth options permit it." },
-  { id: "forgetful", group: "quirks", name: "Forgetful", kind: "quirk", scale: "on or off, with strength", description: "Randomly drops a lesson, and lets what it saw in the shops fade." },
-  { id: "delusional", group: "quirks", name: "Delusional", kind: "quirk", scale: "on or off, with strength", description: "Randomly reads some threat bands wrong." },
-  { id: "compulsive", group: "quirks", name: "Compulsive collector", kind: "quirk", scale: "on or off", description: "Must pick up everything it walks over." },
-  { id: "pyromaniac", group: "quirks", name: "Pyromaniac", kind: "quirk", scale: "on or off", description: "Reaches for fire in every form." },
-  { id: "deathwish", group: "quirks", name: "Death wish", kind: "quirk", scale: "on or off", description: "Allows options above the safety ceiling." },
-  { id: "cowardice", group: "quirks", name: "Craven", kind: "quirk", scale: "on or off", description: "Flees from anything new, then circles back." },
-  { id: "inheritance", group: "lineage", name: "Inheritance", kind: "slider", scale: "nothing passes to everything passes", description: "How much ancestral lore an heir starts with." },
-  { id: "grudges", group: "lineage", name: "Blood grudges", kind: "toggle", scale: "on or off", description: "An heir hates or fears whatever killed its ancestors, and the feeling grows with each one it killed.", default: true },
-  { id: "epitaphs", group: "lineage", name: "Epitaphs", kind: "toggle", scale: "on or off", description: "Squire writes an epitaph naming the killer and the character's last choice.", default: true },
-  { id: "milestones", group: "lineage", name: "Family milestones", kind: "toggle", scale: "on or off", description: "The family remembers depth records, unique kills and its first artifact.", default: true },
-  { id: "namesakes", group: "lineage", name: "Namesakes", kind: "toggle", scale: "on or off", description: "An heir can take an ancestor's name with a number.", default: true },
-  { id: "inheritedSuperstitions", group: "lineage", name: "Inherited superstitions", kind: "toggle", scale: "on or off", description: "An heir avoids the scroll, potion or wand its ancestor used just before dying, until that kind is identified.", default: true },
-  { id: "darkLessons", group: "lineage", name: "Lessons of the dark", kind: "toggle", scale: "on or off", description: "An heir carries extra fuel after an ancestor died without light.", default: true },
-  { id: "trophies", group: "lineage", name: "Trophies", kind: "toggle", scale: "on or off", description: "A proud character keeps one item from each unique it kills while the pack has room.", default: true },
-  { id: "favouredGrounds", group: "lineage", name: "Favoured grounds", kind: "toggle", scale: "on or off", description: "An heir prefers hunting where the family made its best find, once it is ready for that depth.", default: true },
-  { id: "resemblance", group: "lineage", name: "Family resemblance", kind: "slider", scale: "each heir is new to heirs take after parents", description: "How much personality an heir inherits." },
-  { id: "devotion", group: "patron", name: "Devotion", kind: "slider", scale: "ignores you to obeys you", description: "Whether a patron's spoken command is followed." },
-  { id: "gratitude", group: "patron", name: "Gratitude", kind: "slider", scale: "takes gifts for granted to deeply grateful", description: "How much a blessing lifts mood and Devotion." },
-  { id: "resentment", group: "patron", name: "Resentment", kind: "slider", scale: "forgives trials to holds a grudge", description: "How much a trial lowers Devotion." },
-  { id: "strength", group: "meta", name: "Persona strength", kind: "slider", scale: "plays by advice to plays in character", description: "Blends the best move and in-character answers.", default: 35 },
-  { id: "backstory", group: "meta", name: "Backstory weight", kind: "slider", scale: "ignored to rules everything", description: "How much backstory the state carries." },
-  { id: "backstorycap", group: "meta", name: "Backstory cap", kind: "number", scale: "tokens", description: "Maximum backstory tokens per decision.", default: 600 },
-  { id: "learning", group: "meta", name: "Learning rate", kind: "slider", scale: "slow to quick", description: "How fast lessons form and fade." },
-  { id: "drift", group: "meta", name: "Trait drift", kind: "slider", scale: "fixed to shaped by experience", description: "How far experience moves traits.", default: 30 },
-  { id: "confidence", group: "meta", name: "Confidence gate", kind: "slider", scale: "acts on anything to asks again when unsure", description: "When the brain asks a second question." },
-  { id: "depth", group: "meta", name: "Thinking depth", kind: "slider", scale: "fast to thorough", description: "How many questions a decision asks." },
-  { id: "chronicle", group: "meta", name: "Chronicle voice", kind: "slider", scale: "terse to chatty", description: "How many events reach the Chronicle." }
-];
 
 // src/persona/state.ts
 function traitWord(id, scale2, value) {
@@ -2850,7 +3264,7 @@ function saleFits(name, storeName) {
 }
 
 // src/town/memory.ts
-function record(value) {
+function record2(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 function number(value) {
@@ -2860,11 +3274,11 @@ function readStoreMemory(value) {
   if (!Array.isArray(value)) return [];
   const found = /* @__PURE__ */ new Set();
   return value.flatMap((entry) => {
-    const raw = record(entry);
+    const raw = record2(entry);
     if (!number(raw["feat"]) || found.has(raw["feat"]) || !number(raw["turn"]) || !number(raw["lifetime"]) || raw["lifetime"] <= 0 || typeof raw["name"] !== "string" || !Array.isArray(raw["stock"])) return [];
     found.add(raw["feat"]);
     const stock = raw["stock"].flatMap((item) => {
-      const ware = record(item);
+      const ware = record2(item);
       return typeof ware["name"] === "string" && number(ware["tval"]) && number(ware["price"]) && number(ware["count"]) && ware["count"] > 0 ? [{ name: ware["name"], tval: ware["tval"], price: ware["price"], count: ware["count"] }] : [];
     });
     return [{ feat: raw["feat"], name: raw["name"], owner: typeof raw["owner"] === "string" ? raw["owner"] : null, turn: raw["turn"], lifetime: raw["lifetime"], stock }];
@@ -3513,12 +3927,12 @@ function nudgeGrounds(dist, offers, run, view, persona, ceiling) {
   for (const offer of offers) if (offer.goal === goal && offer.risk <= ceiling && out[offer.goal] !== void 0) out[offer.goal] = out[offer.goal] * 1.1;
   return out;
 }
-function record2(raw) {
+function record3(raw) {
   return raw !== null && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
 }
 function strings(raw) {
   return Array.isArray(raw) ? raw.slice(-6).flatMap((s) => {
-    const r = record2(s);
+    const r = record3(s);
     return typeof r["key"] === "string" && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
   }) : [];
 }
@@ -3526,18 +3940,18 @@ function depth(raw) {
   return typeof raw === "number" && Number.isInteger(raw) && raw > 0 && raw <= 127 ? raw : null;
 }
 function find(raw) {
-  const r = record2(raw);
+  const r = record3(raw);
   const at = depth(r["depth"]);
   return at !== null && typeof r["value"] === "number" && Number.isFinite(r["value"]) && r["value"] >= 0 && typeof r["name"] === "string" ? { depth: at, value: r["value"], name: r["name"].slice(0, 100) } : null;
 }
 function readFamilyFlourishes(raw) {
-  const r = record2(raw);
+  const r = record3(raw);
   return { superstitions: strings(r["superstitions"]), darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0, bestFind: find(r["bestFind"]) };
 }
 function readWays(raw) {
-  const r = record2(raw);
+  const r = record3(raw);
   const trophies = Array.isArray(r["trophies"]) ? r["trophies"].slice(0, PACK_LIMIT).flatMap((t) => {
-    const s = record2(t);
+    const s = record3(t);
     return typeof s["unique"] === "string" && typeof s["name"] === "string" && typeof s["handle"] === "number" && Number.isInteger(s["handle"]) && s["handle"] > 0 ? [{ unique: s["unique"].slice(0, 100), name: s["name"].slice(0, 100), handle: s["handle"] }] : [];
   }) : [];
   const uniqueKills = Array.isArray(r["uniqueKills"]) ? r["uniqueKills"].filter((s) => typeof s === "string").slice(-200).map((s) => s.slice(0, 100)) : [];
@@ -3876,6 +4290,7 @@ function createJourney(terrain, unseenDanger) {
   let footOffered = false;
   let recallActive = false;
   let lastPersona = null;
+  let widened = false;
   let anchor = { x: 0, y: 0 };
   let leashField = null;
   let breederLevel = false;
@@ -3967,7 +4382,8 @@ function createJourney(terrain, unseenDanger) {
     if (returnReason !== null || missingPreparation(view, view.player().depth + 1).length > 0) return upStairs(view);
     return knownStairs(view, terrain);
   }
-  function apply(offers, view, persona, visited, recalling) {
+  function apply(offers, view, persona, visited, recalling, widen = false) {
+    widened = widen;
     footOffered = false;
     recallActive = recalling;
     lastPersona = persona;
@@ -3977,13 +4393,14 @@ function createJourney(terrain, unseenDanger) {
     const home = returnReason !== null;
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     let out = offers.filter((offer) => {
+      if (widen && offer.goal === "explore") return true;
       if (breederLevel && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
+      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
@@ -4018,9 +4435,11 @@ function createJourney(terrain, unseenDanger) {
   function guarded(goal, plan) {
     const foot = goal === "leave_level" && footOffered;
     const recalling = recallActive;
+    const wide = widened;
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
+      if (wide && goal === "explore") return plan.step(view, act);
       if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
       if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
         const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
@@ -4031,8 +4450,8 @@ function createJourney(terrain, unseenDanger) {
       if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (player.depth === 0 && !town.ready && !town.earning || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
-        if (player.depth === 0 && town.earning && !departure.active()) departure.begin(view, town.target);
+        if (player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
+        if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
       }
       if (goal === null) {
         const command = plan.step(view, act);
@@ -4071,20 +4490,21 @@ function createJourney(terrain, unseenDanger) {
       return plan.step(view, act);
     } };
   }
-  function explore(ctx) {
+  function explore(ctx, wide = widened) {
     observe(ctx.view);
-    if (expired || returnReason !== null || departure.finished(ctx.view)) return null;
-    const goals = frontiers(ctx.view, terrain).filter((grid) => leashed(ctx.view, grid));
+    if (!wide && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
+    const allowed = (grid) => wide || leashed(ctx.view, grid);
+    const goals = frontiers(ctx.view, terrain).filter(allowed);
     const at = ctx.view.player().grid;
     if (!goals.some((grid) => key(grid) === key(at))) {
-      const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && leashed(ctx.view, grid) });
-      const direction2 = stepDown(field, at, (grid) => isWalkable(ctx.view, terrain, grid) && leashed(ctx.view, grid));
+      const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && allowed(grid) });
+      const direction2 = stepDown(field, at, (grid) => isWalkable(ctx.view, terrain, grid) && allowed(grid));
       return direction2 === null ? null : ctx.act.move(direction2.key);
     }
     const direction = DIRECTIONS.find((dir) => {
       const next = { x: at.x + dir.dx, y: at.y + dir.dy };
       const cell2 = ctx.view.cell(next.x, next.y);
-      return cell2 !== null && !cell2.known && leashed(ctx.view, next);
+      return cell2 !== null && !cell2.known && allowed(next);
     });
     return direction === void 0 ? null : ctx.act.move(direction.key);
   }
@@ -4243,10 +4663,10 @@ function settledLine(who, name, _count) {
 function readKillers(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(-MAX_KILLERS).flatMap((raw) => {
-    const k = record3(raw);
+    const k = record4(raw);
     if (k === null || typeof k["name"] !== "string" || k["name"].trim() === "") return [];
     const deaths = Array.isArray(k["deaths"]) ? k["deaths"].slice(-50).flatMap((d) => {
-      const r = record3(d);
+      const r = record4(d);
       if (r === null) return [];
       const generation = num2(r["generation"]);
       return generation === null ? [] : [{ generation, depth: num2(r["depth"]) ?? 0, turn: num2(r["turn"]) ?? 0 }];
@@ -4259,7 +4679,7 @@ function readKillers(value) {
 function readFeelings(value) {
   if (!Array.isArray(value)) return [];
   return value.slice(0, MAX_FEELINGS).flatMap((raw) => {
-    const f = record3(raw);
+    const f = record4(raw);
     if (f === null || typeof f["name"] !== "string" || f["name"].trim() === "") return [];
     const count2 = num2(f["count"]);
     const kind = f["kind"] === "hatred" || f["kind"] === "fear" ? f["kind"] : null;
@@ -4268,7 +4688,7 @@ function readFeelings(value) {
     return [{ name: f["name"].slice(0, 80), unique: f["unique"] === true, kind, intensity, count: count2 }];
   });
 }
-function record3(value) {
+function record4(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 }
 function num2(value) {
@@ -4277,7 +4697,6 @@ function num2(value) {
 
 // src/brain/goals.ts
 var NONE_OF_THESE2 = "None of the listed options suits this moment.";
-var FALLBACK_STEPS = 8;
 var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
 function healthBand(hp, maxHp) {
@@ -4300,7 +4719,7 @@ var REFUSED_COMMANDS = 3;
 var SAME_SITUATION_TURNS = 50;
 var FORCED_RISK = 0.3;
 var ROUTINE = ["wear", "detect", "study", "rest", "wait"];
-var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
+var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
 var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
 var REFUSAL_HOLD_TURNS = 200;
 var SAME_TURN_PLANS = 3;
@@ -4348,7 +4767,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
     ...speedEnergy === void 0 ? {} : { speedEnergy }
   };
 }
-function clamp01(n) {
+function clamp012(n) {
   return Math.max(0, Math.min(1, n));
 }
 function groupLines(lines2) {
@@ -4396,7 +4815,7 @@ function swarmNote(seen) {
 function fightRisk(s) {
   const target = s.target === null ? 0 : assessThreat(s.target, s.view.player(), s.awake, s.view, s.dreaded, s.terrain, s.speedEnergy).band;
   const band = Math.max(target, s.worst);
-  return clamp01((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
+  return clamp012((BAND_RISK[band] ?? 0.75) * (0.6 + (1 - s.hpShare) * 1.4) * crowd(s) * (s.swarming ? 1.5 : 1));
 }
 function attackRisk(s, attack) {
   const standing = Math.max(fightRisk(s), exposure(s));
@@ -4410,7 +4829,7 @@ function exposure(s) {
   return damageRisk(incoming.damage, s.view.player().hp);
 }
 function damageRisk(damage, hp) {
-  return damage === 0 ? 0.01 : damage >= hp ? 1 : clamp01(0.02 + damage / Math.max(1, hp) * 0.6);
+  return damage === 0 ? 0.01 : damage >= hp ? 1 : clamp012(0.02 + damage / Math.max(1, hp) * 0.6);
 }
 function damageFor(s, at = s.view.player().grid, actions = 1, terrain, openedDoor) {
   return incomingDamage(s.view, at, actions, terrain ?? s.terrain, { monsters: s.threats, unseenDamage: s.unseenDamage, ...s.unseenHit === void 0 ? {} : { unseenHit: s.unseenHit }, lastSeen: s.lastSeen, ...s.speedEnergy === void 0 ? {} : { energy: s.speedEnergy }, ...openedDoor === void 0 ? {} : { openedDoor } });
@@ -4572,7 +4991,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const out = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
-  const add2 = (goal, criteria, risk, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp01(risk), survival, ...routine ? { routine: true } : {}, ...uncertain ? { uncertain: true } : {} });
+  const add2 = (goal, criteria, risk, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp012(risk), survival, ...routine ? { routine: true } : {}, ...uncertain ? { uncertain: true } : {} });
   const exit = leaveStep(s, terrain);
   const addLeave = (criteria, _risk) => {
     if (exit !== null && !out.some((o) => o.goal === "leave_level")) add2("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage);
@@ -4661,6 +5080,13 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const leaveBy = exit?.down === true ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
   if (s.unseenDamage > 0) {
     addLeave(`${leaveBy}. Recent unexplained damage still makes this region dangerous even with no attacker in sight. The route has been checked against incoming damage.`, exposure(s));
+    if (player.status.afraid === 0) add2("swing_unseen", "Swing into an adjacent square where the unseen attacker might stand. Use its last known direction when available, otherwise choose a random direction. A miss spends an action exposed to another hit.", exposure(s), false, player.hp - incoming.damage, true);
+    for (const goal of ["cast_area", "unseen_staff", "unseen_wand", "unseen_rod"]) {
+      const source = unseenAttacks(view, goal, player.depth > 0 && player.gold < RECALL_MIN_GOLD && !reachableAnyStairs(view, terrain) && reachableFrontier(view, terrain))[0];
+      if (source === void 0) continue;
+      const purpose = /Treasure Location/i.test(source.name) ? "look for treasure to fund supplies while searching this unexplored floor for an exit; it cannot reveal the attacker" : /Mapping/i.test(source.name) ? "map ground that might lead to an exit; it cannot reveal the attacker" : goal === "cast_area" ? "cast an area effect where the attacker might stand" : goal === "unseen_staff" ? "affect or reveal creatures without seeing a target" : "aim toward the attacker's likely position";
+      add2(goal, `Use ${source.name} to ${purpose}. The attacker's position and resistance are uncertain; this costs an action exposed to another hit and can fail or miss.`, exposure(s), false, player.hp - incoming.damage, true);
+    }
     for (const goal of ["detect", "see_invisible", "light_room"]) {
       const source = unseenSources(view, goal)[0];
       if (source === void 0) continue;
@@ -4823,6 +5249,8 @@ function createGoalPlanner(options) {
       rememberedThreats.clear();
       unseenHit = null;
     }
+    const liveIds = new Set(view.monsters().map((m) => m.id));
+    for (const id of rememberedThreats.keys()) if (!liveIds.has(id)) rememberedThreats.delete(id);
     if (observe) {
       const visible = view.monsters().filter((m) => m.visible);
       const explains = (grid, damage) => {
@@ -4831,7 +5259,8 @@ function createGoalPlanner(options) {
       };
       if (unseenHit !== null && explains(unseenHit.grid, unseenHit.damage)) unseenHit = null;
       if (observed !== null && observed.depth === player.depth && observed.hp > player.hp && !explains(observed.grid, observed.hp - player.hp) && !explains(player.grid, observed.hp - player.hp) && player.status.poisoned === 0 && player.status.cut === 0 && !standingOnHarm(view, terrain, observed.grid) && !standingOnHarm(view, terrain, player.grid)) {
-        unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn };
+        const likely = [...rememberedThreats.values()].filter((m) => steps(player.grid, m.monster.grid) <= 1).sort((a, b) => b.turn - a.turn)[0];
+        unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn, ...likely === void 0 ? {} : { direction: directionToward(player.grid, likely.monster.grid) ?? void 0 } };
       }
       for (const monster of visible) rememberedThreats.set(monster.id, { monster: { ...monster, grid: { ...monster.grid }, visible: false }, turn });
       observed = { depth: player.depth, hp: player.hp, grid: { ...player.grid } };
@@ -4847,7 +5276,6 @@ function createGoalPlanner(options) {
   let offeredWiden = false;
   const refused = /* @__PURE__ */ new Map();
   let lastAnswer = null;
-  let fallbackStalled = null;
   let lastOutcome = null;
   let outcomeVersion = 0;
   let badFeeling = null;
@@ -4891,8 +5319,7 @@ function createGoalPlanner(options) {
       const command = proposed !== null && distrustedUse(proposed, v, flourishesNow(), personaOf()) ? null : proposed;
       if (command !== null) issued += 1;
       else if (issued === 0 || v.turn() === startTurn) {
-        if (goal === null) fallbackStalled = v.turn();
-        else stalled.set(goal, v.turn());
+        if (goal !== null) stalled.set(goal, v.turn());
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
           const why = refusalOf(goal, v);
@@ -5085,6 +5512,39 @@ function createGoalPlanner(options) {
     view = flourishView(view);
     const pack = readPack(view);
     switch (goal) {
+      case "endure":
+        return once("wait for an opening", view, (ctx) => ctx.act.hold());
+      case "step_aside":
+        return once("try another safe step", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          const at = ctx.view.player().grid;
+          const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, terrain, grid) && !standingOnHarm(ctx.view, terrain, grid) && !ctx.view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && damageFor(s, grid, 1, terrain).damage < ctx.view.player().hp);
+          const next = safe[Math.floor(rng() * safe.length)];
+          const dir = next === void 0 ? null : directionToward(at, next);
+          return dir === null ? null : ctx.act.move(dir);
+        });
+      case "swing_unseen":
+        return once("swing at the unseen attacker", view, (ctx) => {
+          if (ctx.view.player().status.afraid > 0) return null;
+          const s = situationNow(ctx.view);
+          const dir = s.unseenHit?.direction ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)].key;
+          return ctx.act.melee(dir);
+        });
+      case "cast_area":
+      case "unseen_staff":
+      case "unseen_wand":
+      case "unseen_rod":
+        return once("answer the unseen attacker", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          if (s.unseenDamage <= 0) return null;
+          const source = unseenAttacks(ctx.view, goal, ctx.view.player().depth > 0 && ctx.view.player().gold < RECALL_MIN_GOLD && !reachableAnyStairs(ctx.view, terrain) && reachableFrontier(ctx.view, terrain))[0];
+          if (source === void 0) return null;
+          const dir = s.unseenHit?.direction ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)].key;
+          const offset = DIRECTIONS.find((d) => d.key === dir);
+          const at = ctx.view.player().grid;
+          ctx.act.setTargetLocation(at.x + offset.dx, at.y + offset.dy);
+          return source.how === "wand" ? ctx.act.aimWand(source.handle) : useCommand(ctx, source);
+        });
       case "recall_town":
       case "recall_dungeon": {
         const item = recallItem(view);
@@ -5283,7 +5743,10 @@ function createGoalPlanner(options) {
           return dir === null ? null : ctx.act.tunnel(dir);
         });
       case "explore":
-        return view.player().depth === 0 ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true }), view) : stepsPlan("explore", view, (ctx) => journey.explore(ctx));
+        return view.player().depth === 0 ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true }), view) : (() => {
+          const wide = offeredWiden;
+          return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide));
+        })();
       case "leave_level": {
         const down = leaveStep(situationNow(view), terrain)?.down === true;
         return stepsPlan(down ? "take the stairs down" : "take the nearest stairs", view, (ctx) => {
@@ -5407,13 +5870,46 @@ function createGoalPlanner(options) {
     }
     return null;
   }
-  return {
+  function ownChoice(digest, view) {
+    const s = situationNow(view);
+    const persona = personaOf();
+    const preferred = proceduralPick(digest.offers, s.hpShare);
+    const probabilities = Object.fromEntries(digest.offers.map((offer2) => [offer2.goal, (offer2.goal === preferred ? 2 : 1) / (1 + offer2.risk * 8)]));
+    if (s.unseenDamage > 0 && persona !== null) {
+      const bold = persona.sliders.boldness / 100;
+      for (const offer2 of digest.offers) {
+        if (["swing_unseen", "cast_area", "unseen_wand"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * (1 + bold * 4);
+        if (["detect", "see_invisible", "light_room", "unseen_staff", "unseen_rod"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * (1 + (1 - bold) * 4);
+        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "teleport"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * 16;
+      }
+    }
+    const answer = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
+    const picked2 = decide(answer, void 0, digest, { goal: answer }, view);
+    const offer = digest.offers.find((offer2) => offer2.goal === picked2) ?? [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+    if (offer === void 0) return { plan: build("step_aside", view) };
+    digest.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
+    options.orders?.decided(offer.goal, view);
+    return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
+  }
+  const planner = {
+    rules(view, reason, stuck = false) {
+      if (stuck) {
+        lastAnswer = null;
+        for (const goal2 of sameTurn.keys()) stalled.set(goal2, view.turn());
+      }
+      const question = planner.ask(view);
+      if ("handBack" in question || "reflex" in question) return question;
+      const choice2 = ownChoice(question.context, view);
+      if ("handBack" in choice2) return choice2;
+      const goal = question.context.trace?.pick ?? question.context.offers[0]?.goal ?? "wait";
+      return { reflex: reason, plan: choice2.plan, context: question.context, answers: { goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } } };
+    },
     ask(view) {
       view = flourishView(view);
       const persona = personaOf();
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
-      if (player.dead) return { handBack: "The character has died." };
+      if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
       noteSeen(view);
       noteFeeling(view);
       const s = situationNow(view, true);
@@ -5450,8 +5946,19 @@ function createGoalPlanner(options) {
       if (offers.length === 0) {
         const tried = offered.map((o) => o.goal);
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
-        const handBack = journey.blocked(view) ?? nothingToDo(view, tried);
-        return { handBack, context: { depth: player.depth, offers: [], newCreatures: 0, reflex: "nothing to offer" } };
+        const reason = journey.blocked(view) ?? nothingToDo(view, tried);
+        offeredWiden = true;
+        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims);
+        if (reachableFrontier(view, terrain) && !wider.some((o) => o.goal === "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
+        if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
+        offers = journey.apply(wider, view, persona, visitedShops, recalling, true).filter(usable);
+        if (offers.length === 0) {
+          if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && damageFor(s, grid, 1, terrain).damage < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
+          if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
+          if (offers.length === 0 && player.status.afraid === 0) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
+          if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
+        }
+        log(`goal: Squire widens its choices. ${reason}`);
       }
       const aimList = options.strategy?.().aims ?? [];
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
@@ -5551,12 +6058,9 @@ function createGoalPlanner(options) {
     choose(answers, digest, view) {
       view = flourishView(view);
       const answer = answers["goal"];
-      if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
+      if (answer?.type !== "choice") return ownChoice(digest, view);
       const pick2 = decide(answer, answers["in_character"], digest, answers, view);
       if (pick2 === "none_of_these") {
-        const removed = new Set(digest.trace?.removed ?? []);
-        const allowed = digest.offers.filter((o) => !removed.has(o.goal));
-        const likeliest = [...allowed.length > 0 ? allowed : digest.offers].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
         const s = situationNow(view);
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
@@ -5583,21 +6087,15 @@ function createGoalPlanner(options) {
             const adequate = Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0);
             return adequate || a.risk - b.risk || priority2.indexOf(a.goal) - priority2.indexOf(b.goal);
           })[0]?.goal;
-          if (fallback === void 0) return { handBack: "Squire has no usable escape, healing or attack in this danger." };
+          if (fallback === void 0) return ownChoice(digest, view);
           log(`goal: none fit in danger, taking the survival fallback (${fallback})`);
           return { plan: noteStalls(fallback, build(fallback, view), view.turn()) };
         }
-        if (likeliest !== void 0 && fallbackStalled === view.turn()) {
-          log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
-          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view), view.turn()) };
-        }
-        const rated = digest.offers.map((o) => `${o.goal} ${String(Math.round((answer.probabilities[o.goal] ?? 0) * 100))}%`).join(", ");
-        log(`goal: none fit (${rated}), following the fixed errand order`);
-        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS), view.turn()) };
+        return ownChoice(digest, view);
       }
       const offer = digest.offers.find((o) => o.goal === pick2);
       if (offer === void 0) {
-        return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
+        return ownChoice(digest, view);
       }
       options.orders?.decided(offer.goal, view);
       if (digest.situation !== void 0) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal };
@@ -5620,6 +6118,7 @@ function createGoalPlanner(options) {
       return stopped === null ? null : stopped.detail;
     }
   };
+  return planner;
 }
 
 // src/brain/tally.ts
@@ -5929,117 +6428,6 @@ function createStrategy(deps) {
     reset,
     settled: () => inFlight
   };
-}
-
-// src/persona/persona.ts
-function record4(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value) ? value : {};
-}
-function bounded(value, fallback, high = 100) {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(high, Math.round(value))) : fallback;
-}
-function defaultPersona(name = "Squire") {
-  const sliders = {};
-  const lists = {};
-  const quirks = {};
-  const toggles = {};
-  for (const parameter of PARAMETERS) {
-    switch (parameter.kind) {
-      case "slider":
-        sliders[parameter.id] = "default" in parameter ? parameter.default : 50;
-        break;
-      case "list":
-        lists[parameter.id] = [];
-        break;
-      case "quirk":
-        quirks[parameter.id] = { on: false, strength: 50 };
-        break;
-      case "toggle":
-        toggles[parameter.id] = parameter.default;
-        break;
-      case "number":
-        break;
-    }
-  }
-  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
-}
-function normalize(input) {
-  try {
-    const raw = record4(input);
-    const result = defaultPersona(typeof raw["name"] === "string" ? raw["name"].trim().slice(0, 100) || "Squire" : void 0);
-    const sliders = record4(raw["sliders"]);
-    const lists = record4(raw["lists"]);
-    const quirks = record4(raw["quirks"]);
-    const toggles = record4(raw["toggles"]);
-    for (const parameter of PARAMETERS) {
-      switch (parameter.kind) {
-        case "slider":
-          result.sliders[parameter.id] = bounded(sliders[parameter.id], result.sliders[parameter.id]);
-          break;
-        case "list": {
-          const value = lists[parameter.id];
-          result.lists[parameter.id] = Array.isArray(value) ? value.filter((item) => typeof item === "string").map((item) => item.trim().slice(0, 40)).filter(Boolean).slice(0, 12) : [];
-          break;
-        }
-        case "quirk": {
-          const value = record4(quirks[parameter.id]);
-          result.quirks[parameter.id] = {
-            on: typeof value["on"] === "boolean" ? value["on"] : false,
-            strength: bounded(value["strength"], 50)
-          };
-          break;
-        }
-        case "toggle": {
-          const value = toggles[parameter.id];
-          result.toggles[parameter.id] = typeof value === "boolean" ? value : result.toggles[parameter.id];
-          break;
-        }
-        case "number":
-          break;
-      }
-    }
-    result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
-    result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
-    return result;
-  } catch {
-    return defaultPersona();
-  }
-}
-function unit(rng) {
-  const value = rng();
-  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0;
-}
-function randomPersona(rng, name = "Squire") {
-  const result = defaultPersona(name);
-  for (const parameter of PARAMETERS) {
-    if (parameter.kind === "slider") result.sliders[parameter.id] = 20 + Math.floor(unit(rng) * 61);
-  }
-  const pool = ["forgetful", "delusional", "compulsive", "pyromaniac", "cowardice"];
-  const count2 = 1 + Math.floor(unit(rng) * 2);
-  for (let i = 0; i < count2; i += 1) {
-    const index = Math.floor(unit(rng) * pool.length);
-    const id = pool.splice(index, 1)[0];
-    if (id !== void 0) result.quirks[id].on = true;
-  }
-  return result;
-}
-var ARCHETYPES = {
-  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
-  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
-  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
-  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
-  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
-  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
-};
-function archetype(id) {
-  const override = ARCHETYPES[id];
-  return normalize({
-    ...defaultPersona(),
-    name: id[0].toUpperCase() + id.slice(1),
-    sliders: { ...defaultPersona().sliders, ...override.sliders },
-    lists: { ...defaultPersona().lists, ...override.lists },
-    quirks: { ...defaultPersona().quirks, ...override.quirks }
-  });
 }
 
 // src/persona/drift.ts
@@ -7464,232 +7852,6 @@ function createSender(options) {
       });
     }
   };
-}
-
-// src/learning/ranks.ts
-function rankFor(agreementShare, examples) {
-  if (examples >= 150 && agreementShare >= 0.75) return "Knight-Errant";
-  if (examples >= 40 && agreementShare >= 0.55) return "Squire";
-  return "Page";
-}
-function clamp012(value) {
-  return Math.max(0, Math.min(1, value));
-}
-function mean(values) {
-  return values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-function inferPersona(examples, commands) {
-  const persona = defaultPersona("Player");
-  const confidence = {};
-  for (const key2 of Object.keys(persona.sliders)) {
-    persona.sliders[key2] = 50;
-    confidence[key2] = 0;
-  }
-  function set(key2, count2, value) {
-    if (count2 === 0) return;
-    persona.sliders[key2] = Math.round(clamp012(value) * 100);
-    confidence[key2] = clamp012(count2 / 20);
-  }
-  const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
-  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
-  const dangerValues = [
-    ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
-    ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
-  ];
-  set("boldness", dangerValues.length, dangerValues.length ? mean(dangerValues) : 0.5);
-  const rests = commands.filter((command) => command.kind === "rest" && command.restedToFull !== void 0);
-  set("patience", rests.length, rests.length ? rests.filter((command) => command.restedToFull).length / rests.length : 0.5);
-  const heals = commands.filter((command) => command.kind === "heal" && command.hpShare !== void 0);
-  set("healat", heals.length, heals.length ? mean(heals.map((command) => command.hpShare)) : 0.5);
-  const retreats = commands.filter((command) => command.kind === "retreat" && command.hpShare !== void 0);
-  set("retreatat", retreats.length, retreats.length ? mean(retreats.map((command) => command.hpShare)) : 0.5);
-  const duration = commands.length < 2 ? 0 : Math.max(...commands.map((command) => command.turn)) - Math.min(...commands.map((command) => command.turn));
-  const consumed = commands.filter((command) => command.kind === "consumable");
-  if (duration > 0) set("consumables", commands.length, consumed.length * 1e3 / duration / 10);
-  const descents = commands.filter((command) => command.kind === "descend" && command.exploredShare !== void 0);
-  set("levelfeel", descents.length, descents.length ? mean(descents.map((command) => command.exploredShare)) : 0.5);
-  const attacks = commands.filter((command) => command.kind === "ranged" || command.kind === "melee");
-  set("range", attacks.length, attacks.length ? attacks.filter((command) => command.kind === "ranged").length / attacks.length : 0.5);
-  return { persona, confidence };
-}
-
-// src/knight.ts
-var DIR_DELTA = {
-  1: [-1, 1],
-  2: [0, 1],
-  3: [1, 1],
-  4: [-1, 0],
-  6: [1, 0],
-  7: [-1, -1],
-  8: [0, -1],
-  9: [1, -1]
-};
-function goalOfCommand(command, view) {
-  const player = view.player();
-  const at = player.grid;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
-  const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
-  const pack = readPack(view);
-  const detection = detectionSources(view);
-  const has = (list) => handle !== null && list.some((i) => i.handle === handle);
-  switch (command.code) {
-    case "walk":
-    case "run":
-    case "pathfind": {
-      const delta = command.dir === void 0 ? void 0 : DIR_DELTA[command.dir];
-      if (delta !== void 0) {
-        const to = { x: at.x + delta[0], y: at.y + delta[1] };
-        if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
-        if (awake.length > 0) {
-          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
-          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
-          if (nearestAfter > nearestNow) return "retreat";
-          if (nearestAfter < nearestNow) return "fight";
-        }
-      }
-      return "explore";
-    }
-    case "descend":
-      return "descend";
-    case "close":
-      return "close_door";
-    case "rest":
-      return "rest";
-    case "pickup":
-      return "pick_up";
-    case "eat":
-      return "eat";
-    case "study":
-      return "study";
-    case "wield":
-    case "wear":
-      return "wear";
-    case "zap-rod":
-    case "zap":
-      return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
-    case "fire":
-      return "shoot";
-    case "throw":
-      return has(pack.oil) ? "throw_oil" : null;
-    case "aim-wand":
-      return "aim_wand";
-    case "quaff":
-      return has(pack.heal) ? "heal" : null;
-    case "read":
-      if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
-      if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
-      if (has(pack.phase)) return "phase";
-      if (has(pack.teleport)) return "teleport";
-      if (has(pack.descent)) return "deep_descent";
-      return null;
-    case "use-staff":
-      return has(pack.teleport) ? "teleport" : null;
-    case "shop-buy":
-    case "shop-sell":
-      return "shop";
-    case "cast": {
-      const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
-      if (spell === null) return null;
-      if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
-      if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
-      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
-      if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
-      return null;
-    }
-    default:
-      return null;
-  }
-}
-function proceduralPick(offers, hpShare) {
-  const has = (g) => offers.find((o) => o.goal === g);
-  const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
-  const fight = has("fight");
-  if (fight !== void 0 && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
-  }
-  if (hpShare < 0.35) {
-    const safe = first("heal", "cast_heal");
-    if (safe !== null) return safe;
-  }
-  if (fight !== void 0) return first("shoot", "cast_attack", "throw_oil", "aim_wand", "fight");
-  return first("detect", "wear", "study", "recall_town", "shop", "recall_dungeon", "rest", "eat", "pick_up", "explore", "descend");
-}
-var LABEL = {
-  fight: "fight in melee",
-  shoot: "shoot",
-  throw_oil: "throw oil",
-  aim_wand: "aim a wand",
-  cast_attack: "cast an attack spell",
-  heal: "drink a healing potion",
-  cast_heal: "cast a healing spell",
-  phase: "phase away",
-  teleport: "teleport away",
-  deep_descent: "read Deep Descent",
-  retreat: "back away",
-  rest: "rest",
-  eat: "eat",
-  study: "learn a spell",
-  wear: "wear gear",
-  detect: "survey the level",
-  see_invisible: "see invisible creatures",
-  light_room: "light the room",
-  pick_up: "pick it up",
-  fetch: "fetch an item",
-  drop_junk: "drop junk",
-  buff: "use a combat buff",
-  resist: "drink a resist potion",
-  device: "use a curing device",
-  activate: "activate an item",
-  disarm: "disarm a trap",
-  tunnel: "tunnel through rubble",
-  explore: "explore",
-  descend: "take the stairs",
-  leave_level: "leave the level",
-  close_door: "close a door",
-  recall_town: "recall to town",
-  shop: "shop for supplies",
-  recall_dungeon: "recall into the dungeon",
-  wait: "wait a turn"
-};
-function goalLabel(goal) {
-  return LABEL[goal];
-}
-function noteLine(squire, knight, hpShare) {
-  const hp = `at ${String(Math.round(hpShare * 100))}% health`;
-  if (squire === knight) return `Agreed: you chose to ${LABEL[knight]} ${hp}, as I would have.`;
-  return `Noted: you chose to ${LABEL[knight]} ${hp}. I would have chosen to ${LABEL[squire]}.`;
-}
-var WHY_REASONS = ["danger", "saving resources", "setting something up", "instinct", "just because"];
-function emptyApprentice() {
-  return { entries: [], agreed: 0, total: 0, commands: [], exams: [], examArmed: false, ghostHint: null, ghostGoal: null };
-}
-function note(apprentice, entry) {
-  const weight = entry.demonstration ? 2 : 1;
-  return {
-    entries: [...apprentice.entries, entry].slice(-200),
-    agreed: apprentice.agreed + (entry.agreed ? weight : 0),
-    total: apprentice.total + weight,
-    commands: apprentice.commands,
-    exams: apprentice.exams,
-    examArmed: apprentice.examArmed,
-    ghostHint: apprentice.ghostHint,
-    ghostGoal: apprentice.ghostGoal
-  };
-}
-function rankOf(apprentice) {
-  return rankFor(apprentice.total === 0 ? 0 : apprentice.agreed / apprentice.total, apprentice.total);
-}
-function momentOf(view) {
-  const p = view.player();
-  const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
-  return { awake, hpBand: share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3, depth: p.depth };
-}
-function isDecisionPoint(previous, now, goal) {
-  if (goal === null) return false;
-  if (previous === null) return true;
-  if (goal !== "explore") return true;
-  return previous.awake !== now.awake || previous.hpBand !== now.hpBand || previous.depth !== now.depth;
 }
 
 // src/learning/flourishes.ts
@@ -9509,6 +9671,10 @@ function createRuntime(host, options = {}) {
     observeWays(view);
     strategy.remember(view, terrain);
     channel.tick();
+    if (brain !== null) {
+      strategy.observe(view);
+      orders.observe(view);
+    }
     const command = controller(view, act);
     if (command !== null) rememberUse(command, view);
     if (command !== null) ownCommandAt = Date.now();
@@ -9643,8 +9809,8 @@ function createRuntime(host, options = {}) {
       const backend = backendFor(config);
       const net = host.net;
       if (backend === null || net === void 0 || !cfg.useModel) {
-        if (cfg.useModel && net === void 0) host.log("This version of the game cannot send Squire's requests, so Squire runs its errands");
-        return tracked(errands(), terrain);
+        if (cfg.useModel && net === void 0) host.log("This game cannot send model requests. Squire chooses from its own offers.");
+        return tracked(!cfg.useModel && !cfg.errandCampaign ? errands() : startBrain(backend ?? JEV, cfg, terrain, true) ?? errands(), terrain);
       }
       const ready = keyReady(net.secrets, backend, false, host.log);
       let chosen = null;
@@ -9657,7 +9823,7 @@ function createRuntime(host, options = {}) {
         channel.tick();
         if (chosen === null) {
           if (picked2 === null) return null;
-          chosen = picked2 ? startBrain(backend, cfg, terrain) ?? errands() : errands();
+          chosen = startBrain(backend, cfg, terrain) ?? errands();
         }
         lastTurn = view.turn();
         lastView = view;
@@ -9848,16 +10014,17 @@ function createRuntime(host, options = {}) {
     self.saveConfig({ ...config, lineages: { ...config.lineages, [line]: { ...lineage, killers, feelings } } });
     host.log(settledLine(character.persona?.name ?? "Squire", before.name, remembered(before, lineage.generation)));
   }
-  function startBrain(backend, cfg, terrain) {
+  function startBrain(backend, cfg, terrain, rulesOnly = false) {
     const mark = host.controller?.markNondeterministic;
-    if (mark === void 0) {
-      host.log("This version of the game cannot mark the save for a model, so Squire runs its errands");
-      return null;
+    if (!rulesOnly && mark === void 0) {
+      host.log("This game cannot mark a save for model decisions. Squire chooses from its own offers.");
+      rulesOnly = true;
     }
-    mark.call(host.controller);
+    if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
     brain = createBrain({
       backend,
+      rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
@@ -9879,7 +10046,6 @@ function createRuntime(host, options = {}) {
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
-      ...host.controller?.release === void 0 ? {} : { release: (reason) => host.controller?.release?.(reason) },
       onDecision: (record5) => {
         void logLoaded.then(() => logDecision(record5));
         for (const listener of listeners) listener(record5, lastTurn);
@@ -9889,7 +10055,7 @@ function createRuntime(host, options = {}) {
       },
       gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth })
     });
-    host.log(`Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
+    host.log(rulesOnly ? "Squire has the keyboard and chooses from its current fight and travel offers." : `Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;
   }
   let openDecision = null;
@@ -11824,7 +11990,6 @@ var plugin_default = {
       changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
     );
     const errands = () => createSquire({ cfg, terrain, log: ctx.log }).controller;
-    if (ctx.net === void 0) return errands();
     return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
   }
 };

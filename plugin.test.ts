@@ -66,12 +66,13 @@ describe("the Squire plugin", () => {
 
   it("offers a controller once the character carries the autoplayer mark", () => {
     const { ctx } = context({ noscore: NOSCORE_BORG });
-    expect(typeof plugin.controller(ctx)).toBe("function");
+    const installed = plugin.controller(ctx);
+    expect(installed).toMatchObject({ controller: expect.any(Function), onDeath: "end" });
   });
 
   it("offers a controller to a new character started with Squire armed", () => {
     const { ctx } = context({ noscore: 0 });
-    expect(typeof plugin.controller({ ...ctx, controllerArmed: true })).toBe("function");
+    expect(plugin.controller({ ...ctx, controllerArmed: true })).toMatchObject({ controller: expect.any(Function) });
     expect(plugin.controller({ ...ctx, controllerArmed: false })).toBeUndefined();
   });
 
@@ -90,7 +91,8 @@ describe("the Squire plugin", () => {
 
   it("keeps playing without a terrain registry, and says what it lost", () => {
     const { ctx, logged } = context({ noscore: NOSCORE_BORG, withRegistries: false });
-    expect(typeof plugin.controller(ctx)).toBe("function");
+    const installed = plugin.controller(ctx);
+    expect(installed).toMatchObject({ controller: expect.any(Function), onDeath: "end" });
     expect(logged.join("\n")).toContain("will not take stairs or open doors");
   });
 

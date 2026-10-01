@@ -1,6 +1,6 @@
 # Squire: quick reference
 
-A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character, asking a model what to do at each moment that matters. Press any key to take the keyboard back. With no model set up, it runs one short errand instead.
+A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character, asking a model what to do at each moment that matters. Press any key to take the keyboard back. With no model set up, it keeps playing by its own rules. You can choose a short errand under Mods, then Squire.
 
 This page is the short version: every setting, what the mod asks the game for,
 and where the longer material is. The account of why each of these exists is in
@@ -17,7 +17,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Errand: clear what is in front of me | `squire.errandAutofight` | on | Hand over with a creature in sight and Squire attacks the nearest one it can reach. |
 | Errand: explore this floor | `squire.errandAutoexplore` | on | Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. |
 | Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. |
-| Let a model choose what to do | `squire.useModel` | on | When a model is set up in the Squire panel, Squire asks it what to do at each decision and plays on until you take the keyboard back. With this off, or with no model, a handover runs an errand. |
+| Let a model choose what to do | `squire.useModel` | on | When a model is set up in the Squire panel, Squire asks it what to do at each decision and plays on until you take the keyboard back. With no model, Squire chooses from its current fight and travel offers. Switch this off to choose a short errand. |
 | Stop when I am hurt | `squire.stopOnLowHealth` | on | End the errand when hit points fall below half. |
 | Stop when something new appears | `squire.stopOnNewCreature` | on | End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter. |
 | Attack sleeping creatures | `squire.wakeSleepers` | off | Let the fighting errand pick a sleeping creature as its target. |

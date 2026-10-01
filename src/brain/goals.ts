@@ -21,7 +21,7 @@ import { isStop } from "../mission.js";
 import type { SquireCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createWatcher, type Watcher } from "../disturb.js";
-import { directionToward, key, neighbours, steps, type Loc } from "../grid.js";
+import { DIRECTIONS, directionToward, key, neighbours, steps, type Loc } from "../grid.js";
 import { frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import { flowFrom, stepAway } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
@@ -31,10 +31,10 @@ import { engineTravel } from "../travel-engine.js";
 import { volleyAvailable, volleySteps, type RangedGoal } from "./volley.js";
 import { AUTOFIGHT_REACH, autofight } from "../missions/autofight.js";
 import { autoexplore } from "../missions/autoexplore.js";
-import { campaign } from "../missions/campaign.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question, Reflex } from "./brain.js";
-import { canRead, detectionSource, hungry, readPack, studyable, unseenSources, type Pack } from "./pack.js";
+import { proceduralPick } from "../knight.js";
+import { canRead, unseenAttacks, detectionSource, hungry, readPack, studyable, unseenSources, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
@@ -61,6 +61,13 @@ import { distrusted, distrustedUse, emptyFlourishes, flourishLines, nudgeGrounds
 
 /** Every option this planner can offer. */
 export type Goal =
+  | "swing_unseen"
+  | "cast_area"
+  | "unseen_staff"
+  | "unseen_wand"
+  | "unseen_rod"
+  | "step_aside"
+  | "endure"
   | "fight"
   | "shoot"
   | "throw_oil"
@@ -98,9 +105,6 @@ export type Goal =
   | "wait";
 
 const NONE_OF_THESE = "None of the listed options suits this moment.";
-
-/** How many steps the fixed errand order runs when the model picks none of the options. */
-const FALLBACK_STEPS = 8;
 
 /** How many steps a retreat plan takes before the model is asked again. */
 const RETREAT_STEPS = 4;
@@ -147,7 +151,7 @@ const SAME_SITUATION_TURNS = 50;
 const FORCED_RISK = 0.3;
 /** Upkeep Squire does on its own when nothing awake is in sight, first to last. */
 const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
-const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
+const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
 const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
@@ -754,6 +758,13 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const leaveBy = exit?.down === true ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
   if (s.unseenDamage > 0) {
     addLeave(`${leaveBy}. Recent unexplained damage still makes this region dangerous even with no attacker in sight. The route has been checked against incoming damage.`, exposure(s));
+    if (player.status.afraid === 0) add("swing_unseen", "Swing into an adjacent square where the unseen attacker might stand. Use its last known direction when available, otherwise choose a random direction. A miss spends an action exposed to another hit.", exposure(s), false, player.hp - incoming.damage, true);
+    for (const goal of ["cast_area", "unseen_staff", "unseen_wand", "unseen_rod"] as const) {
+      const source = unseenAttacks(view, goal, player.depth > 0 && player.gold < RECALL_MIN_GOLD && !reachableAnyStairs(view, terrain) && reachableFrontier(view, terrain))[0];
+      if (source === undefined) continue;
+      const purpose = /Treasure Location/i.test(source.name) ? "look for treasure to fund supplies while searching this unexplored floor for an exit; it cannot reveal the attacker" : /Mapping/i.test(source.name) ? "map ground that might lead to an exit; it cannot reveal the attacker" : goal === "cast_area" ? "cast an area effect where the attacker might stand" : goal === "unseen_staff" ? "affect or reveal creatures without seeing a target" : "aim toward the attacker's likely position";
+      add(goal, `Use ${source.name} to ${purpose}. The attacker's position and resistance are uncertain; this costs an action exposed to another hit and can fail or miss.`, exposure(s), false, player.hp - incoming.damage, true);
+    }
     for (const goal of ["detect", "see_invisible", "light_room"] as const) {
       const source = unseenSources(view, goal)[0];
       if (source === undefined) continue;
@@ -960,6 +971,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       rememberedThreats.clear();
       unseenHit = null;
     }
+    const liveIds = new Set(view.monsters().map((m) => m.id));
+    for (const id of rememberedThreats.keys()) if (!liveIds.has(id)) rememberedThreats.delete(id);
     if (observe) {
       const visible = view.monsters().filter((m) => m.visible);
       const explains = (grid: Loc, damage: number) => {
@@ -968,7 +981,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       };
       if (unseenHit !== null && explains(unseenHit.grid, unseenHit.damage)) unseenHit = null;
       if (observed !== null && observed.depth === player.depth && observed.hp > player.hp && !explains(observed.grid, observed.hp - player.hp) && !explains(player.grid, observed.hp - player.hp) && player.status.poisoned === 0 && player.status.cut === 0 && !standingOnHarm(view, terrain, observed.grid) && !standingOnHarm(view, terrain, player.grid)) {
-        unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn };
+        const likely = [...rememberedThreats.values()].filter((m) => steps(player.grid, m.monster.grid) <= 1).sort((a, b) => b.turn - a.turn)[0];
+        unseenHit = { grid: { ...player.grid }, damage: observed.hp - player.hp, turn, ...(likely === undefined ? {} : { direction: directionToward(player.grid, likely.monster.grid) ?? undefined }) };
       }
       for (const monster of visible) rememberedThreats.set(monster.id, { monster: { ...monster, grid: { ...monster.grid }, visible: false }, turn });
       observed = { depth: player.depth, hp: player.hp, grid: { ...player.grid } };
@@ -1000,7 +1014,6 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let lastAnswer: { readonly situation: string; readonly turn: number; readonly pick: Goal } | null = null;
 
   /* The game turn on which the errand-order fallback last ended having done nothing. */
-  let fallbackStalled: number | null = null;
 
   /* How the last plan ended, told to the model at the next decision: it keeps
    * no memory between calls, so without this it cannot know that fear just
@@ -1056,8 +1069,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * issued no command, or the game refused every one it issued (a spell
        * while confused, a blocked step). Asking again this turn would repeat it. */
       else if (issued === 0 || v.turn() === startTurn) {
-        if (goal === null) fallbackStalled = v.turn();
-        else stalled.set(goal, v.turn());
+        if (goal !== null) stalled.set(goal, v.turn());
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
           const why = refusalOf(goal, v);
@@ -1300,6 +1312,39 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     view = flourishView(view);
     const pack = readPack(view);
     switch (goal) {
+      case "endure":
+        return once("wait for an opening", view, (ctx) => ctx.act.hold());
+      case "step_aside":
+        return once("try another safe step", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          const at = ctx.view.player().grid;
+          const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, terrain, grid) && !standingOnHarm(ctx.view, terrain, grid) && !ctx.view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && damageFor(s, grid, 1, terrain).damage < ctx.view.player().hp);
+          const next = safe[Math.floor(rng() * safe.length)];
+          const dir = next === undefined ? null : directionToward(at, next);
+          return dir === null ? null : ctx.act.move(dir);
+        });
+      case "swing_unseen":
+        return once("swing at the unseen attacker", view, (ctx) => {
+          if (ctx.view.player().status.afraid > 0) return null;
+          const s = situationNow(ctx.view);
+          const dir = s.unseenHit?.direction ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)]!.key;
+          return ctx.act.melee(dir);
+        });
+      case "cast_area":
+      case "unseen_staff":
+      case "unseen_wand":
+      case "unseen_rod":
+        return once("answer the unseen attacker", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          if (s.unseenDamage <= 0) return null;
+          const source = unseenAttacks(ctx.view, goal, ctx.view.player().depth > 0 && ctx.view.player().gold < RECALL_MIN_GOLD && !reachableAnyStairs(ctx.view, terrain) && reachableFrontier(ctx.view, terrain))[0];
+          if (source === undefined) return null;
+          const dir = s.unseenHit?.direction ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)]!.key;
+          const offset = DIRECTIONS.find((d) => d.key === dir)!;
+          const at = ctx.view.player().grid;
+          ctx.act.setTargetLocation(at.x + offset.dx, at.y + offset.dy);
+          return source.how === "wand" ? ctx.act.aimWand(source.handle) : useCommand(ctx, source);
+        });
       case "recall_town":
       case "recall_dungeon": {
         const item = recallItem(view);
@@ -1507,7 +1552,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         /* The model saw every awake creature before choosing to explore. */
         return view.player().depth === 0
           ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true }), view)
-          : stepsPlan("explore", view, (ctx) => journey.explore(ctx));
+          : (() => { const wide = offeredWiden; return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide)); })();
       case "leave_level": {
         const down = leaveStep(situationNow(view), terrain)?.down === true;
         return stepsPlan(down ? "take the stairs down" : "take the nearest stairs", view, (ctx) => {
@@ -1656,13 +1701,47 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return null;
   }
 
-  return {
+  function ownChoice(digest: GoalDigest, view: AgentView): Choice {
+    const s = situationNow(view);
+    const persona = personaOf();
+    const preferred = proceduralPick(digest.offers, s.hpShare);
+    const probabilities = Object.fromEntries(digest.offers.map((offer) => [offer.goal, (offer.goal === preferred ? 2 : 1) / (1 + offer.risk * 8)]));
+    if (s.unseenDamage > 0 && persona !== null) {
+      const bold = persona.sliders.boldness / 100;
+      for (const offer of digest.offers) {
+        if (["swing_unseen", "cast_area", "unseen_wand"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * (1 + bold * 4);
+        if (["detect", "see_invisible", "light_room", "unseen_staff", "unseen_rod"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * (1 + (1 - bold) * 4);
+        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "teleport"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * 16;
+      }
+    }
+    const answer: Answer & { type: "choice" } = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
+    const picked = decide(answer, undefined, digest, { goal: answer }, view);
+    const offer = digest.offers.find((offer) => offer.goal === picked) ?? [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+    if (offer === undefined) return { plan: build("step_aside", view) };
+    digest.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
+    options.orders?.decided(offer.goal, view);
+    return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
+  }
+
+  const planner: Planner<GoalDigest> = {
+    rules(view, reason, stuck = false) {
+      if (stuck) {
+        lastAnswer = null;
+        for (const goal of sameTurn.keys()) stalled.set(goal, view.turn());
+      }
+      const question = planner.ask(view);
+      if ("handBack" in question || "reflex" in question) return question;
+      const choice = ownChoice(question.context, view);
+      if ("handBack" in choice) return choice;
+      const goal = question.context.trace?.pick ?? question.context.offers[0]?.goal ?? "wait";
+      return { reflex: reason, plan: choice.plan, context: question.context, answers: { goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } } };
+    },
     ask(view) {
       view = flourishView(view);
       const persona = personaOf();
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
-      if (player.dead) return { handBack: "The character has died." };
+      if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
       noteSeen(view);
       noteFeeling(view);
       const s = situationNow(view, true);
@@ -1702,8 +1781,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (offers.length === 0) {
         const tried = offered.map((o) => o.goal);
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
-        const handBack = journey.blocked(view) ?? nothingToDo(view, tried);
-        return { handBack, context: { depth: player.depth, offers: [], newCreatures: 0, reflex: "nothing to offer" } };
+        const reason = journey.blocked(view) ?? nothingToDo(view, tried);
+        offeredWiden = true;
+        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims);
+        if (reachableFrontier(view, terrain) && !wider.some((o) => o.goal === "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
+        if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
+        offers = journey.apply(wider, view, persona, visitedShops, recalling, true).filter(usable);
+        if (offers.length === 0) {
+          if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && damageFor(s, grid, 1, terrain).damage < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
+          if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
+          if (offers.length === 0 && player.status.afraid === 0) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
+          if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
+        }
+        log(`goal: Squire widens its choices. ${reason}`);
       }
 
       const aimList = options.strategy?.().aims ?? [];
@@ -1803,13 +1893,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     choose(answers: Readonly<Record<string, Answer>>, digest: GoalDigest, view: AgentView): Choice {
       view = flourishView(view);
       const answer = answers["goal"];
-      if (answer?.type !== "choice") return { handBack: "The model gave no goal." };
+      if (answer?.type !== "choice") return ownChoice(digest, view);
       const pick = decide(answer, answers["in_character"], digest, answers, view);
       if (pick === "none_of_these") {
-        /* Options the persona's safety floor took away stay away. */
-        const removed = new Set(digest.trace?.removed ?? []);
-        const allowed = digest.offers.filter((o) => !removed.has(o.goal));
-        const likeliest = [...(allowed.length > 0 ? allowed : digest.offers)].sort((a, b) => (answer.probabilities[b.goal] ?? 0) - (answer.probabilities[a.goal] ?? 0))[0];
         const p = view.player();
         const s = situationNow(view);
         const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
@@ -1829,23 +1915,15 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             const adequate = Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0);
             return adequate || a.risk - b.risk || priority.indexOf(a.goal) - priority.indexOf(b.goal);
           })[0]?.goal;
-          if (fallback === undefined) return { handBack: "Squire has no usable escape, healing or attack in this danger." };
+          if (fallback === undefined) return ownChoice(digest, view);
           log(`goal: none fit in danger, taking the survival fallback (${fallback})`);
           return { plan: noteStalls(fallback, build(fallback, view), view.turn()) };
         }
-        /* On a cleared floor the errand order has nothing to do either, and
-         * repeating it only stops Squire. The model's likeliest offer stands in. */
-        if (likeliest !== undefined && fallbackStalled === view.turn()) {
-          log(`goal: none fit and the errand order has nothing to do, taking ${likeliest.goal}`);
-          return { plan: noteStalls(likeliest.goal, build(likeliest.goal, view), view.turn()) };
-        }
-        const rated = digest.offers.map((o) => `${o.goal} ${String(Math.round((answer.probabilities[o.goal] ?? 0) * 100))}%`).join(", ");
-        log(`goal: none fit (${rated}), following the fixed errand order`);
-        return { plan: noteStalls(null, missionPlan("follow the errand order", campaign(), view, cfg, FALLBACK_STEPS), view.turn()) };
+        return ownChoice(digest, view);
       }
       const offer = digest.offers.find((o) => o.goal === pick);
       if (offer === undefined) {
-        return { handBack: "The model picked an option Squire did not offer, so the keyboard is yours." };
+        return ownChoice(digest, view);
       }
       options.orders?.decided(offer.goal, view);
       if (digest.situation !== undefined) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal };
@@ -1869,4 +1947,5 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       return stopped === null ? null : stopped.detail;
     },
   };
+  return planner;
 }

@@ -1,36 +1,6 @@
 /**
- * Squire itself: choose one errand, run it, and hand the keyboard back.
- *
- * ------------------------------------------------------------------
- * HOW HANDING BACK ACTUALLY WORKS
- * ------------------------------------------------------------------
- *
- * An AgentController returns a command, or null. Returning null is the seam's
- * own way of saying "I have nothing to say": the game loop reports that it needs
- * input and waits, exactly as it waits for a human. So the whole of this mod's
- * central claim comes down to one line - when the errand ends, this controller
- * returns null and never issues another command.
- *
- * From there the host finishes the job. Any real keypress while an autoplayer
- * holds the keyboard releases it, and the key that did the releasing is consumed
- * rather than passed on, so a player pressing something to get attention does not
- * also swing a weapon with it. That means a player NEVER has to fight this mod
- * for their own keyboard, and it means the release is not something this mod
- * could get wrong even if it tried: it is the game's, not this mod's.
- *
- * WHAT THIS COSTS TODAY, said plainly. One handover is one errand. There is no
- * seam a mod can use to bind a key to its own code in play, so asking for a
- * second errand means handing the keyboard over again. PLANNED.md carries what a
- * host-side fix would need and why it belongs in the game rather than here.
- *
- * ------------------------------------------------------------------
- * CHOOSING THE ERRAND
- * ------------------------------------------------------------------
- *
- * From the world, not from a menu, because the world already says what the
- * player meant. Hand over with something in sight and the errand is to deal with
- * it; hand over in an empty corridor and the errand is to walk the floor out.
- * Both rules can be switched off, and the long errand overrides both.
+ * Default handovers keep playing. A player can choose a bounded errand by
+ * switching off model play; the host still owns every keypress and death.
  */
 
 import type { AgentController } from "@rpgm-tools/neo-angband-core";
@@ -78,7 +48,7 @@ export function chooseMission(
   at: { readonly x: number; readonly y: number },
   monsters: Parameters<typeof pickTarget>[0],
 ): Mission | null {
-  if (cfg.errandCampaign) return campaign();
+  if (cfg.useModel || cfg.errandCampaign) return campaign();
   const target = pickTarget(monsters, at, {
     wakeSleepers: cfg.wakeSleepers,
     reach: AUTOFIGHT_REACH,
@@ -98,7 +68,7 @@ export function createSquire(options: SquireOptions): Squire {
   function finish(stop: Stop): null {
     finished = stop;
     log(`errand ended (${stop.reason}): ${stop.detail}`);
-    log("the keyboard is yours again; press any key to take it back from Squire");
+    if (mission?.id !== "campaign") log("the keyboard is yours again; press any key to take it back from Squire");
     return null;
   }
 

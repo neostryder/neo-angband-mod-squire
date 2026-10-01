@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { AgentActions, AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, selfHosted, type AskResult, type NetLike } from "./backend.js";
-import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, outcomeLine, RESUME_HINT, type Gauge, type Plan, type PlanEnd, type Planner, type Token } from "./brain.js";
+import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, outcomeLine, type Gauge, type Plan, type PlanEnd, type Planner, type Token } from "./brain.js";
 import { parseReply, type SystemOneRequest } from "./systemone.js";
 import { createTally, dayKey } from "./tally.js";
 import { createRuntime, type SquireHost } from "../runtime.js";
@@ -90,7 +90,6 @@ function rig(options: {
     status: () => {},
     onPlanEnd: (end) => ends.push(end),
     ...(options.gauge === undefined ? {} : { gauge: options.gauge }),
-    ...(options.release === undefined ? {} : { release: options.release }),
   });
   return {
     brain,
@@ -105,11 +104,18 @@ function rig(options: {
 }
 
 describe("brain", () => {
+  it("leaves victory with the host and issues no further command", () => {
+    const r = rig({ planner: planner(() => walks(1)), results: [], view: { player: () => ({ dead: false, winner: true }) } as AgentView });
+    expect(r.tick()).toBeNull();
+    expect(r.tick()).toBeNull();
+    expect(r.brain.stoppedBecause()).toBe("The character has won.");
+    expect(r.sent).toHaveLength(0);
+  });
   it.each([
     { available: true, dead: false },
     { available: false, dead: false },
     { available: true, dead: true },
-  ])("probes host release on the real planner hand-back ($available, death $dead)", async ({ available, dead }) => {
+  ])("keeps host ownership through readiness blocks and death ($available, death $dead)", async ({ available, dead }) => {
     const release = vi.fn();
     const host: SquireHost = {
       log: () => {},
@@ -130,14 +136,9 @@ describe("brain", () => {
     await flush();
     controller(w.view, w.act);
     controller(w.view, w.act);
-    expect(rt.brain()?.state()).toBe("stopped");
-    if (available && !dead) {
-      expect(release).toHaveBeenCalledExactlyOnceWith(rt.brain()?.stoppedBecause());
-      expect(rt.brain()?.stoppedBecause()).toContain("Press Ctrl-Z to hand the keyboard to Squire again.");
-    } else {
-      expect(release).not.toHaveBeenCalled();
-      expect(rt.brain()?.stoppedBecause()).toBe(dead ? "The character has died." : "Squire cannot descend yet: it needs maximum character level 2.");
-    }
+    expect(release).not.toHaveBeenCalled();
+    expect(rt.brain()?.state()).toBe(dead ? "stopped" : "asking");
+    expect(rt.brain()?.stoppedBecause()).toBe(dead ? "The character has died." : null);
   });
 
   it("asks, waits for the answer, then runs the plan", async () => {
@@ -191,89 +192,86 @@ describe("brain", () => {
     expect(r.sent).toHaveLength(2);
   });
 
-  it("backs off after a retryable failure, then tries again", async () => {
-    const down: AskResult = {
-      ok: false,
-      latencyMs: 5,
-      failure: { kind: "unreachable", message: "Could not reach Jev: offline.", retryable: true },
-    };
+  it("plays by its own rules during backoff, then uses the model again", async () => {
+    const down: AskResult = { ok: false, latencyMs: 5, failure: { kind: "unreachable", message: "Could not reach Jev: offline.", retryable: true } };
     const r = rig({ planner: planner(() => walks(1)), results: [down, answered()] });
     r.tick();
     await flush();
     expect(r.tick()).toBeNull();
-    expect(r.brain.state()).toBe("waiting");
-    r.advance((BACKOFF_MS[0] ?? 0) - 1);
-    expect(r.tick()).toBeNull();
+    expect(r.brain.state()).toBe("running");
+    r.advance(BACKOFF_MS[0]! - 1);
+    expect(r.tick()).toEqual(WALK);
     expect(r.sent).toHaveLength(1);
     r.advance(1);
     expect(r.tick()).toBeNull();
     expect(r.sent).toHaveLength(2);
     await flush();
     expect(r.tick()).toEqual(WALK);
+    expect(r.logs).toContain("Squire resumes model decisions.");
   });
 
-  it("stops for good on a refused key, and says how to resume", async () => {
-    const refused: AskResult = {
-      ok: false,
-      latencyMs: 5,
-      failure: { kind: "key-refused", message: "Jev refused the API key.", retryable: false },
-    };
-    const r = rig({ planner: planner(() => walks(1)), results: [refused] });
+  it("plays after a nonretryable request failure and retries later", async () => {
+    const refused: AskResult = { ok: false, latencyMs: 5, failure: { kind: "key-refused", message: "Jev refused the API key.", retryable: false } };
+    const r = rig({ planner: planner(() => walks(1)), results: [refused, answered()] });
     r.tick();
     await flush();
-    expect(r.tick()).toBeNull();
-    expect(r.brain.state()).toBe("stopped");
-    expect(r.brain.stoppedBecause()).toContain("Ctrl-Z");
-    expect(r.brain.stoppedBecause()).toBe(`Jev refused the API key. ${RESUME_HINT}`);
-    expect(r.tick()).toBeNull();
+    r.tick();
+    expect(r.tick()).toEqual(WALK);
+    expect(r.brain.stoppedBecause()).toBeNull();
     expect(r.sent).toHaveLength(1);
+    r.advance(BACKOFF_MS[0]!);
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    expect(r.sent).toHaveLength(2);
   });
 
-  it("stops once the retries run out", async () => {
-    const down: AskResult = {
-      ok: false,
-      latencyMs: 5,
-      failure: { kind: "server-error", message: "Jev had a problem.", retryable: true },
-    };
-    const results = Array.from({ length: BACKOFF_MS.length + 1 }, () => down);
-    const r = rig({ planner: planner(() => walks(1)), results });
-    for (let i = 0; i <= BACKOFF_MS.length; i += 1) {
-      r.tick();
+  it("continues retrying after the backoff list ends", async () => {
+    const down: AskResult = { ok: false, latencyMs: 5, failure: { kind: "server-error", message: "Jev had a problem.", retryable: true } };
+    const count = BACKOFF_MS.length + 3;
+    const r = rig({ planner: planner(() => walks(1)), results: Array.from({ length: count }, () => down) });
+    r.tick();
+    for (let i = 0; i < count; i += 1) {
       await flush();
       r.tick();
-      r.advance(60_000);
+      expect(r.tick()).toEqual(WALK);
+      expect(r.brain.stoppedBecause()).toBeNull();
+      r.advance(60000);
+      if (i < count - 1) r.tick();
     }
-    expect(r.brain.state()).toBe("stopped");
-    expect(r.sent).toHaveLength(BACKOFF_MS.length + 1);
+    expect(r.sent).toHaveLength(count);
+    expect(r.logs.filter((line) => line.includes("plays by its own rules"))).toHaveLength(1);
   });
 
-  it("gives up after the same number of tries when the server sends Retry-After", async () => {
-    const limited: AskResult = {
-      ok: false,
-      latencyMs: 5,
-      failure: { kind: "rate-limited", message: "Jev is busy.", retryable: true, retryAfterMs: 30_000 },
-    };
-    const results = Array.from({ length: BACKOFF_MS.length + 3 }, () => limited);
-    const r = rig({ planner: planner(() => walks(1)), results });
-    for (let i = 0; i <= BACKOFF_MS.length + 2; i += 1) {
-      r.tick();
+  it("continues retrying after the backoff list ends with Retry-After", async () => {
+    const down: AskResult = { ok: false, latencyMs: 5, failure: { kind: "server-error", message: "Jev had a problem.", retryable: true, retryAfterMs: 30000 } };
+    const count = BACKOFF_MS.length + 3;
+    const r = rig({ planner: planner(() => walks(1)), results: Array.from({ length: count }, () => down) });
+    r.tick();
+    for (let i = 0; i < count; i += 1) {
       await flush();
       r.tick();
-      r.advance(60_000);
+      expect(r.tick()).toEqual(WALK);
+      expect(r.brain.stoppedBecause()).toBeNull();
+      r.advance(60000);
+      if (i < count - 1) r.tick();
     }
-    expect(r.brain.state()).toBe("stopped");
-    expect(r.sent).toHaveLength(BACKOFF_MS.length + 1);
+    expect(r.sent).toHaveLength(count);
+    expect(r.logs.filter((line) => line.includes("plays by its own rules"))).toHaveLength(1);
   });
 
-  it("stops when plan after plan does nothing", async () => {
-    const results = Array.from({ length: MAX_EMPTY_DECISIONS + 2 }, () => answered());
-    const r = rig({ planner: planner(() => walks(0)), results });
-    for (let i = 0; i <= MAX_EMPTY_DECISIONS + 1; i += 1) {
-      r.tick();
-      await flush();
-      r.tick();
-    }
-    expect(r.brain.state()).toBe("stopped");
+  it("pauses an empty-plan loop and tries a different rule choice", async () => {
+    let tries = 0;
+    const p = planner(() => walks(0));
+    p.rules = () => { tries += 1; return { reflex: "another move", plan: walks(1), context: null, answers: {} }; };
+    const r = rig({ planner: p, results: Array.from({ length: MAX_EMPTY_DECISIONS + 2 }, () => answered()) });
+    for (let i = 0; i <= MAX_EMPTY_DECISIONS + 1; i += 1) { r.tick(); await flush(); r.tick(); }
+    expect(r.brain.state()).toBe("waiting");
+    expect(r.brain.stoppedBecause()).toBeNull();
+    r.advance(1000);
+    r.tick();
+    expect(r.tick()).toEqual(WALK);
+    expect(tries).toBe(1);
   });
 
   it("keeps going while each empty plan is a different goal", async () => {
@@ -291,16 +289,17 @@ describe("brain", () => {
     expect(r.brain.state()).not.toBe("stopped");
   });
 
-  it("hands back when the planner has nothing to ask", () => {
+  it("pauses and retries when the planner has nothing to ask", () => {
     const r = rig({
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
       results: [],
     });
     expect(r.tick()).toBeNull();
-    expect(r.brain.stoppedBecause()).toBe("Nothing to do here.");
+    expect(r.brain.stoppedBecause()).toBeNull();
+    expect(r.brain.state()).toBe("waiting");
   });
 
-  it("releases the keyboard once when the planner stops, with the restart hint", () => {
+  it("keeps the keyboard when a planner cannot act", () => {
     const release = vi.fn();
     const r = rig({
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
@@ -308,11 +307,12 @@ describe("brain", () => {
     });
     r.tick();
     r.tick();
-    expect(release).toHaveBeenCalledExactlyOnceWith("Nothing to do here. Press Ctrl-Z to hand the keyboard to Squire again.");
-    expect(r.logs).toEqual([r.brain.stoppedBecause()]);
+    expect(release).not.toHaveBeenCalled();
+    expect(r.logs).toHaveLength(1);
+    expect(r.brain.stoppedBecause()).toBeNull();
   });
 
-  it("replaces the take-back hint when a failed request releases the keyboard", async () => {
+  it("keeps the keyboard after a failed request", async () => {
     const release = vi.fn();
     const r = rig({ planner: planner(() => walks(1)), release, results: [{
       ok: false, latencyMs: 5,
@@ -322,8 +322,8 @@ describe("brain", () => {
     await flush();
     r.tick();
     r.tick();
-    expect(release).toHaveBeenCalledExactlyOnceWith("Jev refused the API key. Press Ctrl-Z to hand the keyboard to Squire again.");
-    expect(r.brain.stoppedBecause()).not.toContain("Press any key");
+    expect(release).not.toHaveBeenCalled();
+    expect(r.brain.stoppedBecause()).toBeNull();
   });
 
   it("leaves the death hand-back to the host without releasing", () => {
@@ -338,7 +338,7 @@ describe("brain", () => {
     expect(release).not.toHaveBeenCalled();
   });
 
-  it("logs a hand-back with nothing to offer as a decision, so the stop shows in the decision log", () => {
+  it("records an interrupted decision when a planner cannot act", () => {
     const outcomes: string[] = [];
     const ends: PlanEnd[] = [];
     const brain = createBrain<null>({
@@ -354,14 +354,51 @@ describe("brain", () => {
       onPlanEnd: (end) => ends.push(end),
     });
     expect(brain.controller(view, act)).toBeNull();
-    expect(brain.state()).toBe("stopped");
-    expect(brain.stoppedBecause()).toBe("Squire has nothing left to try here.");
-    expect(outcomes).toEqual(["nothing to offer: hand back: Squire has nothing left to try here."]);
-    expect(ends).toMatchObject([{ stop: "handed back", reason: "Squire has nothing left to try here." }]);
+    expect(brain.state()).toBe("waiting");
+    expect(brain.stoppedBecause()).toBeNull();
+    expect(outcomes).toEqual(["nothing to offer: try again: Squire has nothing left to try here."]);
+    expect(ends).toMatchObject([{ stop: "interrupted", reason: "Squire has nothing left to try here." }]);
   });
 });
 
 describe("reflexes", () => {
+  it.each(["session", "day"])("plays under a %s spend cap and resumes when it allows requests", async (kind) => {
+    const caps = { perSessionUsd: kind === "session" ? 0.001 : 0, perDayUsd: kind === "day" ? 0.001 : 0 };
+    let now = new Date(2026, 8, 30, 12).getTime();
+    const tally = createTally(caps);
+    tally.record(JEV, { inputTokens: 1_000_000, outputTokens: 0, estimated: false }, now);
+    const send = vi.fn(async () => answered());
+    const logs: string[] = [];
+    const status = vi.fn();
+    const brain = createBrain({ backend: JEV, planner: planner(() => walks(1)), tally, send, token: () => ({ epoch: 1, revision: 1 }), now: () => now, log: (line) => logs.push(line), status });
+    brain.controller(view, act);
+    expect(brain.controller(view, act)).toEqual(WALK);
+    brain.controller(view, act);
+    expect(brain.controller(view, act)).toEqual(WALK);
+    expect(send).not.toHaveBeenCalled();
+    expect(logs.filter((line) => line.includes("plays by its own rules"))).toHaveLength(1);
+    expect(status).toHaveBeenLastCalledWith("walk 1", expect.stringContaining("spend limit"));
+    if (kind === "session") caps.perSessionUsd = 0;
+    else now += 24 * 60 * 60 * 1000;
+    brain.controller(view, act);
+    await flush();
+    expect(brain.controller(view, act)).toEqual(WALK);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(brain.stoppedBecause()).toBeNull();
+  });
+
+  it("uses rule decisions with no model and sends no requests", () => {
+    const send = vi.fn();
+    const p = planner(() => walks(1));
+    p.rules = () => ({ reflex: "own rules", plan: walks(1), context: null, answers: {} });
+    const brain = createBrain({ backend: JEV, rulesOnly: true, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send, token: () => null, now: () => 0, log: () => {}, status: () => {} });
+    brain.controller(view, act);
+    expect(brain.controller(view, act)).toEqual(WALK);
+    brain.controller(view, act);
+    expect(brain.controller(view, act)).toEqual(WALK);
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it("runs a reflex without sending a request, and logs it as a decision", () => {
     const decisions: string[] = [];
     const brain = createBrain({
@@ -395,8 +432,14 @@ describe("plan outcomes", () => {
     expect(r.tick()).toEqual(WALK);
     r.advance(30_001);
     expect(r.tick()).toBeNull();
-    expect(r.ends[0]).toMatchObject({ stop: "interrupted", reason: "The plan made no progress for 30 seconds." });
-    expect(r.sent).toHaveLength(2);
+    expect(r.ends[0]).toMatchObject({ stop: "interrupted", reason: "Squire made no progress for 30 seconds." });
+    expect(r.brain.state()).toBe("waiting");
+    expect(r.sent).toHaveLength(1);
+    r.advance(1000);
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    expect(r.brain.stoppedBecause()).toBeNull();
   });
 
   it("keeps a long plan when game turns continue to pass", async () => {
@@ -484,7 +527,7 @@ describe("plan outcomes", () => {
     expect(outcomeLine(r.ends[0]!)).toBe("interrupted, 1 command");
   });
 
-  it("reports a hand-back as the decision's ending", async () => {
+  it("reports an unusable decision as interrupted", async () => {
     const r = rig({
       planner: { ask: () => ({ request: REQUEST, context: null }), choose: () => ({ handBack: "The character is in town." }), trigger: () => null },
       results: [answered()],
@@ -493,8 +536,8 @@ describe("plan outcomes", () => {
     r.tick();
     await flush();
     r.tick();
-    expect(r.ends).toEqual([{ stop: "handed back", reason: "The character is in town.", commands: 0, refused: 0, hpBefore: 12, hpAfter: 12 }]);
-    expect(outcomeLine(r.ends[0]!)).toBe("handed back");
+    expect(r.ends).toEqual([{ stop: "interrupted", reason: "The character is in town.", commands: 0, refused: 0, hpBefore: 12, hpAfter: 12 }]);
+    expect(outcomeLine(r.ends[0]!)).toBe("interrupted, 0 commands, hp 0");
   });
 });
 

@@ -34,7 +34,7 @@ function squireOver(
   const w = world({ map, monsters });
   const logged: string[] = [];
   const squire = createSquire({
-    cfg: { ...defaultCfg(), ...overrides },
+    cfg: { ...defaultCfg(), useModel: false, ...overrides },
     terrain: w.terrain,
     log: (message) => logged.push(message),
   });
@@ -44,28 +44,28 @@ function squireOver(
 describe("chooseMission", () => {
   it("fights when something is in sight to fight", () => {
     const w = world({ map: HALL, monsters: [{ grid: { x: 5, y: 2 } }] });
-    expect(chooseMission(defaultCfg(), HERE, w.view.monsters())?.id).toBe("autofight");
+    expect(chooseMission({ ...defaultCfg(), useModel: false }, HERE, w.view.monsters())?.id).toBe("autofight");
   });
 
   it("explores when nothing is", () => {
     const w = world({ map: HALL });
-    expect(chooseMission(defaultCfg(), HERE, w.view.monsters())?.id).toBe("autoexplore");
+    expect(chooseMission({ ...defaultCfg(), useModel: false }, HERE, w.view.monsters())?.id).toBe("autoexplore");
   });
 
   it("explores past a sleeping creature, because it is not a target", () => {
     const w = world({ map: HALL, monsters: [{ grid: { x: 5, y: 2 }, asleep: true }] });
-    expect(chooseMission(defaultCfg(), HERE, w.view.monsters())?.id).toBe("autoexplore");
+    expect(chooseMission({ ...defaultCfg(), useModel: false }, HERE, w.view.monsters())?.id).toBe("autoexplore");
   });
 
   it("takes the long errand over both short ones when it is switched on", () => {
     const w = world({ map: HALL, monsters: [{ grid: { x: 5, y: 2 } }] });
-    const cfg = { ...defaultCfg(), errandCampaign: true };
+    const cfg = { ...defaultCfg(), useModel: false, errandCampaign: true };
     expect(chooseMission(cfg, HERE, w.view.monsters())?.id).toBe("campaign");
   });
 
   it("falls through to exploring when fighting is switched off", () => {
     const w = world({ map: HALL, monsters: [{ grid: { x: 5, y: 2 } }] });
-    const cfg = { ...defaultCfg(), errandAutofight: false };
+    const cfg = { ...defaultCfg(), useModel: false, errandAutofight: false };
     expect(chooseMission(cfg, HERE, w.view.monsters())?.id).toBe("autoexplore");
   });
 
@@ -73,6 +73,7 @@ describe("chooseMission", () => {
     const w = world({ map: HALL });
     const cfg = {
       ...defaultCfg(),
+      useModel: false,
       errandAutofight: false,
       errandAutoexplore: false,
       errandCampaign: false,

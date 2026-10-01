@@ -49,8 +49,8 @@ export function nudgeUnseen(dist: Readonly<Record<string, number>>, offers: read
   const pressure = Math.min(1, damage / Math.max(1, hp)) * strength / 100;
   for (const offer of offers) {
     if (offer.risk > ceiling) continue;
-    const response = ["detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
-    const advance = ["explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
+    const response = ["unseen_staff", "unseen_rod", "detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
+    const advance = ["swing_unseen", "cast_area", "unseen_wand", "explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
     if (response || advance) result[offer.goal] = (result[offer.goal] ?? 0) * Math.exp(pressure * (response ? fear * 2 : 1 - fear * 2));
   }
   return result;

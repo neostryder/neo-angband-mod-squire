@@ -147,6 +147,13 @@ export interface NotebookEntry {
 }
 
 const LABEL: Readonly<Record<Goal, string>> = {
+  swing_unseen: "swing at an unseen attacker",
+  cast_area: "cast an area spell",
+  unseen_staff: "use a staff against an unseen attacker",
+  unseen_wand: "aim a wand at an unseen attacker",
+  unseen_rod: "zap a rod against an unseen attacker",
+  step_aside: "try another safe step",
+  endure: "wait for an opening",
   fight: "fight in melee",
   shoot: "shoot",
   throw_oil: "throw oil",

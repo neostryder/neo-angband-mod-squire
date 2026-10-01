@@ -17,7 +17,7 @@
  *   3. Collect. Something underfoot on a grid not already picked over: take it.
  *   4. Explore. Unexplored ground that can be reached: walk toward it.
  *   5. Descend. The floor is walked out and a down staircase is known: use it.
- *   6. Nothing left. Stop, and hand the keyboard back.
+ *   6. Nothing left. Try a fresh level or another safe step.
  *
  * HOW THIS DIFFERS FROM A FAITHFUL AUTOPLAYER'S LADDER. A faithful one weighs
  * every rung against every other on a single danger number and will happily
@@ -37,10 +37,10 @@
 import type { SquireContext } from "../context.js";
 import type { Decision, Mission, Stop } from "../mission.js";
 import { issue, stop } from "../mission.js";
-import { adjacent } from "../grid.js";
+import { adjacent, directionToward, neighbours } from "../grid.js";
 import { advance, alreadyCollected, markCollected } from "../progress.js";
 import { awakeInSight, pickTarget } from "../threat.js";
-import { frontiers, hasFloorObject, knownDownStairs, standingOnHarm } from "../map.js";
+import { frontiers, hasFloorObject, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import { retreatFrom, stepIntoDark, strike, travelTo } from "../travel.js";
 
 /** How far the campaign will walk to reach a fight. */
@@ -64,6 +64,7 @@ export function campaign(): Mission {
       advance(ctx.progress, at);
 
       if (player.dead) return stop("dead", "The character died.");
+      if (player.winner) return stop("done", "The character has won.");
 
       /* A new floor is a new set of everything this errand remembers. Without
        * this the grids picked over on the last floor would still read as picked
@@ -144,12 +145,15 @@ export function campaign(): Mission {
       }
 
       /* 6. Nothing left. */
-      return stop(
-        "done",
-        ctx.progress.idle >= ctx.cfg.idleSteps
-          ? "The character has stopped making progress."
-          : "There is nothing left to do on this floor.",
-      );
+      ctx.progress.idle = 0;
+      const stairs = knownStairs(ctx.view, ctx.terrain).filter((grid) => ctx.terrain.isUpStair(ctx.view.cell(grid.x, grid.y)?.feat ?? -1));
+      if (stairs.some((grid) => grid.x === at.x && grid.y === at.y)) return issue(ctx.act.ascend());
+      const home = travelTo(ctx, stairs);
+      if (home.kind === "step") return issue(home.command);
+      const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, ctx.terrain, grid) && !standingOnHarm(ctx.view, ctx.terrain, grid) && !awake.some((m) => adjacent(grid, m.grid)));
+      const next = safe[Math.floor(Math.random() * safe.length)];
+      const dir = next === undefined ? null : directionToward(at, next);
+      return issue(dir === null ? ctx.act.hold() : ctx.act.move(dir));
     },
   };
 }

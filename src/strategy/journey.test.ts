@@ -19,6 +19,25 @@ function goals(w: ReturnType<typeof world>, journey = createJourney(w.terrain), 
 }
 
 describe("journey offer and execution guards", () => {
+  it("starts another earning trip when wider choices permit an unready town departure", () => {
+    const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    journey.apply(offers("descend"), w.view, null, new Set(), false);
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    w.moveTo({ x: 2, y: 1 });
+    journey.apply(offers("explore"), w.view, null, new Set(), false);
+    w.setPlayer({ depth: 0 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false).map((o) => o.goal)).not.toContain("descend");
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).toContain("descend");
+    const down = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
+    expect(down.step(w.view, w.act)).toEqual({ code: "descend" });
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    w.moveTo({ x: 2, y: 1 });
+    expect(journey.apply(offers("explore"), w.view, null, new Set(), false).map((o) => o.goal)).toContain("explore");
+    expect(journey.blocked(w.view)).not.toContain("needs town");
+  });
   const breeders = [5, 6, 7].map((x, index) => ({ grid: { x, y: 1 }, race: index === 2 ? "giant white mouse" : "white worm mass", raceFlags: ["MULTIPLY"] }));
 
   it("keeps the young Mage's aggregate breeder exit after sight and mana change", () => {

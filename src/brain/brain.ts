@@ -14,11 +14,10 @@
  * - asking: a request is out. Calls return null until it resolves.
  * - running: a plan is issuing commands. Each call checks the planner's
  *   triggers first, and a trigger drops the plan and asks again.
- * - waiting: the last request failed and Squire is backing off before it tries
- *   again.
+ * - waiting: plans made no progress. A brief pause limits repeated refusals.
  *
- * A failure that retrying cannot fix, or retries that run out, ends in stopped:
- * the controller says why and how to resume, then returns null for good.
+ * Failed requests switch to the character's own rules while retries back off.
+ * Only death ends play; the host owns the keyboard and next-character flow.
  *
  * An answer is used only if the game is still at the input wait the question
  * was asked at. The input token says so. A stale answer is thrown away and the
@@ -69,6 +68,7 @@ export interface Reflex<C> {
 
 /** The game-specific half of the brain: what to ask, and what an answer means. */
 export interface Planner<C> {
+  rules?(view: AgentView, reason: string, stuck?: boolean): Reflex<C> | { readonly handBack: string; readonly context?: C };
   /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back, with the context to log it under when the planner has one. */
   ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string; readonly context?: C };
   /** Turn the answers into a plan. */
@@ -130,6 +130,7 @@ export function outcomeLine(end: PlanEnd): string {
 }
 
 export interface BrainDeps<C> {
+  readonly rulesOnly?: boolean;
   readonly backend: Backend;
   readonly planner: Planner<C>;
   readonly tally: Tally;
@@ -141,7 +142,6 @@ export interface BrainDeps<C> {
   log(message: string): void;
   /** Publish the current task, through `ctx.controller.setStatus`. */
   status(label: string, reason?: string): void;
-  release?(reason?: string): void;
   onDecision?(record: DecisionRecord<C>): void;
   /** Called when a decision's plan ends, once per decision and after onDecision. */
   onPlanEnd?(end: PlanEnd): void;
@@ -149,10 +149,10 @@ export interface BrainDeps<C> {
   gauge?(view: AgentView): Gauge;
 }
 
-/** Waits between retries, in milliseconds. Once these run out, Squire stops. */
+/** Waits between retries, in milliseconds. Later retries use the last wait. */
 export const BACKOFF_MS: readonly number[] = Object.freeze([1_000, 2_000, 4_000, 8_000, 15_000, 30_000]);
 
-/** Longest wait Squire accepts from a server's Retry-After before it stops instead. */
+/** Longest wait between requests while Squire plays by its own rules. */
 const MAX_RETRY_AFTER_MS = 60_000;
 
 /**
@@ -166,9 +166,6 @@ export const MAX_PLAN_IDLE_MS = 30_000;
 
 /** Time a plan can run before Squire asks for a fresh decision. */
 export const MAX_PLAN_MS = 60_000;
-
-/** How to get Squire going again, said the same way everywhere. */
-export const RESUME_HINT = "Press any key to take the keyboard back, then Ctrl-Z to hand it to Squire again.";
 
 /** Counts for the plan that is running. */
 interface PlanRun {
@@ -209,6 +206,20 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   let emptyDecisions = 0;
   /* Labels of the plans that ended with no command since the last command. */
   const emptyLabels = new Set<string>();
+  let rulesReason: string | null = null;
+  let retryAt = 0;
+  let breakLoop = false;
+  let progressGauge: Gauge | null = null;
+  let progressAt = deps.now();
+
+  function useRules(reason: string): void {
+    if (rulesReason === null) deps.log(`${reason} Squire plays by its own rules, choosing from its current offers.`);
+    rulesReason = reason;
+  }
+
+  function runningStatus(plan: Plan): void {
+    deps.status(plan.label, rulesReason === null ? (deps.rulesOnly === true ? "Squire plays by its own rules." : undefined) : `Squire plays by its own rules. ${rulesReason}`);
+  }
 
   function newRun(view: AgentView): PlanRun {
     const gauge = deps.gauge?.(view);
@@ -226,37 +237,36 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   }
 
   function stopWith(message: string, view: AgentView): null {
-    const release = view.player?.().dead === true ? undefined : deps.release;
-    if (release !== undefined) {
-      const hint = "Press Ctrl-Z to hand the keyboard to Squire again.";
-      message = message.endsWith(RESUME_HINT) ? message.slice(0, -RESUME_HINT.length) + hint : `${message} ${hint}`;
+    if (view.player?.().dead !== true && view.player?.().winner !== true) {
+      useRules(message);
+      breakLoop = true;
+      state = { kind: "waiting", until: deps.now() + 1000 };
+      deps.status("trying another move", message);
+      return null;
     }
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
-    release?.(message);
     return null;
   }
 
   function failed(failure: Failure, view: AgentView): null {
-    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`, view);
-    /* A server's Retry-After sets how long to wait, never how many times. */
-    const wait = attempt >= BACKOFF_MS.length ? undefined : failure.retryAfterMs ?? BACKOFF_MS[attempt];
-    if (wait === undefined || wait > MAX_RETRY_AFTER_MS) {
-      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`, view);
-    }
+    const wait = Math.min(MAX_RETRY_AFTER_MS, failure.retryAfterMs ?? BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]!);
     attempt += 1;
-    state = { kind: "waiting", until: deps.now() + wait };
-    deps.log(`${failure.message} Trying again in ${String(Math.ceil(wait / 1000))} s.`);
-    deps.status("waiting", failure.message);
+    retryAt = deps.now() + wait;
+    useRules(failure.message);
+    state = { kind: "idle" };
+    startAsking(view);
     return null;
   }
 
   function startAsking(view: AgentView): null {
-    const capped = tally.overCap(backend, deps.now());
-    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`, view);
+    const capped = deps.rulesOnly === true ? null : tally.overCap(backend, deps.now());
+    if (capped !== null) useRules(capped.message);
 
-    const question = planner.ask(view);
+    const own = deps.rulesOnly === true || capped !== null || rulesReason !== null && deps.now() < retryAt || breakLoop;
+    const question = own && planner.rules !== undefined ? planner.rules(view, rulesReason ?? (deps.rulesOnly === true ? "Squire plays by its own rules." : "Squire is trying another move."), breakLoop) : planner.ask(view);
+    breakLoop = false;
     if ("handBack" in question) {
       /* A hand-back with no decision record looks, in the log, like Squire still holding the keyboard with nothing to do. */
       if (question.context !== undefined) {
@@ -269,11 +279,11 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
           usage: { inputTokens: 0, outputTokens: 0, estimated: false },
           model: null,
           latencyMs: 0,
-          outcome: `hand back: ${question.handBack}`,
+          outcome: `try again: ${question.handBack}`,
           reflex: "nothing to offer",
         });
         const hp = deps.gauge?.(view).hp ?? null;
-        deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+        deps.onPlanEnd?.({ stop: "interrupted", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       }
       return stopWith(question.handBack, view);
     }
@@ -291,10 +301,17 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         reflex: question.reflex,
       });
       state = { kind: "running", plan: question.plan, run: newRun(view) };
-      deps.status(question.plan.label);
+      runningStatus(question.plan);
       return null;
     }
 
+    if (own) {
+      const choice = planner.choose({}, question.context, view);
+      if ("handBack" in choice) return stopWith(choice.handBack, view);
+      state = { kind: "running", plan: choice.plan, run: newRun(view) };
+      runningStatus(choice.plan);
+      return null;
+    }
     const token = deps.token();
     state = { kind: "asking", token, question };
     deps.status("thinking");
@@ -329,6 +346,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     }
     tally.record(backend, result.usage, deps.now());
     attempt = 0;
+    if (rulesReason !== null) deps.log("Squire resumes model decisions.");
+    rulesReason = null;
 
     if (!sameToken(token, deps.token())) {
       /* The game moved while the model was thinking: the player took the
@@ -338,7 +357,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     }
 
     const choice = planner.choose(result.answers, question.context, view);
-    const outcome = "plan" in choice ? choice.plan.label : `hand back: ${choice.handBack}`;
+    const outcome = "plan" in choice ? choice.plan.label : `try again: ${choice.handBack}`;
     deps.onDecision?.({
       token,
       backend: backend.label,
@@ -353,17 +372,31 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     });
     const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice) {
-      deps.onPlanEnd?.({ stop: "handed back", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
+      deps.onPlanEnd?.({ stop: "interrupted", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       stopWith(choice.handBack, view);
       return null;
     }
     state = { kind: "running", plan: choice.plan, run: newRun(view) };
-    deps.status(choice.plan.label);
+    runningStatus(choice.plan);
     return "planned";
   }
 
   const controller: AgentController = (view, act) => {
+    if (view.player?.().dead === true || view.player?.().winner === true) return state.kind === "stopped" ? null : stopWith(view.player().dead ? "The character has died." : "The character has won.", view);
     if (state.kind === "stopped") return null;
+    const current = deps.gauge?.(view);
+    if (current !== undefined) {
+      if (progressGauge === null || current.turn !== progressGauge.turn || current.depth !== progressGauge.depth) progressAt = deps.now();
+      progressGauge = current;
+      if ((state.kind === "running" || state.kind === "idle") && deps.now() - progressAt >= MAX_PLAN_IDLE_MS) {
+        if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, hpBefore: state.run.hpBefore, hpAfter: current.hp });
+        progressAt = deps.now();
+        breakLoop = true;
+        state = { kind: "waiting", until: deps.now() + 1000 };
+        deps.status("trying another move", "Squire made no progress. It will pause briefly and try another move.");
+        return null;
+      }
+    }
 
     if (state.kind === "asking") {
       if (takeLanded(view) === null) return null;
@@ -420,7 +453,12 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         else emptyLabels.add(plan.label);
       }
       if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`, view);
+        emptyDecisions = 0;
+        emptyLabels.clear();
+        breakLoop = true;
+        state = { kind: "waiting", until: deps.now() + 1000 };
+        deps.status("trying another move", "Squire's plans issued no commands. It will wait one second and choose another action.");
+        return null;
       }
       state = { kind: "idle" };
     }

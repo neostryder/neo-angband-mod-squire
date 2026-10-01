@@ -250,8 +250,9 @@ describe("polling while Squire plays", () => {
     const net = stubNet([ok([{ text: "run from uniques", platform: "twitch", user: "Grip" }])]);
     const rt = createRuntime(host(URL, net), { store: memoryStore() });
     expect(net.calls).toHaveLength(0);
-    const controller = rt.controllerFor(defaultCfg(), {} as Terrain, () => () => null);
-    controller(world({ map: ["###", "#@#", "###"] }).view, {} as AgentActions);
+    const w = world({ map: ["###", "#@#", "###"] });
+    const controller = rt.controllerFor(defaultCfg(), w.terrain, () => () => null);
+    controller(w.view, w.act);
     await vi.waitFor(() => expect(rt.orders().list()).toHaveLength(1));
     expect(rt.orders().list()[0]).toMatchObject({ text: "run from uniques", source: "channel", viewer: "Grip" });
   });
@@ -259,8 +260,9 @@ describe("polling while Squire plays", () => {
   it("asks nothing with no address", async () => {
     const net = stubNet([]);
     const rt = createRuntime(host("", net), { store: memoryStore() });
-    const controller = rt.controllerFor(defaultCfg(), {} as Terrain, () => () => null);
-    controller(world({ map: ["###", "#@#", "###"] }).view, {} as AgentActions);
+    const w = world({ map: ["###", "#@#", "###"] });
+    const controller = rt.controllerFor(defaultCfg(), w.terrain, () => () => null);
+    controller(w.view, w.act);
     await Promise.resolve();
     expect(net.calls).toHaveLength(0);
   });

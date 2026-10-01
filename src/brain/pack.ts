@@ -54,6 +54,38 @@ export type Detection =
 
 export type UnseenResponse = "detect" | "see_invisible" | "light_room";
 
+export type UnseenUse = CombatUse | { readonly how: "wand"; readonly handle: number; readonly name: string };
+export type UnseenAttack = "cast_area" | "unseen_staff" | "unseen_wand" | "unseen_rod";
+
+export function unseenAttacks(view: AgentView, response: UnseenAttack, surveyTreasure = false): UnseenUse[] {
+  const out: UnseenUse[] = [];
+  const area = /\b(?:balls?|orbs?|cloud|storm|swarm|dispel evil|sleep monsters)\b/i;
+  const aimed = /\b(?:bolts?|balls?|magic missile|stinking cloud|light|dragon's (?:flame|frost|breath))\b/i;
+  if (response === "cast_area") {
+    for (const spell of canRead(view) ? castable(view) : []) {
+      const info = inspecting(view).spellInfo?.(spell.sidx);
+      if (area.test(spell.name + " " + (info?.description ?? "")) && info?.canCastNow !== false && (info?.failChance ?? spell.fail) <= 50 && (info?.mana ?? spell.mana) <= view.player().sp) out.push({ how: "cast", sidx: spell.sidx, name: spell.name });
+    }
+    return out;
+  }
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    if (name === null || empty(name) || item.timeout > 0 || /\bcharging\b/i.test(name)) continue;
+    const how = response === "unseen_staff" && /\bStaffs?\b/i.test(name) ? "staff"
+      : response === "unseen_wand" && /\bWands?\b/i.test(name) ? "wand"
+      : response === "unseen_rod" && /\bRods?\b/i.test(name) ? "rod" : null;
+    if (how === null) continue;
+    const shownEffect = /\bof (.+?)(?:\s*\(|$)/i.exec(name)?.[1] ?? "";
+    const inspected = inspecting(view).inspectItem?.(item.handle)?.text ?? "";
+    const effect = shownEffect + " " + (/\bWhen (?:aimed|used|zapped)\b[^.]*\./i.exec(inspected)?.[0] ?? "");
+    const reaches = how === "staff" ? /\b(?:detect evil|dispel evil|sleep\w*\b[^.]*monsters?|light|illumination|mapping)\b/i.test(effect)
+      : how === "wand" ? aimed.test(effect) : /\b(?:detection|illumination|light|bolts?|balls?)\b/i.test(effect);
+    const usefulTreasure = how === "rod" && /\btreasure location\b/i.test(effect) && surveyTreasure;
+    if (reaches || usefulTreasure) out.push({ how, handle: item.handle, name });
+  }
+  return out;
+}
+
 /** Inspection supplies activation effects without guessing from an artifact's name. */
 export function unseenSources(view: AgentView, response: UnseenResponse): CombatUse[] {
   const pattern = response === "detect" ? /\b(?:Detect Monsters|Detect Invisible|Reveal Monsters|of Detection|Detect Evil)\b/i

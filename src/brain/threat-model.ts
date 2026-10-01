@@ -143,6 +143,7 @@ export interface ThreatFacts {
 }
 
 export interface UnseenHit {
+  readonly direction?: number | undefined;
   readonly grid: Loc;
   readonly damage: number;
   readonly turn: number;

@@ -74,7 +74,7 @@ describe("campaign", () => {
     const errand = run(w, campaign());
     errand.begin();
     expect(commandOf(errand.step())).toEqual({ code: "pickup" });
-    expect(stopOf(errand.step()).reason).toBe("done");
+    expect(commandOf(errand.step()).code).toBe("walk");
   });
 
   it("leaves it alone when collecting is switched off", () => {
@@ -84,7 +84,7 @@ describe("campaign", () => {
     w.moveTo({ x: 2, y: 2 });
     const errand = run(w, campaign(), { collect: false });
     errand.begin();
-    expect(stopOf(errand.step()).reason).toBe("done");
+    expect(commandOf(errand.step()).code).toBe("walk");
   });
 
   it("explores when there is nothing to fight and nothing to take", () => {
@@ -113,7 +113,7 @@ describe("campaign", () => {
     const w = world({ map: ["#####", "#@.>#", "#####"] });
     const errand = run(w, campaign(), { descend: false });
     errand.begin();
-    expect(stopOf(errand.step()).reason).toBe("done");
+    expect(commandOf(errand.step()).code).toBe("walk");
   });
 
   it("does NOT stop when a creature appears, which is the whole difference", () => {
