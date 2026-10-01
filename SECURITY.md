@@ -2,11 +2,11 @@
 
 ## Scope
 
-This repository owns the Squire plugin, its capability declarations, its use of the agent view and bound registries, its decision logic, and the commands it emits.
+This repository owns the Squire plugin, its capability declarations, its use of the agent view and bound registries, its decision logic, and the commands it emits. It also owns how Squire builds and sends requests to model servers, its telemetry batching and upload queue, the records it keeps in local storage, and how it reads viewers' orders from an address the player enters.
 
 A vulnerability in those components belongs to `neo-angband-mod-squire`.
 
-The core `neo-angband` repository owns mod loading, capability enforcement, controller isolation, the shared agent API, archive handling, and the general mod trust model. A vulnerability in those components belongs to core. See the [core security policy](https://github.com/neostryder/neo-angband/blob/master/SECURITY.md).
+The core `neo-angband` repository owns mod loading, capability enforcement, controller isolation, the shared agent API, network permissions, secret storage, archive handling, and the general mod trust model. A vulnerability in those components belongs to core. See the [core security policy](https://github.com/neostryder/neo-angband/blob/master/SECURITY.md).
 
 ## Reporting a vulnerability
 

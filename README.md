@@ -2,7 +2,7 @@
 
 **A Learning Angband Autoplayer.**
 
-Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. At each moment that matters, a new creature, a hit, an empty floor, it asks a model what to do. Press any key and the keyboard is yours again.
+Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. When something changes, such as a new creature, a hit or an empty floor, it asks a model what to do. Routine upkeep and choices with only one way out it settles itself. Press any key and the keyboard is yours again.
 
 While you play, Squire rides along as your apprentice. It makes its own choice at each of those moments, notes where yours differed, and learns your style. Give it a persona and it plays in character: a coward who flees too early, a berserker who never backs down, a miser who won't spend a coin.
 
@@ -32,14 +32,14 @@ Squire only knows what the character knows:
 
 - Items are used by the names your inventory shows, so an unidentified potion stays a mystery to Squire too.
 - It reads a shop's stock only while standing in that shop.
-- It plans routes only over ground the character remembers, and picks up only what lies underfoot.
+- It plans routes only over ground the character remembers. It can walk to a worthwhile item on that ground and pick it up there. The long errand picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
 Squire judges gear by what it lets the character do: the damage it can deal each action, how well it can cast, and its speed, ahead of price or a favourite name. It never trades away the last source of Free Action, See Invisible or telepathy, or a resistance the next depth calls for. A swap that gives something up for something else stays a choice; only a straight upgrade is automatic.
 
 In town, Squire first makes sure the character has a small reserve: two healing potions, two Phase Doors, some food, and a working light with spare fuel. These come before anything optional, and they can use money the savings setting would otherwise hold back. It won't head back down while one of them is missing and affordable. When there isn't the gold for them, a healthy character can go and earn some on the first dungeon level, staying close to the stairs.
 
-Before going deeper on purpose, Squire checks that the character is ready for that depth: enough levels and hit points for its class, and the supplies and protections the depth calls for, such as Word of Recall from 250 ft, Phase Door from 300 ft and Free Action by 1000 ft. Whatever is missing becomes an aim, so the next trip to town shops for it. Fleeing down the stairs in an emergency doesn't wait for this check.
+Before going deeper on purpose, Squire checks that the character is ready for that depth: enough levels and hit points for its class, and the supplies and protections the depth calls for, such as Word of Recall from 250 ft, Phase Door from 300 ft and Free Action by 1000 ft. Whatever is missing becomes an aim: supplies go on the next shopping list, while experience, hit points and protections the shops don't sell are things to earn or find first. The deepest levels ask for more, such as speed, telepathy and a stock of Healing potions. Fleeing down the stairs in an emergency doesn't wait for this check.
 
 It heads home while it still has enough to get there, not when the last potion is gone, and walks back up if it has no Recall. It reads Recall only somewhere quiet, and while waiting for it to work it won't rest near anything dangerous.
 
@@ -49,11 +49,11 @@ When a floor has nothing reachable left to explore and the character is not read
 
 In a fight, Squire works out how much damage the character could take over its next action or two, from each creature's speed, the blows it has been seen to use, its ranged attacks and the character's resistances. When it doesn't know a creature's attacks, it assumes some danger rather than none. An escape has to leave the character safer: stepping away from an adjacent creature that is as fast as it is doesn't count, and each step of a walk to the stairs is checked again before it is taken. When one blow could finish an enemy, attacking can beat stepping away.
 
-In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley, and only spends it on a kill it can be sure of.
+In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley. It spends the reserve only on a finishing attack, when even its weakest hit would kill, the attack has at least a three-in-four chance to work, and the other creatures in sight can't kill the character before its next action.
 
 A young character, up to level 5, treats three awake breeders as the sign to leave the level. It stops chasing, exploring and resting there, clears whatever is next to it, and may shut a door on them on the way out.
 
-It heals when the cure outpaces the damage coming in, using the smallest potion that is enough, and stops drinking when the character is losing ground anyway. When only one cure or escape keeps the character alive, Squire takes it straight away without asking the model. Out of combat it rests instead of drinking, but not while poisoned or cut, near breeders, or soon after a hit from something it can't see, and it waits for Recall only where nothing can reach it.
+It heals with the smallest potion that outpaces the damage coming in. A weaker potion is still offered when the next blows could kill the character, or when it is poisoned, cut, blinded or confused. When only one cure or escape keeps the character alive, Squire takes it straight away without asking the model. Out of combat it rests instead of drinking, but not while poisoned or cut, near breeders, or soon after a hit from something it can't see, and it waits for Recall only where nothing can reach it.
 
 Near death, Squire offers whatever healing and teleports the character carries, and Word of Recall even with no gold to restock, though Recall's delay can't stop the next blow. Deep Descent is offered only when there is time to wait, since it drops the character several levels deeper. If the model turns every option down in danger, Squire picks the best escape or attack itself. A fast unique is treated as deadly to a character of level 1 to 3: Squire looks for a safe way off the level and never walks up to fight it.
 
@@ -63,13 +63,13 @@ When the game supports releasing the keyboard, a final stop gives it back straig
 
 ## Personas
 
-A persona is a character sheet for how Squire plays: sliders for boldness, patience, greed, how early it heals and when it retreats, lists of favourite weapons and hated creatures, quirks, and a backstory. Squire asks the model two questions at each decision, the best move and the move this character would make, and blends the two by how strong the persona is. A safety floor still keeps a sensible persona out of a fight it would certainly lose, unless you give it a death wish.
+A persona is a character sheet for how Squire plays: sliders for boldness, patience, greed, how early it heals and when it retreats, lists of favourite weapons and hated creatures, quirks, and a backstory. With a persona, Squire usually asks the model two questions at once, the best move and the move this character would make, and blends the answers by how strong the persona is. A safety floor then removes any choice riskier than the persona's Self-preservation allows. If every choice is that risky, the safest one stays. Death wish lifts the limit for every choice, and an order the character follows closely lifts it for that order.
 
-The Persona tab starts from Default or a random persona, or from an archetype: coward, berserker, miser, scholar, zealot or tourist. Personas can be exported to a file and imported again.
+The Persona tab starts from Default or a random persona, or from an archetype: coward, berserker, miser, scholar, zealot or tourist. Personas can be exported to a file and imported again. Edits on the Persona tab apply to new characters. A character already in play keeps its own copy, which shifts with experience.
 
 When a character dies, Setup can have Squire start the next one for you, either like the last one or with a random race and class. The new character inherits a little of what its ancestors learned.
 
-The family also remembers what killed its characters. A bold or proud heir hates that creature and a cautious or craven one fears it, more strongly with each ancestor it killed. Hatred adds weight to fighting it, and a hated unique can become an aim to avenge the family. Fear makes the heir believe the creature more dangerous and offers to leave the level when it appears. Neither overrides the safety floor. Killing a hated unique settles the grudge for the whole family, and a feeling toward an ordinary monster fades over later generations unless it kills again. The Squire panel lists these under Family memory. With Inheritance at nothing, or Blood grudges off, an heir starts with no grudges.
+The family also remembers what killed its characters. A bold or proud heir hates that creature and a cautious or craven one fears it, more strongly with each ancestor it killed. Hatred adds weight to fighting it, and a hated unique can become an aim to avenge the family. Fear makes the heir believe the creature more dangerous and offers to leave the level when it appears. Neither overrides the safety floor. Killing a hated unique settles the grudge for the whole family. A feeling toward an ordinary monster that has killed one or two ancestors fades over later generations unless it kills again, and one that has killed three never fades. The Squire panel lists these under Family memory. With Inheritance at nothing, or Blood grudges off, an heir starts with no grudges.
 
 Epitaphs gives each death a short line in the character's voice, naming the killer, depth, character level and last choice. The log records it, and Family memory shows the last few an heir inherits. Turn Epitaphs off to stop writing them. Inheritance sets how many pass to heirs.
 
@@ -91,30 +91,34 @@ When you have the keyboard, you are the knight and Squire is your apprentice. It
 - **Why, sir?** When your choice surprises it, the notebook offers a few one-click reasons. Answering is optional.
 - **Watch this** makes your next five choices count double.
 - **Ranks.** As it agrees with you more often, the apprentice rises from Page to Squire to Knight-Errant.
-- **Play like me** shows the persona Squire infers from your play beside its own, as two radar charts. Save it, and a handover plays the way you would.
-- **Exams.** After 40 noted moments, take an exam: after your next Ctrl-Z, Squire's first 20 choices are scored against yours.
+- **Play like me** shows the persona Squire infers from your play beside its own, as two radar charts. **Save as a persona** adds your style to the persona library, and **Use it** also makes new characters play that way.
+- **Exams.** After 40 noted moments, take an exam. After your next Ctrl-Z, the next 20 choices Squire asks the model about are compared with what you chose in similar moments in the notebook. A choice with no similar moment in the notebook is not scored.
 - **The hint**, off by default, shows what Squire would do when it disagrees with you, for players learning the game.
 
-Knight's Lessons works with no model set up, using Squire's own rules to form its choices.
+Knight's Lessons is on by default. With a model set up, Squire asks it for its own choice while you play, one question at a time. With no model, it forms its choices from its own rules. To stop these requests, clear "Learn from how I play while I have the keyboard" on the Setup tab. The Mods switch "Let a model choose what to do" does not stop them.
 
 ## Reports
 
-When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and save the full decision log. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions.
+When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and post the run on X or Reddit from its links. The decision log can be saved at any time, even before a report exists, and holds the latest 20,000 decisions. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions.
 
 ## What Squire sends and stores
 
-- **To the model you chose**, the situation at each decision: the character's level, class, health and mana, the creatures in sight and how dangerous they are, the ground, and the persona. Nothing else from your computer.
-- **To Laya, if you turn on "Train Laya while Jev plays"**, the same requests again. Squire never acts on Laya's answers there. Off by default.
-- **To squire.rpgm.tools, only if you turn it on.** Telemetry is off by default. The Setup tab lists what each level sends, from a run summary up to every decision, and a backstory is sent only with its own consent. "Delete what I have sent" removes everything this install has sent.
-- **On your computer**, Squire keeps its settings, personas, the decision log, reports, Laya training rows and the apprentice's notebook in the game's own storage. In the desktop app, an API key is kept encrypted by the app, and the game page never sees it. In a browser, Squire keeps the key in page storage, where other mods in the same page could read it.
+- **To the model you chose**, everything Squire weighs in a decision. That means the character's level, race, class, health, mana, gold and status, the creatures in sight and how dangerous they are, the ground around it and how the last plan ended. It also means the persona and its backstory, the lessons Squire has learned, its aims, your orders and the names of viewers who gave orders. Squire asks the model whether an event belongs in the Chronicle, too. When a character dies, Squire sends the cause, the depth and the last few plans, and asks which plan got the character killed. With Knight's Lessons on, these requests go out while you play as well.
+- **To Laya, if you turn on "Send decisions to Laya"** under "Train Laya while Jev plays". Each of Jev's questions goes to Laya as a separate request. If Laya is still answering the last question of that kind, Squire skips the new one. Squire never acts on what Laya answers here. This is off by default. Squire still saves Jev's answers on your computer as training rows when it is off.
+- **To squire.rpgm.tools, only if you turn it on.** Telemetry is off by default. The Setup tab lists what each level sends, from a run summary up to every decision, and a backstory is sent only with its own consent. The Endpoint field on the Setup tab sets where runs go, and with it empty Squire sends nothing. A run that could not be sent waits on your computer and goes out with the next one. "Delete what I have sent" asks the telemetry service to delete this install's records and drops any runs still waiting to be sent. Your own logs and reports stay on your computer.
+- **On your computer**, Squire keeps its settings, personas, family records, the decision log, reports, Laya training rows, runs waiting to be sent and the apprentice's notebook in the game's own storage. In the desktop app, an API key is kept encrypted by the app, and the game page never sees it. In a browser, Squire keeps the key in page storage, where other mods in the same page could read it.
 
 ## Playing in a browser
 
 The desktop app is the easiest way to use Squire, because the app sends Squire's requests itself. A game page in a browser can reach Laya on the same computer, but Jev doesn't yet accept requests from web pages, and a page can't reach a server on another computer. [Squire Link](https://github.com/neostryder/squire-link) is a small program that runs on your computer and passes those requests on.
 
+## Orders
+
+The Orders tab takes orders and standing instructions in plain words, such as `suit up at the armour shop`. Each one shows whether Squire is following it, following it grudgingly or ignoring it, which depends on the persona, most of all its Devotion, Stubbornness and Resentment. A standing instruction can be marked as a family creed, which heirs inherit, and creeds can be saved to a file and loaded again. During play, press O to open the order prompt. If O is already taken, Squire uses N, and if both are taken the order key is left unbound. While the Squire panel has the keyboard, Ctrl-Shift-O opens the Orders tab. "Instructions kept" on the Setup tab sets how many orders and instructions Squire holds before it drops the one it follows least readily.
+
 ## Orders from viewers
 
-If you stream your game, Squire Link can also read your Twitch chat or a Discord channel and keep the orders viewers give there, such as `!squire run from uniques`. Enter its orders address, `http://127.0.0.1:8765/v1/orders`, as the "Viewer orders address" under Orders on the Setup tab. While Squire plays, it checks that address every 5 seconds and takes each order as if you had typed it in the Orders tab. The Orders tab and the journal name the viewer, as in "New order from viewer Grip: run from uniques". If the address can't be reached, Squire notes it once in the log and tries again 30 seconds later. With the field empty, Squire asks nothing. Squire Link's own README explains how to turn chat on and how to keep a busy chat from flooding the squire.
+If you stream your game, Squire Link can also read your Twitch chat or a Discord channel and keep the orders viewers give there, such as `!squire run from uniques`. Enter its orders address, `http://127.0.0.1:8765/v1/orders`, as the "Viewer orders address" under Orders on the Setup tab. While Squire plays, it checks that address every 5 seconds and adds each order to the Orders tab. The Orders tab and the journal name the viewer, as in "New order from viewer Grip: run from uniques". A viewer's order pulls on Squire less than one of yours, unless the persona's Devotion is 90 or higher. If the address can't be reached, Squire notes it once in the log and tries again 30 seconds later. With the field empty, Squire asks nothing. Squire Link's own README explains how to turn chat on and how to keep a busy chat from flooding the squire.
 
 ## Without a model: errands
 
@@ -132,7 +136,7 @@ The fighting errand leaves sleeping creatures alone unless you switch that on or
 
 ## Installing
 
-Two files: `manifest.json` and `plugin.js`. Either:
+Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband engine 1.8.0 or newer. Either:
 
 - **In the game.** Mods, then **Install a mod...**, which fetches this repository at a release tag, never a branch, so what arrives can't change afterwards. The install records a SHA-256 of every byte that arrived, which lets the manager tell later whether the copy on your machine has changed.
 - **A folder.** Clone this repository into your mods directory, or point the browser build at it with **Load mod folder**.
@@ -177,7 +181,7 @@ A tag matching `vX.Y.Z` is the release: there is no separate publish step. The r
 
 [**The RPGM Tools Discord**](https://discord.gg/YegtwbHTBQ) is the fastest way to ask anything: whether a behaviour is intended, how to get Squire set up, or what to try next. No GitHub account needed.
 
-[Open an issue here](../../issues/new/choose) for a bug in **this mod**. Two kinds of bug belong against the game instead, and the forms will point you there: the mod **system** (an install that fails, a load order that won't stick, a conflict report that looks wrong), and the game **not matching Angband 4.2.6** once this mod is switched off.
+[Open an issue here](../../issues/new/choose) for a bug in **this mod**. Two kinds of bug belong against the game instead, and the forms will point you there: the mod **system** (an install that fails, a load order that won't stick, a conflict report that looks wrong), and the game **not matching Angband's own gameplay** once this mod is switched off.
 
 For anything that should not be public, including a security report: **strider-angband (at) rpgm.tools**. See [SECURITY.md](SECURITY.md).
 
