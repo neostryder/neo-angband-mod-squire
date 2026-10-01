@@ -6,7 +6,7 @@
 import type { AgentController } from "@rpgm-tools/neo-angband-core";
 import type { SquireContext } from "./context.js";
 import type { Mission, Stop } from "./mission.js";
-import { isStop } from "./mission.js";
+import { isStop, stopText } from "./mission.js";
 import type { SquireCfg } from "./settings.js";
 import type { Terrain } from "./terrain.js";
 import { newProgress, type Progress } from "./progress.js";
@@ -23,6 +23,8 @@ export interface SquireOptions {
   readonly terrain: Terrain;
   /** The host's log sink. */
   readonly log: (message: string) => void;
+  /** Publish a fixed errand's ending through the host's autoplayer status. */
+  readonly status?: (reason: string) => void;
 }
 
 /** A live Squire. */
@@ -60,7 +62,7 @@ export function chooseMission(
 
 /** Build a Squire. One per handover: it holds the errand and its progress. */
 export function createSquire(options: SquireOptions): Squire {
-  const { cfg, terrain, log } = options;
+  const { cfg, terrain, log, status } = options;
   let mission: Mission | null = null;
   let progress: Progress | null = null;
   let finished: Stop | null = null;
@@ -68,7 +70,10 @@ export function createSquire(options: SquireOptions): Squire {
   function finish(stop: Stop): null {
     finished = stop;
     log(`errand ended (${stop.reason}): ${stop.detail}`);
-    if (mission?.id !== "campaign") log("the keyboard is yours again; press any key to take it back from Squire");
+    status?.(stopText(stop));
+    if (mission?.id !== "campaign") {
+      log("the keyboard is yours again; press any key to take it back from Squire");
+    }
     return null;
   }
 

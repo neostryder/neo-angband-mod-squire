@@ -1,5 +1,5 @@
 /**
- * What a player can move, and the two numbers they cannot.
+ * What a player can move for a fixed errand.
  *
  * Every boolean here is a manifest rule: a labelled toggle in the mod manager,
  * resolved per mod and handed to the plugin as `ctx.flags`. A rule is the right
@@ -12,12 +12,11 @@
  * errand ignore it. `src/manifest-rules.test.ts` is what stops this table and
  * manifest.json drifting apart in either direction.
  *
- * THE TWO NUMBERS ARE NOT TOGGLES, and that is a host limitation rather than a
- * choice. `retreatFraction` and `errandSteps` are the boundaries an errand is
- * measured against, and the manifest rule schema carries a boolean `default` and
- * nothing else - there is no numeric or range rule to declare one with. They are
- * therefore fixed here, and PLANNED.md carries what a host-side fix would need.
+ * The Mods screen owns numeric settings, so their defaults and ranges live in
+ * manifest.json and the resolved values enter here through ctx.settings.
  */
+
+import type { ModSettingsRead } from "@rpgm-tools/neo-angband-core";
 
 /** Squire's settings, at the point every decision reads them. */
 export interface SquireCfg {
@@ -74,8 +73,8 @@ export function defaultCfg(): SquireCfg {
     wakeSleepers: false,
     collect: true,
     descend: true,
-    retreatFraction: 0.5,
-    errandSteps: 200,
+    retreatFraction: DEFAULT_RETREAT_PERCENT / 100,
+    errandSteps: DEFAULT_ERRAND_STEPS,
     idleSteps: 3,
   };
 }
@@ -93,6 +92,15 @@ export const RULE_CFG: Readonly<Record<string, keyof SquireCfg>> = {
   "squire.descend": "descend",
 };
 
+export const RETREAT_PERCENT_SETTING = "squire.retreatPercent";
+export const ERRAND_STEPS_SETTING = "squire.errandSteps";
+export const DEFAULT_RETREAT_PERCENT = 50;
+export const MIN_RETREAT_PERCENT = 10;
+export const MAX_RETREAT_PERCENT = 90;
+export const DEFAULT_ERRAND_STEPS = 200;
+export const MIN_ERRAND_STEPS = 50;
+export const MAX_ERRAND_STEPS = 500;
+
 /**
  * Fold the host's resolved rule flags over the stock settings.
  *
@@ -102,11 +110,19 @@ export const RULE_CFG: Readonly<Record<string, keyof SquireCfg>> = {
  * of these default to ON, so reading absence as false would quietly switch off
  * behaviour the mod ships enabled.
  */
-export function cfgFromFlags(flags: Readonly<Record<string, boolean>>): SquireCfg {
+export function cfgFromFlags(flags: Readonly<Record<string, boolean>>, settings?: Pick<ModSettingsRead, "get">): SquireCfg {
   const cfg = defaultCfg();
   for (const [flag, field] of Object.entries(RULE_CFG)) {
     const value = flags[flag];
     if (typeof value === "boolean") (cfg[field] as boolean) = value;
+  }
+  const retreatPercent = settings?.get(RETREAT_PERCENT_SETTING);
+  const errandSteps = settings?.get(ERRAND_STEPS_SETTING);
+  if (typeof retreatPercent === "number" && Number.isFinite(retreatPercent)) {
+    cfg.retreatFraction = Math.min(MAX_RETREAT_PERCENT, Math.max(MIN_RETREAT_PERCENT, retreatPercent)) / 100;
+  }
+  if (typeof errandSteps === "number" && Number.isFinite(errandSteps)) {
+    cfg.errandSteps = Math.round(Math.min(MAX_ERRAND_STEPS, Math.max(MIN_ERRAND_STEPS, errandSteps)));
   }
   return cfg;
 }
@@ -114,8 +130,11 @@ export function cfgFromFlags(flags: Readonly<Record<string, boolean>>): SquireCf
 /** The settings that are not on their stock value, named, for the log line. */
 export function changedFrom(cfg: SquireCfg): string[] {
   const stock = defaultCfg();
-  return Object.values(RULE_CFG)
+  return [
+    ...Object.values(RULE_CFG)
     .filter((field) => stock[field] !== cfg[field])
-    .map((field) => `${field}=${String(cfg[field])}`)
-    .sort();
+    .map((field) => `${field}=${String(cfg[field])}`),
+    ...(stock.retreatFraction === cfg.retreatFraction ? [] : [`retreatPercent=${String(Math.round(cfg.retreatFraction * 100))}`]),
+    ...(stock.errandSteps === cfg.errandSteps ? [] : [`errandSteps=${String(cfg.errandSteps)}`]),
+  ].sort();
 }

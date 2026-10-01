@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { chooseMission, createSquire, type Squire } from "./squire.js";
 import { defaultCfg, type SquireCfg } from "./settings.js";
 import { world, type MonsterSpec, type World } from "./harness.js";
+import { stopText } from "./mission.js";
 
 const HALL = [
   "#########",
@@ -24,6 +25,7 @@ interface Scene {
   readonly w: World;
   readonly squire: Squire;
   readonly logged: string[];
+  readonly status: string[];
 }
 
 function squireOver(
@@ -33,13 +35,37 @@ function squireOver(
 ): Scene {
   const w = world({ map, monsters });
   const logged: string[] = [];
+  const status: string[] = [];
   const squire = createSquire({
     cfg: { ...defaultCfg(), useModel: false, ...overrides },
     terrain: w.terrain,
     log: (message) => logged.push(message),
+    status: (reason) => status.push(reason),
   });
-  return { w, squire, logged };
+  return { w, squire, logged, status };
 }
+
+describe("stopText", () => {
+  it("gives every end reason one short player-facing sentence", () => {
+    const cases = [
+      ["done", "The target is down.", "The errand is complete."],
+      ["nothing-to-do", "There is nothing to do.", "There was nothing to do."],
+      ["unsafe", "A cave spider is awake and in sight.", "A cave spider is awake and in sight."],
+      ["target-gone", "The cave spider is out of sight.", "The cave spider is out of sight."],
+      ["creature-appeared", "cave spider came into view.", "Stopped: cave spider came into view."],
+      ["hurt", "Hit points are down to 20 of 40.", "Hit points are down to 20 of 40."],
+      ["afflicted", "The character is confused.", "The character is confused."],
+      ["level-changed", "The depth changed from 1 to 2.", "The character changed depth."],
+      ["blocked", "The way is blocked.", "The way is blocked."],
+      ["budget", "The fight ran longer than a short errand should.", "The errand reached its decision limit."],
+      ["dead", "The character died.", "The character died."],
+    ] as const;
+    for (const [reason, detail, expected] of cases) {
+      expect(stopText({ reason, detail })).toBe(expected);
+      expect(expected.endsWith(".")).toBe(true);
+    }
+  });
+});
 
 describe("chooseMission", () => {
   it("fights when something is in sight to fight", () => {
@@ -123,11 +149,12 @@ describe("createSquire", () => {
   });
 
   it("logs why the errand ended, and how to take the keyboard back", () => {
-    const { w, squire, logged } = squireOver(["#####", "#...#", "#.@.#", "#####"]);
+    const { w, squire, logged, status } = squireOver(["#####", "#...#", "#.@.#", "#####"]);
     squire.controller(w.view, w.act);
     const said = logged.join("\n");
     expect(said).toContain("errand ended (done)");
     expect(said).toContain("press any key");
+    expect(status).toEqual(["The errand is complete."]);
   });
 
   it("holds one errand for the whole handover rather than re-choosing each turn", () => {

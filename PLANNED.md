@@ -29,8 +29,6 @@ The errands run only when no model is set up. With a model, Squire also uses its
 
 ## Not built yet
 
-- **A message the player reads when an errand ends.** The reason a fixed errand ended goes only to the mod log, so a player watching the screen sees the character stop and has to work out why. When Squire stops during continuing play with a model, it already passes the reason to the game as the autoplayer's status.
-- **An adjustable retreat line.** The retreat line (half of maximum hit points) and a short errand's two hundred decisions are fixed.
 - **Wider gear trading.** Squire wears better gear it finds, and in town it buys an affordable weapon or piece of armour that one of its aims calls for. It sells only plain spare weapons and armour, and only when the persona's Selling is 60 or more. Buying gear no aim calls for, and selling anything else, are not built.
 - **Playing on a phone through Squire Link.** Squire Link can run beside the model and be published over HTTPS, but Squire's permissions reach only this computer and your home network, so Squire can't use a published address yet.
 - **Patron mode.** Watching Squire play and stepping in now and then, with a meter that refills over time, comes in the release after 1.0.

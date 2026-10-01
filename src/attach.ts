@@ -34,7 +34,7 @@ import { activePersona } from "./config.js";
 import type { Persona } from "./persona/persona.js";
 
 /** The plugin context fields used while attaching Squire's panels and events. */
-export type AttachHost = Pick<ModPluginContext, "flags" | "events" | "ui"> & SquireHost & {
+export type AttachHost = Pick<ModPluginContext, "flags" | "settings" | "events" | "ui"> & SquireHost & {
   readonly core?: Pick<ModPluginContext["core"], "createAgentView"> & Partial<Pick<ModPluginContext["core"], "TF" | "turnEnergy">>;
   readonly registries?: Pick<NonNullable<ModPluginContext["registries"]>, "features">;
   readonly state?: ModPluginContext["state"];
@@ -123,7 +123,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     ctx.registries?.features !== undefined && ctx.core?.TF !== undefined
       ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF)
       : noTerrain();
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {}, ...(ctx.core?.turnEnergy === undefined ? {} : { speedEnergy: ctx.core.turnEnergy }) });
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, ...(ctx.core?.turnEnergy === undefined ? {} : { speedEnergy: ctx.core.turnEnergy }) });
 
   function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();

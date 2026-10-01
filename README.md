@@ -130,7 +130,7 @@ With no model set up, a normal handover plays on using Squire's own rules. To as
 
 | Errand | What it does | What ends it |
 | --- | --- | --- |
-| **Clear what is in front of me** | Picks one creature, walks to it, and fights until it is down. | The target falls or leaves, something new arrives, hit points cross the retreat line, a status effect lands, or the way is blocked. |
+| **Clear what is in front of me** | Picks one creature, walks to it, and fights until it is down. | The target falls or leaves, something new arrives, hit points reach the retreat line, a status effect lands, or the way is blocked. |
 | **Explore this floor** | Walks toward the nearest unmapped ground until the floor is walked out. | The floor is finished, anything comes into view, any hit lands, a status effect lands, or the character stops making progress. |
 | **Play on until I take the keyboard back** | Plays by Squire's own rules and keeps looking for a way on. | You take the keyboard back, the character wins or the character dies. |
 

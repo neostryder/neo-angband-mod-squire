@@ -53,7 +53,7 @@ import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } f
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
 
-type ControllerCtx = Pick<ModPluginContext, "flags" | "core" | "log" | "registries"> & SquireHost & {
+type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log" | "registries"> & SquireHost & {
   readonly log: (msg: string) => void;
   /**
    * The bound content registries (host `ctx.registries`).
@@ -152,7 +152,7 @@ export default {
      * Squire's title row arrives with the controller armed. */
     if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return undefined;
 
-    const cfg = cfgFromFlags(ctx.flags);
+    const cfg = cfgFromFlags(ctx.flags, ctx.settings);
     const terrain = terrainFrom(ctx);
 
     ctx.log(
@@ -167,7 +167,7 @@ export default {
         : `Squire's settings differ from stock: ${changed.join(", ")}`,
     );
 
-    const errands = () => createSquire({ cfg, terrain, log: ctx.log }).controller;
+    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }) }).controller;
     /* An older game has no ctx.net and expects a bare controller back. */
     return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
   },

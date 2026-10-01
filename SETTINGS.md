@@ -12,11 +12,13 @@ Open the Escape menu, then **Mods**, then Squire. The short errand switches appl
 | Errand: explore this floor | `squire.errandAutoexplore` | on | Runs the exploring errand when the fighting errand is off or has no creature to fight. |
 | Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Runs the long errand in place of both short errands. |
 | Let a model choose what to do | `squire.useModel` | on | With a model set up in the Squire panel, Squire asks it what to do and keeps playing. With this off, a handover runs the errands. Knight's Lessons still asks the model while you play; turn that off on the Setup tab. |
-| Stop when I am hurt | `squire.stopOnLowHealth` | on | Ends a short errand when hit points fall to half or less. The long errand reacts to low health whatever this says. |
+| Stop when I am hurt | `squire.stopOnLowHealth` | on | Ends a short errand when hit points reach the retreat line. The long errand reacts to low health whatever this says. |
 | Stop when something new appears | `squire.stopOnNewCreature` | on | Ends a short errand when a creature that was not already in sight comes into view. The long errand keeps playing. |
 | Attack sleeping creatures | `squire.wakeSleepers` | off | Lets the fighting errand and the long errand pick a sleeping creature to fight. |
 | Pick things up on the way | `squire.collect` | on | Lets the long errand pick up what lies under the character. |
 | Take the stairs down | `squire.descend` | on | Lets the long errand take a known down staircase, and lets a model choose ordinary descent. Fleeing down the stairs in an emergency and reading Word of Recall do not depend on it. |
+| Retreat line | `squire.retreatPercent` | 50% | The share of maximum hit points at which a short errand ends, when Stop when I am hurt is on. From 10% to 90%, in 5% steps. |
+| Short errand length | `squire.errandSteps` | 200 decisions | How many decisions a short errand makes before it ends. From 50 to 500, in steps of 10. |
 
 ## Setup tab
 

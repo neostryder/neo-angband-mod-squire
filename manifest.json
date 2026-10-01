@@ -105,5 +105,28 @@
       "requiresReload": true
     }
   ],
+  "settings": [
+    {
+      "id": "squire.retreatPercent",
+      "title": "Retreat line",
+      "description": "Ends a short errand when hit points reach this share of maximum hit points. The default is 50%.",
+      "min": 10,
+      "max": 90,
+      "step": 5,
+      "default": 50,
+      "unit": "%",
+      "requiresReload": true
+    },
+    {
+      "id": "squire.errandSteps",
+      "title": "Short errand length",
+      "description": "Sets the decision limit for a short errand. The default is 200.",
+      "min": 50,
+      "max": 500,
+      "step": 10,
+      "default": 200,
+      "requiresReload": true
+    }
+  ],
   "repository": "https://github.com/neostryder/neo-angband-mod-squire"
 }

@@ -15,7 +15,20 @@
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { RULE_CFG, cfgFromFlags, changedFrom, defaultCfg } from "./settings.js";
+import { DEFAULT_ERRAND_STEPS, DEFAULT_RETREAT_PERCENT, ERRAND_STEPS_SETTING, MAX_ERRAND_STEPS, MAX_RETREAT_PERCENT, MIN_ERRAND_STEPS, MIN_RETREAT_PERCENT, RETREAT_PERCENT_SETTING, RULE_CFG, cfgFromFlags, changedFrom, defaultCfg } from "./settings.js";
+import { autofight } from "./missions/autofight.js";
+import { isStop, type Decision } from "./mission.js";
+import { run, world } from "./harness.js";
+
+function stopOf(decision: Decision): { reason: string; detail: string } {
+  if (!isStop(decision)) throw new Error("expected the errand to stop");
+  return decision.stop;
+}
+
+function commandOf(decision: Decision): { code: string; dir?: number } {
+  if (isStop(decision)) throw new Error(`expected a command, got ${decision.stop.reason}`);
+  return decision.command;
+}
 
 interface ManifestRule {
   flag: string;
@@ -29,6 +42,7 @@ interface Manifest {
   version: string;
   engine: string;
   rules: ManifestRule[];
+  settings: { id: string; title: string; description: string; min: number; max: number; step: number; default: number }[];
 }
 
 const manifest = JSON.parse(
@@ -58,6 +72,15 @@ describe("manifest.json", () => {
     }
   });
 
+  it("declares the errand numbers with their code defaults and bounds", () => {
+    expect(manifest.settings).toEqual([
+      expect.objectContaining({ id: RETREAT_PERCENT_SETTING, min: MIN_RETREAT_PERCENT, max: MAX_RETREAT_PERCENT, default: DEFAULT_RETREAT_PERCENT }),
+      expect.objectContaining({ id: ERRAND_STEPS_SETTING, min: MIN_ERRAND_STEPS, max: MAX_ERRAND_STEPS, default: DEFAULT_ERRAND_STEPS }),
+    ]);
+    expect(defaultCfg().retreatFraction).toBe(DEFAULT_RETREAT_PERCENT / 100);
+    expect(defaultCfg().errandSteps).toBe(DEFAULT_ERRAND_STEPS);
+  });
+
   it("gives every rule a title and a description a player can act on", () => {
     for (const rule of manifest.rules) {
       expect(rule.title.length).toBeGreaterThan(0);
@@ -71,6 +94,8 @@ describe("manifest.json", () => {
 });
 
 describe("cfgFromFlags", () => {
+  const settings = (values: Readonly<Record<string, number>>) => ({ get: (id: string) => values[id] });
+
   it("takes what the host resolved", () => {
     const cfg = cfgFromFlags({ "squire.errandCampaign": true, "squire.collect": false });
     expect(cfg.errandCampaign).toBe(true);
@@ -87,6 +112,24 @@ describe("cfgFromFlags", () => {
     const cfg = cfgFromFlags({ "someothermod.thing": true });
     expect(cfg).toEqual(defaultCfg());
   });
+
+  it("reads the retreat line and short errand decision limit", () => {
+    const cfg = cfgFromFlags({}, settings({ [RETREAT_PERCENT_SETTING]: 30, [ERRAND_STEPS_SETTING]: 50 }));
+    expect(cfg.retreatFraction).toBe(0.3);
+    expect(cfg.errandSteps).toBe(50);
+
+    const w = world({ map: ["#########", "#.......#", "#.@.....#", "#.......#", "#########"], player: { hp: 40, maxHp: 40 }, monsters: [{ grid: { x: 3, y: 2 }, hp: 1000, maxHp: 1000 }] });
+    const fight = run(w, autofight(), cfg);
+    fight.begin();
+    w.setPlayer({ hp: 12 });
+    expect(stopOf(fight.step()).reason).toBe("hurt");
+
+    const longWorld = world({ map: ["#########", "#.......#", "#.@.....#", "#.......#", "#########"], monsters: [{ grid: { x: 3, y: 2 }, hp: 1000, maxHp: 1000 }] });
+    const longFight = run(longWorld, autofight(), cfg);
+    longFight.begin();
+    for (let i = 0; i < 50; i += 1) expect(commandOf(longFight.step()).code).toBe("melee");
+    expect(stopOf(longFight.step()).reason).toBe("budget");
+  });
 });
 
 describe("changedFrom", () => {
@@ -98,6 +141,13 @@ describe("changedFrom", () => {
     expect(changedFrom({ ...defaultCfg(), errandCampaign: true, collect: false })).toEqual([
       "collect=false",
       "errandCampaign=true",
+    ]);
+  });
+
+  it("records changed numeric errand settings", () => {
+    expect(changedFrom({ ...defaultCfg(), retreatFraction: 0.35, errandSteps: 250 })).toEqual([
+      "errandSteps=250",
+      "retreatPercent=35",
     ]);
   });
 });

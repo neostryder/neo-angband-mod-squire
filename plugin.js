@@ -2,6 +2,32 @@
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
+function stopText(stop2) {
+  switch (stop2.reason) {
+    case "done":
+      return "The errand is complete.";
+    case "nothing-to-do":
+      return "There was nothing to do.";
+    case "unsafe":
+      return stop2.detail;
+    case "target-gone":
+      return stop2.detail;
+    case "creature-appeared":
+      return `Stopped: ${stop2.detail}`;
+    case "hurt":
+      return stop2.detail;
+    case "afflicted":
+      return stop2.detail;
+    case "level-changed":
+      return "The character changed depth.";
+    case "blocked":
+      return "The way is blocked.";
+    case "budget":
+      return "The errand reached its decision limit.";
+    case "dead":
+      return "The character died.";
+  }
+}
 function isStop(decision2) {
   return "stop" in decision2;
 }
@@ -728,14 +754,17 @@ function chooseMission(cfg, at, monsters) {
   return null;
 }
 function createSquire(options) {
-  const { cfg, terrain, log } = options;
+  const { cfg, terrain, log, status } = options;
   let mission = null;
   let progress = null;
   let finished = null;
   function finish(stop2) {
     finished = stop2;
     log(`errand ended (${stop2.reason}): ${stop2.detail}`);
-    if (mission?.id !== "campaign") log("the keyboard is yours again; press any key to take it back from Squire");
+    status?.(stopText(stop2));
+    if (mission?.id !== "campaign") {
+      log("the keyboard is yours again; press any key to take it back from Squire");
+    }
     return null;
   }
   const controller = (view, act) => {
@@ -3161,8 +3190,8 @@ function defaultCfg() {
     wakeSleepers: false,
     collect: true,
     descend: true,
-    retreatFraction: 0.5,
-    errandSteps: 200,
+    retreatFraction: DEFAULT_RETREAT_PERCENT / 100,
+    errandSteps: DEFAULT_ERRAND_STEPS,
     idleSteps: 3
   };
 }
@@ -3177,17 +3206,37 @@ var RULE_CFG = {
   "squire.collect": "collect",
   "squire.descend": "descend"
 };
-function cfgFromFlags(flags) {
+var RETREAT_PERCENT_SETTING = "squire.retreatPercent";
+var ERRAND_STEPS_SETTING = "squire.errandSteps";
+var DEFAULT_RETREAT_PERCENT = 50;
+var MIN_RETREAT_PERCENT = 10;
+var MAX_RETREAT_PERCENT = 90;
+var DEFAULT_ERRAND_STEPS = 200;
+var MIN_ERRAND_STEPS = 50;
+var MAX_ERRAND_STEPS = 500;
+function cfgFromFlags(flags, settings) {
   const cfg = defaultCfg();
   for (const [flag, field] of Object.entries(RULE_CFG)) {
     const value = flags[flag];
     if (typeof value === "boolean") cfg[field] = value;
   }
+  const retreatPercent = settings?.get(RETREAT_PERCENT_SETTING);
+  const errandSteps = settings?.get(ERRAND_STEPS_SETTING);
+  if (typeof retreatPercent === "number" && Number.isFinite(retreatPercent)) {
+    cfg.retreatFraction = Math.min(MAX_RETREAT_PERCENT, Math.max(MIN_RETREAT_PERCENT, retreatPercent)) / 100;
+  }
+  if (typeof errandSteps === "number" && Number.isFinite(errandSteps)) {
+    cfg.errandSteps = Math.round(Math.min(MAX_ERRAND_STEPS, Math.max(MIN_ERRAND_STEPS, errandSteps)));
+  }
   return cfg;
 }
 function changedFrom(cfg) {
   const stock = defaultCfg();
-  return Object.values(RULE_CFG).filter((field) => stock[field] !== cfg[field]).map((field) => `${field}=${String(cfg[field])}`).sort();
+  return [
+    ...Object.values(RULE_CFG).filter((field) => stock[field] !== cfg[field]).map((field) => `${field}=${String(cfg[field])}`),
+    ...stock.retreatFraction === cfg.retreatFraction ? [] : [`retreatPercent=${String(Math.round(cfg.retreatFraction * 100))}`],
+    ...stock.errandSteps === cfg.errandSteps ? [] : [`errandSteps=${String(cfg.errandSteps)}`]
+  ].sort();
 }
 
 // src/town/shop.ts
@@ -11689,7 +11738,7 @@ function attachSquire(ctx, rt) {
     for (const l of listeners) l(next);
   }
   const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags), terrain, log: () => {
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {
   }, ...ctx.core?.turnEnergy === void 0 ? {} : { speedEnergy: ctx.core.turnEnergy } });
   function record5(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
@@ -11997,7 +12046,7 @@ var plugin_default = {
   },
   controller(ctx) {
     if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return void 0;
-    const cfg = cfgFromFlags(ctx.flags);
+    const cfg = cfgFromFlags(ctx.flags, ctx.settings);
     const terrain = terrainFrom(ctx);
     ctx.log(
       terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain registry: it will not take stairs or open doors"
@@ -12006,7 +12055,7 @@ var plugin_default = {
     ctx.log(
       changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
     );
-    const errands = () => createSquire({ cfg, terrain, log: ctx.log }).controller;
+    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }) }).controller;
     return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
   }
 };

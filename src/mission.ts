@@ -54,6 +54,23 @@ export interface Stop {
   readonly detail: string;
 }
 
+/** Turn an errand stop into one short sentence for the player's status line. */
+export function stopText(stop: Stop): string {
+  switch (stop.reason) {
+    case "done": return "The errand is complete.";
+    case "nothing-to-do": return "There was nothing to do.";
+    case "unsafe": return stop.detail;
+    case "target-gone": return stop.detail;
+    case "creature-appeared": return `Stopped: ${stop.detail}`;
+    case "hurt": return stop.detail;
+    case "afflicted": return stop.detail;
+    case "level-changed": return "The character changed depth.";
+    case "blocked": return "The way is blocked.";
+    case "budget": return "The errand reached its decision limit.";
+    case "dead": return "The character died.";
+  }
+}
+
 /** What one decision produced: a command to issue, or the end of the errand. */
 export type Decision = { readonly command: AgentCommand } | { readonly stop: Stop };
 
