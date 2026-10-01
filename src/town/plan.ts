@@ -74,6 +74,9 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
   });
 }
 
+/** Turns a town trip waits for a creature to clear the only way to a shop before skipping that shop for the visit. */
+const BLOCKED_WAIT_TURNS = 5;
+
 /** Re-read the entered shop after each command; buying can move its stock slots. */
 export function townTripPlan(terrain: Terrain, persona: Persona | null, visited: Set<number> = new Set(), log: (line: string) => void = () => {}, aims: readonly Aim[] = [], flourishes: () => Flourishes = emptyFlourishes, strategy?: () => Steering, purchaseOrder?: () => readonly PurchaseKind[] | null, home?: HomeStock, saveHome?: (stock: HomeStock) => void): Plan {
   const progress = newProgress(0);
@@ -87,6 +90,8 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
   const offeredSales = new Map<number, Set<number>>();
   /* Home wares taken and stacks left this trip, each tried once. */
   const homeTried = new Set<string>();
+  /* Turns spent waiting for a creature to clear the way to one shop. */
+  const waited = new Map<number, number>();
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -190,12 +195,26 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         log("shop: no shop left with anything needed");
         return null;
       }
-      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {} }, [next]);
-      if (travel.kind === "step") return travel.command;
-      /* A townsperson in the way is gone in a turn or two, so only a shop that
-       * cannot be reached at all is crossed off for this visit. */
-      if (travel.kind === "unreachable") visited.add(next.feat);
-      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
+      /* Walk around a townsperson where the streets allow it. */
+      const occupied = (grid: { readonly x: number; readonly y: number }) => view.monsters().some((monster) => monster.visible && monster.grid.x === grid.x && monster.grid.y === grid.y);
+      const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {} }, [next], occupied);
+      if (travel.kind === "step") {
+        waited.delete(next.feat);
+        return travel.command;
+      }
+      /* A townsperson in the only way through usually moves on within a few
+       * turns, so the trip waits for it; one that stays, as Farmer Maggot can
+       * when he follows the character, crosses that shop off for this visit. */
+      if (travel.kind === "blocked") {
+        const turns = (waited.get(next.feat) ?? 0) + 1;
+        waited.set(next.feat, turns);
+        if (turns <= BLOCKED_WAIT_TURNS) {
+          log(`shop: the way to the ${next.name} is blocked; waiting a turn`);
+          return act.hold();
+        }
+      }
+      visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "still blocked, so it is skipped this visit"}`);
       return null;
     },
   };

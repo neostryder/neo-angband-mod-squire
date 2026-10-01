@@ -4687,6 +4687,7 @@ function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new S
     return rank2(a) - rank2(b);
   });
 }
+var BLOCKED_WAIT_TURNS = 5;
 function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log = () => {
 }, aims = [], flourishes = emptyFlourishes, strategy, purchaseOrder2, home, saveHome) {
   const progress = newProgress(0);
@@ -4695,6 +4696,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
   const homeMemory = createHomeMemory(home, saveHome);
   const offeredSales = /* @__PURE__ */ new Map();
   const homeTried = /* @__PURE__ */ new Set();
+  const waited = /* @__PURE__ */ new Map();
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -4784,11 +4786,23 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
         log("shop: no shop left with anything needed");
         return null;
       }
+      const occupied = (grid) => view.monsters().some((monster) => monster.visible && monster.grid.x === grid.x && monster.grid.y === grid.y);
       const travel = travelTo({ view, act, terrain, cfg: defaultCfg(), progress, log: () => {
-      } }, [next]);
-      if (travel.kind === "step") return travel.command;
-      if (travel.kind === "unreachable") visited.add(next.feat);
-      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "blocked for now"}`);
+      } }, [next], occupied);
+      if (travel.kind === "step") {
+        waited.delete(next.feat);
+        return travel.command;
+      }
+      if (travel.kind === "blocked") {
+        const turns = (waited.get(next.feat) ?? 0) + 1;
+        waited.set(next.feat, turns);
+        if (turns <= BLOCKED_WAIT_TURNS) {
+          log(`shop: the way to the ${next.name} is blocked; waiting a turn`);
+          return act.hold();
+        }
+      }
+      visited.add(next.feat);
+      log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "still blocked, so it is skipped this visit"}`);
       return null;
     }
   };

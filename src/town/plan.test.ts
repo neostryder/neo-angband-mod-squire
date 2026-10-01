@@ -137,6 +137,25 @@ describe("town trip", () => {
   });
 });
 
+describe("a townsperson in the way", () => {
+  const maggot = { grid: { x: 2, y: 1 }, race: "Farmer Maggot", level: 2, speed: 120, raceFlags: ["UNIQUE", "RAND_25"] };
+
+  it("waits a few turns for the only way to clear, then skips that shop for the visit", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { cls: "Warrior", depth: 0, gold: 100 }, pack: [], monsters: [maggot], worn: ["a Wooden Torch (5000 turns)"] });
+    const visited = new Set<number>();
+    const plan = townTripPlan(w.terrain, defaultPersona(), visited);
+    for (let i = 0; i < 5; i += 1) expect(plan.step(w.view, w.act)).toMatchObject({ code: "hold" });
+    expect(plan.step(w.view, w.act)).toBeNull();
+    expect(visited.size).toBe(1);
+  });
+
+  it("walks around a townsperson when the street is wide enough", () => {
+    const w = world({ map: ["#####", "#...#", "#@.A#", "#...#", "#####"], player: { cls: "Warrior", depth: 0, gold: 100 }, pack: [], monsters: [{ ...maggot, grid: { x: 2, y: 2 } }], worn: ["a Wooden Torch (5000 turns)"] });
+    const plan = townTripPlan(w.terrain, defaultPersona());
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+});
+
 describe("home routing", () => {
   it("withdraws from the home before the shops and remembers it for the next trip", () => {
     const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [
