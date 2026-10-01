@@ -2553,7 +2553,7 @@ function proceduralPick(offers, hpShare) {
   const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
   const fight = has("fight");
   if (fight !== void 0 && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+    return first("teleport", "phase", "heal", "take_position", "retreat", "shoot", "cast_attack", "fight");
   }
   if (hpShare < 0.35) {
     const safe = first("heal", "cast_heal");
@@ -2604,7 +2604,8 @@ var LABEL = {
   recall_town: "recall to town",
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",
-  wait: "wait a turn"
+  wait: "wait a turn",
+  take_position: "step to a defensible square"
 };
 function goalLabel(goal) {
   return LABEL[goal];
@@ -3344,6 +3345,20 @@ function nudgeUnseen(dist, offers, persona, damage, hp, ceiling) {
     const response = ["unseen_staff", "unseen_rod", "detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
     const advance2 = ["swing_unseen", "cast_area", "unseen_wand", "explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
     if (response || advance2) result[offer.goal] = (result[offer.goal] ?? 0) * Math.exp(pressure * (response ? fear * 2 : 1 - fear * 2));
+  }
+  return result;
+}
+function nudgePosition(dist, offers, persona) {
+  const result = { ...dist };
+  const { boldness, impulsiveness, patience, selfpreservation } = persona.sliders;
+  const caution = (selfpreservation + patience + (100 - boldness)) / 300;
+  const rash = (boldness + impulsiveness) / 200;
+  const lean = (caution - rash) * 2;
+  for (const offer of offers) {
+    if (offer.goal !== "take_position") continue;
+    const current2 = result[offer.goal];
+    if (current2 === void 0) continue;
+    result[offer.goal] = current2 * Math.exp(lean);
   }
   return result;
 }
@@ -5540,7 +5555,10 @@ var ROUTINE = ["wear", "detect", "study", "rest", "wait"];
 function waitCompetes(offers) {
   return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
 }
-var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
+var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level", "take_position"]);
+var TAKE_POSITION_REACH = 4;
+var TAKE_POSITION_MIN_WALLS = 2;
+var TAKE_POSITION_GROUP_SIZE = 2;
 var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
 var REFUSAL_HOLD_TURNS = 200;
 var SAME_TURN_PLANS = 3;
@@ -5562,6 +5580,16 @@ function swarmOf(monsters) {
   let best = null;
   for (const [race, count2] of counts) if (best === null || count2 > best.count) best = { race, count: count2 };
   return best;
+}
+function hardContactGroup(s) {
+  if (s.swarm !== null || s.awake.length >= TAKE_POSITION_GROUP_SIZE) return true;
+  const recall = s.view.monsterRecall;
+  for (const m of s.awake) {
+    if (m.spellFlags.some((flag) => flag.startsWith("S_"))) return true;
+    const lore = recall?.call(s.view, m.raceIndex);
+    if (lore !== null && lore !== void 0 && (/\bbreathe\b/i.test(lore.text) || /\bsummon/i.test(lore.text))) return true;
+  }
+  return false;
 }
 function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered3 = [], unseenDamage = 0, terrain, speedEnergy, harmless) {
   const player = view.player();
@@ -6045,11 +6073,95 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
+  if (!bleeding && hardContactGroup(s)) {
+    const take = offerTakePosition(s, terrain);
+    if (take !== null) out.push(take);
+  }
   return out.filter((offer) => {
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
   });
+}
+function cardinalWalls(s, at) {
+  let walls = 0;
+  for (const n of neighbours(at)) {
+    if (n.x !== at.x && n.y !== at.y) continue;
+    const cell2 = s.view.cell(n.x, n.y);
+    if (cell2 !== null && !cell2.passable) walls += 1;
+  }
+  return walls;
+}
+function isChokeSquare(s, terrain, at) {
+  if (isClosedDoor(s.view, terrain, at)) return true;
+  return cardinalWalls(s, at) >= TAKE_POSITION_MIN_WALLS;
+}
+function routeDamages(s, terrain) {
+  const at = s.view.player().grid;
+  const hp = s.view.player().hp;
+  const start = { at, damage: 0, status: 0, steps: 0, path: [at] };
+  const best = /* @__PURE__ */ new Map([[key(at), start]]);
+  const queue = [{ at, entry: start }];
+  for (let head = 0; head < queue.length && head < 4e3; head += 1) {
+    const here = queue[head];
+    if (here.entry.steps >= TAKE_POSITION_REACH) continue;
+    for (const next of neighbours(here.at)) {
+      if (!isRoutable(s.view, terrain, next)) continue;
+      const step = damageFor(s, next, 1, terrain);
+      const damage = here.entry.damage + step.damage;
+      if (damage >= hp) continue;
+      const prev = best.get(key(next));
+      if (prev !== void 0 && damage >= prev.damage) continue;
+      const entry = { at: next, damage, status: here.entry.status + step.status, steps: here.entry.steps + 1, path: [...here.entry.path, next] };
+      best.set(key(next), entry);
+      queue.push({ at: next, entry });
+    }
+  }
+  return best;
+}
+function chokeSpots(s, terrain) {
+  const player = s.view.player();
+  const at = player.grid;
+  if (pinned(s) || player.status.confused > 0) return [];
+  const routes = routeDamages(s, terrain);
+  const out = [];
+  for (const route of routes.values()) {
+    if (route.steps === 0) continue;
+    const grid = route.at;
+    if (!isWalkable(s.view, terrain, grid)) continue;
+    const door = isClosedDoor(s.view, terrain, grid);
+    const walls = cardinalWalls(s, grid);
+    if (!door && walls < TAKE_POSITION_MIN_WALLS) continue;
+    const spotDamage = damageFor(s, grid, 1, terrain).damage;
+    if (route.damage > damageFor(s, at, route.steps, terrain).damage) continue;
+    if (route.damage + spotDamage > damageFor(s, at, route.steps + 1, terrain).damage) continue;
+    if (route.status > damageFor(s, at, route.steps, terrain).status) continue;
+    out.push({ at: grid, walls, door, damage: spotDamage, routeDamage: route.damage, routeStatus: route.status, steps: route.steps, route: route.path.slice(1) });
+  }
+  return out;
+}
+function bestChokeSpot(s, terrain) {
+  const here = damageFor(s, s.view.player().grid, 1, terrain).damage;
+  const spots = chokeSpots(s, terrain).filter((spot) => spot.damage < here || spot.damage === here && (spot.door || spot.walls >= TAKE_POSITION_MIN_WALLS) && spot.steps >= 1).sort((a, b) => a.damage - b.damage || b.walls - a.walls || a.routeDamage - b.routeDamage || a.steps - b.steps);
+  return spots[0] ?? null;
+}
+function offerTakePosition(s, terrain) {
+  const player = s.view.player();
+  const at = player.grid;
+  if (player.status.confused > 0 || player.status.afraid > 0 || player.status.blind > 0) return null;
+  if (pinned(s)) return null;
+  if (isChokeSquare(s, terrain, at)) return null;
+  const best = bestChokeSpot(s, terrain);
+  if (best === null) return null;
+  const reach = best.steps === 1 ? "1 step" : `${String(best.steps)} steps`;
+  const reason = best.door ? "the doorway narrows the front to one creature at a time" : best.walls >= 3 ? "the dead end limits who can reach it together" : "the corridor limits who can reach it together";
+  return {
+    goal: "take_position",
+    criteria: `Step ${reach} to a nearby choke point so ${reason}; the route has been checked and does not take more damage than standing here for the same time, and waiting there for the creature to come alone is part of the same offer.`,
+    risk: damageRisk(best.damage, player.hp),
+    /* The plan walks the route, then waits, so both costs bound what is left. */
+    survival: Math.max(0, player.hp - best.routeDamage - best.damage)
+  };
 }
 function createGoalPlanner(options) {
   const { cfg, terrain, log } = options;
@@ -6642,6 +6754,40 @@ function createGoalPlanner(options) {
           const travel = travelTo(ctx, stairs);
           return travel.kind === "step" ? travel.command : null;
         });
+      case "take_position": {
+        let route = null;
+        let waited = false;
+        let started = false;
+        return stepsPlan("step to a defensible square", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          const at = ctx.view.player().grid;
+          if (isChokeSquare(s, terrain, at)) {
+            if (waited) return null;
+            const adjacent2 = s.awake.some((m) => steps(m.grid, at) <= 1);
+            const closing = s.awake.some((m) => !m.raceFlags.includes("NEVER_MOVE"));
+            if (adjacent2 || !closing) return null;
+            waited = true;
+            return ctx.act.hold();
+          }
+          if (route === null) {
+            const target = bestChokeSpot(s, terrain);
+            if (target === null) return null;
+            route = target.route;
+          }
+          const index = route.findIndex((cell2) => key(cell2) === key(at));
+          const next = index >= 0 ? route[index + 1] : !started && route[0] !== void 0 && steps(at, route[0]) === 1 ? route[0] : void 0;
+          if (next === void 0) return null;
+          if (!isWalkable(ctx.view, terrain, next) && !isClosedDoor(ctx.view, terrain, next)) return null;
+          const ahead = damageFor(s, next, 1, terrain);
+          const here = damageFor(s, at, 1, terrain);
+          if (ahead.damage > here.damage || ahead.status > here.status) return null;
+          const dir = directionToward(at, next);
+          if (dir === null) return null;
+          if (isClosedDoor(ctx.view, terrain, next)) return ctx.act.open(dir);
+          started = true;
+          return ctx.act.move(dir);
+        });
+      }
     }
   }
   const stillSince = /* @__PURE__ */ new Map();
@@ -6707,7 +6853,8 @@ function createGoalPlanner(options) {
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
     const cursed2 = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed2, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
-    const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const positioned = nudgePosition(unseen, digest.offers, persona);
+    const nudged = holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
     return record6(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });

@@ -38,7 +38,7 @@ import { attackSpellsOutOfMana, canRead, unseenAttacks, detectionSource, hungry,
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
-import { fleesFromNew, forget, mustPickUp, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
+import { fleesFromNew, forget, mustPickUp, nudgePosition, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
@@ -105,7 +105,8 @@ export type Goal =
   | "recall_town"
   | "shop"
   | "recall_dungeon"
-  | "wait";
+  | "wait"
+  | "take_position";
 
 const NONE_OF_THESE = "None of the listed options suits this moment.";
 
@@ -161,7 +162,13 @@ const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
 function waitCompetes(offers: readonly Offer[]): boolean {
   return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
 }
-const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level"]);
+const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level", "take_position"]);
+/** How far Squire will walk to take a defensible square. Beyond it, the route check and the persona's patience would not pay back. */
+const TAKE_POSITION_REACH = 4;
+/** The minimum number of impassable cardinal neighbours a square must have to count as a choke point. */
+const TAKE_POSITION_MIN_WALLS = 2;
+/** Awake creatures in sight that count as a group. */
+const TAKE_POSITION_GROUP_SIZE = 2;
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
 const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
@@ -306,6 +313,25 @@ export function swarmOf(monsters: readonly MonsterView[]): { race: string; count
   let best: { race: string; count: number } | null = null;
   for (const [race, count] of counts) if (best === null || count > best.count) best = { race, count };
   return best;
+}
+
+/**
+ * Whether the awake creatures in sight are worth taking a defensible square over
+ * for: a creature that splits, one that breathes or summons, or a group that
+ * arrives together. A single easy melee fighter is not, since a stand-and-fight
+ * leaves no room for a positional read. A summoner is read from its spell
+ * flags, which is how the player knows it before it has called anything; a
+ * breather is read from the recall, matching how the resist offer reads one.
+ */
+function hardContactGroup(s: Situation): boolean {
+  if (s.swarm !== null || s.awake.length >= TAKE_POSITION_GROUP_SIZE) return true;
+  const recall = s.view.monsterRecall;
+  for (const m of s.awake) {
+    if (m.spellFlags.some((flag) => flag.startsWith("S_"))) return true;
+    const lore = recall?.call(s.view, m.raceIndex);
+    if (lore !== null && lore !== undefined && (/\bbreathe\b/i.test(lore.text) || /\bsummon/i.test(lore.text))) return true;
+  }
+  return false;
 }
 
 function situationOf(view: AgentView, dreaded: ReadonlySet<string> = new Set(), stationary: ReadonlySet<number> = new Set(), remembered: readonly MonsterView[] = [], unseenDamage = 0, terrain?: Terrain, speedEnergy?: SpeedEnergy, harmless?: (monster: MonsterView) => boolean): Situation {
@@ -972,11 +998,167 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     add("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
+  if (!bleeding && hardContactGroup(s)) {
+    const take = offerTakePosition(s, terrain);
+    if (take !== null) out.push(take);
+  }
   return out.filter((offer) => {
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
   });
+}
+
+/** A square where the character would face the threat with fewer creatures at once. */
+export interface ChokeSpot {
+  readonly at: Loc;
+  /** Cardinal neighbours of the spot that are walls, doors or otherwise impassable. */
+  readonly walls: number;
+  /** True for a closed-door square, which itself narrows the front. */
+  readonly door: boolean;
+  /** Incoming damage for one action at the spot, from the threats now awake. */
+  readonly damage: number;
+  /** Damage taken walking to the spot, one action per step, against the standing damage for the same time. */
+  readonly routeDamage: number;
+  /** Status damage dealt to the character along the route. */
+  readonly routeStatus: number;
+  /** Steps from the character, along the checked route. */
+  readonly steps: number;
+  /**
+   * The route the check priced, one grid per step, ending on the spot. Walking
+   * this exact route is what makes the offer's guarantee true: the plan never
+   * walks a shorter path the check never saw.
+   */
+  readonly route: readonly Loc[];
+}
+
+/** The number of a grid's four cardinal neighbours that are walls or otherwise impassable. */
+function cardinalWalls(s: Situation, at: Loc): number {
+  let walls = 0;
+  for (const n of neighbours(at)) {
+    if (n.x !== at.x && n.y !== at.y) continue;
+    const cell = s.view.cell(n.x, n.y);
+    if (cell !== null && !cell.passable) walls += 1;
+  }
+  return walls;
+}
+
+/** Whether a grid is itself a choke point: a closed door, or mostly walled in. */
+export function isChokeSquare(s: Situation, terrain: Terrain, at: Loc): boolean {
+  if (isClosedDoor(s.view, terrain, at)) return true;
+  return cardinalWalls(s, at) >= TAKE_POSITION_MIN_WALLS;
+}
+
+/** One grid's place on the cheapest route found so far, with the path that reached it. */
+interface RouteEntry {
+  readonly at: Loc;
+  readonly damage: number;
+  readonly status: number;
+  readonly steps: number;
+  readonly path: readonly Loc[];
+}
+
+/**
+ * The damage the character takes reaching every grid within a few steps, one
+ * action per step, against the active threats. A grid is dropped once a step
+ * would push the running total to a lethal figure, so no route through a
+ * killing blow survives. Each entry keeps the path whose damage it quotes, so
+ * the plan can walk exactly the route the check priced.
+ */
+function routeDamages(s: Situation, terrain: Terrain): Map<string, RouteEntry> {
+  const at = s.view.player().grid;
+  const hp = s.view.player().hp;
+  const start: RouteEntry = { at, damage: 0, status: 0, steps: 0, path: [at] };
+  const best = new Map<string, RouteEntry>([[key(at), start]]);
+  const queue: { readonly at: Loc; readonly entry: RouteEntry }[] = [{ at, entry: start }];
+  for (let head = 0; head < queue.length && head < 4000; head += 1) {
+    const here = queue[head]!;
+    if (here.entry.steps >= TAKE_POSITION_REACH) continue;
+    for (const next of neighbours(here.at)) {
+      if (!isRoutable(s.view, terrain, next)) continue;
+      const step = damageFor(s, next, 1, terrain);
+      const damage = here.entry.damage + step.damage;
+      if (damage >= hp) continue;
+      const prev = best.get(key(next));
+      if (prev !== undefined && damage >= prev.damage) continue;
+      const entry: RouteEntry = { at: next, damage, status: here.entry.status + step.status, steps: here.entry.steps + 1, path: [...here.entry.path, next] };
+      best.set(key(next), entry);
+      queue.push({ at: next, entry });
+    }
+  }
+  return best;
+}
+
+/**
+ * Find nearby choke points over ground the character remembers. A spot is a
+ * choke point when at least TAKE_POSITION_MIN_WALLS of its four cardinal
+ * neighbours are impassable, or the spot itself is a closed door. A spot whose
+ * route takes more damage than standing still for the same number of turns, or
+ * whose route leaves the character status-affected, is left out, so the persona
+ * never has to choose between a worse spot and a walk through a killing blow.
+ */
+export function chokeSpots(s: Situation, terrain: Terrain): ChokeSpot[] {
+  const player = s.view.player();
+  const at = player.grid;
+  if (pinned(s) || player.status.confused > 0) return [];
+  const routes = routeDamages(s, terrain);
+  const out: ChokeSpot[] = [];
+  for (const route of routes.values()) {
+    if (route.steps === 0) continue;
+    const grid = route.at;
+    if (!isWalkable(s.view, terrain, grid)) continue;
+    const door = isClosedDoor(s.view, terrain, grid);
+    const walls = cardinalWalls(s, grid);
+    if (!door && walls < TAKE_POSITION_MIN_WALLS) continue;
+    /* The walk costs no more than standing still as long, and neither does the walk with the one-turn wait there. */
+    const spotDamage = damageFor(s, grid, 1, terrain).damage;
+    if (route.damage > damageFor(s, at, route.steps, terrain).damage) continue;
+    if (route.damage + spotDamage > damageFor(s, at, route.steps + 1, terrain).damage) continue;
+    /* Only status beyond what standing still for the same time already brings counts. */
+    if (route.status > damageFor(s, at, route.steps, terrain).status) continue;
+    out.push({ at: grid, walls, door, damage: spotDamage, routeDamage: route.damage, routeStatus: route.status, steps: route.steps, route: route.path.slice(1) });
+  }
+  return out;
+}
+
+/** The best defensible square to step to now, judged by damage then by how walled in it is. */
+export function bestChokeSpot(s: Situation, terrain: Terrain): ChokeSpot | null {
+  const here = damageFor(s, s.view.player().grid, 1, terrain).damage;
+  const spots = chokeSpots(s, terrain)
+    .filter((spot) => spot.damage < here || spot.damage === here && (spot.door || spot.walls >= TAKE_POSITION_MIN_WALLS) && spot.steps >= 1)
+    .sort((a, b) => a.damage - b.damage || b.walls - a.walls || a.routeDamage - b.routeDamage || a.steps - b.steps);
+  return spots[0] ?? null;
+}
+
+/**
+ * The offer Squire extends to take a defensible square nearby, when the
+ * character faces a summoner, a breather, or a group. A character already in a
+ * choke point has nothing to gain from another move, and the route is verified
+ * against standing still for the same time, so the persona never has to choose
+ * between fighting from a worse spot and walking into one.
+ */
+export function offerTakePosition(s: Situation, terrain: Terrain): Offer | null {
+  const player = s.view.player();
+  const at = player.grid;
+  if (player.status.confused > 0 || player.status.afraid > 0 || player.status.blind > 0) return null;
+  /* The caller has already checked hardContactGroup. */
+  if (pinned(s)) return null;
+  if (isChokeSquare(s, terrain, at)) return null;
+  const best = bestChokeSpot(s, terrain);
+  if (best === null) return null;
+  const reach = best.steps === 1 ? "1 step" : `${String(best.steps)} steps`;
+  const reason = best.door
+    ? "the doorway narrows the front to one creature at a time"
+    : best.walls >= 3
+      ? "the dead end limits who can reach it together"
+      : "the corridor limits who can reach it together";
+  return {
+    goal: "take_position",
+    criteria: `Step ${reach} to a nearby choke point so ${reason}; the route has been checked and does not take more damage than standing here for the same time, and waiting there for the creature to come alone is part of the same offer.`,
+    risk: damageRisk(best.damage, player.hp),
+    /* The plan walks the route, then waits, so both costs bound what is left. */
+    survival: Math.max(0, player.hp - best.routeDamage - best.damage),
+  };
 }
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
@@ -1671,6 +1853,48 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const travel = travelTo(ctx, stairs);
           return travel.kind === "step" ? travel.command : null;
         });
+      case "take_position": {
+        /* Step along the route the offer's check priced, worked out once and
+         * replayed step by step. A step that now costs more than standing
+         * still ends the plan rather than walking into a worse spot. */
+        let route: readonly Loc[] | null = null;
+        let waited = false;
+        let started = false;
+        return stepsPlan("step to a defensible square", view, (ctx) => {
+          const s = situationNow(ctx.view);
+          const at = ctx.view.player().grid;
+          if (isChokeSquare(s, terrain, at)) {
+            /* Standing in the spot: one wait lets a creature that can walk
+             * come to us. With one already adjacent, or none that can close
+             * in, the plan ends so the next decision fights. */
+            if (waited) return null;
+            const adjacent = s.awake.some((m) => steps(m.grid, at) <= 1);
+            const closing = s.awake.some((m) => !m.raceFlags.includes("NEVER_MOVE"));
+            if (adjacent || !closing) return null;
+            waited = true;
+            return ctx.act.hold();
+          }
+          if (route === null) {
+            const target = bestChokeSpot(s, terrain);
+            if (target === null) return null;
+            route = target.route;
+          }
+          const index = route.findIndex((cell) => key(cell) === key(at));
+          /* The route starts beside the character. Pushed off it after that,
+           * the plan ends and the next decision prices the new square. */
+          const next = index >= 0 ? route[index + 1] : !started && route[0] !== undefined && steps(at, route[0]) === 1 ? route[0] : undefined;
+          if (next === undefined) return null;
+          if (!isWalkable(ctx.view, terrain, next) && !isClosedDoor(ctx.view, terrain, next)) return null;
+          const ahead = damageFor(s, next, 1, terrain);
+          const here = damageFor(s, at, 1, terrain);
+          if (ahead.damage > here.damage || ahead.status > here.status) return null;
+          const dir = directionToward(at, next);
+          if (dir === null) return null;
+          if (isClosedDoor(ctx.view, terrain, next)) return ctx.act.open(dir);
+          started = true;
+          return ctx.act.move(dir);
+        });
+      }
     }
   }
 
@@ -1751,7 +1975,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
     const cursed = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
-    const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const positioned = nudgePosition(unseen, digest.offers, persona);
+    const nudged = holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });

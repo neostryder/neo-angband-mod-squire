@@ -120,7 +120,7 @@ export function proceduralPick(offers: readonly Offer[], hpShare: number): Goal 
   const first = (...goals: Goal[]) => goals.find((g) => has(g) !== undefined) ?? null;
   const fight = has("fight");
   if (fight !== undefined && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "retreat", "shoot", "cast_attack", "fight");
+    return first("teleport", "phase", "heal", "take_position", "retreat", "shoot", "cast_attack", "fight");
   }
   if (hpShare < 0.35) {
     const safe = first("heal", "cast_heal");
@@ -189,6 +189,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   shop: "shop for supplies",
   recall_dungeon: "recall into the dungeon",
   wait: "wait a turn",
+  take_position: "step to a defensible square",
 };
 
 export function goalLabel(goal: Goal): string {

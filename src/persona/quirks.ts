@@ -55,3 +55,26 @@ export function nudgeUnseen(dist: Readonly<Record<string, number>>, offers: read
   }
   return result;
 }
+
+/**
+ * How the persona weights the offer to step to a defensible square. Cautious,
+ * patient and self-preserving personas take it more readily because they
+ * measure the value of fewer attackers at once; bold and impulsive ones weight
+ * it lower because standing their ground looks like the surer thing to do.
+ */
+export function nudgePosition(dist: Readonly<Record<string, number>>, offers: readonly { readonly goal: string }[], persona: Persona): Record<string, number> {
+  const result = { ...dist };
+  const { boldness, impulsiveness, patience, selfpreservation } = persona.sliders;
+  const caution = (selfpreservation + patience + (100 - boldness)) / 300;
+  const rash = (boldness + impulsiveness) / 200;
+  const lean = (caution - rash) * 2;
+  for (const offer of offers) {
+    if (offer.goal !== "take_position") continue;
+    const current = result[offer.goal];
+    /* The model left the offer out: there is no weight to bend, and the
+     * safety floor still owns the ceiling. */
+    if (current === undefined) continue;
+    result[offer.goal] = current * Math.exp(lean);
+  }
+  return result;
+}

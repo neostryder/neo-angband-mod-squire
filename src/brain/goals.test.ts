@@ -1982,3 +1982,211 @@ describe("the leave_level label", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
   });
 });
+
+describe("defensible positions", () => {
+  /* A room with a one-square dead end two steps from the character: walls above,
+   * below and right, open to the room on the left. */
+  const SUMMON_ROOM = [
+    "##########",
+    "#..#.#...#",
+    "#..@......#",
+    "#........#",
+    "##########",
+  ];
+  const summoner = { grid: { x: 7, y: 2 }, race: "novice summoner", level: 2, spellFlags: ["S_MONSTER"] };
+  /* An open room whose corners sit five steps out, past the few-step reach. */
+  const OPEN_ROOM = [
+    "#############",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#.....@.....#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#...........#",
+    "#############",
+  ];
+  /* A corridor whose only choke point is a dead end, with a dangerous
+   * never-moving creature beside the one route to it. */
+  const AMBUSH_CORRIDOR = [
+    "######.######",
+    "######.######",
+    "#####...#####",
+    "######.######",
+    "#.....@.....#",
+    "#...........#",
+    "#...........#",
+    "#############",
+  ];
+  const STEP: Readonly<Record<number, readonly [number, number]>> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
+
+  it("offers a defensible square against a summoner and the plan reaches the corridor", () => {
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("take_position");
+    const choice = p.choose(pick("take_position"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a position plan");
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    let holds = 0;
+    while (command !== null && guard < 20) {
+      if (command.code === "hold") holds += 1;
+      if (command.code === "walk") {
+        const delta = STEP[(command as { readonly dir?: number }).dir ?? 0];
+        if (delta !== undefined) w.moveTo({ x: w.view.player().grid.x + delta[0], y: w.view.player().grid.y + delta[1] });
+      }
+      guard += 1;
+      command = choice.plan.step(w.view, w.act);
+    }
+    expect(w.at()).toEqual({ x: 4, y: 1 });
+    expect(holds).toBe(1);
+  });
+
+  it("offers no position in an open room with nowhere better to stand", () => {
+    const w = world({ map: OPEN_ROOM, monsters: [{ ...summoner, grid: { x: 2, y: 2 } }] });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("offers no move to a character already standing in a choke point", () => {
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    w.moveTo({ x: 4, y: 1 });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("refuses a position whose route passes next to a dangerous creature", () => {
+    const dangerous = { grid: { x: 5, y: 2 }, race: "cave troll", level: 5, raceFlags: ["NEVER_MOVE"] };
+    const w = world({
+      map: AMBUSH_CORRIDOR,
+      player: { hp: 200, maxHp: 200 },
+      monsters: [{ ...summoner, grid: { x: 2, y: 4 } }, dangerous],
+      monsterRecall: () => "It can bite to hurt (4d6, 50%).",
+    });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("weighs the position lower for a bold persona than a cautious one with a seeded rng", () => {
+    const seeded = (seed: number): (() => number) => {
+      let s = seed >>> 0;
+      return () => {
+        s = (s + 0x6d2b79f5) >>> 0;
+        let t = s;
+        t = Math.imul(t ^ (t >>> 15), t | 1);
+        t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    };
+    const weight = (sliders: Partial<ReturnType<typeof defaultPersona>["sliders"]>): number => {
+      const persona = defaultPersona("Weigher");
+      persona.sliders = { ...persona.sliders, ...sliders, strength: 35, volatility: 0 };
+      const w = world({ map: SUMMON_ROOM, player: { hp: 200, maxHp: 200 }, monsters: [summoner] });
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, rng: seeded(7), reflex: false });
+      const q = asked(p.ask(w.view));
+      const answers: Readonly<Record<string, Answer>> = {
+        goal: { type: "choice", choice: "fight", confidence: 0.6, probabilities: { fight: 0.6, take_position: 0.4 } },
+      };
+      p.choose(answers, q.context, w.view);
+      return q.context.trace?.blended["take_position"] ?? 0;
+    };
+    const cautious = weight({ selfpreservation: 100, patience: 100, boldness: 0, impulsiveness: 0 });
+    const bold = weight({ selfpreservation: 0, patience: 0, boldness: 100, impulsiveness: 100 });
+    expect(cautious).toBeGreaterThan(bold);
+  });
+
+  it("ends on the spot and does not offer another move from there", () => {
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("take_position"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a position plan");
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    let holds = 0;
+    while (command !== null && guard < 20) {
+      if (command.code === "hold") holds += 1;
+      if (command.code === "walk") {
+        const delta = STEP[(command as { readonly dir?: number }).dir ?? 0];
+        if (delta !== undefined) w.moveTo({ x: w.view.player().grid.x + delta[0], y: w.view.player().grid.y + delta[1] });
+      }
+      guard += 1;
+      command = choice.plan.step(w.view, w.act);
+    }
+    expect(command).toBeNull();
+    expect(w.at()).toEqual({ x: 4, y: 1 });
+    expect(holds).toBe(1);
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("drops the offer once the character stands in the choke, even with an ally beside it", () => {
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("take_position"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a position plan");
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    while (command !== null && guard < 20) {
+      if (command.code === "walk") {
+        const delta = STEP[(command as { readonly dir?: number }).dir ?? 0];
+        if (delta !== undefined) w.moveTo({ x: w.view.player().grid.x + delta[0], y: w.view.player().grid.y + delta[1] });
+      }
+      guard += 1;
+      command = choice.plan.step(w.view, w.act);
+    }
+    /* An ally now stands beside the choke; the character is already in it, so no move is offered. */
+    w.setMonsters([summoner, { ...summoner, grid: { x: 7, y: 3 } }]);
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("walks the checked route when the short route is the dangerous one", () => {
+    /* Two four-step routes reach the choke point at (3,4): the one through
+     * (3,6) runs beside a dangerous creature, the one through (4,6) is clear.
+     * The check prices the clear route, so the plan must walk that one. */
+    const TWO_ROUTES = [
+      "########",
+      "####...#",
+      "####...#",
+      "##.#...#",
+      "###....#",
+      "#......#",
+      "#......#",
+      "#...@..#",
+    ];
+    const dangerous = { grid: { x: 2, y: 6 }, race: "cave troll", level: 5, raceFlags: ["NEVER_MOVE"] };
+    const w = world({
+      map: TWO_ROUTES,
+      player: { hp: 200, maxHp: 200 },
+      monsters: [{ ...summoner, grid: { x: 6, y: 1 } }, dangerous],
+      monsterRecall: () => "It can bite to hurt (4d6, 50%).",
+    });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("take_position");
+    const choice = p.choose(pick("take_position"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a position plan");
+    const visited: { x: number; y: number }[] = [];
+    let command = choice.plan.step(w.view, w.act);
+    let guard = 0;
+    let holds = 0;
+    while (command !== null && guard < 20) {
+      if (command.code === "hold") holds += 1;
+      if (command.code === "walk") {
+        const delta = STEP[(command as { readonly dir?: number }).dir ?? 0];
+        if (delta !== undefined) {
+          const to = { x: w.view.player().grid.x + delta[0], y: w.view.player().grid.y + delta[1] };
+          w.moveTo(to);
+          visited.push(to);
+        }
+      }
+      guard += 1;
+      command = choice.plan.step(w.view, w.act);
+    }
+    expect(w.at()).toEqual({ x: 3, y: 4 });
+    expect(holds).toBe(1);
+    for (const cell of visited) expect(Math.max(Math.abs(cell.x - 2), Math.abs(cell.y - 6))).toBeGreaterThan(1);
+  });
+});
