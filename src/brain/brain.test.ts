@@ -1,9 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AgentActions, AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, selfHosted, type AskResult, type NetLike } from "./backend.js";
-import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, outcomeLine, type Gauge, type Plan, type PlanEnd, type Planner, type Token } from "./brain.js";
+import { BACKOFF_MS, createBrain, MAX_EMPTY_DECISIONS, outcomeLine, RESUME_HINT, type Gauge, type Plan, type PlanEnd, type Planner, type Token } from "./brain.js";
 import { parseReply, type SystemOneRequest } from "./systemone.js";
 import { createTally, dayKey } from "./tally.js";
+import { createRuntime, type SquireHost } from "../runtime.js";
+import { memoryStore } from "../memory/kv.js";
+import { suppliedWorld } from "../harness.js";
+import { defaultCfg } from "../settings.js";
 
 const view = {} as AgentView;
 const act = {} as AgentActions;
@@ -63,6 +67,8 @@ function rig(options: {
   results: AskResult[];
   token?: () => Token | null;
   gauge?: () => Gauge;
+  release?: (reason?: string) => void;
+  view?: AgentView;
 }) {
   let clock = 1_000_000;
   const sent: SystemOneRequest[] = [];
@@ -84,13 +90,14 @@ function rig(options: {
     status: () => {},
     onPlanEnd: (end) => ends.push(end),
     ...(options.gauge === undefined ? {} : { gauge: options.gauge }),
+    ...(options.release === undefined ? {} : { release: options.release }),
   });
   return {
     brain,
     sent,
     logs,
     ends,
-    tick: () => brain.controller(view, act),
+    tick: () => brain.controller(options.view ?? view, act),
     advance: (ms: number) => {
       clock += ms;
     },
@@ -98,6 +105,41 @@ function rig(options: {
 }
 
 describe("brain", () => {
+  it.each([
+    { available: true, dead: false },
+    { available: false, dead: false },
+    { available: true, dead: true },
+  ])("probes host release on the real planner hand-back ($available, death $dead)", async ({ available, dead }) => {
+    const release = vi.fn();
+    const host: SquireHost = {
+      log: () => {},
+      controller: { setStatus: () => {}, markNondeterministic: () => {}, ...(available ? { release } : {}) },
+      net: {
+        transport: "page",
+        request: async () => ({ ok: false, code: "not-allowed", problem: "The test has no server." }),
+        secrets: {
+          storage: "page", has: async () => ({ present: true }),
+          fromEnv: async () => ({ ok: false, problem: "The test has no environment." }),
+          set: async () => ({ ok: true }), delete: async () => ({ ok: true }),
+        },
+      },
+    };
+    const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { depth: 1, level: 1, maxLevel: 1, dead } });
+    const rt = createRuntime(host, { store: memoryStore() });
+    const controller = rt.controllerFor(defaultCfg(), w.terrain, () => { throw new Error("expected the brain"); });
+    await flush();
+    controller(w.view, w.act);
+    controller(w.view, w.act);
+    expect(rt.brain()?.state()).toBe("stopped");
+    if (available && !dead) {
+      expect(release).toHaveBeenCalledExactlyOnceWith(rt.brain()?.stoppedBecause());
+      expect(rt.brain()?.stoppedBecause()).toContain("Press Ctrl-Z to hand the keyboard to Squire again.");
+    } else {
+      expect(release).not.toHaveBeenCalled();
+      expect(rt.brain()?.stoppedBecause()).toBe(dead ? "The character has died." : "Squire cannot descend yet: it needs maximum character level 2.");
+    }
+  });
+
   it("asks, waits for the answer, then runs the plan", async () => {
     const r = rig({ planner: planner(() => walks(2)), results: [answered()] });
     expect(r.tick()).toBeNull();
@@ -182,6 +224,7 @@ describe("brain", () => {
     expect(r.tick()).toBeNull();
     expect(r.brain.state()).toBe("stopped");
     expect(r.brain.stoppedBecause()).toContain("Ctrl-Z");
+    expect(r.brain.stoppedBecause()).toBe(`Jev refused the API key. ${RESUME_HINT}`);
     expect(r.tick()).toBeNull();
     expect(r.sent).toHaveLength(1);
   });
@@ -255,6 +298,44 @@ describe("brain", () => {
     });
     expect(r.tick()).toBeNull();
     expect(r.brain.stoppedBecause()).toBe("Nothing to do here.");
+  });
+
+  it("releases the keyboard once when the planner stops, with the restart hint", () => {
+    const release = vi.fn();
+    const r = rig({
+      planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
+      results: [], release,
+    });
+    r.tick();
+    r.tick();
+    expect(release).toHaveBeenCalledExactlyOnceWith("Nothing to do here. Press Ctrl-Z to hand the keyboard to Squire again.");
+    expect(r.logs).toEqual([r.brain.stoppedBecause()]);
+  });
+
+  it("replaces the take-back hint when a failed request releases the keyboard", async () => {
+    const release = vi.fn();
+    const r = rig({ planner: planner(() => walks(1)), release, results: [{
+      ok: false, latencyMs: 5,
+      failure: { kind: "key-refused", message: "Jev refused the API key.", retryable: false },
+    }] });
+    r.tick();
+    await flush();
+    r.tick();
+    r.tick();
+    expect(release).toHaveBeenCalledExactlyOnceWith("Jev refused the API key. Press Ctrl-Z to hand the keyboard to Squire again.");
+    expect(r.brain.stoppedBecause()).not.toContain("Press any key");
+  });
+
+  it("leaves the death hand-back to the host without releasing", () => {
+    const release = vi.fn();
+    const r = rig({
+      planner: { ask: () => ({ handBack: "The character has died." }), choose: () => ({ handBack: "" }), trigger: () => null },
+      results: [], release, view: { player: () => ({ dead: true }) } as AgentView,
+    });
+    r.tick();
+    r.tick();
+    expect(r.brain.stoppedBecause()).toBe("The character has died.");
+    expect(release).not.toHaveBeenCalled();
   });
 
   it("logs a hand-back with nothing to offer as a decision, so the stop shows in the decision log", () => {

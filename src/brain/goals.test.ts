@@ -302,7 +302,7 @@ describe("combat safety action guards", () => {
   });
 
   it("rechecks a stair plan before each walking command", () => {
-    const w = world({ map: ["#######", "#@...>#", "#.....#", "#.....#", "#######"], monsters: [{ grid: { x: 1, y: 3 }, level: 10, speed: 100 }], messages: ["Omens of death haunt this place."], travelPath: (to) => [to] });
+    const w = suppliedWorld({ map: ["#######", "#@...>#", "#.....#", "#.....#", "#######"], player: { hp: 20, maxHp: 30 }, monsters: [{ grid: { x: 1, y: 3 }, level: 10, speed: 100 }], messages: ["Omens of death haunt this place."], travelPath: (to) => [to] });
     const { p } = planner(w);
     const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a stair plan");
@@ -1273,5 +1273,47 @@ describe("soak findings", () => {
   it("offers to leave a walked-out floor with no way down known", () => {
     const w = world({ map: ["########", "#<@....#", "########"], player: { depth: 1 } });
     expect(offered(planner(w).p.ask(w.view))).toContain("leave_level");
+  });
+
+  it("takes the up stairs from a walked-out Rogue floor despite known down stairs", () => {
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 14, maxHp: 14 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.find((offer) => offer.goal === "leave_level")?.criteria).toContain("up staircase");
+    expect(offered(q)).not.toContain("descend");
+    const choice = p.choose(pick("leave_level"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exit plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(10);
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+    expect(w.issued.some((command) => command.code === "descend")).toBe(false);
+  });
+
+  it("never takes blocked down stairs under attack when leaving a level", () => {
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 14, maxHp: 14 } });
+    const { p } = planner(w);
+    const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exit plan");
+    w.moveTo({ x: 5, y: 1 });
+    w.setMonsters([{ grid: { x: 6, y: 1 }, level: 1 }]);
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    expect(w.issued.some((command) => command.code === "descend")).toBe(false);
+  });
+
+  it("does not offer an exit through blocked down stairs when no up stairs are known", () => {
+    const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1 } });
+    expect(planner(w).p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("maximum character level 2") });
+  });
+
+  it("rechecks readiness before taking the down stairs in a leave plan", () => {
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 2, maxLevel: 2 }, messages: ["Omens of death haunt this place."] });
+    const { p } = planner(w);
+    const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exit plan");
+    w.moveTo({ x: 5, y: 1 });
+    w.setPlayer({ maxHp: 14 });
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    expect(w.issued.some((command) => command.code === "descend")).toBe(false);
   });
 });

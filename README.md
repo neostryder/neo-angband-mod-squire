@@ -45,6 +45,8 @@ It heads home while it still has enough to get there, not when the last potion i
 
 While the character is young, it explores and picks up loot only within a leash of the up stairs that grows with its level. When a level stops paying off in experience, gold or new ground, Squire reconsiders: a fresh level, a deeper one if it is ready, or a trip to town.
 
+When a floor has nothing reachable left to explore and the character is not ready to go deeper, Squire takes the up stairs to keep earning on a fresh floor. From the first dungeon level it returns to town, where it prepares for the next trip. A plan to leave a level never takes down stairs into a depth the character is not ready for.
+
 In a fight, Squire works out how much damage the character could take over its next action or two, from each creature's speed, the blows it has been seen to use, its ranged attacks and the character's resistances. When it doesn't know a creature's attacks, it assumes some danger rather than none. An escape has to leave the character safer: stepping away from an adjacent creature that is as fast as it is doesn't count, and each step of a walk to the stairs is checked again before it is taken. When one blow could finish an enemy, attacking can beat stepping away.
 
 In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley, and only spends it on a kill it can be sure of.
@@ -56,6 +58,8 @@ It heals when the cure outpaces the damage coming in, using the smallest potion 
 Near death, Squire offers whatever healing and teleports the character carries, and Word of Recall even with no gold to restock, though Recall's delay can't stop the next blow. Deep Descent is offered only when there is time to wait, since it drops the character several levels deeper. If the model turns every option down in danger, Squire picks the best escape or attack itself. A fast unique is treated as deadly to a character of level 1 to 3: Squire looks for a safe way off the level and never walks up to fight it.
 
 If the model can't be reached, Squire finishes the step it is on, stops, and tries again a few times, showing how long it will wait. After that it gives you the keyboard and says how to resume.
+
+When the game supports releasing the keyboard, a final stop gives it back straight away and hides Squire's banner. Ctrl-Z starts Squire again. On older games, press any key to take the keyboard back first. Death stays with the game's death and next-character flow.
 
 ## Personas
 

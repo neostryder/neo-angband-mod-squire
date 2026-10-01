@@ -49,6 +49,7 @@ import type { Orders } from "../orders/book.js";
 import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
 import { holdDescent } from "../strategy/hold.js";
 import { createJourney } from "../strategy/journey.js";
+import { missingPreparation } from "../strategy/readiness.js";
 import type { Aim } from "../strategy/aims.js";
 import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
@@ -497,6 +498,9 @@ function escapeRoute(s: Situation, terrain: Terrain, goals: readonly Loc[]): Esc
 
 function leaveStep(s: Situation, terrain: Terrain): EscapeStep | null {
   if (s.view.player().depth === 0) return null;
+  if (missingPreparation(s.view, s.view.player().depth + 1).length > 0) {
+    return escapeRoute(s, terrain, knownStairs(s.view, terrain).filter((at) => terrain.isUpStair(s.view.cell(at.x, at.y)!.feat)));
+  }
   return escapeRoute(s, terrain, knownDownStairs(s.view, terrain)) ?? escapeRoute(s, terrain, knownStairs(s.view, terrain));
 }
 
@@ -769,6 +773,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* A floor walked out with no way down found has nothing left to stay for, and a new level by any staircase has its own way down. */
   if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
     addLeave("Take the nearest staircase to a new level: nothing unexplored can be reached here and no way down is known.", exposure(s) + 0.02);
+  }
+  if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && missingPreparation(view, player.depth + 1).length > 0) {
+    addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
@@ -1464,7 +1471,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
-          if (cell !== null && terrain.isDownStair(cell.feat)) return ctx.act.descend();
+          if (cell !== null && terrain.isDownStair(cell.feat) && missingPreparation(ctx.view, here.depth + 1).length === 0) return ctx.act.descend();
           if (cell !== null && terrain.isUpStair(cell.feat)) return ctx.act.ascend();
           const checked = leaveStep(situationNow(ctx.view), terrain);
           if (checked === null) return null;

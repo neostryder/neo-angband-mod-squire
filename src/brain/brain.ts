@@ -141,6 +141,7 @@ export interface BrainDeps<C> {
   log(message: string): void;
   /** Publish the current task, through `ctx.controller.setStatus`. */
   status(label: string, reason?: string): void;
+  release?(reason?: string): void;
   onDecision?(record: DecisionRecord<C>): void;
   /** Called when a decision's plan ends, once per decision and after onDecision. */
   onPlanEnd?(end: PlanEnd): void;
@@ -224,19 +225,25 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     };
   }
 
-  function stopWith(message: string): null {
+  function stopWith(message: string, view: AgentView): null {
+    const release = view.player?.().dead === true ? undefined : deps.release;
+    if (release !== undefined) {
+      const hint = "Press Ctrl-Z to hand the keyboard to Squire again.";
+      message = message.endsWith(RESUME_HINT) ? message.slice(0, -RESUME_HINT.length) + hint : `${message} ${hint}`;
+    }
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
+    release?.(message);
     return null;
   }
 
-  function failed(failure: Failure): null {
-    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`);
+  function failed(failure: Failure, view: AgentView): null {
+    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`, view);
     /* A server's Retry-After sets how long to wait, never how many times. */
     const wait = attempt >= BACKOFF_MS.length ? undefined : failure.retryAfterMs ?? BACKOFF_MS[attempt];
     if (wait === undefined || wait > MAX_RETRY_AFTER_MS) {
-      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`);
+      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`, view);
     }
     attempt += 1;
     state = { kind: "waiting", until: deps.now() + wait };
@@ -247,7 +254,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
 
   function startAsking(view: AgentView): null {
     const capped = tally.overCap(backend, deps.now());
-    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
+    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`, view);
 
     const question = planner.ask(view);
     if ("handBack" in question) {
@@ -268,7 +275,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         const hp = deps.gauge?.(view).hp ?? null;
         deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       }
-      return stopWith(question.handBack);
+      return stopWith(question.handBack, view);
     }
     if ("reflex" in question) {
       deps.onDecision?.({
@@ -317,7 +324,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     landed = null;
 
     if (!result.ok) {
-      failed(result.failure);
+      failed(result.failure, view);
       return null;
     }
     tally.record(backend, result.usage, deps.now());
@@ -347,7 +354,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice) {
       deps.onPlanEnd?.({ stop: "handed back", reason: choice.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
-      stopWith(choice.handBack);
+      stopWith(choice.handBack, view);
       return null;
     }
     state = { kind: "running", plan: choice.plan, run: newRun(view) };
@@ -413,7 +420,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         else emptyLabels.add(plan.label);
       }
       if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);
+        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`, view);
       }
       state = { kind: "idle" };
     }

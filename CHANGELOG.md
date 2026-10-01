@@ -54,6 +54,7 @@ Fixed.
 - [Visible] **Favoured grounds.** Heirs favour exploring at the depth of an ancestor's most valuable find once their gear and supplies let them reach it.
 
 ### Changed
+- [Visible] **When Squire stops for good, the keyboard comes back to you.** The message says why it stopped and that Ctrl-Z hands control back to Squire. A death still goes through roll-on as before.
 - [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.
 
 ### Removed
@@ -61,6 +62,7 @@ Fixed.
 - [Internal] **Removed this repo's own Discord release announcer.** Its workflow, script and test are gone. The releases site at releases.rpgm.tools now posts each new release to the Neo Angband announcements forum.
 
 ### Fixed
+- [Visible] [Balance] **Squire keeps earning experience when it isn't ready to go deeper.** On a cleared floor it takes an up staircase to a fresh level instead of stopping, and it never takes a down staircase to a depth it isn't prepared for.
 - [Visible] **Squire no longer waits in town for light it already has.** By day the town reports no light radius, so Squire now checks the light it wields and the fuel that light can use: flasks of oil for a lantern, spare torches for a torch.
 - [Visible] **Squire no longer freezes in town.** It keeps exploring until it can actually reach the staircase down, rests instead of opening the shop when it means to wait on a shop entrance, and when it truly has nothing left to try it hands the keyboard back with the reason on the dashboard.
 - [Visible] **Squire stops dying while it backs away.** It no longer tries to step away from an adjacent creature as fast as it is, offers healing, teleports and recall near death, and picks an escape or a fight itself when the model turns every option down. It buys Phase Door and healing before anything else in town, and leaves the level when a fast unique like Grip shows up early on.

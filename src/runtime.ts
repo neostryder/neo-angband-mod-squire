@@ -59,6 +59,8 @@ export interface SquireHost {
   readonly controller?: {
     setStatus(status: { readonly label?: string; readonly reason?: string }): void;
     markNondeterministic(): void;
+    /** Available from Core 1.20.0. */
+    release?(reason?: string): void;
   };
   readonly saves?: {
     create?(options?: { readonly like?: RunReportLike["birth"]; readonly resumeAutoplayer?: boolean }): Promise<{ readonly ok: boolean; readonly reason?: string }>;
@@ -618,6 +620,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
+      ...(host.controller?.release === undefined ? {} : { release: (reason?: string) => host.controller?.release?.(reason) }),
       onDecision: (record) => {
         void logLoaded.then(() => logDecision(record));
         for (const listener of listeners) listener(record, lastTurn);

@@ -1067,17 +1067,23 @@ function createBrain(deps) {
       issuedDepth: null
     };
   }
-  function stopWith(message) {
+  function stopWith(message, view) {
+    const release = view.player?.().dead === true ? void 0 : deps.release;
+    if (release !== void 0) {
+      const hint = "Press Ctrl-Z to hand the keyboard to Squire again.";
+      message = message.endsWith(RESUME_HINT) ? message.slice(0, -RESUME_HINT.length) + hint : `${message} ${hint}`;
+    }
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
+    release?.(message);
     return null;
   }
-  function failed(failure) {
-    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`);
+  function failed(failure, view) {
+    if (!failure.retryable) return stopWith(`${failure.message} ${RESUME_HINT}`, view);
     const wait = attempt >= BACKOFF_MS.length ? void 0 : failure.retryAfterMs ?? BACKOFF_MS[attempt];
     if (wait === void 0 || wait > MAX_RETRY_AFTER_MS) {
-      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`);
+      return stopWith(`${failure.message} Squire tried ${String(attempt)} times and has stopped. ${RESUME_HINT}`, view);
     }
     attempt += 1;
     state = { kind: "waiting", until: deps.now() + wait };
@@ -1087,7 +1093,7 @@ function createBrain(deps) {
   }
   function startAsking(view) {
     const capped = tally.overCap(backend, deps.now());
-    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`);
+    if (capped !== null) return stopWith(`${capped.message} ${RESUME_HINT}`, view);
     const question = planner.ask(view);
     if ("handBack" in question) {
       if (question.context !== void 0) {
@@ -1106,7 +1112,7 @@ function createBrain(deps) {
         const hp = deps.gauge?.(view).hp ?? null;
         deps.onPlanEnd?.({ stop: "handed back", reason: question.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
       }
-      return stopWith(question.handBack);
+      return stopWith(question.handBack, view);
     }
     if ("reflex" in question) {
       deps.onDecision?.({
@@ -1151,7 +1157,7 @@ function createBrain(deps) {
     const { result, question, token } = landed;
     landed = null;
     if (!result.ok) {
-      failed(result.failure);
+      failed(result.failure, view);
       return null;
     }
     tally.record(backend, result.usage, deps.now());
@@ -1177,7 +1183,7 @@ function createBrain(deps) {
     const hp = deps.gauge?.(view).hp ?? null;
     if ("handBack" in choice2) {
       deps.onPlanEnd?.({ stop: "handed back", reason: choice2.handBack, commands: 0, refused: 0, hpBefore: hp, hpAfter: hp });
-      stopWith(choice2.handBack);
+      stopWith(choice2.handBack, view);
       return null;
     }
     state = { kind: "running", plan: choice2.plan, run: newRun(view) };
@@ -1233,7 +1239,7 @@ function createBrain(deps) {
         else emptyLabels.add(plan.label);
       }
       if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`);
+        return stopWith(`Squire's last ${String(MAX_EMPTY_DECISIONS)} plans ended before doing anything, so it has stopped. ${RESUME_HINT}`, view);
       }
       state = { kind: "idle" };
     }
@@ -4248,6 +4254,9 @@ function escapeRoute(s, terrain, goals) {
 }
 function leaveStep(s, terrain) {
   if (s.view.player().depth === 0) return null;
+  if (missingPreparation(s.view, s.view.player().depth + 1).length > 0) {
+    return escapeRoute(s, terrain, knownStairs(s.view, terrain).filter((at) => terrain.isUpStair(s.view.cell(at.x, at.y).feat)));
+  }
   return escapeRoute(s, terrain, knownDownStairs(s.view, terrain)) ?? escapeRoute(s, terrain, knownStairs(s.view, terrain));
 }
 function retreatStep(s, terrain, flight) {
@@ -4450,6 +4459,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
     addLeave("Take the nearest staircase to a new level: nothing unexplored can be reached here and no way down is known.", exposure(s) + 0.02);
+  }
+  if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && missingPreparation(view, player.depth + 1).length > 0) {
+    addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
   if (nearDeath || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
     if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
@@ -5023,7 +5035,7 @@ function createGoalPlanner(options) {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell2 = ctx.view.cell(here.grid.x, here.grid.y);
-          if (cell2 !== null && terrain.isDownStair(cell2.feat)) return ctx.act.descend();
+          if (cell2 !== null && terrain.isDownStair(cell2.feat) && missingPreparation(ctx.view, here.depth + 1).length === 0) return ctx.act.descend();
           if (cell2 !== null && terrain.isUpStair(cell2.feat)) return ctx.act.ascend();
           const checked = leaveStep(situationNow(ctx.view), terrain);
           if (checked === null) return null;
@@ -9535,6 +9547,7 @@ function createRuntime(host, options = {}) {
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
+      ...host.controller?.release === void 0 ? {} : { release: (reason) => host.controller?.release?.(reason) },
       onDecision: (record4) => {
         void logLoaded.then(() => logDecision(record4));
         for (const listener of listeners) listener(record4, lastTurn);
