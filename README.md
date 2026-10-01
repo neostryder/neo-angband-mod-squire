@@ -22,6 +22,8 @@ Squire is a mod. It installs and uninstalls in the game's mod manager and reache
 
 Press any key to take the keyboard back. The character stays where it is, and the key you pressed is not acted on. Ctrl-Z hands it over again.
 
+On a game new enough to offer it, the title screen has a **New Squire character** row (key S). It starts a character with Squire already playing, in this profile or in a separate one that keeps Squire's options, mods and characters apart from yours. A separate profile can start fresh or copy another profile's options, mods and mod settings, but never its characters. Next time, Squire offers the profiles it made before.
+
 A character handed to any autoplayer is marked for good, and the game keeps it off the score table. That is the game's own rule, and Squire follows it.
 
 ## How Squire decides
@@ -32,7 +34,7 @@ Squire only knows what the character knows:
 
 - Items are used by the names your inventory shows, so an unidentified potion stays a mystery to Squire too.
 - It learns a shop's stock only by walking in, and plans from what it remembers, which may be out of date by its next visit.
-- It plans routes only over ground the character remembers. It can walk to a worthwhile item on that ground and pick it up there. The long errand picks up only what lies underfoot.
+- It plans routes only over ground the character remembers. It can walk to a worthwhile item on that ground and pick it up there. On a game that keeps the player's floor memory, Squire knows an item as the look command shows it: by name while in sight, as remembered once out of sight, and not at all if it fell where nobody saw. It looks again on arrival, and drops the plan if the item has gone. Squire can't value an unknown flavour or an object it has only sensed, so it walks over to look at one close by, as a player picks up unknown potions to learn them. A curious, greedy or bold persona goes further for it, and a cautious one stays closer. The long errand picks up only what lies underfoot.
 - It compares gear by what the game would show once an item's runes are known. An item whose runes are still unknown can only be tried on, which a curious persona does.
 
 Squire judges gear by what it lets the character do: the damage it can deal each action, how well it can cast, and its speed, ahead of price or a favourite name. It never trades away the last source of Free Action, See Invisible or telepathy, or a resistance the next depth calls for. A swap that gives something up for something else stays a choice; only a straight upgrade is automatic.

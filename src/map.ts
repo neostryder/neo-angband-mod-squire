@@ -140,8 +140,18 @@ export function knownDownStairs(view: AgentView, terrain: Terrain): Loc[] {
   return found;
 }
 
+/**
+ * The objects the player remembers on a cell. Newer views report the count of
+ * the player's own floor memory beside the older count; older views have only
+ * the older one.
+ */
+export function knownCount(cell: CellView): number {
+  const known = (cell as CellView & { readonly knownObjectCount?: number }).knownObjectCount;
+  return typeof known === "number" ? known : cell.objectCount;
+}
+
 /** Whether there is something on this grid to pick up. */
 export function hasFloorObject(view: AgentView, at: Loc): boolean {
   const cell = cellAt(view, at);
-  return cell !== null && cell.objectCount > 0;
+  return cell !== null && knownCount(cell) > 0;
 }

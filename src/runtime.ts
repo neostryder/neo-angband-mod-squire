@@ -66,6 +66,8 @@ export interface SquireHost {
   readonly saves?: {
     create?(options?: { readonly like?: RunReportLike["birth"]; readonly resumeAutoplayer?: boolean }): Promise<{ readonly ok: boolean; readonly reason?: string }>;
   };
+  /** True when this mod's controller was asked for the new character. Absent from older Core. */
+  readonly controllerArmed?: boolean;
 }
 
 interface NetSecretsWrite {

@@ -54,7 +54,7 @@ import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
 import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
-import { floorTarget, junkInPack, packFull } from "./items.js";
+import { floorTarget, junkInPack, packFull, stillWorthIt } from "./items.js";
 import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
 import { distrusted, distrustedUse, emptyFlourishes, flourishLines, nudgeGrounds, type Flourishes } from "../learning/family-ways.js";
@@ -892,8 +892,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
    * a full pack is emptied of junk rather than left to stall on a pickup. */
   const full = packFull(view);
   if (!bleeding && !full) {
-    const loot = floorTarget(view, terrain, saving);
-    if (loot !== null) {
+    const loot = floorTarget(view, terrain, saving, persona);
+    if (loot?.look === true) add("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to look at ${loot.name} on the floor.`, exposure(s) + 0.02);
+    else if (loot !== null) {
       const why = loot.gold ? " It is gold, which buys the aim." : loot.sellable ? " It looks worth selling." : "";
       add("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to the ${loot.name} on the floor and pick it up.${why}`, exposure(s) + 0.02);
     }
@@ -1448,11 +1449,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return once("pick up", view, (ctx) => ctx.act.pickup());
       case "fetch":
         return (() => {
-          const loot = floorTarget(view, terrain, savingFor(view));
+          const saving = savingFor(view);
+          const loot = floorTarget(view, terrain, saving, personaOf());
           if (loot === null) return once("nothing to fetch", view, () => null);
           let grabbed = false;
           return stepsPlan("fetch item", view, (ctx) => {
-            if (grabbed) return null;
+            if (grabbed || !stillWorthIt(ctx.view, loot, saving, personaOf())) return null;
             const here = ctx.view.player().grid;
             if (here.x === loot.at.x && here.y === loot.at.y) {
               grabbed = true;

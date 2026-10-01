@@ -33,7 +33,9 @@
     "network:squire.rpgm.tools",
     "ui:birth.replace",
     "registry:command",
-    "keymap:write"
+    "keymap:write",
+    "ui:title",
+    "profiles:manage"
   ],
   "author": "neostryder",
   "license": "GPL-3.0-only",

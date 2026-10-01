@@ -33,6 +33,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   let expired = false;
   let footOffered = false;
   let recallActive = false;
+  let lastPersona: Persona | null = null;
   let anchor: Loc = { x: 0, y: 0 };
   let leashField: FlowField | null = null;
   let breederLevel = false;
@@ -137,6 +138,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function apply(offers: readonly Offer[], view: AgentView, persona: Persona | null, visited: ReadonlySet<number>, recalling: boolean): Offer[] {
     footOffered = false;
     recallActive = recalling;
+    lastPersona = persona;
     observe(view);
     const player = view.player();
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
@@ -155,7 +157,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
       if (offer.goal === "fetch") {
-        const loot = floorTarget(view, terrain, false);
+        const loot = floorTarget(view, terrain, false, lastPersona);
         return loot !== null && leashed(view, loot.at);
       }
       if (offer.goal === "pick_up") return leashed(view, player.grid);
@@ -216,7 +218,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
       if (OPTIONAL.has(goal) && (expired || returnReason !== null || departure.finished(view))) return null;
       if (goal === "fetch") {
-        const loot = floorTarget(view, terrain, false);
+        const loot = floorTarget(view, terrain, false, lastPersona);
         if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at)) return null;
         /* Engine runs can cross the leash before the next planner observation. */
         const single = { ...view, travelPath: undefined };

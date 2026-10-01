@@ -69,6 +69,12 @@ describe("the Squire plugin", () => {
     expect(typeof plugin.controller(ctx)).toBe("function");
   });
 
+  it("offers a controller to a new character started with Squire armed", () => {
+    const { ctx } = context({ noscore: 0 });
+    expect(typeof plugin.controller({ ...ctx, controllerArmed: true })).toBe("function");
+    expect(plugin.controller({ ...ctx, controllerArmed: false })).toBeUndefined();
+  });
+
   it("declares no hooks, because it changes no rule", () => {
     /* register adds the panel and listens to events, and birth only accepts a
      * roll-on creation Squire asked for; neither overrides a rule. */

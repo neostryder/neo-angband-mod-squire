@@ -23,6 +23,23 @@ export function fleesFromNew(persona: Persona): boolean {
   return persona.quirks.cowardice.on;
 }
 
+/**
+ * How many steps the character will walk to look at a floor item it cannot
+ * judge from where it stands: an unknown flavour, or something only sensed.
+ * Every character looks at what lies close by, as a player picks up unknown
+ * potions to learn them. Curiosity, greed (more so for sensed money) and
+ * boldness draw it further; self-preservation and paranoia hold it back.
+ */
+export const LOOK_BASE = 8;
+
+export function lookReach(persona: Persona | null, money: boolean): number {
+  if (persona === null) return LOOK_BASE;
+  const { curiosity, greed, boldness, selfpreservation, paranoia } = persona.sliders;
+  const lean = (curiosity - 50) + (greed - 50) * (money ? 1 : 0.5) + (boldness - 50) / 2 -
+    (selfpreservation - 50) / 2 - (paranoia - 50) / 2;
+  return Math.max(0, LOOK_BASE + Math.floor(lean / 2));
+}
+
 /** Unknown harm bends preferences without changing the survival bound. */
 export function nudgeUnseen(dist: Readonly<Record<string, number>>, offers: readonly { readonly goal: string; readonly risk: number }[], persona: Persona, damage: number, hp: number, ceiling: number): Record<string, number> {
   const result = { ...dist };

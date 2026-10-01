@@ -335,9 +335,13 @@ function knownDownStairs(view, terrain) {
   }
   return found;
 }
+function knownCount(cell2) {
+  const known = cell2.knownObjectCount;
+  return typeof known === "number" ? known : cell2.objectCount;
+}
 function hasFloorObject(view, at) {
   const cell2 = cellAt(view, at);
-  return cell2 !== null && cell2.objectCount > 0;
+  return cell2 !== null && knownCount(cell2) > 0;
 }
 
 // src/travel.ts
@@ -1465,11 +1469,11 @@ function shownName2(item) {
   const name = item.name;
   return typeof name === "string" && name.length > 0 ? name : null;
 }
-function matchesSupplyName(shown, wanted) {
-  if (wanted === "Flask of Oil") return /\bFlasks? of Oil\b/i.test(shown);
-  if (wanted === "Ration of Food") return /\bRations? of Food\b/i.test(shown);
-  if (wanted === "Wooden Torch") return /\bWooden (Torch|Torches)\b/i.test(shown);
-  return shown.toLowerCase().includes(wanted.toLowerCase());
+function matchesSupplyName(shown, wanted2) {
+  if (wanted2 === "Flask of Oil") return /\bFlasks? of Oil\b/i.test(shown);
+  if (wanted2 === "Ration of Food") return /\bRations? of Food\b/i.test(shown);
+  if (wanted2 === "Wooden Torch") return /\bWooden (Torch|Torches)\b/i.test(shown);
+  return shown.toLowerCase().includes(wanted2.toLowerCase());
 }
 function supplyName(kind, level, lantern, launcher) {
   switch (kind) {
@@ -2584,6 +2588,13 @@ function mustPickUp(persona) {
 function fleesFromNew(persona) {
   return persona.quirks.cowardice.on;
 }
+var LOOK_BASE = 8;
+function lookReach(persona, money) {
+  if (persona === null) return LOOK_BASE;
+  const { curiosity, greed, boldness, selfpreservation, paranoia } = persona.sliders;
+  const lean = curiosity - 50 + (greed - 50) * (money ? 1 : 0.5) + (boldness - 50) / 2 - (selfpreservation - 50) / 2 - (paranoia - 50) / 2;
+  return Math.max(0, LOOK_BASE + Math.floor(lean / 2));
+}
 function nudgeUnseen(dist, offers, persona, damage, hp, ceiling) {
   const result = { ...dist };
   const { boldness, pride, paranoia, selfpreservation, strength } = persona.sliders;
@@ -3005,9 +3016,9 @@ function armourAim(view, shelf, packItems, worn) {
   const wornTvals = worn.map((item) => item.tval);
   const empty2 = ARMOUR_SLOTS.filter((slot2) => !slot2.tvals.some((t) => wornTvals.includes(t)) && !(casts && slot2.name === "hands"));
   if (empty2.length === 0) return null;
-  const wanted = empty2.flatMap((slot2) => slot2.tvals);
-  const carried = packItems.some((item) => wanted.includes(item.tval));
-  const source = carried ? { how: "try", price: null } : sourced(cheapest(shelf.wares, (ware) => wanted.includes(ware.tval)));
+  const wanted2 = empty2.flatMap((slot2) => slot2.tvals);
+  const carried = packItems.some((item) => wanted2.includes(item.tval));
+  const source = carried ? { how: "try", price: null } : sourced(cheapest(shelf.wares, (ware) => wanted2.includes(ware.tval)));
   return {
     kind: "armour",
     label: "armour for empty slots",
@@ -3247,7 +3258,12 @@ function createDeparture() {
 }
 
 // src/brain/items.ts
+function knowing(view) {
+  return view;
+}
 var TV_GOLD = 1;
+var TV_MAGIC = { STAFF: 22, WAND: 23, ROD: 24, SCROLL: 25, POTION: 26, MUSHROOM: 29 };
+var FLAVOURED = [TV.AMULET, TV.RING, ...Object.values(TV_MAGIC)];
 var LOOT_VALUE = 10;
 var PACK_LIMIT = 23;
 var GEAR = [
@@ -3285,6 +3301,10 @@ var USEFUL = [
   /\bLantern\b/i,
   /\bBook\b/i
 ];
+function valueIn(text) {
+  const match = /(\d+)\s+gold/i.exec(text) ?? /value[:\s]+(\d+)/i.exec(text);
+  return match === null ? null : Number(match[1]);
+}
 function itemValue(view, at, item) {
   if (typeof item.value === "number") return item.value;
   const index = item.floorIndex;
@@ -3292,41 +3312,92 @@ function itemValue(view, at, item) {
   if (v.inspectItem === void 0 || index === void 0) return null;
   const info = v.inspectItem({ floor: { x: at.x, y: at.y, index } });
   if (info === null) return null;
-  const match = /(\d+)\s+gold/i.exec(info.text) ?? /value[:\s]+(\d+)/i.exec(info.text);
-  return match === null ? null : Number(match[1]);
+  return valueIn(info.text);
 }
-function judge(view, at, item) {
+function unknownFlavour(tval, name) {
+  if (!FLAVOURED.includes(tval)) return false;
+  return tval === TV_MAGIC.SCROLL ? /\btitled\b/i.test(name) : !/\bof\b/i.test(name);
+}
+function judge(view, at, item, strict = false) {
   const name = shownName2(item) ?? item.label;
-  const value = itemValue(view, at, item);
+  const unknown = strict && unknownFlavour(item.tval, name);
+  const value = unknown ? null : itemValue(view, at, item);
   const gold = item.tval === TV_GOLD;
-  const useful = USEFUL.some((pattern) => pattern.test(name));
-  const sellable = !useful && (mightBeSpecial(name) || value !== null && value >= LOOT_VALUE);
-  return { gold, sellable, useful, value, name };
+  const useful = !unknown && USEFUL.some((pattern) => pattern.test(name));
+  const sellable = !unknown && !useful && (mightBeSpecial(name) || value !== null && value >= LOOT_VALUE);
+  return { gold, sellable, useful, value, name, unknown, money: false, sensed: false };
 }
-function floorTarget(view, terrain, saving) {
+function judgeKnown(view, entry) {
+  const look = entry.visibility === "seen" ? view.inspectKnownFloorItem?.(entry.ref) : void 0;
+  if (look?.status === "stale") return null;
+  if (entry.sensed) {
+    return { gold: false, sellable: false, useful: false, value: null, name: entry.money ? "unseen treasure" : "an unseen object", unknown: true, money: entry.money, sensed: true };
+  }
+  const name = entry.item.name;
+  const unknown = unknownFlavour(entry.item.tval, name);
+  const value = unknown || look?.status !== "seen" ? null : valueIn(look.inspection.text);
+  const gold = entry.item.tval === TV_GOLD;
+  const useful = !unknown && USEFUL.some((pattern) => pattern.test(name));
+  const sellable = !unknown && !useful && (mightBeSpecial(name) || value !== null && value >= LOOT_VALUE);
+  return { gold, sellable, useful, value, name, unknown, money: false, sensed: false };
+}
+function wanted(verdict, saving) {
+  return verdict.gold || verdict.sellable || !saving && verdict.useful;
+}
+function looksAt(verdict, saving, persona, away) {
+  return verdict.unknown && (!saving || verdict.money) && away <= lookReach(persona, verdict.money);
+}
+function floorTarget(view, terrain, saving, persona = null) {
   const player = view.player();
   const at = player.grid;
   const bounds = view.mapBounds();
   const routable = (grid) => isRoutable(view, terrain, grid);
   const field = flowFrom({ goals: [at], canEnter: routable });
+  const memory = knowing(view);
+  const remembered3 = typeof memory.knownFloorItems === "function";
   let best = null;
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const cell2 = view.cell(x, y);
-      if (cell2 === null || !cell2.known || cell2.objectCount === 0) continue;
+      if (cell2 === null || !cell2.known || knownCount(cell2) === 0) continue;
       const here = { x, y };
       if (here.x === at.x && here.y === at.y) continue;
       if (!Number.isFinite(field.distance(here))) continue;
-      for (const item of view.floorItems(x, y)) {
-        const verdict = judge(view, here, item);
-        const wanted = verdict.gold || verdict.sellable || !saving && verdict.useful;
-        if (!wanted) continue;
-        const away = steps(at, here);
-        if (best === null || away < best.away) best = { at: here, name: verdict.name, away, gold: verdict.gold, sellable: verdict.sellable, useful: verdict.useful, value: verdict.value };
+      const verdicts = remembered3 ? (memory.knownFloorItems?.(x, y) ?? []).map((entry) => judgeKnown(memory, entry)).filter((verdict) => verdict !== null) : view.floorItems(x, y).map((item) => judge(view, here, item));
+      const away = steps(at, here);
+      for (const verdict of verdicts) {
+        const fetch = wanted(verdict, saving);
+        const look = !fetch && remembered3 && looksAt(verdict, saving, persona, away);
+        if (!fetch && !look) continue;
+        if (best === null || away < best.away) best = {
+          at: here,
+          name: verdict.name,
+          away,
+          gold: verdict.gold,
+          sellable: verdict.sellable,
+          useful: verdict.useful,
+          value: verdict.value,
+          ...remembered3 ? { known: true, look, sensed: verdict.sensed } : {}
+        };
       }
     }
   }
   return best;
+}
+function stillWorthIt(view, loot, saving, persona) {
+  if (loot.known !== true) return true;
+  const keep = (verdict) => wanted(verdict, saving) || looksAt(verdict, saving, persona, 1);
+  const here = view.player().grid;
+  if (here.x === loot.at.x && here.y === loot.at.y) {
+    return view.floorItems(here.x, here.y).some((item) => keep(judge(view, here, item, true)));
+  }
+  const memory = knowing(view);
+  const entries = memory.knownFloorItems?.(loot.at.x, loot.at.y) ?? [];
+  const same3 = loot.sensed === true ? entries : entries.filter((entry) => !entry.sensed && entry.item.name === loot.name);
+  return same3.some((entry) => {
+    const verdict = judgeKnown(memory, entry);
+    return verdict !== null && (entry.visibility === "remembered" || keep(verdict));
+  });
 }
 function packFull(view) {
   return view.inventory().length >= PACK_LIMIT;
@@ -3385,8 +3456,8 @@ function familyAfterDeath(family, run, view, persona) {
   const last = run.lastUse;
   const known = view?.inventory().some((i) => itemKey(i) === last?.key && unknownUse(i) === null) ?? false;
   const learned = view === null ? [] : learnedSuperstitions(family.superstitions, view);
-  const remembered2 = family.superstitions.filter((s) => !learned.some((t) => s.key === t.key));
-  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && !known ? [...remembered2.filter((s) => s.key !== last.key), last].slice(-6) : remembered2;
+  const remembered3 = family.superstitions.filter((s) => !learned.some((t) => s.key === t.key));
+  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && !known ? [...remembered3.filter((s) => s.key !== last.key), last].slice(-6) : remembered3;
   const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
   const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
   return { superstitions, darkDeaths: family.darkDeaths + (persona.toggles.darkLessons && dark ? 1 : 0), bestFind };
@@ -3597,8 +3668,8 @@ function wornKind(view, criteria) {
   return null;
 }
 function inSight2(view, name) {
-  const wanted = name.toLowerCase();
-  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted);
+  const wanted2 = name.toLowerCase();
+  return view.monsters().some((m) => m.visible && m.race.toLowerCase() === wanted2);
 }
 function servedBy(offer, view, aims, gold) {
   const depth2 = view.player().depth;
@@ -3638,9 +3709,9 @@ function steerOffers(offers, view, steering, context, make) {
   if (steering.aims.length === 0) return [...offers];
   const player = view.player();
   const out = [...offers];
-  const wanted = steering.aims.find((aim) => affordable(aim, player.gold));
-  if (wanted !== void 0 && player.depth > 0 && !context.recallActive && !out.some((o) => o.goal === "recall_town") && steering.tripAllowed(player.gold) && canRead(view) && recallItem(view) !== null) {
-    out.push(make("recall_town", `Read Word of Recall to return to town with ${String(player.gold)} gold, enough to buy the aim: ${wanted.label}.`, context.tripRisk));
+  const wanted2 = steering.aims.find((aim) => affordable(aim, player.gold));
+  if (wanted2 !== void 0 && player.depth > 0 && !context.recallActive && !out.some((o) => o.goal === "recall_town") && steering.tripAllowed(player.gold) && canRead(view) && recallItem(view) !== null) {
+    out.push(make("recall_town", `Read Word of Recall to return to town with ${String(player.gold)} gold, enough to buy the aim: ${wanted2.label}.`, context.tripRisk));
   }
   return out.map((offer) => {
     const served = servedBy(offer, view, steering.aims, player.gold);
@@ -3799,11 +3870,12 @@ function createJourney(terrain, unseenDanger) {
   let previousHp = null;
   let unseenUntil = -1;
   let lastTurn = -1;
-  const remembered2 = /* @__PURE__ */ new Map();
+  const remembered3 = /* @__PURE__ */ new Map();
   let town = { ready: true, earning: false, reason: "", target: null };
   let expired = false;
   let footOffered = false;
   let recallActive = false;
+  let lastPersona = null;
   let anchor = { x: 0, y: 0 };
   let leashField = null;
   let breederLevel = false;
@@ -3830,11 +3902,11 @@ function createJourney(terrain, unseenDanger) {
       if (player.depth === 0 || turn < lastTurn) returnReason = null;
       previousHp = null;
       unseenUntil = -1;
-      remembered2.clear();
+      remembered3.clear();
     }
-    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered2.set(monster.id, { monster, until: turn + 100 });
+    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered3.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
-    for (const [id, entry] of remembered2) if (!live.has(id) || entry.until < turn) remembered2.delete(id);
+    for (const [id, entry] of remembered3) if (!live.has(id) || entry.until < turn) remembered3.delete(id);
     if (previousHp !== null && player.hp < previousHp && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
@@ -3851,13 +3923,13 @@ function createJourney(terrain, unseenDanger) {
     if (standingOnHarm(view, terrain, player.grid)) return false;
     if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return false;
     if (view.monsters().some((monster) => monster.visible && (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, player.grid) <= 10 || !monster.asleep || steps(monster.grid, player.grid) <= 8))) return false;
-    return ![...remembered2.values()].some((entry) => entry.until >= view.turn());
+    return ![...remembered3.values()].some((entry) => entry.until >= view.turn());
   }
   function checkedRoute(view, goals) {
     const player = view.player();
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return null;
-    const threats = [...remembered2.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
+    const threats = [...remembered3.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
     const enter2 = (grid) => isRoutable(view, terrain, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap;
     const field = flowFrom({ goals, canEnter: enter2 });
     if (!Number.isFinite(field.distance(player.grid))) return null;
@@ -3898,6 +3970,7 @@ function createJourney(terrain, unseenDanger) {
   function apply(offers, view, persona, visited, recalling) {
     footOffered = false;
     recallActive = recalling;
+    lastPersona = persona;
     observe(view);
     const player = view.player();
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
@@ -3915,7 +3988,7 @@ function createJourney(terrain, unseenDanger) {
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
       if (offer.goal === "fetch") {
-        const loot = floorTarget(view, terrain, false);
+        const loot = floorTarget(view, terrain, false, lastPersona);
         return loot !== null && leashed(view, loot.at);
       }
       if (offer.goal === "pick_up") return leashed(view, player.grid);
@@ -3974,7 +4047,7 @@ function createJourney(terrain, unseenDanger) {
       }
       if (OPTIONAL.has(goal) && (expired || returnReason !== null || departure.finished(view))) return null;
       if (goal === "fetch") {
-        const loot = floorTarget(view, terrain, false);
+        const loot = floorTarget(view, terrain, false, lastPersona);
         if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at)) return null;
         const single = { ...view, travelPath: void 0 };
         const command = plan.step(single, act);
@@ -4250,7 +4323,7 @@ function swarmOf(monsters) {
   for (const [race, count2] of counts) if (best === null || count2 > best.count) best = { race, count: count2 };
   return best;
 }
-function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered2 = [], unseenDamage = 0, terrain, speedEnergy) {
+function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered3 = [], unseenDamage = 0, terrain, speedEnergy) {
   const player = view.player();
   const monsters = view.monsters();
   const awake = awakeInSight(monsters);
@@ -4268,7 +4341,7 @@ function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* 
     target,
     worst,
     hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1,
-    threats: [...monsters.filter((m) => m.visible), ...remembered2.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
+    threats: [...monsters.filter((m) => m.visible), ...remembered3.filter((m) => !monsters.some((other) => other.visible && other.id === m.id))],
     unseenDamage,
     lastSeen: /* @__PURE__ */ new Map(),
     ...terrain === void 0 ? {} : { terrain },
@@ -4689,8 +4762,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   const full = packFull(view);
   if (!bleeding && !full) {
-    const loot = floorTarget(view, terrain, saving);
-    if (loot !== null) {
+    const loot = floorTarget(view, terrain, saving, persona);
+    if (loot?.look === true) add2("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to look at ${loot.name} on the floor.`, exposure(s) + 0.02);
+    else if (loot !== null) {
       const why = loot.gold ? " It is gold, which buys the aim." : loot.sellable ? " It looks worth selling." : "";
       add2("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to the ${loot.name} on the floor and pick it up.${why}`, exposure(s) + 0.02);
     }
@@ -5154,11 +5228,12 @@ function createGoalPlanner(options) {
         return once("pick up", view, (ctx) => ctx.act.pickup());
       case "fetch":
         return (() => {
-          const loot = floorTarget(view, terrain, savingFor(view));
+          const saving = savingFor(view);
+          const loot = floorTarget(view, terrain, saving, personaOf());
           if (loot === null) return once("nothing to fetch", view, () => null);
           let grabbed = false;
           return stepsPlan("fetch item", view, (ctx) => {
-            if (grabbed) return null;
+            if (grabbed || !stillWorthIt(ctx.view, loot, saving, personaOf())) return null;
             const here = ctx.view.player().grid;
             if (here.x === loot.at.x && here.y === loot.at.y) {
               grabbed = true;
@@ -11625,6 +11700,91 @@ function registerOrderCommand(host, ctx, rt) {
   return null;
 }
 
+// src/title.ts
+var TITLE_LABEL = "New Squire character";
+var TITLE_KEY = "S";
+var PROFILES_KEY = "squire/profiles";
+var WHERE_PROMPT = "Where should the new Squire character live?";
+var WHERE_SEPARATE = "In a separate profile, with its own options, mods and characters";
+var WHERE_HERE = "In this profile";
+var WHICH_PROMPT = "Which profile should Squire use?";
+var WHICH_FRESH = "Start a fresh profile";
+var WHICH_COPY = "Copy an existing profile";
+var COPY_PROMPT = "Copy which profile? Its options, mods and mod settings come across, but not its characters.";
+var FALLBACK_HERE = "Start the character in this profile";
+var GIVE_UP = "Back to the title";
+var ARMED = { kind: "create-character", armController: true };
+async function remembered2(store) {
+  const saved = await store.get(PROFILES_KEY).catch(() => void 0);
+  return Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : [];
+}
+function freshName(taken) {
+  const used = new Set(taken.map((name) => name.toLowerCase()));
+  if (!used.has("squire")) return "Squire";
+  for (let n = 2; ; n++) if (!used.has(`squire ${String(n)}`)) return `Squire ${String(n)}`;
+}
+function registerSquireTitle(ctx, store) {
+  const title = ctx.title;
+  const profiles = ctx.profiles;
+  if (title === void 0 || profiles === void 0) return false;
+  const self = ctx.id ?? "squire";
+  async function here() {
+    const active2 = profiles.list();
+    const id = active2.ok ? active2.value.find((profile) => profile.active)?.id ?? null : null;
+    const started = profiles.switchTo(id, ARMED);
+    if (!started.ok) await title.choose(`Squire could not start the character: ${started.reason}`, [GIVE_UP]);
+  }
+  async function refused(reason) {
+    const answer = await title.choose(`Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
+    if (answer === 0) await here();
+  }
+  async function separate() {
+    const listed = profiles.list();
+    if (!listed.ok) return refused(listed.reason);
+    const all = listed.value;
+    const ours = new Set(await remembered2(store));
+    const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
+    const which = await title.choose(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
+    if (which === null) return;
+    let target;
+    if (which >= 2) {
+      const chosen = made[which - 2];
+      if (chosen === void 0) return;
+      target = chosen;
+    } else {
+      let copyFrom;
+      if (which === 1) {
+        const source = await title.choose(COPY_PROMPT, all.map((profile) => profile.name));
+        if (source === null) return;
+        const picked2 = all[source];
+        if (picked2 === void 0) return;
+        copyFrom = picked2.id;
+      }
+      const created = profiles.create(freshName(all.map((profile) => profile.name)), copyFrom === void 0 ? {} : { copyFrom });
+      if (!created.ok) return refused(created.reason);
+      target = created.value;
+      if (target.id === null) return refused("the new profile has no id");
+      if (copyFrom === void 0) {
+        const enabled = profiles.setEnabledMods(target.id, [self]);
+        if (!enabled.ok) return refused(enabled.reason);
+      }
+      await store.set(PROFILES_KEY, [...ours, target.id]).catch(() => void 0);
+    }
+    const switched = profiles.switchTo(target.id, ARMED);
+    if (!switched.ok) return refused(switched.reason);
+  }
+  title.registerRow({
+    label: TITLE_LABEL,
+    key: TITLE_KEY,
+    async run() {
+      const where = await title.choose(WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
+      if (where === 0) await separate();
+      else if (where === 1) await here();
+    }
+  });
+  return true;
+}
+
 // plugin.ts
 var NOSCORE_BORG = 32;
 function characterAlreadyAutoplayed(ctx) {
@@ -11645,6 +11805,7 @@ var plugin_default = {
     const rt = runtime(ctx);
     attachSquire(ctx, rt);
     registerOrderCommand(host, ctx, rt);
+    registerSquireTitle(ctx, rt.store());
   },
   /* Roll-on: accepts the one creation Squire asked for after a death, and
    * declines every other, so the game shows its own birth screens. */
@@ -11652,7 +11813,7 @@ var plugin_default = {
     return rollOnPresenter(ctx);
   },
   controller(ctx) {
-    if (!characterAlreadyAutoplayed(ctx) && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return void 0;
+    if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return void 0;
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);
     ctx.log(

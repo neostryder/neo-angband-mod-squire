@@ -48,6 +48,7 @@ import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
 import { registerOrderCommand, type OrderCommandCtx } from "./src/ui/order-command.js";
+import { registerSquireTitle, type TitleCtx } from "./src/title.js";
 import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
@@ -144,11 +145,13 @@ export default {
 
   /* The panel, Knight's Lessons and run bookkeeping, for every character with
    * Squire enabled, whether or not it has been handed over. */
-  register(host: unknown, ctx: ControllerCtx & AttachHost & OrderCommandCtx): void {
+  register(host: unknown, ctx: ControllerCtx & AttachHost & OrderCommandCtx & TitleCtx): void {
     const rt = runtime(ctx);
     attachSquire(ctx, rt);
     /* The in-game order key needs registry:command and keymap:write; without them the panel's own key still works. */
     registerOrderCommand(host, ctx, rt);
+    /* The title row needs ui:title and profiles:manage; an older Core offers neither and gets no row. */
+    registerSquireTitle(ctx, rt.store());
   },
 
   /* Roll-on: accepts the one creation Squire asked for after a death, and
@@ -162,8 +165,9 @@ export default {
      * keyboard. This is the normal case: the mod is installed and enabled, and
      * this character has never been handed to an autoplayer. */
     /* A roll-on heir is not marked yet: the birth presenter left a one-time
-     * mark saying Squire asked for this character. */
-    if (!characterAlreadyAutoplayed(ctx) && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return undefined;
+     * mark saying Squire asked for this character. A character started from
+     * Squire's title row arrives with the controller armed. */
+    if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return undefined;
 
     const cfg = cfgFromFlags(ctx.flags);
     const terrain = terrainFrom(ctx);

@@ -57,6 +57,8 @@ const ACCESSOR_DOMAIN: Readonly<Record<string, string>> = {
   inventory: "inventory",
   equipment: "inventory",
   floorItems: "floor",
+  knownFloorItems: "floor",
+  inspectKnownFloorItem: "floor",
   target: "target",
   messages: "messages",
   stores: "stores",
@@ -130,7 +132,8 @@ function hostsUsed(): Set<string> {
 /**
  * The grants that are not state reads or hosts, each tied to the source that
  * needs it: the panel, each event subscribed to, the roster call that starts
- * an heir, the order command and its key, and the player-typed server address on the local network.
+ * an heir, the order command and its key, the player-typed server address on the local network,
+ * and the title-screen row with the profile it starts.
  */
 function otherGrantsUsed(): Set<string> {
   const grants = new Set<string>();
@@ -143,6 +146,8 @@ function otherGrantsUsed(): Set<string> {
     if (/\bserverUrl\b/u.test(text)) grants.add("network:local");
     if (/\.setVerb\(/u.test(text)) grants.add("registry:command");
     if (/\.isBindableTriggerKey\(/u.test(text)) grants.add("keymap:write");
+    if (/\btitle[?!]?\.registerRow\b/u.test(text)) grants.add("ui:title");
+    if (/\bprofiles[?!]?\.switchTo\b/u.test(text)) grants.add("profiles:manage");
   }
   return grants;
 }
