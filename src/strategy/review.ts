@@ -20,6 +20,7 @@ import { createLevelPacing } from "./pacing.js";
 import { createStoreMemory, wareName, type StoreMemory } from "../town/memory.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
+import { pursuitFacts, pursuitsFor, type FamilyFacts, type Pursuit } from "./pursuits.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
@@ -66,7 +67,7 @@ const WORTH: readonly string[] = [
 ];
 
 /** The one request that ranks the candidates: a Score question for each aim. */
-export function scoreRequest(view: AgentView, aims: readonly Aim[]): SystemOneRequest {
+export function scoreRequest(view: AgentView, aims: readonly Aim[], pursuits: readonly Pursuit[] = []): SystemOneRequest {
   const player = view.player();
   const questions: Record<string, ScoreQuestion> = {};
   const described: Record<string, string> = {};
@@ -80,9 +81,10 @@ export function scoreRequest(view: AgentView, aims: readonly Aim[]): SystemOneRe
   }
   return {
     state: {
-      rules: "An aim is something worth working toward over the next few dungeon levels. Dying early ends every aim, so a safe gain outranks a risky one.",
+      rules: "An aim is something worth working toward over the next few dungeon levels. Dying early ends every aim, so a safe gain outranks a risky one. Rank the aims the way this character would, given the goals it holds.",
       character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
       aims: described,
+      ...(pursuits.length === 0 ? {} : pursuitFacts(pursuits)),
     },
     questions,
   };
@@ -107,6 +109,8 @@ export interface StrategyDeps {
   /** The heir's hatred and fear toward its ancestors' killers. Without it no avenge aim is offered. */
   feelings?(): readonly Feeling[];
   persona?(): Persona | null;
+  /** What the family line knows that shapes an heir's goals. */
+  family?(): FamilyFacts | null;
   readonly storeMemory?: readonly StoreMemory[];
   saveStoreMemory?(memory: readonly StoreMemory[]): void;
   rng?(): number;
@@ -125,6 +129,8 @@ export interface Strategy {
   shops(): readonly StoreMemory[];
   /** The current aims, best first. Empty until the first review. */
   ranked(): readonly Aim[];
+  /** The long goals the persona holds now, most wanted first. */
+  pursuits(): readonly Pursuit[];
   last(): ReviewSummary | null;
   /**
    * Whether a town trip for an affordable aim may be offered. After a trip the
@@ -155,6 +161,11 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   const shops = createStoreMemory(deps.storeMemory, deps.saveStoreMemory, deps.rng);
   let stockReview = false;
   let answers: Readonly<Record<string, Answer>> | null = null;
+  let deepest = 0;
+
+  function pursuitsNow(): Pursuit[] {
+    return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null);
+  }
 
   function clear(): void {
     memory = null;
@@ -162,6 +173,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     aims = [];
     last = null;
     tripGold = null;
+    deepest = 0;
     generation += 1;
     answers = null;
     stockReview = false;
@@ -175,14 +187,15 @@ export function createStrategy(deps: StrategyDeps): Strategy {
 
   async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string; readonly answers?: Readonly<Record<string, Answer>> }> {
     const fixed = inFixedOrder(candidates);
-    if (candidates.length < 2) return { ranked: fixed, source: "fixed", by: "" };
+    /* The win is always a candidate, so it alone does not justify a model call. */
+    if (candidates.filter((aim) => aim.kind !== "win").length < 2) return { ranked: fixed, source: "fixed", by: "" };
     const backend = deps.backend();
     if (backend === null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because no model server is set up." };
     const capped = deps.tally.overCap(backend, deps.now());
     if (capped !== null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the spend limit is reached." };
     let result: AskResult;
     try {
-      result = await deps.send(scoreRequest(view, candidates));
+      result = await deps.send(scoreRequest(view, candidates, pursuitsNow()));
     } catch {
       return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the request failed." };
     }
@@ -193,7 +206,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
 
   async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
     const seq = ++latest;
-    const own = candidateAims(view, shops.all());
+    const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
     aims = inFixedOrder(candidates);
@@ -217,7 +230,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
         const owned = [...view.inventory(), ...view.equipment().filter((item) => item !== null)].some((item) => wareName((item as { name?: string }).name ?? "") === wareName(stock.name));
         if (!owned) deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
       }
-      const own = candidateAims(view, shops.all());
+      const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
       const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
       aims = answers === null ? inFixedOrder(candidates) : rankByScore(candidates, answers);
       /* A reply based on an older shelf cannot restore a sold item. */
@@ -231,10 +244,11 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       const turn = view.turn();
       if (memory !== null && turn < memory.reviewTurn) reset();
       if (aims.some((aim) => aim.stock !== undefined)) {
-        const fresh = candidateAims(view, shops.all());
+        const fresh = candidateAims(view, shops.all(), deps.persona?.() ?? null);
         const updated = aims.flatMap((aim) => aim.stock === undefined ? [aim] : fresh.filter((entry) => entry.kind === aim.kind));
         aims = answers === null ? inFixedOrder(updated) : rankByScore(updated, answers);
       }
+      deepest = Math.max(deepest, player.maxDepth);
       const budget = pacing.observe(view);
       const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (stockReview ? "stock" : budget.review ? "budget" : null);
       memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
@@ -246,6 +260,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       });
     },
     ranked: () => aims,
+    pursuits: pursuitsNow,
     last: () => last,
     tripAllowed: (gold) => tripGold === null || gold >= tripGold * TRIP_GOLD_GROWTH,
     inherit(list) {

@@ -55,10 +55,10 @@ describe("the Inheritance slider", () => {
 });
 
 describe("an heir's persona and an inherited aim", () => {
-  it("drops a depth target deeper than the heir's ambition allows, and keeps the weapon", () => {
+  it("shortens a depth target deeper than the heir's ambition takes on, and keeps the weapon", () => {
     const { parent, heir } = pair(100, 20);
     expect(depthCeiling(20)).toBe(10);
-    expect(inheritAims([{ kind: "depth", depth: 14 }, { kind: "weapon", depth: null }], parent, heir)).toEqual([{ kind: "weapon", depth: null }]);
+    expect(inheritAims([{ kind: "depth", depth: 14 }, { kind: "weapon", depth: null }], parent, heir)).toEqual([{ kind: "depth", depth: 10 }, { kind: "weapon", depth: null }]);
   });
 
   it("keeps a depth target within the ceiling", () => {

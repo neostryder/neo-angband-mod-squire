@@ -47,7 +47,8 @@ export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
 import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/steer.js";
-import { holdDescent } from "../strategy/hold.js";
+import { descentEscapes, holdDescent } from "../strategy/hold.js";
+import { nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import { createJourney } from "../strategy/journey.js";
 import { missingPreparation } from "../strategy/readiness.js";
 import type { Aim } from "../strategy/aims.js";
@@ -623,6 +624,8 @@ function reachableFrontier(view: AgentView, terrain: Terrain): boolean {
 /** The options that apply right now, each with its description and risk. */
 /** Game turns to wait for a recall to fire before trusting it failed: the delay is 15 to 34 player turns of 10 game turns each. */
 export const RECALL_WAIT_TURNS = 400;
+/** Player turns one wait errand holds for a pending recall: the longest delay and a little more. */
+export const RECALL_HOLD_STEPS = 40;
 /* A second scroll restarts descent's countdown, so a stack must wait longer than the maximum seven world ticks. */
 const DEEP_DESCENT_WAIT_TURNS = 80;
 
@@ -679,7 +682,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const defenceless = s.pack.heal.length === 0 && s.pack.phase.length === 0 && s.pack.teleport.length === 0 && s.pack.escapeSpell.length === 0;
   const tripPays = starving || (player.gold >= RECALL_MIN_GOLD && (player.depth >= RECALL_FROM_DEPTH || defenceless));
   if (recallActive && damageFor(s, at, 2, terrain).damage === 0 && incoming.status === 0 && s.unseenDamage === 0) {
-    add("wait", "Wait a turn for the Word of Recall already read to take effect.", exposure(s) * 0.8, s.awake.length === 0);
+    add("wait", "Wait for the Word of Recall already read to take effect.", exposure(s) * 0.8, s.awake.length === 0);
   }
   /* A second reading cancels a recall already under way, so none is offered while one is pending. */
   if (!recallActive && player.depth > 0 && recall !== null && (nearDeath || (fastUnique !== undefined && !immediateDanger(s)))) {
@@ -1470,15 +1473,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       case "rest":
         return once("rest", view, (ctx) => safeRecovery(situationNow(ctx.view), terrain) ? ctx.act.rest() : null);
-      case "wait":
-        return once("wait a turn", view, (ctx) => {
+      case "wait": {
+        const holdOne = (ctx: SquireContext): AgentCommand | null => {
           const incoming = damageFor(situationNow(ctx.view), ctx.view.player().grid, 2, terrain);
           if (incoming.damage !== 0 || incoming.status !== 0) return null;
           /* Holding on a shop entrance opens the shop instead of passing a turn, and a
            * rest of one turn repeats the last rest count, which may be none. */
           const here = ctx.view.player().grid;
           return terrain.isShopEntrance(ctx.view.cell(here.x, here.y)?.feat ?? -1) ? ctx.act.rest(2) : ctx.act.hold();
-        });
+        };
+        const depth = view.player().depth;
+        if (!recallPending(view.player(), recallRead, view.turn())) return once("wait a turn", view, holdOne);
+        /* A recall takes 15 to 34 player turns, and asking again after each one
+         * spent a decision per turn on the same answer; the errand's own watch
+         * still stops the wait for anything that comes into view. */
+        return stepsPlan("wait for the recall", view, (ctx, i) =>
+          i >= RECALL_HOLD_STEPS || ctx.view.player().depth !== depth || !recallPending(ctx.view.player(), recallRead, ctx.view.turn()) ? null : holdOne(ctx));
+      }
       case "study": {
         const study = studyable(view, triedStudies);
         if (study === null) return once("nothing to study", view, () => null);
@@ -1688,7 +1699,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     /* A level with nothing left to explore has nothing safe and useful left, and the depth target no longer holds the character on it. */
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
-    const felt = nudgeGrudges(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, grudgesNow(), sighted, riskCeiling(persona));
+    const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
+    const felt = nudgeGrudges(pursued, digest.offers, grudgesNow(), sighted, riskCeiling(persona));
     const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(grounded, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const nudged = holdDescent(unseen, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
@@ -1900,7 +1912,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
             ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
             ...swarmNote(seen),
             ...lessonsFor(view),
-            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) } }),
+            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) } }),
           },
           questions:
             persona === null

@@ -1210,6 +1210,27 @@ describe("town goals", () => {
     expect(goals).not.toContain("recall_town");
   });
 
+  it("waits out a pending recall in one errand, not one decision per turn", () => {
+    /* The Rogue's soak shape: level 2, full health on dungeon level 1, nothing in sight, recall read, nothing left to explore; it once asked 25 times in a row. */
+    const w = suppliedWorld({ map: ["#####", "#@..#", "#####"], player: { cls: "Rogue", level: 2, depth: 1, maxDepth: 1, hp: 24, maxHp: 24, recall: 20 } as never });
+    const { p } = planner(w, true);
+    const decided = p.ask(w.view);
+    expect("reflex" in decided && decided.context.offers.map((o) => o.goal)).toEqual(["wait"]);
+    if (!("reflex" in decided)) throw new Error("expected a reflex");
+    let holds = 0;
+    for (let turn = 0; turn < 20; turn += 1) {
+      const command = decided.plan.step(w.view, w.act);
+      if (command === null) break;
+      expect(command).toMatchObject({ code: "hold" });
+      holds += 1;
+      w.advance(10);
+      w.setPlayer({ recall: 19 - turn } as never);
+    }
+    expect(holds).toBe(20);
+    w.setPlayer({ recall: 0, depth: 0 } as never);
+    expect(decided.plan.step(w.view, w.act)).toBeNull();
+  });
+
   it("trusts the recall timer when the game reports one", () => {
     expect(recallPending({ depth: 6, recall: 12 }, null, 0)).toBe(true);
     expect(recallPending({ depth: 6, recall: 0 }, { turn: 0, depth: 6 }, 10)).toBe(false);

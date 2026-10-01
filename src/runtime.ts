@@ -262,6 +262,12 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     log: (message) => host.log(message),
     feelings: () => feelingsNow(),
     persona: () => character.persona ?? activePersona(config),
+    family: () => {
+      const lineage = familyNow();
+      if (lineage === null) return null;
+      const depths = lineage.ancestors.map((a) => a.deepest ?? a.died?.depth ?? 0);
+      return { deepest: depths.length === 0 ? null : Math.max(...depths), heir: lineage.generation > 1 };
+    },
     storeMemory: character.storeMemory ?? [],
     saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
   });
@@ -609,7 +615,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         flourishes: () => character.flourishes ?? emptyFlourishes(),
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops() }),
+        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), pursuits: strategy.pursuits() }),
         orders,
       }),
       tally,

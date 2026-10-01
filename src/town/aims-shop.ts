@@ -34,6 +34,7 @@ function matchesAim(aim: Aim, name: string, tval: number): boolean {
     case "spellbook": return /\bBook\b/i.test(name);
     case "preparation": return false;
     case "depth": return false;
+    case "win": return false;
     case "avenge": return false;
   }
 }

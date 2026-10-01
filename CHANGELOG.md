@@ -21,6 +21,7 @@ Fixed.
 
 ### Added
 - [Visible] **Squire fights with what works and keeps its way out.** When one blow can kill, it takes the finishing attack; otherwise it compares melee, arrows, oil, wands and spells by damage per action. It won't spend the mana, oil or wand charge its next escape depends on, and a young character leaves the level once three breeders are awake around it. Swapping gear never costs the Free Action, See Invisible or resistance the next depth requires.
+- [Visible] [Balance] **Each Squire character chases the goals its persona cares about.** Winning the game (Sauron on dungeon level 99, then Morgoth on 100) is a goal for every character, weighted mostly by Ambition, beside goals the persona picks: riches, fine gear, seeing the dungeon, uniques, a family grudge, an ancestor's deepest level, depth for its own sake, and keeping the family line alive. A miser can care more about gold than about winning, and a tourist more about seeing each level.
 - [Visible] [UI] **Squire shows why a fixed errand ended.** The reason appears in the autoplayer status, such as "Stopped: cave spider came into view."
 - [Visible] [UI] **The retreat line and the length of a short errand are settings.** The retreat line runs from 10% to 90% of maximum hit points and a short errand from 50 to 500 decisions; the defaults stay at 50% and 200.
 - [Visible] **Heirs remember who killed the family.** An heir hates or fears the creature that killed its ancestors, depending on its persona, and more strongly with each death. Hatred pulls it toward the fight and can make a hated unique an aim; fear makes the creature look more dangerous and offers a way off the level, and neither overrides the safety floor. Killing a hated unique settles the grudge, and feelings about an ordinary monster fade over the generations unless it has killed three of the family.
@@ -61,6 +62,8 @@ Fixed.
 
 ### Changed
 - [Visible] **Squire plays on until you take the keyboard back or the character dies.** When the model can't be reached or a spend limit is reached, it keeps choosing from its own options and returns to the model when it can. A floor with nothing left to do, a plan the game refuses or a loop that gets nowhere makes it look further afield instead of stopping.
+- [Visible] [Balance] **Ambition sets how fast Squire heads deeper.** An heir's ambition now shortens an inherited depth target instead of dropping it.
+- [Visible] [Balance] **A bold character roams further from the stairs on a trip to earn gold, and a cautious one stays close.**
 - [Visible] [Compatibility] **Squire now needs Neo Angband 1.21.0 or later**, the first version with everything it reads from the game: the title-screen row, profiles, and floor items as the player knows them.
 - [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.
 
@@ -70,6 +73,8 @@ Fixed.
 
 ### Fixed
 - [Visible] [Security] **Deleting your telemetry also clears uploads still waiting to be sent.** A queued run could otherwise upload after the deletion. New uploads follow your consent setting as before.
+- [Visible] **Squire no longer reads Word of Recall on dungeon level 1 when it doesn't know where the up staircase is.** It looks for the way up on foot.
+- [Visible] **Waiting for Word of Recall to take effect is one plan instead of a decision every game turn.**
 - [Visible] [UI] **The Squire panel opens at its intended minimum size.** It passed its size under names the game does not read, so the dock could squeeze it smaller.
 - [Visible] **With Inheritance at nothing, or Blood grudges off for the parent or the heir, no grudge passes down.** The family still remembers what killed its characters.
 - [Visible] [Balance] **Squire can go deeper than 2,300 ft.** Past that depth it descends once the character has the speed, protections and healing each depth calls for, where before it never went further.

@@ -146,7 +146,7 @@ describe("ranking", () => {
     const questions = Object.values(requests[0]?.questions ?? {});
     expect(questions).toHaveLength(candidateAims(w.view).length);
     expect(questions.every((q) => q.type === "score")).toBe(true);
-    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "lantern", "spellbook", "armour", "preparation"]);
+    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "lantern", "spellbook", "armour", "preparation", "win"]);
     expect(strategy.last()?.source).toBe("model");
     expect(logs).toHaveLength(1);
     expect(logs[0]).toContain("Jev ranked them.");
@@ -203,7 +203,7 @@ describe("ranking", () => {
     strategy.observe(w.view);
     await strategy.settled();
     expect(requests).toHaveLength(0);
-    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth"]);
+    expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "win"]);
   });
 
   it("writes the aims and the character into the request state", () => {

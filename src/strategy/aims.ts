@@ -14,8 +14,10 @@ import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
 import { missingPreparation } from "./readiness.js";
 import { stockConfidence, type StoreMemory } from "../town/memory.js";
+import type { Persona } from "../persona/persona.js";
+import { paceFactor, winStep } from "./pursuits.js";
 
-export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth" | "avenge";
+export type AimKind = "spellbook" | "lantern" | "armour" | "weapon" | "free-action" | "see-invisible" | "preparation" | "depth" | "win" | "avenge";
 
 /** How an aim is pursued: gold to save, something to find, something already carried, or a depth to reach. */
 export type AimHow = "save" | "hunt" | "try" | "dive";
@@ -37,7 +39,7 @@ export interface Aim {
 }
 
 /** The order aims come in when the model cannot rank them. */
-export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth", "avenge"];
+export const FIXED_ORDER: readonly AimKind[] = ["spellbook", "lantern", "armour", "weapon", "free-action", "see-invisible", "preparation", "depth", "win", "avenge"];
 
 /** A book counts as next when its first spell is at most this many levels above the character. */
 export const BOOK_LOOKAHEAD = 5;
@@ -186,14 +188,27 @@ function protectionAim(view: AgentView, kind: "free-action" | "see-invisible", p
   };
 }
 
-/** The aims that apply to the character now, in the fixed order. */
-export function candidateAims(view: AgentView, memories: readonly StoreMemory[] = []): Aim[] {
+/** The win as an aim: its next step on the road to Morgoth, held by every character. */
+export function winAim(maxDepth: number): Aim {
+  const step = winStep(maxDepth);
+  return {
+    kind: "win",
+    label: "win the game",
+    detail: `Defeat Sauron on dungeon level 99 and then Morgoth on dungeon level 100. The next step is to ${step.text}.`,
+    how: "dive",
+    price: null,
+    depth: step.depth,
+  };
+}
+
+/** The aims that apply to the character now, in the fixed order. The persona sets the pace of the depth target. */
+export function candidateAims(view: AgentView, memories: readonly StoreMemory[] = [], persona: Persona | null = null): Aim[] {
   const player = view.player();
   const shelf = shelves(view, memories);
   const packItems = view.inventory();
   const pack = namesOf(packItems);
   const worn = view.equipment().flatMap((item) => (item === null ? [] : [item]));
-  const target = depthTarget(player.level, player.maxHp);
+  const target = Math.max(1, Math.round(depthTarget(player.level, player.maxHp) * paceFactor(persona)));
   const next = Math.max(2, player.depth + 1, player.depth === 0 ? player.maxDepth : 0);
   const missing = missingPreparation(view, next);
   const preparation: Aim | null = missing.length === 0 ? null : {
@@ -221,6 +236,7 @@ export function candidateAims(view: AgentView, memories: readonly StoreMemory[] 
     protectionAim(view, "see-invisible", pack),
     preparation,
     depth,
+    winAim(player.maxDepth),
   ];
   return found.filter((aim): aim is Aim => aim !== null);
 }

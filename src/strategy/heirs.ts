@@ -24,7 +24,11 @@ const INHERITABLE: readonly AimKind[] = ["depth", "weapon"];
 /** The most aims one line hands on, before the Inheritance slider trims them. */
 export const MAX_INHERITED_AIMS = INHERITABLE.length;
 
-/** The deepest target an heir with this ambition keeps: 5 levels at none, 30 at full. */
+/**
+ * How deep an inherited target an heir takes on at once: 5 levels at no
+ * ambition, 30 at full. It sets the pace of the inherited target only; the win
+ * is the heir's own aim and has no ceiling.
+ */
 export function depthCeiling(ambition: number): number {
   return 5 + Math.floor(Math.max(0, Math.min(100, ambition)) / 4);
 }
@@ -42,7 +46,8 @@ export function passableAims(aims: readonly Aim[]): InheritedAim[] {
 /**
  * The aims an heir starts with. The parent's Inheritance slider sets how many
  * pass (as it sets how much lore does) and how much of a depth target carries;
- * the heir's persona then drops a depth target deeper than its ambition allows.
+ * the heir's persona then shortens a depth target deeper than its ambition
+ * takes on at once.
  */
 export function inheritAims(aims: readonly InheritedAim[], parent: Persona, heir: Persona): InheritedAim[] {
   const s = share(parent);
@@ -52,8 +57,8 @@ export function inheritAims(aims: readonly InheritedAim[], parent: Persona, heir
     if (!INHERITABLE.includes(aim.kind) || kept.some((k) => k.kind === aim.kind)) continue;
     if (aim.kind === "depth") {
       const depth = aim.depth === null ? 0 : Math.max(1, Math.round(aim.depth * s));
-      if (depth < 1 || depth > ceiling) continue;
-      kept.push({ kind: "depth", depth });
+      if (depth < 1) continue;
+      kept.push({ kind: "depth", depth: Math.min(depth, ceiling) });
     } else {
       kept.push({ kind: "weapon", depth: null });
     }

@@ -281,6 +281,25 @@ describe("bounded exploration and earning", () => {
     w.advance(10);
     expect(goals(w, journey, false, offers("explore"))).toEqual(["leave_level"]);
   });
+  /* The soak's Priest reached level 1 at turn 580 standing on a down staircase
+   * with no up staircase known, read Word of Recall at turn 680 as the only
+   * option, then waited 23 turns for it: the trip ended because a missing up
+   * staircase counted as a missing return route. */
+  it("keeps an earning trip that arrives with no up staircase known, and searches on foot instead of reading Recall", () => {
+    const w = world({ map: ["############", "#.@>....,,,#", "############"], player: { cls: "Priest", depth: 0, gold: 0, level: 1, maxLevel: 1, hp: 13, maxHp: 13, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)", "a Scroll of Word of Recall"] });
+    const journey = createJourney(w.terrain);
+    journey.apply(offers("descend"), w.view, null, new Set(), false);
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    w.moveTo({ x: 3, y: 1 });
+    w.advance(100);
+    expect(goals(w, journey, false, offers("explore", "wait"))).toEqual(["explore", "wait"]);
+    w.advance(1000);
+    const late = journey.apply(offers("explore", "wait"), w.view, null, new Set(), false);
+    expect(late.map((offer) => offer.goal)).not.toContain("recall_town");
+    expect(late.find((offer) => offer.goal === "explore")?.criteria).toContain("up stairs");
+  });
+
   it("does not repeat an earning trip that returned with no gold gain", () => {
     const w = world({ map: ROOM, player: { depth: 0, gold: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const journey = createJourney(w.terrain);

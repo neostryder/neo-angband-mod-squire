@@ -10,6 +10,7 @@ import { gearCandidates, TV } from "../gear/compare.js";
 import { recallItem, shownName } from "../town/needs.js";
 import { affordable, type Aim, type AimKind } from "./aims.js";
 import type { StoreMemory } from "../town/memory.js";
+import type { Pursuit } from "./pursuits.js";
 
 /** What the planner needs from the strategy layer. */
 export interface Steering {
@@ -18,6 +19,8 @@ export interface Steering {
   /** Whether a town trip for an affordable aim may be offered at this gold. */
   readonly tripAllowed: (gold: number) => boolean;
   readonly storeMemory?: readonly StoreMemory[];
+  /** The long goals the persona holds, most wanted first, with the win among them. */
+  readonly pursuits?: readonly Pursuit[];
 }
 
 /** The aim an offer serves, kept on the offer for the nudge. */
@@ -70,7 +73,8 @@ function servedBy(offer: Steerable, view: AgentView, aims: readonly Aim[], gold:
       case "pick_up":
       case "fetch": serves = aim.how === "save" && !affordable(aim, gold); break;
       case "wear": serves = wear === aim.kind; break;
-      case "descend": serves = aim.kind === "depth" && aim.depth !== null && aim.depth > depth; break;
+      case "descend": serves = (aim.kind === "depth" || aim.kind === "win") && aim.depth !== null && aim.depth > depth; break;
+      case "recall_dungeon": serves = aim.kind === "win"; break;
       case "explore": serves = depth > 0 && ((aim.kind === "depth" && aim.depth !== null && aim.depth <= depth) || aim.how === "hunt"); break;
       case "fight":
       case "shoot":

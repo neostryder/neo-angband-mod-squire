@@ -83,7 +83,9 @@ describe("inherited aims", () => {
     expect(inherit(base, parent, bold, () => 0.5).lineage.aims).toEqual(base.aims);
     const meek = defaultPersona("Cia");
     meek.sliders.ambition = 10;
-    expect(inherit(base, parent, meek, () => 0.5).lineage.aims).toEqual([{ kind: "weapon", depth: null }]);
+    const meekAims = inherit(base, parent, meek, () => 0.5).lineage.aims ?? [];
+    expect(meekAims.map((aim) => aim.kind)).toEqual(["depth", "weapon"]);
+    expect(meekAims[0]?.depth ?? 0).toBeLessThan(base.aims?.[0]?.depth ?? 0);
     parent.sliders.inheritance = 0;
     expect(inherit(base, parent, bold, () => 0.5).lineage.aims).toEqual([]);
   });

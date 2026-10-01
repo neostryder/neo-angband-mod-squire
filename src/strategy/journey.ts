@@ -14,7 +14,7 @@ import { flowFrom, stepDown, type FlowField } from "../flow.js";
 import { frontiers, hasFloorObject, isRoutable, isWalkable, knownStairs, standingOnHarm } from "../map.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
-import { recallItem } from "../town/needs.js";
+import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createLevelPacing, stairLeash } from "./pacing.js";
 import { missingPreparation, supplies, supplyMargin } from "./readiness.js";
@@ -76,7 +76,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (!departure.active()) returnReason ??= supplyMargin(view);
       /* A widened trip can start with no rations and too little gold to buy one,
        * so an empty pack ends it only once the character is hungry. */
-      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || upStairs(view).length > 0 && checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;
@@ -117,12 +117,30 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return knownStairs(view, terrain).filter((grid) => terrain.isUpStair(view.cell(grid.x, grid.y)?.feat ?? -1));
   }
 
+  /** How far from the up stairs an earning trip may roam: a bold persona ranges toward the ordinary stair leash. */
+  function earningLeash(view: AgentView): number {
+    const bold = Math.min(100, Math.max(0, lastPersona?.sliders.boldness ?? 0)) / 100;
+    return EARNING_LEASH + Math.round(Math.max(0, stairLeash(view.player().level) - EARNING_LEASH) * bold);
+  }
+
+  /**
+   * An earning trip that must end but knows no way up looks for the up stairs
+   * on foot; a Recall scroll read on the first levels costs more than the trip
+   * makes there.
+   */
+  function searching(view: AgentView): boolean {
+    const depth = view.player().depth;
+    if (!departure.active() || depth <= 0 || depth >= RECALL_FROM_DEPTH || upStairs(view).length > 0) return false;
+    if (returnReason === null && !expired && !departure.finished(view)) return false;
+    return checkedRoute(view, exitTargets(view)) === null && frontiers(view, terrain).length > 0;
+  }
+
   function leashed(view: AgentView, at: Loc): boolean {
     if (view.player().depth === 0 || view.player().level >= 20 && !departure.active()) return true;
     const stairs = upStairs(view);
-    /* With no remembered exit, only a three-step search near arrival is justified. */
+    /* With no remembered exit, a short search near arrival is justified; an earning trip arrives on a down staircase and must find the way up. */
     const sources = stairs.length > 0 ? stairs : [anchor];
-    const limit = stairs.length === 0 ? 3 : departure.active() ? EARNING_LEASH : stairLeash(view.player().level);
+    const limit = stairs.length === 0 ? (departure.active() ? earningLeash(view) : 3) : departure.active() ? earningLeash(view) : stairLeash(view.player().level);
     leashField ??= flowFrom({ goals: sources, canEnter: (grid) => {
       const cell = view.cell(grid.x, grid.y);
       if (cell === null || !cell.known) return false;
@@ -159,6 +177,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
+      if (offer.goal === "explore" && searching(view)) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
       if (offer.goal === "fetch") {
@@ -171,7 +190,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns and stays within ${String(EARNING_LEASH)} path steps of the up stairs.` } : offer);
     const reason = home ? `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
-      if (!recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: `Read Word of Recall to return to town while waiting is safe. ${reason}`, risk: 0.02 });
+      const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || searching(view));
+      if (searching(view)) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
+      if (!walkable && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: `Read Word of Recall to return to town while waiting is safe. ${reason}`, risk: 0.02 });
       if (checkedRoute(view, exitTargets(view)) !== null) {
         footOffered = true;
         out = out.filter((offer) => offer.goal !== "leave_level");
@@ -197,7 +218,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
-      if (wide && goal === "explore") return plan.step(view, act);
+      if (wide && goal === "explore" || goal === "explore" && searching(view)) return plan.step(view, act);
       if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
       if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
         const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
@@ -254,8 +275,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
 
   function explore(ctx: SquireContext, wide = widened): AgentCommand | null {
     observe(ctx.view);
-    if (!wide && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
-    const allowed = (grid: Loc) => wide || leashed(ctx.view, grid);
+    const search = !wide && searching(ctx.view);
+    if (!wide && !search && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
+    const allowed = (grid: Loc) => wide || search || leashed(ctx.view, grid);
     const goals = frontiers(ctx.view, terrain).filter(allowed);
     const at = ctx.view.player().grid;
     if (!goals.some((grid) => key(grid) === key(at))) {
