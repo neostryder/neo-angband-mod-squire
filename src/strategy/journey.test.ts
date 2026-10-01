@@ -101,6 +101,27 @@ describe("journey offer and execution guards", () => {
     expect(journey.searching(w.view)).toBe(false);
   });
 
+  it("does not re-offer a far explore when a hurt character is already past the leash and the offers widen", () => {
+    /* StairLeash at level 3 is 18; a long corridor puts the character 20 steps past it with the up
+     * stairs at the far end and 30 percent HP. The widen path is the safety net when the model has
+     * nothing else, but a hurt character past the leash should head back toward known stairs or
+     * rest, not be sent further out. */
+    const known = ".".repeat(37);
+    const farFloor = ".".repeat(19);
+    const row = "#<" + known + "@" + farFloor + ",".repeat(5) + "#";
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Warrior", level: 3, maxLevel: 3, hp: 18, maxHp: 60 } });
+    const journey = createJourney(w.terrain);
+    /* Sanity: the character is past the leash and not in search. */
+    expect(journey.leashed(w.view, w.view.player().grid)).toBe(false);
+    expect(journey.searching(w.view)).toBe(false);
+    /* Simulate the widen path in goals.ts: same widen=true the planner uses when no offers are produced. */
+    const out = journey.apply(offers("explore", "rest", "leave_level", "wait"), w.view, null, new Set(), false, true);
+    expect(out.map((offer) => offer.goal)).not.toContain("explore");
+    /* A hurt character should be steered toward rest (or a leave_level toward the known up stairs). */
+    expect(out.map((offer) => offer.goal)).toEqual(expect.arrayContaining(["rest"]));
+  });
+
   it("offers the descent and the exit once a ready level knows a down staircase", () => {
     const row = `#<@${".".repeat(27)}>#`;
     const wall = "#".repeat(row.length);

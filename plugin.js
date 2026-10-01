@@ -5023,6 +5023,7 @@ function createLevelPacing() {
 
 // src/strategy/journey.ts
 var OPTIONAL = /* @__PURE__ */ new Set(["explore", "fetch", "pick_up", "tunnel"]);
+var SEARCH_HP_FRACTION = 0.35;
 function createJourney(terrain, unseenDanger) {
   const pacing2 = createLevelPacing();
   const departure = createDeparture();
@@ -5132,7 +5133,7 @@ function createJourney(terrain, unseenDanger) {
     if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return true;
     const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
     const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, void 0, terrain).band >= 2);
-    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth2 + 1).length === 0 && player.hp >= player.maxHp * 0.35 && !dangerous && !front.some((grid) => leashed(view, grid))) return true;
+    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth2 + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return true;
     return false;
   }
   function searchingNow(view) {
@@ -5172,9 +5173,18 @@ function createJourney(terrain, unseenDanger) {
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
+    let searchCache = null;
+    const search = () => {
+      if (searchCache === null) searchCache = { value: searching(view) };
+      return searchCache.value;
+    };
     let out = offers.filter((offer) => {
-      if (widen && offer.goal === "explore") return true;
-      if (breederLevel && !(offer.goal === "explore" && searching(view)) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
+      if (widen && offer.goal === "explore") {
+        const player2 = view.player();
+        if (player2.hp < player2.maxHp * SEARCH_HP_FRACTION && !leashed(view, player2.grid)) return false;
+        return true;
+      }
+      if (breederLevel && !(offer.goal === "explore" && search()) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
@@ -5182,7 +5192,7 @@ function createJourney(terrain, unseenDanger) {
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
       if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
-      if (offer.goal === "explore" && searching(view)) return true;
+      if (offer.goal === "explore" && search()) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
       if (offer.goal === "fetch") {
@@ -5195,8 +5205,8 @@ function createJourney(terrain, unseenDanger) {
     if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns and stays within ${String(EARNING_LEASH)} path steps of the up stairs.` } : offer);
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
-      const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || searching(view));
-      if (searching(view)) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
+      const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || search());
+      if (search()) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
       if (!walkable && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: `Read Word of Recall to return to town while waiting is safe. ${reason}`, risk: 0.02 });
       if (checkedRoute(view, exitTargets(view)) !== null) {
         footOffered = true;
@@ -5209,7 +5219,7 @@ function createJourney(terrain, unseenDanger) {
       out.push({ goal: "leave_level", criteria: "Leave this breeder level by the checked staircase. The exit objective lasts until the level changes.", risk: 0.02, survival: player.hp });
     }
     if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
-    if (searching(view) && !(player.depth > 0 && (home || expired))) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: breederLevel ? `Search this level on foot for a staircase to leave the breeders behind. ${offer.criteria}` : `Search this level on foot for a staircase onward. ${offer.criteria}` } : offer);
+    if (search() && !(player.depth > 0 && (home || expired))) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: breederLevel ? `Search this level on foot for a staircase to leave the breeders behind. ${offer.criteria}` : `Search this level on foot for a staircase onward. ${offer.criteria}` } : offer);
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1)[0];
       if (missing !== void 0) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
