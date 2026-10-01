@@ -16,7 +16,7 @@ The item below needs a change to Neo Angband itself. Squire cannot work around i
 
 ## Errands not built yet
 
-The issue this mod was opened against names several more, and each is a mission in `src/missions/` with its own stop conditions once the errand-selection gap above is closed. Selecting between five errands from the state of the world alone is not going to work; they need a way to be asked for.
+The issue this mod was opened against names several more, and each is a mission in `src/missions/` with its own stop conditions once the errand-selection gap above is closed. Selecting between five errands from the state of the world alone is not going to work; they need a way to be asked for. Tracked as neostryder/neo-angband#169.
 
 - **Search this floor for valuables.** Explore, then walk the floor collecting. When a model is playing, Squire already walks over to worthwhile items on ground the character remembers. The missing piece is an errand that does only that, and to be fair it has to read what the character knows is lying about. The map view counts every object on the floor, seen or not.
 - **Get me to the stairs.** The descend rung of the long errand, as an errand of its own with a disturbance stop attached.
@@ -30,6 +30,6 @@ The errands run only when no model is set up. With a model, Squire also uses its
 ## Not built yet
 
 - **Wider gear trading.** Squire wears better gear it finds, and in town it buys an affordable weapon or piece of armour that one of its aims calls for. It sells only plain spare weapons and armour, and only when the persona's Selling is 60 or more. Buying gear no aim calls for, and selling anything else, are not built.
-- **Playing on a phone through Squire Link.** Squire Link can run beside the model and be published over HTTPS, but Squire's permissions reach only this computer and your home network, so Squire can't use a published address yet.
+- **Playing on a phone through Squire Link.** Squire Link can run beside the model and be published over HTTPS, but Squire's permissions reach only this computer and your home network, so Squire can't use a published address yet. Tracked as neostryder/neo-angband#332.
 - **Patron mode.** Watching Squire play and stepping in now and then, with a meter that refills over time, comes in the release after 1.0.
-- **Class-themed run cards** (neostryder/neo-angband#303). Drawn card designs themed by class, with a tombstone for a death and a trophy for a win, shared by the share card and the run's Discord post. The Report tab already draws a plain share card and saves it as an image.
+- **Class-themed run cards** (neostryder/neo-angband#303, after 1.0). Drawn card designs themed by class, with a tombstone for a death and a trophy for a win, shared by the share card and the run's Discord post. The Report tab already draws a plain share card and saves it as an image.

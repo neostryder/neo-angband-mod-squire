@@ -53,6 +53,8 @@ In a fight, Squire works out how much damage the character could take over its n
 
 In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley. It spends the reserve only on a finishing attack, when even its weakest hit would kill, the attack has at least a three-in-four chance to work, and the other creatures in sight can't kill the character before its next action.
 
+A spellcaster studies a new spell from a carried book while a swarm of weak creatures keeps it busy, so long as the creatures that can reach it this turn would cost less than the retreat fraction of its hit points and none can paralyse, confuse or slow it. With no mana for its attack spells, it backs away from a creature that hurts on touch or that it cannot kill quickly, rather than swing. Casting and studying fit into combat like any other action: one turn, one decision, weighed against the rest.
+
 A young character, up to level 5, treats three awake breeders as the sign to leave the level. It stops chasing, exploring and resting there, clears whatever is next to it, and may shut a door on them on the way out.
 
 It heals with the smallest potion that outpaces the damage coming in. A weaker potion is still offered when the next blows could kill the character, or when it is poisoned, cut, blinded or confused. When only one cure or escape keeps the character alive, Squire takes it straight away without asking the model. Out of combat it rests instead of drinking, but not while poisoned or cut, near breeders, or soon after a hit from something it can't see, and it waits for Recall only where nothing can reach it.
@@ -73,6 +75,8 @@ The Persona tab starts from Default or a random persona, or from an archetype: c
 
 When a character dies, Setup can have Squire start the next one for you, either like the last one or with a random race and class. The new character inherits a little of what its ancestors learned.
 
+Goals are the long aims the persona holds. Every character holds the win: kill Sauron on dungeon level 99, then Morgoth on dungeon level 100, weighted mostly by Ambition. Beside the win, the persona picks a few of its own: riches, fine gear, seeing the dungeon, uniques, a family grudge, an ancestor's deepest level, depth for its own sake, and keeping the family line alive. A miser can care more about gold than about winning, and a tourist more about seeing each level. The planner nudges options that serve a goal the character holds, never past the safety ceiling.
+
 The family also remembers what killed its characters. A bold or proud heir hates that creature and a cautious or craven one fears it, more strongly with each ancestor it killed. Hatred adds weight to fighting it, and a hated unique can become an aim to avenge the family. Fear makes the heir believe the creature more dangerous and offers to leave the level when it appears. Neither overrides the safety floor. Killing a hated unique settles the grudge for the whole family. A feeling toward an ordinary monster that has killed one or two ancestors fades over later generations unless it kills again, and one that has killed three never fades. The Squire panel lists these under Family memory. With Inheritance at nothing, or Blood grudges off, an heir starts with no grudges.
 
 Epitaphs gives each death a short line in the character's voice, naming the killer, depth, character level and last choice. The log records it, and Family memory shows the last few an heir inherits. Turn Epitaphs off to stop writing them. Inheritance sets how many pass to heirs.
@@ -87,6 +91,18 @@ Lessons of the dark makes an heir carry one extra torch or flask of lantern fuel
 Trophies lets a character with Pride at 70 or above keep one carried item dropped by each unique it kills. The item's inspection must name the unique. Squire keeps useful gear available to wear and sells the rest of a trophy stack. A full pack ends the sale protection. Family memory lists the trophies, and the log records each one. The setting starts on; trophies belong to the character that earned them, so heirs start a fresh collection.
 
 Favoured grounds gives an heir a small preference for hunting at the depth of the family's most valuable dungeon find. Squire reads the item's value and inspection, or remembers where it was picked up. The heir favours descent toward that depth only once it meets the readiness requirements, then favours exploration there. Survival guards and the death-risk ceiling still decide what is safe. Inheritance sets the chance of passing on the preference. Family memory lists the depth, and the setting starts on and can be turned off.
+
+Family motto sets the first character's strongest traits as a short line the family repeats. An heir says it at a level-up or a narrow escape, and may write its own when its persona differs a lot from the founder's. The log records each line. The setting starts on and can be turned off.
+
+Favoured weapon kinds sets an heir's preference for the weapon kind its most successful ancestor used, when two weapons are close in value. The family keeps a record of each generation's kills by kind. The setting starts on and can be turned off.
+
+Cursed ground remembers the dungeon level where an ancestor died. On that level a cautious or paranoid heir moves on sooner, and a bold or proud heir is drawn back to it. The setting starts on and can be turned off.
+
+Celebrations writes a short line in the character's voice for a level-up and for the first time the family slays a unique. The log records each line. The setting starts on and can be turned off.
+
+First-kill boasts lets a character with Pride at 60 or more speak a short line the first time it kills a creature kind, with about a one in three chance each time. The log records it. The setting starts on and can be turned off.
+
+Heirloom recognition lets an heir name an artifact the family has carried before, when it turns up again in a shop or on the floor. A proud or greedy heir wants it more. Family memory lists the heirlooms. The setting starts on and can be turned off.
 
 ## Knight's Lessons
 
@@ -135,6 +151,8 @@ With no model set up, a normal handover plays on using Squire's own rules. To as
 | **Play on until I take the keyboard back** | Plays by Squire's own rules and keeps looking for a way on. | You take the keyboard back, the character wins or the character dies. |
 
 When a short errand ends, Squire waits for you to take the keyboard back with a keypress. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
+
+When a fixed errand ends, the autoplayer status names the reason, such as "Stopped: cave spider came into view." Each line is read from the game state rather than the message stream, so it holds in every language.
 
 The fighting errand leaves sleeping creatures alone unless you switch that on or target one first with the game's own targeting command. The exploring errand stops at the first point of damage, because damage while walking about means something caught the character off guard.
 

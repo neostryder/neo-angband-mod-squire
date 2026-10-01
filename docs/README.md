@@ -18,8 +18,10 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Errand: explore this floor | `squire.errandAutoexplore` | on | Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. |
 | Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. |
 | Let a model choose what to do | `squire.useModel` | on | When a model is set up in the Squire panel, Squire asks it what to do at each decision and plays on until you take the keyboard back. With no model, Squire chooses from its current fight and travel offers. Switch this off to choose a short errand. |
-| Stop when I am hurt | `squire.stopOnLowHealth` | on | End the errand when hit points fall below half. |
+| Stop when I am hurt | `squire.stopOnLowHealth` | on | End a short errand when hit points reach the retreat line. |
 | Stop when something new appears | `squire.stopOnNewCreature` | on | End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter. |
+| Retreat line | `squire.retreatPercent` | 50% | The share of maximum hit points at which a short errand ends, from 10% to 90%. |
+| Short errand length | `squire.errandSteps` | 200 | How many decisions a short errand makes before it ends, from 50 to 500. |
 | Attack sleeping creatures | `squire.wakeSleepers` | off | Let the fighting errand pick a sleeping creature as its target. |
 | Pick things up on the way | `squire.collect` | on | During the long errand, pick up whatever is lying on a square the character has already walked onto. |
 | Take the stairs down | `squire.descend` | on | During the long errand, walk to a known down staircase and use it once the floor has been walked out. |
@@ -33,7 +35,7 @@ Squire learns a shop's stock when the character enters it. It saves the names, p
 - **Engine:** `>=1.21.0`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
-- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `saves:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
+- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:floor.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `ui:title`, `registry:command`, `keymap:write`, `saves:manage`, `profiles:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
 
 The model, panel and Setup choices (brain, key, personas, telemetry, roll-on, Knight's Lessons) live in the Squire panel rather than on the Mods screen. The errand settings above apply only when no model is choosing.
 

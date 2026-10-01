@@ -182,6 +182,12 @@ Each quirk starts off, with its strength slider at 50.
 | Lessons of the dark | on | An heir carries extra fuel after an ancestor died without light. |
 | Trophies | on | A proud character keeps one item from each unique it kills while the pack has room. |
 | Favoured grounds | on | An heir prefers hunting where the family made its best find, once it is ready for that depth. |
+| Family motto | on | The first character's strongest traits are remembered as a motto, and heirs repeat it at moments that fit. |
+| Favoured weapon kinds | on | An heir prefers the weapon kind its most successful ancestor used when two weapons are close in value. |
+| Cursed ground | on | A cautious heir moves on sooner from the level where an ancestor died, and a bold heir is drawn back to it. |
+| Celebrations | on | A short line marks a level-up and a first unique kill in the character's voice. |
+| First-kill boasts | on | A proud character occasionally speaks when it kills a creature kind for the first time. |
+| Heirloom recognition | on | An heir recognises by name an artifact an ancestor carried, and wants it more. |
 | Family resemblance | 50 | How much personality an heir takes from its parent, from each heir is new (0) to heirs take after parents (100). |
 
 The [README](README.md#personas) explains what each lineage feature does in play.

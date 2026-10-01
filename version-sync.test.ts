@@ -15,16 +15,8 @@ import { readFileSync } from "node:fs";
  * and The Ledger builds every entry from that version's own section at its tag,
  * so a missing one is a version that reaches the site as nothing at all.
  *
- * THIS COPY DIFFERS FROM THE OTHER MODS', because Squire has not had a first
- * release. Its changelog carries an Unreleased section and nothing else, and
- * the repository carries no tags, so the third site has nothing to compare
- * against yet. That is a real state rather than a check worth skipping, and the
- * branch below is written so it cannot stay quietly vacuous: the moment a
- * version is dated the ordinary assertion takes over, and until then the shape
- * of the heading itself is pinned. A section written as `## [0.1.0] - <date>`
- * rather than `## 0.1.0 - <date>` would otherwise leave the main pattern
- * matching nothing here forever, which is the same silence this file exists to
- * remove.
+ * Released headings are spelled `## 1.0.0 - <date>`. One written with
+ * brackets would not match, and the test fails rather than compare nothing.
  */
 describe("the two version sites", () => {
   const read = (f: string): string =>
@@ -40,18 +32,8 @@ describe("the two version sites", () => {
     const text = changelog();
     const newest = /^## (\d+\.\d+\.\d+) - /mu.exec(text);
 
-    if (newest === null) {
-      /* No released section yet. Assert the changelog is actually in that state
-       * rather than in a state this pattern cannot read: every `## ` heading
-       * must be the Unreleased one, so a dated section in any other spelling
-       * fails here instead of being silently invisible. */
-      const headings = [...text.matchAll(/^## (.+)$/gmu)].map((m) => m[1]?.trim() ?? "");
-      expect(headings, "the changelog has a section this test cannot read").toEqual(
-        headings.filter((h) => /^\[?Unreleased\]?$/u.test(h)),
-      );
-      return;
-    }
+    expect(newest, "the changelog has no dated section this test can read").not.toBeNull();
 
-    expect(newest[1]).toBe(read("./manifest.json"));
+    expect(newest?.[1]).toBe(read("./manifest.json"));
   });
 });
