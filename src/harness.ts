@@ -68,6 +68,7 @@ export const FEAT = {
   UP_STAIR: 10,
   RUBBLE: 11,
   OPEN_DOOR: 12,
+  HOME: 13,
 } as const;
 
 /** The terrain classification matching FEAT. */
@@ -77,8 +78,8 @@ export function harnessTerrain(): Terrain {
     isUpStair: (feat) => feat === FEAT.UP_STAIR,
     isClosedDoor: (feat) => feat === FEAT.DOOR_CLOSED,
     isOpenDoor: (feat) => feat === FEAT.OPEN_DOOR,
-    isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.ARMOUR,
-    shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury" })[feat] ?? null,
+    isShopEntrance: (feat) => feat >= FEAT.GENERAL && feat <= FEAT.HOME,
+    shopName: (feat) => ({ [FEAT.GENERAL]: "General Store", [FEAT.ALCHEMY]: "Alchemy Shop", [FEAT.WEAPON]: "Weapon Smiths", [FEAT.ARMOUR]: "Armoury", [FEAT.HOME]: "Home" })[feat] ?? null,
     isHarmful: (feat) => feat === FEAT.LAVA,
     isDiggable: (feat) => feat === FEAT.RUBBLE,
     size: Object.keys(FEAT).length,
@@ -122,6 +123,8 @@ function squareFor(glyph: string): Square {
       return { feat: FEAT.WEAPON, passable: true, known: true, objectCount: 0 };
     case "U":
       return { feat: FEAT.ARMOUR, passable: true, known: true, objectCount: 0 };
+    case "H":
+      return { feat: FEAT.HOME, passable: true, known: true, objectCount: 0 };
     default:
       return { feat: FEAT.FLOOR, passable: true, known: true, objectCount: 0 };
   }
@@ -174,13 +177,13 @@ export function itemNamed(name: string, handle: number): ItemView {
     [/\bGold\b/i, 1],
     [/\b(Arrows?|Seeker Arrows?)\b/i, TV.ARROW], [/\b(Bolts?|Seeker Bolts?)\b/i, TV.BOLT],
     [/\b(Shots?|Pebbles?)\b/i, TV.SHOT],
-    [/\b(Sling|Bow|Crossbow)\b/i, TV.BOW], [/\b(Sword|Dagger|Blade)\b/i, TV.SWORD],
-    [/\b(Axe|Spear|Pike|Halberd)\b/i, TV.POLEARM], [/\b(Mace|Whip|Hammer)\b/i, TV.HAFTED],
-    [/\bBoots\b/i, TV.BOOTS], [/\bGloves\b/i, TV.GLOVES], [/\b(Helm|Helmet)\b/i, TV.HELM],
-    [/\bCrown\b/i, TV.CROWN], [/\bShield\b/i, TV.SHIELD], [/\bCloak\b/i, TV.CLOAK],
-    [/\b(Soft|Leather) Armour\b/i, TV.SOFT_ARMOR], [/\b(Hard|Metal|Chain|Plate) Armour\b/i, TV.HARD_ARMOR],
-    [/\b(Lanterns?|Torch(?:es)?|Phial|Star|Arkenstone)\b/i, TV.LIGHT], [/\bFlasks? of Oil\b/i, TV.FLASK], [/\bAmulet\b/i, TV.AMULET], [/\bRing\b/i, TV.RING],
-    [/\bRod\b/i, TV.ROD], [/\bScroll\b/i, TV.SCROLL],
+    [/\b(Sling|Bow|Crossbow)s?\b/i, TV.BOW], [/\b(Sword|Dagger|Blade)s?\b/i, TV.SWORD],
+    [/\b(Axe|Spear|Pike|Halberd)s?\b/i, TV.POLEARM], [/\b(Mace|Whip|Hammer)s?\b/i, TV.HAFTED],
+    [/\bBoots?\b/i, TV.BOOTS], [/\bGloves?\b/i, TV.GLOVES], [/\b(Helm|Helmet)s?\b/i, TV.HELM],
+    [/\bCrowns?\b/i, TV.CROWN], [/\bShields?\b/i, TV.SHIELD], [/\bCloaks?\b/i, TV.CLOAK],
+    [/\b(Soft|Leather) Armours?\b/i, TV.SOFT_ARMOR], [/\b(Hard|Metal|Chain|Plate) Armours?\b/i, TV.HARD_ARMOR],
+    [/\b(Lanterns?|Torch(?:es)?|Phial|Star|Arkenstone)\b/i, TV.LIGHT], [/\bFlasks? of Oil\b/i, TV.FLASK], [/\bAmulets?\b/i, TV.AMULET], [/\bRings?\b/i, TV.RING],
+    [/\bRods?\b/i, TV.ROD], [/\bScrolls?\b/i, TV.SCROLL], [/\bWands?\b/i, TV.WAND], [/\b(Staffs?|Staves)\b/i, TV.STAFF], [/\bPotions?\b/i, TV.POTION],
   ];
   const tval = kinds.find(([pattern]) => pattern.test(name))?.[1] ?? 0;
   const artifact = tval === TV.LIGHT && /\b(Phial|Star|Arkenstone)\b/i.test(name);

@@ -10,6 +10,7 @@ import { gearCandidates, TV } from "../gear/compare.js";
 import { recallItem, shownName } from "../town/needs.js";
 import { affordable, type Aim, type AimKind } from "./aims.js";
 import type { StoreMemory } from "../town/memory.js";
+import type { HomeStock } from "../town/home.js";
 import type { Pursuit } from "./pursuits.js";
 
 /** What the planner needs from the strategy layer. */
@@ -19,6 +20,10 @@ export interface Steering {
   /** Whether a town trip for an affordable aim may be offered at this gold. */
   readonly tripAllowed: (gold: number) => boolean;
   readonly storeMemory?: readonly StoreMemory[];
+  /** The home's remembered stock, so the trip knows what it holds. */
+  readonly homeStock?: HomeStock;
+  /** Persist the home once it is read. */
+  readonly saveHomeStock?: (stock: HomeStock) => void;
   /** The long goals the persona holds, most wanted first, with the win among them. */
   readonly pursuits?: readonly Pursuit[];
 }

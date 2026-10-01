@@ -4,7 +4,7 @@ import { sameKind, TV } from "./compare.js";
 import type { AgentView, LoadoutSimulation, LoadoutView, PlayerView } from "@rpgm-tools/neo-angband-core";
 import { itemNamed, world } from "../harness.js";
 import { equipmentValue, gearCandidates, keepsCapacity, loadoutDamage, loadoutMissileDamage } from "./compare.js";
-import { aimPurchase } from "../town/aims-shop.js";
+import { aimPurchase, unaimedUpgradePurchase } from "../town/aims-shop.js";
 import { sellList } from "../town/shop.js";
 import { readPack } from "../brain/pack.js";
 import { defaultPersona } from "../persona/persona.js";
@@ -107,6 +107,24 @@ describe("loadout capacity", () => {
     const aim = { kind: "armour" as const, label: "armour", detail: "", how: "save" as const, price: 10, depth: null };
     expect(aimPurchase([aim], store, 50, view)).toMatchObject({ index: 1 });
     expect(aimPurchase([aim], { ...store, stock: stock.slice(0, 1) }, 50, view)).toBeNull();
+  });
+
+  it("buys an unaimed upgrade when no aim asked for it and it is a clear swap", () => {
+    const stock = [
+      { ...itemNamed("Leather Shield [8,+0]", 1), index: 0, number: 1, price: 10 },
+      { ...itemNamed("Leather Shield [8,+2]", 2), index: 1, number: 1, price: 20 },
+    ];
+    const store = { feat: 9, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 1000 }, stock };
+    const w = world({ map: ["@"], player: { objectFlags: ["FREE_ACT"], gold: 50 }, worn: ["Leather Shield [4,+0]"], stores: [store] });
+    const before = loadout(w.view);
+    const view: AgentView = { ...w.view, simulateLoadout: (change) => {
+      const ref = change.wield?.[0];
+      const index = ref?.from === "store" ? ref.index : 0;
+      return simulation(before, loadout(w.view, index === 0 ? { objectFlags: [], ac: 50 } : { speed: 115 }, [stock[index]!]));
+    } };
+    expect(unaimedUpgradePurchase(store, 50, view)).toMatchObject({ index: 1, aim: "unaimed upgrade" });
+    expect(unaimedUpgradePurchase(store, 5, view)).toBeNull();
+    expect(unaimedUpgradePurchase(store, 0, view)).toBeNull();
   });
 
   it("does not sell a spare whose removal loses speed or a required ability", () => {

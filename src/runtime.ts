@@ -16,6 +16,7 @@ import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
 import { readStoreMemory, type StoreMemory } from "./town/memory.js";
+import { readHomeStock, UNKNOWN_HOME, type HomeStock } from "./town/home.js";
 import { passableAims } from "./strategy/heirs.js";
 import { createOrders, type Orders } from "./orders/book.js";
 import { createChannelPoller } from "./orders/channel.js";
@@ -75,6 +76,8 @@ export interface CharacterData {
   readonly orders: readonly Instruction[];
   readonly flourishes?: Flourishes;
   readonly storeMemory?: readonly StoreMemory[];
+  /** The home's remembered stock, once the character has seen it. */
+  readonly homeStock?: HomeStock;
 }
 
 const CHARACTER_FORMAT = "neo-angband/squire/character";
@@ -116,6 +119,7 @@ function readCharacter(stored: unknown): CharacterData | null {
     orders: readInstructions(data["orders"]),
     flourishes: readWays(data["flourishes"]),
     storeMemory: readStoreMemory(data["storeMemory"]),
+    homeStock: readHomeStock(data["homeStock"]),
   };
 }
 
@@ -292,6 +296,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     seed: () => character.runId,
     storeMemory: character.storeMemory ?? [],
     saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
+    homeStock: () => character.homeStock ?? UNKNOWN_HOME,
+    saveHomeStock: (homeStock) => self.saveCharacter({ ...character, homeStock }),
   });
 
   const orders = createOrders({
@@ -738,7 +744,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), pursuits: strategy.pursuits() }),
+        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits() }),
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,

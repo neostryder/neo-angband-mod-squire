@@ -3,8 +3,12 @@ import { describe, expect, it } from "vitest";
 import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
 import { defaultPersona } from "../persona/persona.js";
 import type { Aim } from "../strategy/aims.js";
+import { emptyFlourishes } from "../learning/family-ways.js";
 import { aimPurchase } from "./aims-shop.js";
 import { neededEntrances, townTripPlan } from "./plan.js";
+import { readHomeStock, UNKNOWN_HOME, createHomeMemory, type HomeStock } from "./home.js";
+import { homeSpares, homeWithdrawal, sellList } from "./shop.js";
+import { readPack } from "../brain/pack.js";
 
 describe("town trip", () => {
   it("leaves the general store to buy survival supplies before oil or gear", () => {
@@ -130,5 +134,107 @@ describe("town trip", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
+  });
+});
+
+describe("home routing", () => {
+  it("withdraws from the home before the shops and remembers it for the next trip", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 0, number: 5 },
+    ] };
+    const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 10 },
+    ] };
+    const w = world({ map: ["#######", "#@.H.A#", "#######"], player: { cls: "Warrior", depth: 0, gold: 100 }, pack: [], stores: [home, alchemy], worn: ["a Wooden Torch (5000 turns)"] });
+    const persona = defaultPersona();
+    let saved: HomeStock = UNKNOWN_HOME;
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {}, [], emptyFlourishes, undefined, undefined, UNKNOWN_HOME, (stock) => { saved = stock; });
+    expect(neededEntrances(w.view, w.terrain, persona, new Set(), [], emptyFlourishes(), undefined, UNKNOWN_HOME)[0]?.name).toBe("Home");
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 2 } });
+    expect(saved.entered).toBe(true);
+    /* A reload reads the home back, and the remembered stock still routes a need there. */
+    const reloaded = readHomeStock(JSON.parse(JSON.stringify(saved)));
+    expect(reloaded.entered).toBe(true);
+    expect(homeWithdrawal(reloaded, [{ kind: "healing", name: "Cure Light Wounds", want: 2, have: 0 }])).toEqual([{ name: "Cure Light Wounds", quantity: 2 }]);
+    w.setPack([]);
+    expect(neededEntrances(w.view, w.terrain, persona, new Set(), [], emptyFlourishes(), undefined, reloaded).map((entry) => entry.name)).toContain("Home");
+    /* A second trip from the reloaded stock withdraws the same ware. */
+    const second = townTripPlan(w.terrain, persona, new Set(), () => {}, [], emptyFlourishes, undefined, undefined, reloaded, () => {});
+    expect(second.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 2 } });
+  });
+
+  it("takes a second ware from the home on the same visit", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 0, number: 5 },
+      { ...itemNamed("a Scroll of Phase Door", 0), index: 1, price: 0, number: 5 },
+    ] };
+    const w = world({ map: ["#####", "#@.H#", "#####"], player: { cls: "Warrior", depth: 0, gold: 100 }, pack: [], stores: [home], worn: ["a Wooden Torch (5000 turns)"] });
+    const plan = townTripPlan(w.terrain, defaultPersona(), new Set(), () => {}, [], emptyFlourishes, undefined, undefined, UNKNOWN_HOME, () => {});
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 0 } });
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 1 } });
+  });
+
+  it("never stores or sells the only escape or Word of Recall on a shallow character", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [] };
+    const w = world({ map: ["#####", "#@.H#", "#####"], player: { cls: "Warrior", depth: 0, maxDepth: 3, gold: 0 }, pack: ["a Scroll of Teleportation", "a Scroll of Word of Recall"], stores: [home], worn: ["a Wooden Torch (5000 turns)"] });
+    const greedy = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, selling: 100, hoarding: 0 } };
+    expect(homeSpares(w.view, greedy, false)).toEqual([]);
+    expect(sellList(readPack(w.view), w.view, greedy).map((sale) => sale.name)).toEqual([]);
+  });
+
+  it("stores a spare at the home and remembers it", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [] };
+    const w = world({ map: ["#####", "#@.H#", "#####"], player: { cls: "Warrior", depth: 0, gold: 0 }, pack: ["10 Potions of Cure Light Wounds"], stores: [home], worn: ["a Wooden Torch (5000 turns)"] });
+    let saved: HomeStock = UNKNOWN_HOME;
+    const plan = townTripPlan(w.terrain, defaultPersona(), new Set(), () => {}, [], emptyFlourishes, undefined, undefined, UNKNOWN_HOME, (stock) => { saved = stock; });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-sell", args: { handle: 1, quantity: 4 } });
+    expect(saved.entered).toBe(true);
+  });
+
+  it("does not read the home from across town", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 0, number: 5 },
+    ] };
+    const w = world({ map: ["#####", "#@.H#", "#####"], player: { depth: 0, gold: 0 }, stores: [home] });
+    const memory = createHomeMemory();
+    expect(memory.observe(w.view)).toBe(false);
+    expect(memory.current().entered).toBe(false);
+    w.moveTo({ x: 3, y: 1 });
+    expect(memory.observe(w.view)).toBe(true);
+    expect(memory.current().entered).toBe(true);
+  });
+});
+
+describe("refused sales", () => {
+  it("does not offer a sale the store's buy list refuses", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 80;
+    const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 10 },
+    ] };
+    const w = suppliedWorld({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 100 }, pack: ["a Dagger", "a Dagger"], stores: [alchemy] });
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {});
+    plan.step(w.view, w.act);
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)?.code).not.toBe("shop-sell");
+    expect(w.issued.some((command) => command.code === "shop-sell")).toBe(false);
+  });
+
+  it("offers a sale once even when the pack still shows the item", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 80;
+    const weapon: StoreView = { feat: FEAT.WEAPON, featName: "Weapon Smiths", isHome: false, owner: { name: "Bert", purse: 5000 }, stock: [] };
+    const w = world({ map: ["#####", "#@.W#", "#####"], player: { depth: 0, maxDepth: 5, gold: 0 }, pack: ["a Dagger", "a Dagger"], stores: [weapon] });
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {});
+    plan.step(w.view, w.act);
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
+    expect(plan.step(w.view, w.act)).not.toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
   });
 });

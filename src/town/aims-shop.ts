@@ -71,6 +71,42 @@ export function aimPurchase(aims: readonly Aim[], store: StoreView, gold: number
   return null;
 }
 
+const ARMOUR_TVALS: readonly number[] = [...ARMOUR];
+
+/**
+ * An affordable upgrade no aim asked for. The existing gear comparison rates a
+ * ware by how it would change the character's loadout; this picks the best
+ * weapon or armour piece in the entered shop that the character can afford and
+ * that improves over the current loadout by enough to be a clear swap. The
+ * upgrade keeps the same capacity guards the wear-time check already applies.
+ */
+export function unaimedUpgradePurchase(store: StoreView, gold: number, view: AgentView): AimPurchase | null {
+  if (store.isHome) return null;
+  const candidates = store.stock.filter((item) => {
+    const name = shownName(item);
+    return name !== null && item.number > 0 && item.price !== undefined && item.price > 0 && item.price <= gold &&
+      (ARMOUR_TVALS.includes(item.tval) || WEAPONS.includes(item.tval));
+  });
+  let best: { index: number; name: string; value: number; price: number } | null = null;
+  for (const item of candidates) {
+    const name = shownName(item) ?? "";
+    if (/\{\?\?\}/.test(name)) continue;
+    if (!fullyKnown(name)) continue;
+    const index = view.stores().findIndex((entry) => entry.feat === store.feat);
+    if (index < 0) continue;
+    const result = view.simulateLoadout?.({ wield: [{ from: "store", store: index, index: item.index }] });
+    if (result === undefined || result === null || result.placements.length === 0) continue;
+    if (!keepsCapacity(view, result)) continue;
+    const value = equipmentValue(result, view);
+    if (value <= 2) continue;
+    if (best === null || value > best.value || value === best.value && (item.price ?? Infinity) < best.price) {
+      best = { index: item.index, name, value, price: item.price ?? Infinity };
+    }
+  }
+  if (best === null) return null;
+  return { index: best.index, quantity: 1, name: best.name, aim: "unaimed upgrade" };
+}
+
 /** The shops a town trip may visit for this aim, guessed by kind and never by stock. */
 export function aimStores(aim: Aim): readonly string[] {
   switch (aim.kind) {

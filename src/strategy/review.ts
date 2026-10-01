@@ -18,6 +18,7 @@ import { stillInherited, withAvenge, withInherited, type InheritedAim } from "./
 import type { Feeling } from "../learning/grudges.js";
 import { createLevelPacing } from "./pacing.js";
 import { createStoreMemory, wareName, type StoreMemory } from "../town/memory.js";
+import { UNKNOWN_HOME, type HomeStock } from "../town/home.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { pursuitFacts, pursuitsFor, type FamilyFacts, type Pursuit } from "./pursuits.js";
@@ -116,6 +117,9 @@ export interface StrategyDeps {
   seed?(): string;
   readonly storeMemory?: readonly StoreMemory[];
   saveStoreMemory?(memory: readonly StoreMemory[]): void;
+  /** The home's remembered stock, read live because a town trip updates it. */
+  homeStock?(): HomeStock;
+  saveHomeStock?(stock: HomeStock): void;
   rng?(): number;
 }
 
@@ -130,6 +134,10 @@ export interface Strategy {
   observe(view: AgentView): void;
   remember(view: AgentView, terrain: Terrain): void;
   shops(): readonly StoreMemory[];
+  /** The home's remembered stock, read live as a town trip updates it. */
+  homeStock(): HomeStock;
+  /** Persist the home's remembered stock. */
+  saveHomeStock(stock: HomeStock): void;
   /** The current aims, best first. Empty until the first review. */
   ranked(): readonly Aim[];
   /** The long goals the persona holds now, most wanted first. */
@@ -273,6 +281,8 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       stockReview = true;
     },
     shops: shops.all,
+    homeStock: () => deps.homeStock?.() ?? UNKNOWN_HOME,
+    saveHomeStock: (stock) => deps.saveHomeStock?.(stock),
     observe(view) {
       const player = view.player();
       if (player.dead) return;
