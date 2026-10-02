@@ -14,6 +14,8 @@ export interface LoggedDecision {
   readonly confidence: number | null;
   readonly probs: Readonly<Record<string, number>> | null;
   readonly state: Readonly<Record<string, unknown>>;
+  /** A hash of the state as sent, absent when no model was asked. */
+  readonly stateHash?: string;
   readonly options: readonly string[];
   readonly plan: string;
   readonly latencyMs: number;

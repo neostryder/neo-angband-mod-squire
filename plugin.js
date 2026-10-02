@@ -3403,6 +3403,50 @@ function inCharacterInstructions(persona) {
   return `Which option would ${persona.name} choose, given this character's nature and history? Answer as the character would act, even when another option seems wiser.`;
 }
 
+// src/brain/context.ts
+var STATE_TOKEN_CAP = 6e3;
+function contextOf(specs) {
+  const entries = [];
+  const keys = /* @__PURE__ */ new Set();
+  for (const [layer, key2, value] of specs) {
+    if (value === void 0) continue;
+    if (keys.has(key2)) throw new Error(`context key ${key2} is filed twice`);
+    keys.add(key2);
+    entries.push(Object.freeze({ layer, key: key2, value }));
+  }
+  return Object.freeze({ entries: Object.freeze(entries) });
+}
+function entriesOf(layer, block) {
+  return Object.entries(block).map(([key2, value]) => [layer, key2, value]);
+}
+function stateOf(context) {
+  return Object.fromEntries(context.entries.map((e) => [e.key, e.value]));
+}
+function stateHash(state) {
+  const text = JSON.stringify(state);
+  let hash = 0xcbf29ce484222325n;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= BigInt(text.charCodeAt(i));
+    hash = hash * 0x100000001b3n & 0xffffffffffffffffn;
+  }
+  return hash.toString(16).padStart(16, "0");
+}
+function stateTokens(state) {
+  return estimateTokens(JSON.stringify(state));
+}
+var SHED_ORDER = ["knowledge", "outcomes", "long_goal", "mid_goal", "purpose"];
+function fitToBudget(context, budget = STATE_TOKEN_CAP) {
+  let entries = context.entries;
+  const shed = [];
+  for (const layer of SHED_ORDER) {
+    if (stateTokens(stateOf({ entries })) <= budget) break;
+    if (!entries.some((e) => e.layer === layer)) continue;
+    entries = entries.filter((e) => e.layer !== layer);
+    shed.push(layer);
+  }
+  return { context: entries === context.entries ? context : Object.freeze({ entries: Object.freeze([...entries]) }), shed, over: stateTokens(stateOf({ entries })) > budget };
+}
+
 // src/town/shop.ts
 var TV_MAGIC = { STAFF: 22, WAND: 23, ROD: 24, SCROLL: 25, POTION: 26 };
 var TV_TRADE = { FLASK: 27, FOOD: 28, MUSHROOM: 29, MAGIC_BOOK: 30, PRAYER_BOOK: 31, NATURE_BOOK: 32, SHADOW_BOOK: 33 };
@@ -7066,29 +7110,35 @@ function createGoalPlanner(options) {
         return decided;
       }
       const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
+      const compiled = contextOf([
+        ["manual", "rules", HANDBOOK.join(" ")],
+        ["memory", "character", `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`],
+        ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
+        ["memory", "mana", player.maxSp > 0 ? `${String(player.sp)} of ${String(player.maxSp)}` : void 0],
+        ["memory", "creatures", creatures],
+        ["memory", "incoming", `Up to ${String(damageFor(s, player.grid, 1, terrain).damage)} HP damage in one action and ${String(damageFor(s, player.grid, 2, terrain).damage)} in two. Status danger ${String(damageFor(s).status)}; uncertainty ${String(damageFor(s).uncertainty)}. These are conservative bounds, not death probabilities.`],
+        ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
+        ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
+        ["memory", "status", statusOf(view, canRead(view))],
+        ["outcomes", "last", lastOutcome ?? void 0],
+        ["long_goal", "aims", aimNote ?? void 0],
+        ["orders", "orders", orderNote ?? void 0],
+        ["memory", "hunger", hungry(view) ? "The character is hungry." : void 0],
+        ...entriesOf("memory", swarmNote(seen)),
+        ...entriesOf("knowledge", lessonsFor(view)),
+        ["persona", "persona", persona === null ? void 0 : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }, ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } }]
+      ]);
+      const fitted2 = fitToBudget(compiled);
+      if (fitted2.shed.length > 0) log(`goal: the request was over ${String(STATE_TOKEN_CAP)} tokens, so it leaves out ${fitted2.shed.join(", ")}`);
+      if (fitted2.over) log(`goal: the request is still over ${String(STATE_TOKEN_CAP)} tokens`);
+      const layers = fitted2.context;
+      const state = stateOf(layers);
       const question = {
         request: {
-          state: {
-            rules: HANDBOOK.join(" "),
-            character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
-            health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
-            ...player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {},
-            creatures,
-            incoming: `Up to ${String(damageFor(s, player.grid, 1, terrain).damage)} HP damage in one action and ${String(damageFor(s, player.grid, 2, terrain).damage)} in two. Status danger ${String(damageFor(s).status)}; uncertainty ${String(damageFor(s).uncertainty)}. These are conservative bounds, not death probabilities.`,
-            ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
-            level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
-            status: statusOf(view, canRead(view)),
-            ...lastOutcome === null ? {} : { last: lastOutcome },
-            ...aimNote === null ? {} : { aims: aimNote },
-            ...orderNote === null ? {} : { orders: orderNote },
-            ...hungry(view) ? { hunger: "The character is hungry." } : {},
-            ...swarmNote(seen),
-            ...lessonsFor(view),
-            ...persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }, ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } } }
-          },
+          state,
           questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...options.orders?.ask(offers, view) ?? {} }
         },
-        context: { depth: player.depth, offers, newCreatures, situation }
+        context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state) }
       };
       return question;
     },
@@ -11360,6 +11410,7 @@ function createRuntime(host, options = {}) {
       probs: goal?.type === "choice" && record6.reflex === void 0 ? goal.probabilities : null,
       ...record6.reflex === void 0 ? {} : { reflex: record6.reflex },
       state: record6.request.state,
+      ...record6.context.stateHash === void 0 ? {} : { stateHash: record6.context.stateHash },
       options: record6.context.offers.map((o) => o.goal),
       plan: record6.outcome,
       latencyMs: record6.latencyMs,

@@ -40,6 +40,7 @@ import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, nudgePosition, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
+import { STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, stateHash, stateOf, type DecisionContext } from "./context.js";
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 import type { HomeStock } from "../town/home.js";
@@ -233,6 +234,10 @@ export interface GoalDigest {
   readonly situation?: string;
   /** Why Squire decided without the model, when it did. */
   readonly reflex?: string;
+  /** The facts the request state was compiled from, by layer, when the model was asked. */
+  readonly layers?: DecisionContext;
+  /** Hash of the request state, to match a log record to the exact state. */
+  readonly stateHash?: string;
   /** Filled in by `choose`. */
   trace?: PersonaTrace;
 }
@@ -2182,32 +2187,39 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
 
       const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
+      /* Keep this order: it is the key order the trained adapters learned. */
+      const compiled = contextOf([
+        ["manual", "rules", HANDBOOK.join(" ")],
+        ["memory", "character", `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`],
+        ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
+        ["memory", "mana", player.maxSp > 0 ? `${String(player.sp)} of ${String(player.maxSp)}` : undefined],
+        ["memory", "creatures", creatures],
+        ["memory", "incoming", `Up to ${String(damageFor(s, player.grid, 1, terrain).damage)} HP damage in one action and ${String(damageFor(s, player.grid, 2, terrain).damage)} in two. Status danger ${String(damageFor(s).status)}; uncertainty ${String(damageFor(s).uncertainty)}. These are conservative bounds, not death probabilities.`],
+        ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
+        ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
+        ["memory", "status", statusOf(view, canRead(view))],
+        ["outcomes", "last", lastOutcome ?? undefined],
+        ["long_goal", "aims", aimNote ?? undefined],
+        ["orders", "orders", orderNote ?? undefined],
+        ["memory", "hunger", hungry(view) ? "The character is hungry." : undefined],
+        ...entriesOf("memory", swarmNote(seen)),
+        ...entriesOf("knowledge", lessonsFor(view)),
+        ["persona", "persona", persona === null ? undefined : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) }],
+      ]);
+      const fitted = fitToBudget(compiled);
+      if (fitted.shed.length > 0) log(`goal: the request was over ${String(STATE_TOKEN_CAP)} tokens, so it leaves out ${fitted.shed.join(", ")}`);
+      if (fitted.over) log(`goal: the request is still over ${String(STATE_TOKEN_CAP)} tokens`);
+      const layers = fitted.context;
+      const state = stateOf(layers);
       const question: Question<GoalDigest> = {
         request: {
-          state: {
-            rules: HANDBOOK.join(" "),
-            character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`,
-            health: `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`,
-            ...(player.maxSp > 0 ? { mana: `${String(player.sp)} of ${String(player.maxSp)}` } : {}),
-            creatures,
-            incoming: `Up to ${String(damageFor(s, player.grid, 1, terrain).damage)} HP damage in one action and ${String(damageFor(s, player.grid, 2, terrain).damage)} in two. Status danger ${String(damageFor(s).status)}; uncertainty ${String(damageFor(s).uncertainty)}. These are conservative bounds, not death probabilities.`,
-            ground: standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground.",
-            level: `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`,
-            status: statusOf(view, canRead(view)),
-            ...(lastOutcome === null ? {} : { last: lastOutcome }),
-            ...(aimNote === null ? {} : { aims: aimNote }),
-            ...(orderNote === null ? {} : { orders: orderNote }),
-            ...(hungry(view) ? { hunger: "The character is hungry." } : {}),
-            ...swarmNote(seen),
-            ...lessonsFor(view),
-            ...(persona === null ? {} : { persona: { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) } }),
-          },
+          state,
           questions:
             persona === null
               ? { goal }
               : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...(options.orders?.ask(offers, view) ?? {}) },
         },
-        context: { depth: player.depth, offers, newCreatures, situation },
+        context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state) },
       };
       return question;
     },

@@ -793,6 +793,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       probs: goal?.type === "choice" && record.reflex === undefined ? goal.probabilities : null,
       ...(record.reflex === undefined ? {} : { reflex: record.reflex }),
       state: record.request.state,
+      ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
       options: record.context.offers.map((o) => o.goal),
       plan: record.outcome,
       latencyMs: record.latencyMs,
