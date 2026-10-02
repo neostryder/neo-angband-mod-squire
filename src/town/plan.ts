@@ -13,7 +13,7 @@ import type { Persona } from "../persona/persona.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores, unaimedUpgradePurchase } from "./aims-shop.js";
-import { supplyNeeds } from "./needs.js";
+import { shownName, supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
 import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
@@ -92,6 +92,8 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
   const homeTried = new Set<string>();
   /* Turns spent waiting for a creature to clear the way to one shop. */
   const waited = new Map<number, number>();
+  /* A buy, sale or withdrawal that left the pack and the gold untouched. */
+  let pending: { feat: number; snapshot: string } | null = null;
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -103,7 +105,16 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       const homeNow = homeMemory.current();
       const first = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory, homeNow)[0];
       const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
-      if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !leftShopForSupplies) {
+      /* A command that moved no item and no gold will not start working on a later step. */
+      const unchanged = pending !== null && cell !== null && pending.feat === cell.feat && pending.snapshot === packSnapshot(view);
+      pending = null;
+      if (unchanged && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
+        visited.add(cell.feat);
+        log("shop: the last command changed nothing, so this store is done");
+        return act.shopExit();
+      }
+      /* Leaving a shop the trip has already finished would be a second exit on the same square. */
+      if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
         return act.shopExit();
       }
@@ -122,6 +133,10 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         /* The home is visited before the first supply shop so a remembered
          * stack can fill the pack without costing gold, and after the loop so
          * the surplus from a deep pack can ride home. */
+        const trade = (command: ReturnType<typeof act.shopBuy>): ReturnType<typeof act.shopBuy> => {
+          pending = { feat: cell.feat, snapshot: packSnapshot(view) };
+          return command;
+        };
         if (store.isHome) {
           homeMemory.observe(view);
           const stock = homeMemory.current();
@@ -134,7 +149,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
             const want = withdrawal.find((w) => shownMatch(ware, w.name))?.quantity ?? 1;
             homeTried.add(`take:${ware.name}`);
             log(`home: taking ${String(want)} "${ware.name}" from the home before the shops`);
-            return act.shopBuy(ware.index, want);
+            return trade(act.shopBuy(ware.index, want));
           }
           /* Either the pack is near full or the spare sits beyond what the
            * basket asks for, so a remembered stack rides home before shops. */
@@ -144,7 +159,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           if (spare !== undefined) {
             homeTried.add(`leave:${String(spare.handle)}`);
             log(`home: storing ${spare.name} at home to ${packFull ? "make room" : "shed excess"}`);
-            return act.shopSell(spare.handle, spare.quantity);
+            return trade(act.shopSell(spare.handle, spare.quantity));
           }
           visited.add(cell.feat);
           log("home: nothing to take or leave");
@@ -157,22 +172,25 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           offered.add(sale.handle);
           offeredSales.set(cell.feat, offered);
           log(`shop: selling ${sale.name} in the ${store.featName}`);
-          return act.shopSell(sale.handle, sale.quantity);
+          return trade(act.shopSell(sale.handle, sale.quantity));
         }
         const order = purchaseOrder?.() ?? null;
-        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order)[0];
+        const list = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order);
+        const purchase = list[0];
         /* With the supplies settled, the gold on hand can fund the top aim, unless the persona chose to keep it. */
         const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
         const aimed = missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         const gearFirst = aimed !== null && order !== null && purchase !== undefined && order.includes("gear") && order.indexOf("gear") < (order.includes(purchase.kind) ? order.indexOf(purchase.kind) : order.length);
         if (purchase !== undefined && !gearFirst) {
-          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
-          return act.shopBuy(purchase.index, purchase.quantity);
+          /* One shelf can fill every unit this list already afforded, instead of one command per unit. */
+          const quantity = list.reduce((sum, item) => item.index === purchase.index ? sum + item.quantity : sum, 0);
+          log(`shop: buying ${String(quantity)} from "${purchase.name}" in the ${store.featName}`);
+          return trade(act.shopBuy(purchase.index, quantity));
         }
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
-          return act.shopBuy(aimed.index, aimed.quantity);
+          return trade(act.shopBuy(aimed.index, aimed.quantity));
         }
         /* An aim that no aim requested: the gear comparison still knows what is
          * a clear swap, and the gold on hand can fund it, unless the persona
@@ -182,7 +200,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           if (upgrade !== null && !boughtFor.has(upgrade.aim)) {
             boughtFor.add(upgrade.aim);
             log(`shop: buying ${upgrade.name} in the ${store.featName} as a clear upgrade`);
-            return act.shopBuy(upgrade.index, upgrade.quantity);
+            return trade(act.shopBuy(upgrade.index, upgrade.quantity));
           }
         }
         visited.add(cell.feat);
@@ -222,6 +240,14 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
 
 function shownMatch(item: { readonly name?: string | null }, wanted: string): boolean {
   return typeof item.name === "string" && item.name.toLowerCase().includes(wanted.toLowerCase());
+}
+
+/** Pack and quiver lines plus gold, so a refused trade is visible on the next step. */
+function packSnapshot(view: AgentView): string {
+  /* Ammo taken from the home lands in the quiver, which the pack list leaves out. */
+  const quiver = (view as { quiver?: () => ItemView[] }).quiver?.() ?? [];
+  const pack = [...view.inventory(), ...quiver].map((item) => `${String(item.handle)}:${shownName(item) ?? ""}:${String(item.number)}`).join(",");
+  return `${String(view.player().gold)}|${pack}`;
 }
 
 /** Recall is one read; the level change is handled by the game's own timer. */

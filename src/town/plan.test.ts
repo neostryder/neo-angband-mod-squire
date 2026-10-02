@@ -1,6 +1,7 @@
-import type { AgentView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
-import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
+import { FEAT, itemNamed, suppliedWorld, world, type World } from "../harness.js";
+import { DIRECTIONS } from "../grid.js";
 import { defaultPersona } from "../persona/persona.js";
 import type { Aim } from "../strategy/aims.js";
 import { emptyFlourishes } from "../learning/family-ways.js";
@@ -9,6 +10,100 @@ import { neededEntrances, townTripPlan } from "./plan.js";
 import { readHomeStock, UNKNOWN_HOME, createHomeMemory, type HomeStock } from "./home.js";
 import { homeSpares, homeWithdrawal, sellList } from "./shop.js";
 import { readPack } from "../brain/pack.js";
+
+/** A stack's identity, so a second purchase of the same ware adds to it. */
+function stackKey(name: string): string {
+  return name.toLowerCase().replace(/ \(\d+ turns\)$/, "").replace(/^\d+\s+/, "").replace(/^(a|an)\s+/, "")
+    .replace(/^potions of /, "potion of ").replace(/^scrolls of /, "scroll of ").replace(/^rations of /, "ration of ")
+    .replace(/^flasks of /, "flask of ").replace(/^wooden torches\b/, "wooden torch");
+}
+
+function stackCount(line: string): number {
+  const match = /^(\d+)\s/.exec(line);
+  return match === null ? 1 : Number(match[1]);
+}
+
+/** The name a stack shows after a purchase. One stays singular; more takes the plural the pack tests already use. */
+function pluralize(single: string, count: number): string {
+  if (count <= 1) return single;
+  const turns = / \(\d+ turns\)$/.exec(single)?.[0] ?? "";
+  const base = single.replace(/ \(\d+ turns\)$/, "")
+    .replace(/^a Potion of /, `${String(count)} Potions of `)
+    .replace(/^a Scroll of /, `${String(count)} Scrolls of `)
+    .replace(/^a Ration of /, `${String(count)} Rations of `)
+    .replace(/^a Flask of /, `${String(count)} Flasks of `)
+    .replace(/^a Wooden Torch$/, `${String(count)} Wooden Torches`)
+    .replace(/^a Cloak$/, `${String(count)} Cloaks`)
+    .replace(/^an /, `${String(count)} `)
+    .replace(/^a /, `${String(count)} `);
+  return base + turns;
+}
+
+function addToPack(pack: readonly string[], wareName: string, bought: number): string[] {
+  const key = stackKey(wareName);
+  const next = [...pack];
+  const slot = next.findIndex((line) => line !== "" && stackKey(line) === key);
+  if (slot < 0) {
+    next.push(pluralize(wareName, bought));
+    return next;
+  }
+  next[slot] = pluralize(wareName, stackCount(next[slot]!) + bought);
+  return next;
+}
+
+/**
+ * Apply the command the trip just issued. A sale pays 5 gold per item, the
+ * price the weapon-shop fixture uses for a plain spare, so the trip's gold
+ * stays a pure function of the commands.
+ */
+function applyTownCommand(w: World, pack: readonly string[], gold: number, stores: readonly StoreView[]): { pack: string[]; gold: number } {
+  const command: AgentCommand | undefined = w.issued[w.issued.length - 1];
+  if (command === undefined) return { pack: [...pack], gold };
+  if (command.code === "walk") {
+    const step = DIRECTIONS.find((dir) => dir.key === command.dir);
+    if (step !== undefined) w.moveTo({ x: w.at().x + step.dx, y: w.at().y + step.dy });
+    return { pack: [...pack], gold };
+  }
+  if (command.code !== "shop-buy" && command.code !== "shop-sell") return { pack: [...pack], gold };
+  const feat = w.view.cell(w.at().x, w.at().y)?.feat;
+  const store = stores.find((entry) => entry.feat === feat);
+  if (store === undefined) return { pack: [...pack], gold };
+  if (command.code === "shop-buy") {
+    const index = command.args?.["index"];
+    const quantity = command.args?.["quantity"];
+    if (typeof index !== "number" || typeof quantity !== "number") return { pack: [...pack], gold };
+    const ware = store.stock.find((item) => item.index === index);
+    const price = ware?.price;
+    if (ware === undefined || price === undefined) return { pack: [...pack], gold };
+    const affordable = price === 0 ? quantity : Math.min(quantity, Math.floor(gold / price));
+    const bought = Math.min(affordable, ware.number);
+    if (bought <= 0) return { pack: [...pack], gold };
+    ware.number -= bought;
+    const next = addToPack(pack, ware.name ?? "", bought);
+    const left = gold - price * bought;
+    w.setPack(next);
+    w.setPlayer({ gold: left });
+    return { pack: next, gold: left };
+  }
+  const handle = command.args?.["handle"];
+  const quantity = command.args?.["quantity"];
+  if (typeof handle !== "number" || typeof quantity !== "number") return { pack: [...pack], gold };
+  const next = [...pack];
+  const line = next[handle - 1];
+  if (line === undefined || line === "") return { pack: next, gold };
+  const left = stackCount(line) - quantity;
+  next[handle - 1] = left > 0 ? pluralize(line, left) : "";
+  const paid = gold + 5 * quantity;
+  w.setPack(next);
+  w.setPlayer({ gold: paid });
+  return { pack: next, gold: paid };
+}
+
+function commandText(command: AgentCommand): string {
+  const dir = command.dir === undefined ? "" : `:${String(command.dir)}`;
+  const args = command.args === undefined ? "" : ` ${JSON.stringify(command.args)}`;
+  return `${command.code}${dir}${args}`;
+}
 
 describe("town trip", () => {
   it("leaves the general store to buy survival supplies before oil or gear", () => {
@@ -27,17 +122,14 @@ describe("town trip", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 4, y: 1 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
-    w.setPack(["a Potion of Cure Light Wounds", "a Ration of Food", "a Wooden Torch"]);
-    w.setPlayer({ gold: 45 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 2 } });
+    w.setPack(["2 Potions of Cure Light Wounds", "a Ration of Food", "a Wooden Torch"]);
+    w.setPlayer({ gold: 25 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 1, quantity: 1 } });
-    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "a Ration of Food", "a Wooden Torch"]);
-    w.setPlayer({ gold: 27 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
     w.setPack(["2 Potions of Cure Light Wounds", "a Scroll of Phase Door", "a Ration of Food", "a Wooden Torch"]);
     w.setPlayer({ gold: 7 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
-    expect(w.issued.filter((command) => command.code === "shop-buy")).toHaveLength(3);
+    expect(w.issued.filter((command) => command.code === "shop-buy")).toHaveLength(2);
   });
 
   it("does not read any stock before stepping inside the matching shop", () => {
@@ -137,6 +229,82 @@ describe("town trip", () => {
   });
 });
 
+describe("a first town trip's commands", () => {
+  function ware(name: string, index: number, price: number, number: number): StoreItemView {
+    return { ...itemNamed(name, 0), index, price, number } as StoreItemView;
+  }
+
+  it("counts every command from the door to the last exit", () => {
+    const stores: StoreView[] = [
+      { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [] },
+      { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+        ware("a Potion of Cure Light Wounds", 0, 20, 20),
+        ware("a Scroll of Phase Door", 1, 18, 20),
+      ] },
+      { feat: FEAT.GENERAL, featName: "General Store", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [
+        ware("a Ration of Food", 0, 3, 20),
+        ware("a Wooden Torch (5000 turns)", 1, 2, 20),
+        ware("a Flask of Oil", 2, 3, 20),
+      ] },
+    ];
+    const persona = defaultPersona();
+    /* Gear sells from 60 up. The default of 50 would keep both cloaks. */
+    persona.sliders.selling = 80;
+    const w = world({
+      map: ["###########", "#@..H.A.G.#", "###########"],
+      player: { cls: "Warrior", level: 1, depth: 0, maxDepth: 0, gold: 100 },
+      pack: ["a Wooden Torch (5000 turns)", "a Cloak", "a Cloak", "a Cloak"],
+      worn: ["a Wooden Torch (5000 turns)"],
+      stores,
+    });
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {}, [], emptyFlourishes, undefined, undefined, UNKNOWN_HOME, () => {});
+    const commands: string[] = [];
+    let pack = ["a Wooden Torch (5000 turns)", "a Cloak", "a Cloak", "a Cloak"];
+    let gold = 100;
+    for (let step = 0; step < 80; step += 1) {
+      const command = plan.step(w.view, w.act);
+      if (command === null) break;
+      commands.push(commandText(command));
+      const applied = applyTownCommand(w, pack, gold, stores);
+      pack = applied.pack;
+      gold = applied.gold;
+    }
+    const carried = pack.filter((line) => line !== "");
+    expect({ count: commands.length, gold, carried, commands }).toEqual({
+      count: 18,
+      gold: 2,
+      carried: [
+        "2 Wooden Torches (5000 turns)",
+        "a Cloak",
+        "2 Potions of Cure Light Wounds",
+        "2 Scrolls of Phase Door",
+        "5 Rations of Food",
+        "5 Flasks of Oil",
+      ],
+      commands: [
+        "walk:6",
+        "walk:6",
+        "walk:6",
+        "shop-exit",
+        "walk:6",
+        "walk:6",
+        "shop-buy {\"index\":0,\"quantity\":2}",
+        "shop-buy {\"index\":1,\"quantity\":2}",
+        "shop-exit",
+        "walk:6",
+        "walk:6",
+        "shop-sell {\"handle\":3,\"quantity\":1}",
+        "shop-sell {\"handle\":4,\"quantity\":1}",
+        "shop-buy {\"index\":0,\"quantity\":2}",
+        "shop-buy {\"index\":1,\"quantity\":1}",
+        "shop-buy {\"index\":0,\"quantity\":3}",
+        "shop-buy {\"index\":2,\"quantity\":5}",
+        "shop-exit",
+      ],
+    });
+  });
+});
+
 describe("a townsperson in the way", () => {
   const maggot = { grid: { x: 2, y: 1 }, race: "Farmer Maggot", level: 2, speed: 120, raceFlags: ["UNIQUE", "RAND_25"] };
 
@@ -194,6 +362,7 @@ describe("home routing", () => {
     expect(plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 0 } });
+    w.setPack(["2 Potions of Cure Light Wounds"]);
     expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 1 } });
   });
 
@@ -245,6 +414,19 @@ describe("refused sales", () => {
     expect(w.issued.some((command) => command.code === "shop-sell")).toBe(false);
   });
 
+  it("marks a store done when a purchase changes neither pack nor gold", () => {
+    const store: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 10 },
+    ] };
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { cls: "Warrior", level: 1, depth: 0, gold: 100 }, pack: ["a Wooden Torch (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"], stores: [store] });
+    const plan = townTripPlan(w.terrain, defaultPersona());
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy" });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
+    expect(plan.step(w.view, w.act)).toBeNull();
+  });
+
   it("offers a sale once even when the pack still shows the item", () => {
     const persona = defaultPersona();
     persona.sliders.selling = 80;
@@ -254,6 +436,23 @@ describe("refused sales", () => {
     plan.step(w.view, w.act);
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
+    /* The sale paid out, so the step is not a no-op, yet the pack still lists the dagger. */
+    w.setPlayer({ gold: 5 });
     expect(plan.step(w.view, w.act)).not.toEqual({ code: "shop-sell", args: { handle: 2, quantity: 1 } });
+  });
+
+  it("counts a withdrawal that lands in the quiver as a change", () => {
+    const home: StoreView = { feat: FEAT.HOME, featName: "Home", isHome: true, owner: { name: "Squire", purse: 0 }, stock: [
+      { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 0, number: 5 },
+      { ...itemNamed("a Scroll of Phase Door", 0), index: 1, price: 0, number: 5 },
+    ] };
+    const w = world({ map: ["#####", "#@.H#", "#####"], player: { cls: "Warrior", depth: 0, gold: 100 }, pack: [], stores: [home], worn: ["a Wooden Torch (5000 turns)"] });
+    const plan = townTripPlan(w.terrain, defaultPersona(), new Set(), () => {}, [], emptyFlourishes, undefined, undefined, UNKNOWN_HOME, () => {});
+    plan.step(w.view, w.act);
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 0 } });
+    /* Only the quiver changes, as it does when the home hands over ammo. */
+    Object.assign(w.view, { quiver: () => [itemNamed("20 Iron Shots", 200)] });
+    expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 1 } });
   });
 });

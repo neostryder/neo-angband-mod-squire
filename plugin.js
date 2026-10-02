@@ -4712,6 +4712,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
   const offeredSales = /* @__PURE__ */ new Map();
   const homeTried = /* @__PURE__ */ new Set();
   const waited = /* @__PURE__ */ new Map();
+  let pending = null;
   return {
     label: "shop for supplies",
     step(view, act) {
@@ -4723,7 +4724,14 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
       const homeNow = homeMemory.current();
       const first = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current2?.storeMemory, homeNow)[0];
       const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell2?.feat;
-      if (alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !leftShopForSupplies) {
+      const unchanged = pending !== null && cell2 !== null && pending.feat === cell2.feat && pending.snapshot === packSnapshot(view);
+      pending = null;
+      if (unchanged && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat)) {
+        visited.add(cell2.feat);
+        log("shop: the last command changed nothing, so this store is done");
+        return act.shopExit();
+      }
+      if (alchemyFirst && cell2 !== null && terrain.isShopEntrance(cell2.feat) && !visited.has(cell2.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
         return act.shopExit();
       }
@@ -4736,6 +4744,10 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           log("shop: this store has no stock to read");
           return act.shopExit();
         }
+        const trade = (command) => {
+          pending = { feat: cell2.feat, snapshot: packSnapshot(view) };
+          return command;
+        };
         if (store.isHome) {
           homeMemory.observe(view);
           const stock = homeMemory.current();
@@ -4746,7 +4758,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
             const want = withdrawal.find((w) => shownMatch(ware, w.name))?.quantity ?? 1;
             homeTried.add(`take:${ware.name}`);
             log(`home: taking ${String(want)} "${ware.name}" from the home before the shops`);
-            return act.shopBuy(ware.index, want);
+            return trade(act.shopBuy(ware.index, want));
           }
           const packFull2 = view.inventory().length >= PACK_LIMIT - 1;
           const spares = homeSpares(view, persona, flourishes().darkLesson);
@@ -4754,7 +4766,7 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           if (spare !== void 0) {
             homeTried.add(`leave:${String(spare.handle)}`);
             log(`home: storing ${spare.name} at home to ${packFull2 ? "make room" : "shed excess"}`);
-            return act.shopSell(spare.handle, spare.quantity);
+            return trade(act.shopSell(spare.handle, spare.quantity));
           }
           visited.add(cell2.feat);
           log("home: nothing to take or leave");
@@ -4767,28 +4779,30 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
           offered.add(sale.handle);
           offeredSales.set(cell2.feat, offered);
           log(`shop: selling ${sale.name} in the ${store.featName}`);
-          return act.shopSell(sale.handle, sale.quantity);
+          return trade(act.shopSell(sale.handle, sale.quantity));
         }
         const order = purchaseOrder2?.() ?? null;
-        const purchase = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order)[0];
+        const list = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order);
+        const purchase = list[0];
         const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
         const aimed = missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         const gearFirst = aimed !== null && order !== null && purchase !== void 0 && order.includes("gear") && order.indexOf("gear") < (order.includes(purchase.kind) ? order.indexOf(purchase.kind) : order.length);
         if (purchase !== void 0 && !gearFirst) {
-          log(`shop: buying ${String(purchase.quantity)} from "${purchase.name}" in the ${store.featName}`);
-          return act.shopBuy(purchase.index, purchase.quantity);
+          const quantity = list.reduce((sum, item) => item.index === purchase.index ? sum + item.quantity : sum, 0);
+          log(`shop: buying ${String(quantity)} from "${purchase.name}" in the ${store.featName}`);
+          return trade(act.shopBuy(purchase.index, quantity));
         }
         if (aimed !== null) {
           boughtFor.add(aimed.aim);
           log(`shop: buying ${aimed.name} in the ${store.featName} for the aim: ${aimed.aim}`);
-          return act.shopBuy(aimed.index, aimed.quantity);
+          return trade(act.shopBuy(aimed.index, aimed.quantity));
         }
         if (!saving && missingEssentials(view, persona).length === 0) {
           const upgrade = unaimedUpgradePurchase(store, view.player().gold, view);
           if (upgrade !== null && !boughtFor.has(upgrade.aim)) {
             boughtFor.add(upgrade.aim);
             log(`shop: buying ${upgrade.name} in the ${store.featName} as a clear upgrade`);
-            return act.shopBuy(upgrade.index, upgrade.quantity);
+            return trade(act.shopBuy(upgrade.index, upgrade.quantity));
           }
         }
         visited.add(cell2.feat);
@@ -4824,6 +4838,11 @@ function townTripPlan(terrain, persona, visited = /* @__PURE__ */ new Set(), log
 }
 function shownMatch(item, wanted3) {
   return typeof item.name === "string" && item.name.toLowerCase().includes(wanted3.toLowerCase());
+}
+function packSnapshot(view) {
+  const quiver = view.quiver?.() ?? [];
+  const pack = [...view.inventory(), ...quiver].map((item) => `${String(item.handle)}:${shownName2(item) ?? ""}:${String(item.number)}`).join(",");
+  return `${String(view.player().gold)}|${pack}`;
 }
 function recallPlan(item) {
   let read = false;

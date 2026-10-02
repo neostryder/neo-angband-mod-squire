@@ -69,6 +69,7 @@ Fixed.
 - [Visible] **Squire plays on until you take the keyboard back or the character dies.** When the model can't be reached or a spend limit is reached, it keeps choosing from its own options and returns to the model when it can. A floor with nothing left to do, a plan the game refuses or a loop that gets nowhere makes it look further afield instead of stopping.
 - [Visible] [Balance] **Ambition sets how fast Squire heads deeper.** An heir's ambition now shortens an inherited depth target instead of dropping it.
 - [Visible] [Balance] **A bold character roams further from the stairs on a trip to earn gold, and a cautious one stays close.**
+- [Visible] **Squire spends fewer commands in a shop.** It buys all the units it wants from a shelf at once, walks out when its last trade changed nothing, and no longer leaves the same shop twice.
 - [Visible] [Compatibility] **Squire now needs Neo Angband 1.21.1 or later.** It is the first version with everything Squire reads from the game: the title-screen row, profiles, and floor items as the player knows them.
 - [Visible] **Squire is now licensed under the GNU General Public License, version 3.** Releases up to 0.1.1 carried Neo Angband's GPL v2 or Angband licence. Squire contains no Angband code, so it now takes the same licence as Squire Link.
 
