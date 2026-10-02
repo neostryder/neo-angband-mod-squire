@@ -110,11 +110,11 @@ importers:
   .:
     devDependencies:
       '@rpgm-tools/neo-angband-core':
-        specifier: 1.21.0
-        version: 1.21.0
+        specifier: 1.21.1
+        version: 1.21.1
       '@rpgm-tools/neo-angband-mod-sdk':
-        specifier: 1.21.0
-        version: 1.21.0
+        specifier: 1.21.1
+        version: 1.21.1
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
@@ -391,12 +391,12 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  '@rpgm-tools/neo-angband-core@1.21.0':
-    resolution: {integrity: sha512-/iHItF0fxxhgzxkYfKFbrBtI+Xf822fpJ5XHG7KIfyQh3iqz2qMStUuEiUVrhtCJaSPd6h5l5i7aoMhvjWlCzQ==}
+  '@rpgm-tools/neo-angband-core@1.21.1':
+    resolution: {integrity: sha512-CVx35poTAFOnE29SJoIuRdcxcykSX1ZbGA1dmdSSq3GpkQzA0iIW1NGzVlNUGYK+vK1KrNpidaZbttaz34GtTw==}
     engines: {node: '>=22'}
 
-  '@rpgm-tools/neo-angband-mod-sdk@1.21.0':
-    resolution: {integrity: sha512-YOBw6km0Qa+qRyB9XUyhLKjW/Nj3RoLnN1DBROSraSgFEbDTBbyk9o8dvqrda0qOhskNDSkOLjq8CAfGe6keLQ==}
+  '@rpgm-tools/neo-angband-mod-sdk@1.21.1':
+    resolution: {integrity: sha512-QlprrsH3Hpfq41mGowaKy53+UNL3/+omGaBkNJM6GFiNilVhvWXLvlDTaD6Tr/GWJ8xCkw4WfEEoeyYI4iLOgw==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -849,11 +849,11 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@rpgm-tools/neo-angband-core@1.21.0':
+  '@rpgm-tools/neo-angband-core@1.21.1':
     dependencies:
-      '@rpgm-tools/neo-angband-mod-sdk': 1.21.0
+      '@rpgm-tools/neo-angband-mod-sdk': 1.21.1
 
-  '@rpgm-tools/neo-angband-mod-sdk@1.21.0': {}
+  '@rpgm-tools/neo-angband-mod-sdk@1.21.1': {}
 
   '@standard-schema/spec@1.1.0': {}
 

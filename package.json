@@ -32,8 +32,8 @@
     "verify": "pnpm typecheck && pnpm test && pnpm check"
   },
   "devDependencies": {
-    "@rpgm-tools/neo-angband-core": "1.21.0",
-    "@rpgm-tools/neo-angband-mod-sdk": "1.21.0",
+    "@rpgm-tools/neo-angband-core": "1.21.1",
+    "@rpgm-tools/neo-angband-mod-sdk": "1.21.1",
     "@types/node": "^22.20.1",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
