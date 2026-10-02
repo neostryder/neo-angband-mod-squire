@@ -83,7 +83,7 @@ export interface CharacterData {
 const CHARACTER_FORMAT = "neo-angband/squire/character";
 
 /** Matches manifest.json, which a test checks, so reports name the version the player installed. */
-export const MOD_VERSION = "0.1.1";
+export const MOD_VERSION = "0.2.0";
 
 /** Where Knight's Lessons row numbers start, far above any decision sequence number. */
 const LESSON_SEQ_BASE = 500_000;

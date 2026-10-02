@@ -1,6 +1,6 @@
 {
   "name": "neo-angband-mod-squire",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Squire: an alternative Angband autoplayer that runs one errand and hands the keyboard back",
   "license": "GPL-3.0-only",

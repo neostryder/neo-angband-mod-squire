@@ -19,6 +19,8 @@ Fixed.
 
 ## [Unreleased]
 
+## 0.2.0 - 2026-10-01
+
 ### Added
 - [Visible] **Squire fights with what works and keeps its way out.** When one blow can kill, it takes the finishing attack; otherwise it compares melee, arrows, oil, wands and spells by damage per action. It won't spend the mana, oil or wand charge its next escape depends on, and a young character leaves the level once three breeders are awake around it. Swapping gear never costs the Free Action, See Invisible or resistance the next depth requires.
 - [Visible] **Six more family touches.** A family motto passes down and an heir repeats it at a level-up or a narrow escape, or drops it for its own when its persona differs a lot. An heir favours the weapon kind its most successful ancestor used. The depth where an ancestor died unsettles a cautious heir and draws a proud one. Level-ups and first unique kills get a line in the persona's voice, a proud character sometimes boasts of a first kill, and an ancestor's artifact is recognised when it turns up again in a shop or on the floor.

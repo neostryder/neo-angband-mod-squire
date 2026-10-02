@@ -10755,7 +10755,7 @@ function createShadow(options) {
 
 // src/runtime.ts
 var CHARACTER_FORMAT = "neo-angband/squire/character";
-var MOD_VERSION = "0.1.1";
+var MOD_VERSION = "0.2.0";
 var LESSON_SEQ_BASE = 5e5;
 function runIdFor(key2, now) {
   const base = (key2 ?? "char").replace(/[^A-Za-z0-9_-]/g, "").slice(0, 40) || "char";
