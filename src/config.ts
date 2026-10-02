@@ -36,7 +36,7 @@ export interface SquireConfig {
   readonly serverUrl: string;
   /** More addresses for the same server, tried in order when the first is busy or not answering. */
   readonly serverFallbacks: readonly string[];
-  /** The model name to send, for servers that want one. Empty sends none. */
+  /** The model name to send, for servers that want one. Empty sends none, except to Laya, which then gets the trained Squire model. */
   readonly serverModel: string;
   /** Send Jev's decisions to a local Laya server for training rows. */
   readonly layaShadow: { readonly enabled: boolean; readonly url: string; readonly fallbacks: readonly string[] };
@@ -239,13 +239,16 @@ export function writeConfig(config: SquireConfig): unknown {
   return { format: CONFIG_FORMAT, schemaVersion: CONFIG_SCHEMA, data: config };
 }
 
+/** Laya serves Squire's trained adapter under this name. A Laya server that has no such adapter answers with its base model. */
+export const LAYA_DEFAULT_MODEL = "laya:squire_goal";
+
 /** The server a config names, or null for no model. */
 export function backendFor(config: SquireConfig): Backend | null {
   switch (config.backend) {
     case "jev":
       return JEV;
     case "laya":
-      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel, config.serverFallbacks);
+      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? LAYA_DEFAULT_MODEL : config.serverModel, config.serverFallbacks);
     case "custom":
       return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? undefined : config.serverModel, config.serverFallbacks);
     case "none":

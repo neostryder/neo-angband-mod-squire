@@ -9265,12 +9265,13 @@ function readConfig(stored) {
 function writeConfig(config) {
   return { format: CONFIG_FORMAT, schemaVersion: CONFIG_SCHEMA, data: config };
 }
+var LAYA_DEFAULT_MODEL = "laya:squire_goal";
 function backendFor(config) {
   switch (config.backend) {
     case "jev":
       return JEV;
     case "laya":
-      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel, config.serverFallbacks);
+      return selfHosted("laya", "Laya", config.serverUrl, config.serverModel === "" ? LAYA_DEFAULT_MODEL : config.serverModel, config.serverFallbacks);
     case "custom":
       return selfHosted("custom", "your System One server", config.serverUrl, config.serverModel === "" ? void 0 : config.serverModel, config.serverFallbacks);
     case "none":
@@ -11743,7 +11744,7 @@ function mountSetup(body2, rt, done) {
       url.addEventListener("change", () => update2({ serverUrl: url.value.trim() }));
       const backups = h("input", { type: "text", value: config.serverFallbacks.join(", ") });
       backups.addEventListener("change", () => update2({ serverFallbacks: parseAddresses(backups.value) }));
-      const model = h("input", { type: "text", value: config.serverModel, placeholder: "Leave empty for the server's default" });
+      const model = h("input", { type: "text", value: config.serverModel, placeholder: config.backend === "laya" ? "Leave empty to use Squire's trained model" : "Leave empty for the server's default" });
       model.addEventListener("change", () => update2({ serverModel: model.value.trim() }));
       fill(
         serverBox,

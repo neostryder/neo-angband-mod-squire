@@ -24,3 +24,12 @@ describe("backup server addresses", () => {
     expect(readConfig({ format: CONFIG_FORMAT, data: { serverFallbacks: "nope" } }).serverFallbacks).toEqual([]);
   });
 });
+
+describe("Laya model name", () => {
+  it("asks Laya for the trained Squire model when the setting is empty", async () => {
+    const { LAYA_DEFAULT_MODEL, backendFor } = await import("./config.js");
+    expect(backendFor({ ...defaultConfig(), backend: "laya", serverModel: "" })?.model).toBe(LAYA_DEFAULT_MODEL);
+    expect(backendFor({ ...defaultConfig(), backend: "laya", serverModel: "laya:@squire-test" })?.model).toBe("laya:@squire-test");
+    expect(backendFor({ ...defaultConfig(), backend: "custom", serverModel: "" })?.model).toBeUndefined();
+  });
+});

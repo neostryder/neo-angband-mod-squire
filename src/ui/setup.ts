@@ -76,7 +76,7 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
       url.addEventListener("change", () => update({ serverUrl: url.value.trim() }));
       const backups = h("input", { type: "text", value: config.serverFallbacks.join(", ") });
       backups.addEventListener("change", () => update({ serverFallbacks: parseAddresses(backups.value) }));
-      const model = h("input", { type: "text", value: config.serverModel, placeholder: "Leave empty for the server's default" });
+      const model = h("input", { type: "text", value: config.serverModel, placeholder: config.backend === "laya" ? "Leave empty to use Squire's trained model" : "Leave empty for the server's default" });
       model.addEventListener("change", () => update({ serverModel: model.value.trim() }));
       fill(
         serverBox,

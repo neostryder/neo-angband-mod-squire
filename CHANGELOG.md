@@ -19,6 +19,9 @@ Fixed.
 
 ## [Unreleased]
 
+### Fixed
+- [Visible] **Laya plays with Squire's trained model.** With the Model name setting empty, Squire asked Laya's base model, so a trained Squire model on the server was never used. It now asks for `laya:squire_goal`, and a server without that model answers with its base model as before.
+
 ## 0.2.0 - 2026-10-01
 
 ### Added
