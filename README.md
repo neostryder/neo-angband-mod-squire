@@ -43,6 +43,8 @@ In town, Squire first makes sure the character has a small reserve: two healing 
 
 Before going deeper on purpose, Squire checks that the character is ready for that depth: enough levels and hit points for its class, and the supplies and protections the depth calls for, such as Word of Recall from 250 ft, Phase Door from 300 ft and Free Action by 1000 ft. Whatever is missing becomes an aim: supplies go on the next shopping list, while experience, hit points and protections the shops don't sell are things to earn or find first. The deepest levels ask for more, such as speed, telepathy and a stock of Healing potions. Fleeing down the stairs in an emergency doesn't wait for this check.
 
+Not every need is a hard rule. Say a level 22 Warrior is on 950 ft with no Free Action: Squire can still take it down to 1000 ft if the model says it's ready, and the persona decides how sure the model has to be. A cautious character waits for a confident yes, and a driven one will go on a coin flip or worse. The model never gets to wave off a missing light or an empty food bag, though, or a character with under half the levels or hit points that depth wants. If the model doesn't answer, the character stays put.
+
 It heads home while it still has enough to get there, not when the last potion is gone, and walks back up if it has no Recall. It reads Recall only somewhere quiet, and while waiting for it to work it won't rest near anything dangerous.
 
 Up to character level 19, Squire first searches within three times its level plus nine path steps of the up stairs. If it cannot act within that distance, it explores reachable unknown ground farther out. It keeps earning at the current dungeon depth until the readiness check permits deeper stairs.
