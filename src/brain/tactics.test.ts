@@ -119,14 +119,20 @@ describe("option purposes", () => {
   it("leaves out a field every option shares, and gives no clause when nothing differs", () => {
     const clauses = purposeClauses([offer("phase", { costNote: "1 of 3 carried" }), offer("teleport", { costNote: "the last one carried" })], null);
     expect(clauses.get("phase")).toBe("Purpose: costs 1 of 3 carried.");
-    expect(purposeClauses([offer("explore"), offer("descend")].map((o) => ({ ...o, criteria: "" })), "explore").get("explore")).toBe("Purpose: serves the near goal.");
+    expect(purposeClauses([offer("explore"), offer("descend")].map((o) => ({ ...o, criteria: "" })), "explore").get("explore")).toBe("Purpose: serves the near goal of exploring this level.");
     expect(purposeClauses([offer("phase"), offer("teleport")], null).size).toBe(0);
   });
 
   it("ties an option to the near-term goal it moves along", () => {
     const clauses = purposeClauses([offer("rest"), offer("explore")], "rest");
-    expect(clauses.get("rest")).toBe("Purpose: serves the near goal.");
+    expect(clauses.get("rest")).toBe("Purpose: serves the near goal of recovering.");
     expect(clauses.get("explore")).toBe("Purpose: serves exploring.");
+  });
+
+  it("always names a birth option the choice runs into, even when nothing else differs", () => {
+    const clauses = purposeClauses([offer("phase"), offer("teleport")], null, new Map([["teleport", ["forced descent is on"]]]));
+    expect(clauses.get("teleport")).toBe("Purpose: birth option: forced descent is on.");
+    expect(clauses.has("phase")).toBe(false);
   });
 });
 

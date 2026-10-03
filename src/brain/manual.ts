@@ -92,6 +92,27 @@ export function birthOf(options: readonly BirthOption[]): string | undefined {
   return lines.length === 0 ? undefined : lines.join(" ");
 }
 
+/** A birth option that limits what one of the decision's options can do. */
+export type BirthRule = "connect_stairs" | "force_descend" | "no_recall" | "no_selling";
+
+/* Each rule's option, the value that makes it a limit, and the limit in the words an option's purpose uses. */
+const BIRTH_RULES: Readonly<Record<BirthRule, readonly [string, boolean, string]>> = {
+  connect_stairs: ["birth_connect_stairs", false, "connected stairs is off, so no staircase waits under the character on the next level"],
+  force_descend: ["birth_force_descend", true, "forced descent is on, so there is no way back up afterwards"],
+  no_recall: ["birth_no_recall", true, "the no-recall option is on, so Word of Recall does nothing"],
+  no_selling: ["birth_no_selling", true, "the no-selling option is on, so stores pay nothing for goods"],
+};
+
+/** The birth rules this character was made with, each with the words an option's purpose uses for it. */
+export function birthConstraints(options: readonly BirthOption[]): Map<BirthRule, string> {
+  const set = new Map(options.map((option) => [option.name, option.value]));
+  const out = new Map<BirthRule, string>();
+  for (const [rule, [name, when, text]] of Object.entries(BIRTH_RULES) as [BirthRule, readonly [string, boolean, string]][]) {
+    if (set.get(name) === when) out.set(rule, text);
+  }
+  return out;
+}
+
 function joinFacts(facts: readonly string[]): string {
   if (facts.length <= 1) return facts.join("");
   return `${facts.slice(0, -1).join(", ")} and ${facts.at(-1) ?? ""}`;

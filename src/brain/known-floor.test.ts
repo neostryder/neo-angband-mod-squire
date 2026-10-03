@@ -101,7 +101,7 @@ describe("floor items as the player knows them", () => {
     const view = remembering(w.view, { entries: [seen(3, 1, "a Bubbling Potion", POTION)] });
     expect(floorTarget(view, w.terrain, false, null)).toMatchObject({ at: { x: 3, y: 1 }, look: true, useful: false, sellable: false, value: null });
     expect(floorTarget(view, w.terrain, false, defaultPersona())).toMatchObject({ look: true });
-    expect(fetchPlan(w, view, archetype("scholar")).offer?.criteria).toBe("Walk 2 steps to look at a Bubbling Potion on the floor.");
+    expect(fetchPlan(w, view, archetype("scholar")).offer?.criteria).toBe("Walk 2 steps (close) to look at a Bubbling Potion on the floor.");
     const far = world({ map: ["#####################", "#@..................#", "#####################"], floor: [{ x: 12, y: 1, name: "a Bubbling Potion" }] });
     const distant = remembering(far.view, { entries: [seen(12, 1, "a Bubbling Potion", POTION)] });
     expect(floorTarget(distant, far.terrain, false, defaultPersona())).toBeNull();
@@ -188,7 +188,7 @@ describe("views without floor memory", () => {
   it("walks to the item and picks it up without a second look", () => {
     const w = world({ map: ROOM, floor: [{ x: 3, y: 1, name: "a Potion of Cure Light Wounds" }] });
     const { plan, offer } = fetchPlan(w, w.view, defaultPersona());
-    expect(offer?.criteria).toBe("Walk 2 steps to the a Potion of Cure Light Wounds on the floor and pick it up.");
+    expect(offer?.criteria).toBe("Walk 2 steps (close) to the a Potion of Cure Light Wounds on the floor and pick it up.");
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "pickup" });

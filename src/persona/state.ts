@@ -49,5 +49,5 @@ export function personaState(persona: Persona, budgetTokens: number): Record<str
 }
 
 export function inCharacterInstructions(persona: Persona): string {
-  return `Which option would ${persona.name} choose, given this character's nature and history? Answer as the character would act, even when another option seems wiser.`;
+  return `Which option would ${persona.name} choose, given the nature and history the persona entry gives for ${persona.name}? Answer as ${persona.name} would act, even when another option seems wiser.`;
 }

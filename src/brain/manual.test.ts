@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { createGoalPlanner } from "./goals.js";
-import { birthOf, createManual, mechanicsOf } from "./manual.js";
+import { birthConstraints, birthOf, createManual, mechanicsOf } from "./manual.js";
 
 const ROOM = ["######", "#.@..#", "######"];
 
@@ -23,6 +23,14 @@ describe("the manual", () => {
     expect(birthOf([])).toBeUndefined();
     expect(birthOf([{ name: "birth_connect_stairs", value: true }, { name: "birth_no_selling", value: true }])).toBe("Stores pay nothing for goods, and the dungeon drops more gold instead.");
     expect(birthOf([{ name: "birth_force_descend", value: true }, { name: "birth_connect_stairs", value: false }, { name: "birth_no_selling", value: false }])).toBe("Up staircases are never made, so stairs lead only down. Taking a staircase does not leave one under the character. Stores buy goods for gold.");
+  });
+
+  it("names the birth rules that limit an option, only when they are set the limiting way", () => {
+    expect(birthConstraints([]).size).toBe(0);
+    expect(birthConstraints([{ name: "birth_connect_stairs", value: true }, { name: "birth_no_recall", value: false }]).size).toBe(0);
+    const rules = birthConstraints([{ name: "birth_connect_stairs", value: false }, { name: "birth_force_descend", value: true }, { name: "birth_no_recall", value: true }, { name: "birth_no_selling", value: true }]);
+    expect([...rules.keys()]).toEqual(["connect_stairs", "force_descend", "no_recall", "no_selling"]);
+    expect(rules.get("force_descend")).toBe("forced descent is on, so there is no way back up afterwards");
   });
 
   it("compiles once per character and survives a failed options read", () => {

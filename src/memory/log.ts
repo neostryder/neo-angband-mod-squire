@@ -17,6 +17,8 @@ export interface LoggedDecision {
   readonly state: Readonly<Record<string, unknown>>;
   /** A hash of the state as sent, absent when no model was asked. */
   readonly stateHash?: string;
+  /** The answer's cache key: the model, the question pack version, the state hash and the goal policy version. Absent when no model was asked. */
+  readonly answerKey?: string;
   readonly options: readonly string[];
   readonly plan: string;
   readonly latencyMs: number;

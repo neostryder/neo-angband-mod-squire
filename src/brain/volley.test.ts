@@ -187,7 +187,7 @@ describe("combat outcomes and escape reserves", () => {
     const p = planner(w);
     const q = asked(p.ask(w.view));
     const attack = q.context.offers.find((offer) => offer.goal === "cast_attack");
-    expect(attack?.criteria).toContain("A hit could kill the target now.");
+    expect(attack?.criteria).toContain("A hit could kill the fruit bat now.");
     expect(attack?.criteria).toContain("immediate killing attempt spends the escape mana reserve");
     expect(attack?.risk).toBeLessThan(1);
     expect(q.context.offers.some((offer) => offer.goal === "retreat")).toBe(false);

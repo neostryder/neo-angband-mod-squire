@@ -6,6 +6,7 @@ import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { drive, readinessExtra } from "./pursuits.js";
+import { depthBand } from "../brain/bands.js";
 
 const TV_FLASK = 27;
 
@@ -207,8 +208,8 @@ export function gapFacts(view: AgentView): string | undefined {
   const depth = view.player().depth + 1;
   const gaps = missingPreparation(view, depth);
   if (depth <= 1) return undefined;
-  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)}.`;
-  return `For dungeon level ${String(depth)} the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;
+  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)} (${depthBand(depth)}).`;
+  return `For dungeon level ${String(depth)} (${depthBand(depth)}) the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;
 }
 
 /**

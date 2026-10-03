@@ -105,7 +105,8 @@ describe("a one-time instruction and its plan", () => {
     expect(chosen.plan.label).toBe("fight");
     expect(orders.live()).toHaveLength(1);
     expect(chosen.plan.step(w.view, w.act)).not.toBeNull();
-    expect(p.trigger(w.view, chosen.plan)).toBeNull();
+    /* No game time passed, so the blow was refused: the plan stops and the instruction is not yet carried out. */
+    expect(p.trigger(w.view, chosen.plan)).toContain("no game time passed");
     expect(orders.live()).toHaveLength(1);
     w.advance(1);
     p.trigger(w.view, chosen.plan);
