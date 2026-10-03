@@ -47,7 +47,7 @@ describe("threat model", () => {
     expect(String(q.request.state["creatures"])).toContain("hits hard for a level 1 mage (up to 16 a round), dangerous");
   });
 
-  it("raises lethality with lost health, crowd and faster enemies", () => {
+  it("raises lethality with lost health and faster enemies", () => {
     const w = world({ map: MAP, player: { level: 10, hp: 40, maxHp: 40 }, monsters: [{ grid: { x: 3, y: 1 }, race: "veteran", level: 0 }] });
     recall(w.view, "He can hit to hurt (2d6, 40%).");
     const rating = () => assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view);
@@ -59,8 +59,10 @@ describe("threat model", () => {
     expect(hurt).toBeLessThan(rating().band);
   });
 
-  it("uses the two-action fallback without recall", () => {
+  it("rates unseen blows on half the level ceiling", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
+    w.setPlayer({ hp: 8 });
     expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(1);
   });
 
@@ -73,7 +75,7 @@ describe("threat model", () => {
     });
     recall(w.view, "Nothing is known about his attack.");
     const rate = () => assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band;
-    expect(rate()).toBe(1);
+    expect(rate()).toBe(0);
     w.setPlayer({ hp: 13 });
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "mean-looking mercenary", level: 0 }]);
     expect(rate()).toBe(0);
@@ -86,7 +88,27 @@ describe("threat model", () => {
   it("keeps the dungeon's estimate for a level 0 creature below town", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 7, maxHp: 13 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
     recall(w.view, "Nothing is known about his attack.");
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(1);
+    w.setPlayer({ hp: 4 });
     expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(2);
+  });
+
+  it("rates each creature alone, so a crowd does not raise a distant one's band", () => {
+    const eye = { grid: { x: 6, y: 1 }, race: "floating eye", level: 1, raceFlags: ["NEVER_MOVE"] };
+    const dogs = [3, 4].map((x) => ({ grid: { x, y: 1 }, race: "wild dog", level: 1 }));
+    const w = world({ map: MAP, player: { level: 1, hp: 8, maxHp: 12 }, monsters: [eye, ...dogs] });
+    const band = () => assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band;
+    const crowded = band();
+    w.setMonsters([eye]);
+    expect(crowded).toBe(band());
+    expect(crowded).toBeLessThan(3);
+  });
+
+  it("does not rate a crowd of townspeople deadly to a level 1 mage", () => {
+    const folk = [3, 4, 5].map((x) => ({ grid: { x, y: 1 }, race: "village idiot", level: 0 }));
+    const w = world({ map: MAP, player: { level: 1, cls: "Mage", hp: 9, maxHp: 9, depth: 0 }, monsters: folk });
+    recall(w.view, "Nothing is known about his attack.");
+    for (const monster of w.view.monsters()) expect(assessThreat(monster, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
   });
 });
 

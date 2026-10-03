@@ -1,7 +1,7 @@
 /**
- * Every fact Squire sends with a decision, each filed under one of ten layers. The request's state
- * is built from these entries in order, so empty layers add nothing and the keys stay in the order
- * the trained Laya adapters learned.
+ * Every fact Squire sends with a decision, filed under one of ten layers. The
+ * state is built from the entries in order, and an empty layer adds nothing.
+ * The goal planner puts the character's situation first and the rules last.
  */
 
 import { estimateTokens } from "./systemone.js";
@@ -40,6 +40,9 @@ export interface DecisionContext {
 
 /** The largest state any request may carry, in estimated tokens. */
 export const STATE_TOKEN_CAP = 6_000;
+
+/** The largest state a Laya request may carry, so the request fits the small model's window. */
+export const LAYA_STATE_TOKENS = 1_024;
 
 export type EntrySpec = readonly [Layer, string, unknown];
 
@@ -88,10 +91,11 @@ export function stateTokens(state: Readonly<Record<string, unknown>>): number {
 }
 
 /**
- * Dropped first, in this order, when a state is too big. Persona and orders stay because the
- * in-character and orders questions need them.
+ * Layers dropped, in this order, when a state is over its budget. Persona and
+ * orders always stay, since the in-character and orders questions read them,
+ * and so does the situation.
  */
-const SHED_ORDER: readonly Layer[] = ["knowledge", "outcomes", "long_goal", "mid_goal", "purpose"];
+const SHED_ORDER: readonly Layer[] = ["knowledge", "outcomes", "long_goal", "mid_goal", "purpose", "manual"];
 
 /** Drops whole layers in SHED_ORDER until the state fits, and says whether it still does not. */
 export function fitToBudget(context: DecisionContext, budget: number = STATE_TOKEN_CAP): { readonly context: DecisionContext; readonly shed: readonly Layer[]; readonly over: boolean } {

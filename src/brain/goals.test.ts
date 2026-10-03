@@ -139,7 +139,7 @@ describe("unseen attackers", () => {
     const w = suppliedWorld({ map, pack: [item] });
     const { p } = planner(w);
     const q = hit(w, p);
-    expect(String(q.request.state["incoming"])).toContain("Up to 4 HP damage in one action and 8 in two");
+    expect(String(q.request.state["incoming"])).toContain("Up to 4 HP damage in one action (under a quarter of current HP) and 8 in two");
     const offer = q.context.offers.find((o) => o.goal === goal);
     expect(offer?.risk).toBeGreaterThan(0.02);
     expect(offer?.routine).toBeUndefined();
@@ -579,7 +579,7 @@ describe("combat safety action guards", () => {
     w.advance(10);
     const q = asked(p.ask(w.view));
     expect(offered(q)).not.toContain("rest");
-    expect(String(q.request.state["incoming"])).toContain("Up to 3 HP damage in one action and 6 in two");
+    expect(String(q.request.state["incoming"])).toContain("Up to 3 HP damage in one action (under a quarter of current HP) and 6 in two");
     w.advance(51);
     expect(offered(p.ask(w.view))).toContain("rest");
   });
@@ -1512,8 +1512,8 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("offers to leave the level once breeders fill the room", () => {
-    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(5) }))).not.toContain("leave_level");
-    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(6) }))).toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(3) }))).not.toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(4) }))).toContain("leave_level");
   });
 
   it("leaves sooner when a breeder of that kind has hurt the line before", () => {
@@ -1537,6 +1537,16 @@ describe("fear, swarms and refused commands", () => {
     expect(p.trigger(w.view, choice.plan)).toBeNull();
     w.setMonsters([...worms(3), { grid: { x: 8, y: 1 }, race: "jackal", level: 1 }]);
     expect(p.trigger(w.view, choice.plan)).not.toBeNull();
+  });
+
+  it("does not stop a plan for a breeder already counted whose blow costs less than a tenth of the character's hit points", () => {
+    const biters = (n: number) => [{ x: 3, y: 1 }, { x: 3, y: 2 }, { x: 2, y: 2 }].slice(0, n).map((grid) => ({ grid, race: "green worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
+    const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 2, level: 6, hp: 60, maxHp: 60 }, monsters: biters(2), monsterRecall: () => "It can crawl to poison (1d3)." });
+    const { p } = planner(w);
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters(biters(3));
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
   });
 
   it("does not interrupt the stair search on a marked breeder level", () => {
@@ -1643,7 +1653,7 @@ describe("soak findings", () => {
     w.setMonsters([]);
     w.advance(10);
     const q = asked(p.ask(w.view));
-    expect(String(q.request.state["incoming"])).toContain("Up to 0 HP damage in one action and 0 in two");
+    expect(String(q.request.state["incoming"])).toContain("Up to 0 HP damage in one action (none) and 0 in two (none)");
   });
 
   const BREEDER_DOOR = ["##########", "#<.@/....#", "##########"];
@@ -2294,5 +2304,163 @@ describe("the readiness answer", () => {
     if (!("plan" in choice)) throw new Error("expected a plan");
     expect(q.context.readiness?.p).toBeNull();
     expect(w.issued.some((command) => command.code === "descend")).toBe(false);
+  });
+});
+
+describe("tactical safety", () => {
+  const ROOM = ["##########", "#........#", "#..@.....#", "#........#", "#........#", "##########"];
+  const eyeLore = "It does not deign to chase intruders. It can gaze to paralyze.";
+  const dogLore = "It can bite to hurt (1d3).";
+  const eye = { grid: { x: 4, y: 2 }, race: "floating eye", raceIndex: 1, level: 1, hp: 11, maxHp: 11 };
+  const dogs = [{ x: 7, y: 4 }, { x: 8, y: 4 }, { x: 8, y: 3 }].map((grid) => ({ grid, race: "wild dog", raceIndex: 2, level: 1, hp: 5, maxHp: 5 }));
+  const lore = (index: number) => index === 1 ? eyeLore : dogLore;
+  const criteria = (q: Question<GoalDigest>, goal: string) => q.context.offers.find((offer) => offer.goal === goal)?.criteria ?? "";
+
+  it("aims its attacks at a creature that can come for the character, not the floating eye beside it", () => {
+    const w = world({ map: ROOM, player: { depth: 1, level: 5, hp: 40, maxHp: 40 }, monsters: [eye, ...dogs], monsterRecall: lore });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(criteria(q, "fight")).toContain("wild dog");
+  });
+
+  it("never offers melee against a floating eye, and offers oil instead", () => {
+    const w = world({ map: ROOM, player: { depth: 1, level: 5, hp: 40, maxHp: 40 }, monsters: [eye], monsterRecall: lore, pack: ["5 Flasks of Oil"] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).not.toContain("fight");
+    expect(offered(q)).toContain("throw_oil");
+    expect(criteria(q, "throw_oil")).toMatch(/for about [\d.]+ damage when it lands/);
+  });
+
+  it("says a creature never moves and that stepping away from it is safe", () => {
+    const w = world({ map: ROOM, player: { depth: 1, level: 1, hp: 12, maxHp: 12 }, monsters: [eye], monsterRecall: lore });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(String(q.request.state["creatures"])).toContain("never moves");
+    expect(criteria(q, "retreat")).toContain("ever moves, so out of their reach the character is safe");
+  });
+
+  it("stops an errand that loses turns beside a creature, and does not offer melee against it after", () => {
+    const lurker = { grid: { x: 4, y: 2 }, race: "cave lurker", raceIndex: 3, level: 1, hp: 5, maxHp: 5 };
+    const w = world({ map: ROOM, player: { depth: 1, level: 5, hp: 40, maxHp: 40 }, monsters: [lurker] });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).toContain("fight");
+    const choice = p.choose(pick("fight"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ dir: 6 });
+    w.advance(60);
+    expect(p.trigger(w.view, choice.plan)).toMatch(/lost about \d+ turns beside the cave lurker/);
+    expect(offered(p.ask(w.view))).not.toContain("fight");
+  });
+
+  it("counts turns lost after studying a spell, which takes one action", () => {
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["a Book of Magic Spells [Magic for Beginners]"], spells: [{ name: "Magic Missile", sidx: 0, learned: false }] });
+    const { p } = planner(w);
+    const choice = p.choose(pick("study"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "study" });
+    w.advance(60);
+    expect(p.trigger(w.view, choice.plan)).toMatch(/lost about \d+ turns without acting/);
+  });
+
+  it("stops an errand once a creature already in view can kill the character before its next action", () => {
+    const brute = { grid: { x: 10, y: 3 }, race: "cave orc", raceIndex: 4, level: 7, hp: 30, maxHp: 30, asleep: true };
+    const w = suppliedWorld({ map: ["############", "#,@........#", "#..........#", "#..........#", "############"], player: { depth: 2, level: 3, hp: 30, maxHp: 30 }, monsters: [brute], monsterRecall: () => "It can hit to hurt (4d8)." });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).toContain("explore");
+    const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setMonsters([{ ...brute, asleep: false, grid: { x: 3, y: 1 } }]);
+    expect(p.trigger(w.view, choice.plan)).toMatch(/can now kill the character/);
+  });
+
+  it("gives a poisoned character with no cure real ways out", () => {
+    const w = world({ map: ["#########", "#.@....<#", "#########"], player: { depth: 2, hp: 8, maxHp: 30, status: { poisoned: 10 } },
+      pack: ["a Light Blue Potion", "a Scroll titled \"abra ka\""] });
+    const goals = offered(planner(w).p.ask(w.view));
+    expect(goals).toContain("quaff_unknown");
+    expect(goals).toContain("read_unknown");
+    expect(goals).toContain("leave_level");
+  });
+
+  it("lights a carried torch before it studies", () => {
+    const spells = [{ name: "Magic Missile", sidx: 0, learned: false }];
+    const lit = world({ map: CORRIDOR, pack: ["a Magic for Beginners"], worn: ["a Wooden Torch (5000 turns)"], spells });
+    expect(offered(planner(lit).p.ask(lit.view))).toContain("study");
+    const dark = world({ map: CORRIDOR, pack: ["a Magic for Beginners", "a Wooden Torch (5000 turns)"], spells });
+    const goals = offered(planner(dark).p.ask(dark.view));
+    expect(goals).toContain("wear");
+    expect(goals).not.toContain("study");
+  });
+
+  it("walks a poisoned character toward the stairs when nothing carried cures it", () => {
+    const w = world({ map: ["#########", "#.@....<#", "#########"], player: { depth: 2, hp: 8, maxHp: 30, status: { poisoned: 10 } } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    const choice = p.choose(pick("leave_level"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("still walks a poisoned character at low HP to the stairs when no creature is in view", () => {
+    const w = world({ map: ["#########", "#.@....>#", "#########"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } },
+      pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    const choice = p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p: 0.9 } }, q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("steps aside rather than swinging at nothing when poison is the only harm", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
+    const goals = offered(planner(w).p.ask(w.view));
+    expect(goals).not.toContain("swing_unseen");
+    expect(goals).toContain("step_aside");
+  });
+
+  it("gives every number in the state a word for its size", () => {
+    const w = world({ map: ROOM, player: { depth: 2, cls: "Mage", hp: 20, maxHp: 20, sp: 6, maxSp: 8 }, monsters: [{ grid: { x: 4, y: 2 }, race: "kobold", raceIndex: 7, level: 2 }], monsterRecall: () => "It can hit to hurt (1d8)." });
+    const state = asked(planner(w).p.ask(w.view)).request.state;
+    expect(state["mana"]).toBe("over half: 6 of 8");
+    expect(String(state["incoming"])).toMatch(/^Up to 8 HP damage in one action \(a quarter to half of current HP\)/);
+  });
+
+  it("stops offering to explore a town it has walked end to end", () => {
+    const town = ["#######", "#.@...#", "#######"];
+    const w = world({ map: town, player: { depth: 0, level: 1 } });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).toContain("explore");
+    for (const x of [1, 3, 4, 5]) {
+      w.moveTo({ x, y: 1 });
+      p.ask(w.view);
+    }
+    expect(offered(p.ask(w.view))).not.toContain("explore");
+  });
+
+  it("withholds a walk to the stairs that a creature in view can end in one round", () => {
+    const merc = { grid: { x: 4, y: 1 }, race: "mean-looking mercenary", raceIndex: 5, level: 1, hp: 15, maxHp: 15 };
+    const w = world({ map: ["##########", "#.@.....>#", "##########"], player: { depth: 0, level: 1, cls: "Mage", hp: 10, maxHp: 10 }, monsters: [merc], monsterRecall: () => "It can hit to hurt (1d10)." });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("descend");
+  });
+
+  it("passes over a fallback that lost hit points on each of its last two tries", () => {
+    const none: Readonly<Record<string, Answer>> = { goal: { type: "choice", choice: "none_of_these", confidence: 0.8, probabilities: { none_of_these: 0.8 } } };
+    const w = world({ map: CORRIDOR, player: { level: 2, hp: 3, maxHp: 25 }, monsters: [{ grid: { x: 3, y: 1 }, race: "cutpurse", raceIndex: 6, level: 2 }], pack: ["3 Potions of Cure Light Wounds", "a Scroll of Phase Door"] });
+    const { p } = planner(w);
+    const first = asked(p.ask(w.view));
+    const taken = p.choose(none, first.context, w.view);
+    if (!("plan" in taken)) throw new Error("expected a plan");
+    const goal = first.context.fallback;
+    expect(goal).toBeDefined();
+    w.setPlayer({ hp: 2 });
+    const second = asked(p.ask(w.view));
+    p.choose(none, second.context, w.view);
+    expect(second.context.fallback).toBe(goal);
+    w.setPlayer({ hp: 1 });
+    const third = asked(p.ask(w.view));
+    p.choose(none, third.context, w.view);
+    expect(third.context.fallback).toBeDefined();
+    expect(third.context.fallback).not.toBe(goal);
   });
 });

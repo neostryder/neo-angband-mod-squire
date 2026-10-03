@@ -500,7 +500,7 @@ describe("plan outcomes", () => {
     r.tick();
     game.turn += 1;
     r.tick();
-    expect(r.ends[0]).toMatchObject({ stop: "finished", commands: 3, refused: 1 });
+    expect(r.ends[0]).toMatchObject({ stop: "finished", commands: 3, refused: 1, refusedBy: { walk: 1 } });
     expect(outcomeLine(r.ends[0]!)).toBe("finished, 3 commands, 1 refused, hp 0");
   });
 

@@ -49,6 +49,32 @@ describe("engine travel", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("walks step by step when the engine route passes next to a sleeping creature", () => {
+    const line = (to: { x: number; y: number }) => [{ x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 }, to];
+    const w = world({ map: ["#######", "#@...>#", "#.....#", "#######"], player: { depth: 2, maxDepth: 2 }, travelPath: line,
+      monsters: [{ grid: { x: 3, y: 2 }, race: "floating eye", level: 1, asleep: true }] });
+    expect(planFor(w, "descend").step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+
+  it("walks step by step when the route to another known staircase passes a sleeping creature", () => {
+    /* The near stair's route is clear, but the game may choose the far one, whose route passes the eye. */
+    const route = (to: { x: number; y: number }) => to.x === 3
+      ? [{ x: 2, y: 1 }, to]
+      : [{ x: 1, y: 2 }, { x: 1, y: 3 }, { x: 1, y: 4 }, to];
+    const map = ["#######", "#@.>..#", "#.#####", "#..####", "#>#####", "#######"];
+    const eye = { grid: { x: 2, y: 3 }, race: "floating eye", level: 1, asleep: true };
+    const w = world({ map, player: { depth: 2, maxDepth: 2 }, travelPath: route, monsters: [eye] });
+    expect(planFor(w, "descend").step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    const clear = world({ map, player: { depth: 2, maxDepth: 2 }, travelPath: route });
+    expect(planFor(clear, "descend").step(clear.view, clear.act)).toEqual({ code: "navigate-down" });
+  });
+
+  it("walks step by step when the engine route crosses ground that burns", () => {
+    const line = (to: { x: number; y: number }) => [{ x: 2, y: 1 }, { x: 3, y: 1 }, { x: 4, y: 1 }, to];
+    const w = world({ map: ["#######", "#@.~.>#", "#.....#", "#######"], player: { depth: 2, maxDepth: 2 }, travelPath: line });
+    expect(planFor(w, "descend").step(w.view, w.act)).not.toEqual({ code: "navigate-down" });
+  });
+
   it("falls back to steps when the view has no engine route read", () => {
     const w = world({ map: ["#####", "#@.>#", "#####"], player: { depth: 2, maxDepth: 2 } });
     expect(planFor(w, "descend").step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });

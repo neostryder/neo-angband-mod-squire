@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
-import { canRead, readPack, studyable, unseenSources } from "./pack.js";
+import { canRead, readPack, studyable, unknownFlavours, unseenSources } from "./pack.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
@@ -66,5 +66,13 @@ describe("reading in the dark", () => {
     expect(canRead(world({ map, player: { light: 2 } }).view)).toBe(true);
     expect(canRead(world({ map, player: { light: 0 } }).view)).toBe(false);
     expect(canRead(world({ map, player: { light: 0, classFlags: ["UNLIGHT"] } as never }).view)).toBe(true);
+  });
+});
+
+describe("unknownFlavours", () => {
+  it("finds the potions and scrolls whose names do not say what they do", () => {
+    const w = world({ map: ["###", "#@#", "###"], pack: ["a Light Blue Potion", "a Potion of Cure Light Wounds", "a Scroll titled \"abra ka\"", "a Scroll of Phase Door"] });
+    expect(unknownFlavours(w.view, "potion").map((item) => item.name)).toEqual(["a Light Blue Potion"]);
+    expect(unknownFlavours(w.view, "scroll").map((item) => item.name)).toEqual(["a Scroll titled \"abra ka\""]);
   });
 });

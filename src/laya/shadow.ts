@@ -2,6 +2,7 @@
 
 import { ask, selfHosted, type NetLike } from "../brain/backend.js";
 import type { DecisionRecord } from "../brain/brain.js";
+import { LAYA_STATE_TOKENS, fitToBudget, stateOf, type DecisionContext } from "../brain/context.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import { rowId, type LayaRow, type Pilot } from "./rows.js";
 
@@ -63,9 +64,15 @@ export function createShadow(options: {
   }
 
   return {
-    /** One teacher row is saved per known pilot, including when shadowing is off. */
-    record(record: DecisionRecord<unknown>, seq: number, enabled: boolean, url: string, fallbacks: readonly string[] = []): Promise<void> {
+    /**
+     * One teacher row is saved per known pilot, including when shadowing is off.
+     * With `layers`, Laya gets the state fitted to LAYA_STATE_TOKENS, the same
+     * state it would get as the main backend, and the row stores that fitted
+     * state so training sees the request as sent.
+     */
+    record(record: DecisionRecord<unknown>, seq: number, enabled: boolean, url: string, fallbacks: readonly string[] = [], layers?: DecisionContext): Promise<void> {
       if (record.backend !== "Jev") return Promise.resolve();
+      const state = layers === undefined ? record.request.state : stateOf(fitToBudget(layers, LAYA_STATE_TOKENS).context);
       const ts = new Date(options.now()).toISOString();
       const tasks: Promise<void>[] = [];
       for (const entry of PILOTS) {
@@ -88,7 +95,7 @@ export function createShadow(options: {
               id,
               pilot: entry.pilot,
               ts,
-              state: record.request.state,
+              state,
               questions,
               jev: { model: record.model ?? "jev-latest", answers: { [entry.id]: answer } },
               outcome: { plan: record.outcome },
@@ -97,7 +104,7 @@ export function createShadow(options: {
             rowWritten();
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
-            const request: SystemOneRequest = { state: record.request.state, questions };
+            const request: SystemOneRequest = { state, questions };
             const backend = selfHosted("laya", "Laya", url, `laya:${entry.pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => { adapter = value; }), backend, request, options.now);
             if (!result.ok) { failed(); return; }

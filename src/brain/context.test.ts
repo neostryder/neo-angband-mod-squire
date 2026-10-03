@@ -3,7 +3,7 @@ import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { archetype } from "../persona/persona.js";
 import { createGoalPlanner, type GoalPlannerOptions } from "./goals.js";
-import { LAYERS, STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, layerOf, stateHash, stateOf, stateTokens } from "./context.js";
+import { LAYERS, LAYA_STATE_TOKENS, STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, layerOf, stateHash, stateOf, stateTokens } from "./context.js";
 
 type Options = Partial<Omit<GoalPlannerOptions, "terrain" | "log">>;
 
@@ -35,7 +35,7 @@ const SCENARIOS: readonly [string, () => ReturnType<typeof requestFor>][] = [
 ];
 
 describe("decision context", () => {
-  /* These state snapshots are byte-identical to the request before layers existed. If one changes, the trained adapters see a different state. */
+  /* A change to one of these state snapshots changes what the trained adapters see. */
   it.each(SCENARIOS)("compiles %s into layers and the same state", (_name, make) => {
     const q = make();
     const context = q.context.layers;
@@ -45,6 +45,23 @@ describe("decision context", () => {
     expect(stateTokens(q.request.state)).toBeLessThan(STATE_TOKEN_CAP);
     expect(Object.fromEntries(LAYERS.map((layer) => [layer, Object.keys(layerOf(context, layer))]))).toMatchSnapshot("layers");
     expect(q.request.state).toMatchSnapshot("state");
+  });
+
+  it("puts the situation first and the rules primer last", () => {
+    const keys = Object.keys(requestFor({ map: ROOM, player: { depth: 3 }, monsters: [{ grid: { x: 7, y: 3 }, race: "kobold", level: 2 }] }).request.state);
+    expect(keys[0]).toBe("character");
+    expect(keys.at(-1)).toBe("rules");
+    expect(keys.indexOf("incoming")).toBeLessThan(keys.indexOf("rules"));
+  });
+
+  it("keeps a Laya state inside its budget by leaving out the steadiest layers", () => {
+    const lessons = () => Array.from({ length: 60 }, (_, i) => `Lesson ${String(i)}: a cave spider swarm on level ${String(i)} cost the line a character.`);
+    const spec: WorldSpec = { map: ROOM, player: { depth: 4 }, monsters: [{ grid: { x: 6, y: 2 }, race: "cave spider", level: 2 }] };
+    const full = requestFor(spec, { lessons });
+    expect(stateTokens(full.request.state)).toBeGreaterThan(LAYA_STATE_TOKENS);
+    const small = requestFor(spec, { lessons, stateTokens: LAYA_STATE_TOKENS });
+    expect(stateTokens(small.request.state)).toBeLessThanOrEqual(LAYA_STATE_TOKENS);
+    expect(Object.keys(small.request.state).slice(0, 4)).toEqual(["character", "health", "creatures", "incoming"]);
   });
 
   it("keeps the context the same when only hidden truth changes", () => {
@@ -89,12 +106,13 @@ describe("decision context", () => {
   });
 
   it("drops whole layers, least needed first, only when a state is over budget", () => {
-    const context = contextOf([["manual", "rules", "r".repeat(400)], ["memory", "status", "s".repeat(400)], ["persona", "persona", "p".repeat(400)], ["knowledge", "lessons", "l".repeat(400)]]);
+    const context = contextOf([["memory", "status", "s".repeat(400)], ["persona", "persona", "p".repeat(400)], ["knowledge", "lessons", "l".repeat(400)], ["manual", "rules", "r".repeat(400)]]);
     expect(fitToBudget(context, 1_000)).toEqual({ context, shed: [], over: false });
     const fitted = fitToBudget(context, 350);
     expect(fitted).toMatchObject({ shed: ["knowledge"], over: false });
-    expect(Object.keys(stateOf(fitted.context))).toEqual(["rules", "status", "persona"]);
-    expect(fitToBudget(context, 100)).toMatchObject({ shed: ["knowledge"], over: true });
+    expect(Object.keys(stateOf(fitted.context))).toEqual(["status", "persona", "rules"]);
+    expect(fitToBudget(context, 250)).toMatchObject({ shed: ["knowledge", "manual"], over: false });
+    expect(fitToBudget(context, 100)).toMatchObject({ shed: ["knowledge", "manual"], over: true });
   });
 
   it("hashes equal states alike and different states apart", () => {
