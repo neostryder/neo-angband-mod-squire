@@ -2,7 +2,7 @@
 
 **A Learning Angband Autoplayer.**
 
-Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. When something changes, such as a new creature, a hit or an empty floor, it asks a model what to do. Routine upkeep and choices with only one way out it settles itself. Press any key and the keyboard is yours again.
+Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. When something changes, such as a new creature, a hit or an empty floor, it asks a model what to do. Routine upkeep and choices with only one way out it settles itself. Press Escape and the keyboard is yours again, or press & for a menu of errands to send it on.
 
 While you play, Squire rides along as your apprentice. It makes its own choice at each of those moments, notes where yours differed, and learns your style. Give it a persona and it plays in character: a coward who flees too early, a berserker who never backs down, a miser who won't spend a coin.
 
@@ -20,7 +20,7 @@ Squire is a mod. It installs and uninstalls in the game's mod manager and reache
 4. **Pick a persona** on the Persona tab, or keep the default.
 5. **Press Ctrl-Z in play.** The game warns you, asks you to confirm, and Squire takes over from the next turn.
 
-Press any key to take the keyboard back. The character stays where it is, and the key you pressed is not acted on. Ctrl-Z hands it over again.
+Press Escape or Ctrl-Z to take the keyboard back. The character stays where it is, and the key you pressed is not acted on. Any other key leaves Squire playing and shows a line saying how to take over, except the errand key, which opens [the errand menu](#the-errand-menu). Ctrl-Z hands the keyboard over again.
 
 On a game new enough to offer it, the title screen has a **New Squire character** row (key S). It starts a character with Squire already playing, in this profile or in a separate one that keeps Squire's options, mods and characters apart from yours. A separate profile can start fresh or copy another profile's options, mods and mod settings, but never its characters. Next time, Squire offers the profiles it made before.
 
@@ -143,7 +143,7 @@ If the model fails or reaches your spend limit, Squire keeps playing by its own 
 
 Squire watches for going in circles: the same choice three times with nothing changing, pacing over a few squares, going up and down between two levels, putting an item back on soon after swapping it out, buying back on one town visit what it just sold, coming back to the same part of a level three times with nothing new seen or picked up, trying a command sequence that fails three times, or stepping around a few squares without getting closer to what the character is after. When it spots one, it tells the model which choice kept failing and why, and asks once more. If the model picks the same thing again, Squire chooses from the other options itself. Each loop it finds goes in the log.
 
-Squire plays on until you take the keyboard back, the character wins or the character dies. Press any key, including Ctrl-Z, to take control. If a plan fails, Squire chooses another offered action or tries a safe step. After 30 seconds without a game turn or depth change, it pauses for one second and tries again. Your roll-on setting decides whether Squire starts another character after a death.
+Squire plays on until you take the keyboard back, the character wins or the character dies. Press Escape or Ctrl-Z to take control. If a plan fails, Squire chooses another offered action or tries a safe step. After 30 seconds without a game turn or depth change, it pauses for one second and tries again. Your roll-on setting decides whether Squire starts another character after a death.
 
 After a hit from an unseen attacker, Squire can detect or light the area, gain See Invisible, swing at an adjacent square, cast an area spell, use a known staff, aim a wand or zap a rod. It uses the last observed direction when one is known, otherwise it guesses an adjacent square. Each offer accounts for another hit while acting. An aggressive persona favours swings and blasts, a cautious one favours detection and light, and a craven one favours an exit.
 
@@ -287,6 +287,29 @@ The Orders tab takes orders and standing instructions in plain words, such as `s
 
 If you stream your game, Squire Link can also read your Twitch chat or a Discord channel and keep the orders viewers give there, such as `!squire run from uniques`. Enter its orders address, `http://127.0.0.1:8765/v1/orders`, as the "Viewer orders address" under Orders on the Setup tab. While Squire plays, it checks that address every 5 seconds and adds each order to the Orders tab. The Orders tab and the journal name the viewer, as in "New order from viewer Grip: run from uniques". A viewer's order pulls on Squire less than one of yours, unless the persona's Devotion is 90 or higher. If the address can't be reached, Squire notes it once in the log and tries again 30 seconds later. With the field empty, Squire asks nothing. Squire Link's own README explains how to turn chat on and how to keep a busy chat from flooding the squire.
 
+## The errand menu
+
+While Squire plays, press & to open the errand menu. Play pauses while it is open. Press an errand's number or click it, and Squire carries out that errand, then gives the keyboard back with a status line saying how it ended. Press & again to close the menu, or Escape to take the keyboard back straight away. The Setup tab can move the menu to `!`, `#`, `$`, `%`, `(` or `_` instead, since no game command uses any of those keys.
+
+| Errand | What it does | When it can start |
+| --- | --- | --- |
+| **1. Collect the valuable loot** | Walks to the known items worth using or selling and picks them up. With a full pack, it drops something worthless to make room, or leaves the pile. | Something worth taking is known on this level. |
+| **2. Return to town** | Reads Word of Recall when the pack has one, and otherwise climbs the up staircases. | Away from town. |
+| **3. Find a down staircase** | Walks to the nearest known down staircase, exploring until it finds one, and stops on it. | When the character is not already on one. |
+| **4. Find an up staircase** | Does the same for an up staircase. | Away from town, when the character is not already on one. |
+| **5. Get off this level** | Takes the nearest staircase, up or down. | Always. |
+| **6. Explore this level** | Walks the parts of the level not yet seen. | While unexplored ground can be reached. |
+| **7. Clear this level** | Hunts down every creature on the level, sleeping ones too, exploring to find them. | Away from town, where the townspeople keep coming back. |
+| **8. Restock** | Visits the town's shops to buy supplies and sell loot. | In town. |
+
+An errand that cannot start yet stays on the list with the reason, and choosing it does nothing. With a model set up, up to three errands it suggests for the moment sit at the top of the menu. If the model has not answered within three seconds, the menu goes without them.
+
+Staying alive comes first in every errand. When a creature is awake in sight, hit points reach the retreat line, or the character is blind, confused, standing on harmful ground or hungry with food to eat, Squire deals with that the way it always does, by fighting, healing or escaping, and then goes on with the errand.
+
+An errand runs the plain way, with no quirks, grudges or Law to Chaos from the persona. Switch on "Let the persona colour errands" under Mods, then Squire, and the persona shapes how an errand is done: a wary persona keeps a step away from creatures, and a bold one holds on a little past the retreat line. The errand is still done either way.
+
+When you take the keyboard back, Squire drops its plan. When you hand it over again, Squire's model hears where the character went, what it fought, killed and used while you played, and that its earlier plan may no longer apply.
+
 ## Without a model: errands
 
 With no model set up, a normal handover plays on using Squire's own rules. To ask for a short errand, switch off "Let a model choose what to do" and enable the errand you want under Mods, then Squire. "Play on until I take the keyboard back" takes precedence over both short errands.
@@ -297,7 +320,7 @@ With no model set up, a normal handover plays on using Squire's own rules. To as
 | **Explore this floor** | Walks toward the nearest unmapped ground until the floor is walked out. | The floor is finished, anything comes into view, any hit lands, a status effect lands, or the character stops making progress. |
 | **Play on until I take the keyboard back** | Plays by Squire's own rules and keeps looking for a way on. | You take the keyboard back, the character wins or the character dies. |
 
-When a short errand ends, Squire waits for you to take the keyboard back with a keypress. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
+When a short errand ends, Squire gives the keyboard back. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
 
 When a fixed errand ends, the autoplayer status names the reason, such as "Stopped: cave spider came into view." Each line is read from the game state rather than the message stream, so it holds in every language.
 
@@ -305,7 +328,7 @@ The fighting errand leaves sleeping creatures alone unless you switch that on or
 
 ## Installing
 
-Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.21.1 or newer. Either:
+Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.22.0 or newer. Either:
 
 - **In the game.** Mods, then **Install a mod...**, which fetches this repository at a release tag, never a branch, so what arrives can't change afterwards. The install records a SHA-256 of every byte that arrived, which lets the manager tell later whether the copy on your machine has changed.
 - **A folder.** Clone this repository into your mods directory, or point the browser build at it with **Load mod folder**.

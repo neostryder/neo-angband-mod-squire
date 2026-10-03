@@ -43,7 +43,7 @@
  */
 
 import type * as Core from "@rpgm-tools/neo-angband-core";
-import type { AgentController, ModPluginContext } from "@rpgm-tools/neo-angband-core";
+import type { AgentController, ControllerKeyAnswer, ControllerKeyPress, ModPluginContext } from "@rpgm-tools/neo-angband-core";
 import { createSquire } from "./src/squire.js";
 import { runtime, type SquireHost } from "./src/runtime.js";
 import { attachSquire, type AttachHost } from "./src/attach.js";
@@ -108,6 +108,12 @@ interface ControllerInstall {
   readonly controller: AgentController;
   /** Keep the ordinary death, with its tombstone and run report, instead of reincarnating in place. */
   readonly onDeath: "end";
+  /**
+   * A key pressed while Squire drives. Escape and Ctrl-Z never get here: the
+   * host gives the keyboard back for those itself. A game that predates the
+   * handler ignores it and gives the keyboard back on any key, as before.
+   */
+  readonly onKey: (press: ControllerKeyPress) => ControllerKeyAnswer;
 }
 
 export default {
@@ -154,8 +160,9 @@ export default {
         : `Squire's settings differ from stock: ${changed.join(", ")}`,
     );
 
-    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }) }).controller;
-    /* An older game has no ctx.net and expects a bare controller back. */
-    return { controller: runtime(ctx).controllerFor(cfg, terrain, errands), onDeath: "end" };
+    const release = ctx.controller?.release === undefined ? {} : { release: (reason: string) => ctx.controller?.release(reason) };
+    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }), ...release }).controller;
+    const rt = runtime(ctx);
+    return { controller: rt.controllerFor(cfg, terrain, errands), onDeath: "end", onKey: (press) => rt.onKey(press) };
   },
 };

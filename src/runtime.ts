@@ -8,12 +8,19 @@
  * whichever call comes first and lives until the page goes.
  */
 
-import type { AgentCommand, AgentController, AgentView, InputSnapshot, ModNet, ModPluginContext } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentController, AgentView, ControllerKeyAnswer, ControllerKeyPress, InputSnapshot, ModNet, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import type { DecisionContext } from "./brain/context.js";
-import { answerKeyOf, createGoalPlanner, type GoalDigest } from "./brain/goals.js";
+import { answerKeyOf, createGoalPlanner, SAFETY_GOALS, type GoalDigest } from "./brain/goals.js";
+import type { Steering } from "./strategy/steer.js";
+import { townTripPlan } from "./town/plan.js";
+import { createErrandDriver, type ErrandDriver } from "./errands/driver.js";
+import { rankErrands } from "./errands/rank.js";
+import { closeSegment, noteCommand, noteKill, readSegment, segmentLine, startSegment, type PlayerSegment } from "./errands/segment.js";
+import { ERRAND_TEXT } from "./errands/text.js";
+import { errandMenuView } from "./ui/errand-menu.js";
 import { tacticalLog } from "./brain/tactics.js";
 import { chaosEntry } from "./brain/chaos.js";
 import { createTally, type Tally } from "./brain/tally.js";
@@ -63,6 +70,8 @@ export type SquireHost = Pick<ModPluginContext, "log"> & {
   readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
   readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
   readonly controllerArmed?: boolean;
+  /** The panel API, for the errand menu. */
+  readonly ui?: Pick<ModUi, "openPanel">;
   /** Resolved manifest rules. Absent in tests that build a host by hand. */
   readonly flags?: Readonly<Record<string, boolean>>;
 };
@@ -85,12 +94,17 @@ export interface CharacterData {
   readonly storeMemory?: readonly StoreMemory[];
   /** The home's remembered stock, once the character has seen it. */
   readonly homeStock?: HomeStock;
+  /** What the player did since the last hand-back, while it is still useful context. */
+  readonly segment?: PlayerSegment | null;
 }
 
 const CHARACTER_FORMAT = "neo-angband/squire/character";
 
 /** Matches manifest.json, which a test checks, so reports name the version the player installed. */
 export const MOD_VERSION = "0.2.0";
+
+/** Squire's own commands after taking the keyboard back during which the player's segment stays in its context. */
+const SEGMENT_CONTEXT_COMMANDS = 100;
 
 /** Where Knight's Lessons row numbers start, far above any decision sequence number. */
 const LESSON_SEQ_BASE = 500_000;
@@ -127,6 +141,7 @@ function readCharacter(stored: unknown): CharacterData | null {
     flourishes: readWays(data["flourishes"]),
     storeMemory: readStoreMemory(data["storeMemory"]),
     homeStock: readHomeStock(data["homeStock"]),
+    segment: readSegment(data["segment"]),
   };
 }
 
@@ -163,6 +178,10 @@ export interface Runtime {
   decisionView(): AgentView | null;
   /** Build the controller the host installs, once the key check settles. */
   controllerFor(cfg: SquireCfg, terrain: Terrain, errands: () => AgentController): AgentController;
+  /** The host's `onKey` for that controller: the errand key, the menu numbers and the notice. */
+  onKey(press: ControllerKeyPress): ControllerKeyAnswer;
+  /** The errand driver, once a controller has been built. */
+  errands(): ErrandDriver | null;
   /** The brain, while one is running. */
   brain(): Brain | null;
   /**
@@ -265,13 +284,63 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   /* Whether Squire has played on this page, and whether the player played after it: the next Squire step is a resume. */
   let squirePlayed = false;
   let playerPlayed = false;
+  /* Set from a hand-back until Squire's next command, so one hand-back is noted once. */
+  let keyboardWithPlayer = false;
+  /* Whether Squire has held the keyboard since the last hand-back, whether or not it has sent a command yet. */
+  let squireHeld = false;
+  /** Squire's controller was called, so Squire holds the keyboard. */
+  function holding(): void {
+    squireHeld = true;
+    keyboardWithPlayer = false;
+  }
+  /* Squire's commands since it took the keyboard back, which ages the player's segment out of its context. */
+  let commandsSinceResume = 0;
+  let driver: ErrandDriver | null = null;
+  /* Whether the model answered the key check, so the errand menu may ask it for a short list. */
+  let modelReady = false;
   function commandGiven(command: AgentCommand): void {
     ownCommand = { key: commandKey(command), at: Date.now() };
     squirePlayed = true;
+    keyboardWithPlayer = false;
+    commandsSinceResume += 1;
     strategy.acted(command);
   }
+
+  /**
+   * The keyboard went back to the player, by Escape, by an errand ending or by
+   * Squire's own key handler. The tactical plan goes, and what the player does
+   * from here is recorded for when Squire takes over again.
+   */
+  function handedBack(source: string, view: AgentView | null): void {
+    if (keyboardWithPlayer) return;
+    keyboardWithPlayer = true;
+    squireHeld = false;
+    brain?.drop(`The keyboard went back to the player (${source}).`);
+    host.log(`Squire gave the keyboard back: ${source}`);
+    if (view !== null) self.saveCharacter({ ...character, segment: startSegment(view) });
+  }
+
+  /** Squire has the keyboard again: close the player's segment, so its line reaches the next decisions. */
+  function resuming(view: AgentView): void {
+    const segment = character.segment;
+    if (segment === null || segment === undefined || !segment.open) return;
+    const closed = closeSegment(segment, view);
+    self.saveCharacter({ ...character, segment: closed });
+    commandsSinceResume = 0;
+    strategy.resumed();
+    host.log(`Squire takes the keyboard back. ${segmentLine(closed) ?? "The player gave no commands."}`);
+  }
+
+  /** The player's segment, as context for decisions soon after Squire takes over again. */
+  function segmentOutcome(): string | null {
+    const segment = character.segment;
+    if (segment === null || segment === undefined || segment.open || commandsSinceResume > SEGMENT_CONTEXT_COMMANDS) return null;
+    return segmentLine(segment);
+  }
+
   const tracked = (controller: AgentController, terrain: Terrain): AgentController => (live, act) => {
     const view = messagesOnce(live);
+    resuming(view);
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
@@ -279,6 +348,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     observeWays(view);
     strategy.remember(view, terrain);
     channel.tick();
+    holding();
     if (playerPlayed) strategy.resumed();
     playerPlayed = false;
     if (brain !== null) {
@@ -470,44 +540,33 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     decisionView: () => lastView,
 
     controllerFor(cfg, terrain, errands) {
-      const backend = backendFor(config);
-      const net = host.net;
-      if (backend === null || net === undefined || !cfg.useModel) {
-        if (cfg.useModel && net === undefined) host.log("This game cannot send model requests. Squire chooses from its own offers.");
-        return tracked(!cfg.useModel && !cfg.errandCampaign ? errands() : startBrain(backend ?? JEV, cfg, terrain, true) ?? errands(), terrain);
-      }
-      const ready = keyReady(net.secrets, backend, false, host.log);
-      let chosen: AgentController | null = null;
-      let picked: boolean | null = null;
-      ready.then(
-        (ok) => (picked = ok),
-        () => (picked = false),
-      );
+      const errandsDriver = errandDriver(cfg, terrain);
+      driver = errandsDriver;
+      const driven = errandsDriver.controller(playFor(cfg, terrain, errands));
       return (live, act) => {
         const view = messagesOnce(live);
-        channel.tick();
-        if (chosen === null) {
-          if (picked === null) return null;
-          chosen = startBrain(backend, cfg, terrain) ?? errands();
-        }
+        /* Free play keeps its own bookkeeping; an errand's turns get the same here. */
+        if (errandsDriver.mode() === "free" && !errandsDriver.menuOpen()) return driven(view, act);
+        resuming(view);
         lastTurn = view.turn();
         lastView = view;
         journal.observe(view);
         observeFamily(view);
         observeWays(view);
         strategy.remember(view, terrain);
-        if (playerPlayed) strategy.resumed();
-        playerPlayed = false;
-        if (brain !== null) {
-          strategy.observe(view);
-          orders.observe(view);
-        }
-        const command = chosen(view, act);
+        channel.tick();
+        holding();
+        const command = driven(view, act);
         if (command !== null) rememberUse(command, view);
         if (command !== null) commandGiven(command);
         return command;
       };
     },
+    onKey(press) {
+      if (driver === null) return { kind: "keep", message: ERRAND_TEXT.notice(config.errandKey) };
+      return driver.onKey(press);
+    },
+    errands: () => driver,
     brain: () => brain,
     takeOwnCommand(command, now) {
       const own = ownCommand !== null && ownCommand.key === commandKey(command) && now - ownCommand.at >= 0 && now - ownCommand.at <= OWN_COMMAND_WINDOW_MS;
@@ -535,7 +594,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
           host.log(boast);
         }
       }
-      self.saveCharacter({ ...character, kills, flourishes: next });
+      const segment = character.segment;
+      const played = keyboardWithPlayer && segment !== null && segment !== undefined && segment.open ? { segment: noteKill(segment, race) } : {};
+      self.saveCharacter({ ...character, kills, flourishes: next, ...played });
       journal.kill(race, unique, view);
       if (unique) settleGrudge(race);
       if (unique) rememberMilestone("unique", view?.player().depth ?? 0, race);
@@ -553,6 +614,14 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     flourishLines: () => flourishLines(character.flourishes ?? emptyFlourishes(), character.persona),
     recordCommand(command, view) {
       if (squirePlayed) playerPlayed = true;
+      /* The player's first command after Squire played is how an Escape shows:
+       * the host gives the keyboard back without telling the mod. */
+      if ((squirePlayed || squireHeld) && !keyboardWithPlayer) {
+        if (driver !== null) driver.handBack("the player took the keyboard");
+        else handedBack("the player took the keyboard", lastView ?? view);
+      }
+      const segment = character.segment;
+      if (segment !== null && segment !== undefined && segment.open) self.saveCharacter({ ...character, segment: noteCommand(segment, command, view) });
       rememberUse(command, view);
     },
     observe(view, terrain) {
@@ -621,6 +690,49 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null,
   };
+
+  /** The controller Squire plays with when no errand is running: model play, its own rules, or a fixed errand. */
+  function playFor(cfg: SquireCfg, terrain: Terrain, errands: () => AgentController): AgentController {
+    const backend = backendFor(config);
+    const net = host.net;
+    if (backend === null || net === undefined || !cfg.useModel) {
+      if (cfg.useModel && net === undefined) host.log("This game cannot send model requests. Squire chooses from its own offers.");
+      return tracked(!cfg.useModel && !cfg.errandCampaign ? errands() : startBrain(backend ?? JEV, cfg, terrain, true) ?? errands(), terrain);
+    }
+    const ready = keyReady(net.secrets, backend, false, host.log);
+    let chosen: AgentController | null = null;
+    let picked: boolean | null = null;
+    ready.then(
+      (ok) => (picked = ok),
+      () => (picked = false),
+    );
+    return (live, act) => {
+      const view = messagesOnce(live);
+      channel.tick();
+      holding();
+      if (chosen === null) {
+        if (picked === null) return null;
+        chosen = startBrain(backend, cfg, terrain) ?? errands();
+      }
+      resuming(view);
+      lastTurn = view.turn();
+      lastView = view;
+      journal.observe(view);
+      observeFamily(view);
+      observeWays(view);
+      strategy.remember(view, terrain);
+      if (playerPlayed) strategy.resumed();
+      playerPlayed = false;
+      if (brain !== null) {
+        strategy.observe(view);
+        orders.observe(view);
+      }
+      const command = chosen(view, act);
+      if (command !== null) rememberUse(command, view);
+      if (command !== null) commandGiven(command);
+      return command;
+    };
+  }
 
   /** The persona this character plays with: its own, or the active one adopted under its name. */
   function personaFor(): Persona | null {
@@ -787,6 +899,98 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     host.log(settledLine(character.persona?.name ?? "Squire", before.name, remembered(before, lineage.generation)));
   }
 
+  /** The aims, goals and outcomes the planner steers by. The player's segment leads the outcomes for a while after a hand-back. */
+  function steering(): Steering {
+    const longGoal = strategy.longLine();
+    const midGoal = strategy.midLine();
+    const nearGoal = strategy.nearLine();
+    const nearKind = strategy.nearKind();
+    const played = segmentOutcome();
+    const outcomes = [...(played === null ? [] : [played]), ...strategy.outcomeLines()];
+    return {
+      aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits(),
+      ...(longGoal === null ? {} : { longGoal }),
+      ...(midGoal === null ? {} : { midGoal }),
+      ...(nearGoal === null ? {} : { nearGoal }),
+      ...(nearKind === null ? {} : { nearKind }),
+      ...(outcomes.length === 0 ? {} : { outcomes }),
+    };
+  }
+
+  /** The errand menu and its driver, over whatever controller Squire plays with. */
+  function errandDriver(cfg: SquireCfg, terrain: Terrain): ErrandDriver {
+    const menu = errandMenuView(host.ui, host.log);
+    return createErrandDriver({
+      cfg,
+      terrain,
+      log: host.log,
+      errandKey: () => config.errandKey,
+      persona: () => character.persona,
+      safety: (status) => safetyBrain(cfg, terrain, status),
+      shopping: (persona) => townTripPlan(terrain, persona, new Set(), host.log, steering().aims, () => character.flourishes ?? emptyFlourishes(), steering, () => strategy.purchaseOrder(), strategy.homeStock(), (stock) => strategy.saveHomeStock(stock)),
+      status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
+      ...(host.controller?.release === undefined ? {} : { release: (reason: string) => host.controller?.release(reason) }),
+      menu,
+      rank: (view, entries) => {
+        const backend = backendFor(config);
+        if (!modelReady || backend === null) return Promise.resolve(null);
+        return rankErrands({
+          send: (request) => self.send(request).then((result) => {
+            if (result.ok) tally.record(backend, result.usage, now());
+            return result;
+          }),
+        }, view, entries);
+      },
+      onHandBack: (source) => handedBack(source, lastView),
+    });
+  }
+
+  /**
+   * The planner an errand hands the decision to while something is dangerous:
+   * the goal planner narrowed to the safety goals. Plain unless the persona
+   * colours errands, in which case its persona and Law to Chaos come back.
+   */
+  function safetyBrain(cfg: SquireCfg, terrain: Terrain, status: (label: string, reason?: string) => void): Brain {
+    const coloured = cfg.personaErrands;
+    return createBrain<GoalDigest>({
+      backend: backendFor(config) ?? JEV,
+      rulesOnly: !modelReady,
+      planner: createGoalPlanner({
+        cfg,
+        terrain,
+        ...(host.core?.turnEnergy === undefined ? {} : { speedEnergy: host.core.turnEnergy }),
+        log: host.log,
+        persona: () => (coloured ? character.persona : null),
+        chaos: coloured,
+        chaosMethod: config.chaosMethod,
+        focus: () => SAFETY_GOALS,
+        backstoryTokens: backstoryBudget(config),
+        stateTokens: stateBudget(config),
+        lessons: (view) => journal.lessonLines(view),
+        grudges: () => (coloured ? feelingsNow() : []),
+        dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
+        calibrate: (probs) => journal.calibrate(probs),
+        strategy: steering,
+        orders,
+      }),
+      tally,
+      send: (request) => self.send(request),
+      token: () => host.snapshot?.()?.token ?? null,
+      now,
+      log: host.log,
+      status,
+      onDecision: (record) => {
+        void logLoaded.then(() => logDecision(record));
+        for (const listener of listeners) listener(record, lastTurn);
+      },
+      onPlanEnd: (end) => {
+        void logLoaded.then(() => endDecision(end));
+      },
+      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }),
+      epoch: () => driver?.epoch() ?? 0,
+    });
+  }
+
   function startBrain(backend: Backend, cfg: SquireCfg, terrain: Terrain, rulesOnly = false): AgentController | null {
     const mark = host.controller?.markNondeterministic;
     if (!rulesOnly && mark === undefined) {
@@ -816,21 +1020,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => {
-          const longGoal = strategy.longLine();
-          const midGoal = strategy.midLine();
-          const nearGoal = strategy.nearLine();
-          const nearKind = strategy.nearKind();
-          const outcomes = strategy.outcomeLines();
-          return {
-            aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits(),
-            ...(longGoal === null ? {} : { longGoal }),
-            ...(midGoal === null ? {} : { midGoal }),
-            ...(nearGoal === null ? {} : { nearGoal }),
-            ...(nearKind === null ? {} : { nearKind }),
-            ...(outcomes.length === 0 ? {} : { outcomes }),
-          };
-        },
+        strategy: steering,
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
@@ -850,7 +1040,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         void logLoaded.then(() => endDecision(end));
       },
       gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }),
+      epoch: () => driver?.epoch() ?? 0,
     });
+    modelReady = !rulesOnly;
     host.log(rulesOnly ? "Squire has the keyboard and chooses from its current fight and travel offers." : `Squire has the keyboard and asks ${backend.label} what to do${persona === null ? "" : `, playing as ${persona.name}`}`);
     return brain.controller;
   }

@@ -21,7 +21,8 @@
  *
  * An answer is used only if the game is still at the input wait the question
  * was asked at. The input token says so. A stale answer is thrown away and the
- * question asked again about the game as it is now.
+ * question asked again about the game as it is now. So is one asked before the
+ * keyboard last changed hands, which the hand-back epoch says.
  */
 
 import type { AgentActions, AgentCommand, AgentController, AgentView } from "../host-adapter.js";
@@ -149,6 +150,12 @@ export interface BrainDeps<C> {
   onPlanEnd?(end: PlanEnd): void;
   /** Reads the game turn and hit points. Without it, refused commands and hit point changes are not measured. */
   gauge?(view: AgentView): Gauge;
+  /**
+   * The hand-back epoch, which counts every hand-back and every errand start.
+   * An answer asked under an older epoch is dropped. Without it only the input
+   * token decides.
+   */
+  epoch?(): number;
 }
 
 /** Waits between retries, in milliseconds. Later retries use the last wait. */
@@ -200,13 +207,20 @@ export interface Brain {
   state(): "idle" | "asking" | "running" | "waiting" | "stopped";
   /** Why Squire stopped, or null while it is still playing. */
   stoppedBecause(): string | null;
+  /**
+   * Forget the running plan and any question in flight, because the keyboard
+   * changed hands. The next call decides afresh from the game as it is.
+   */
+  drop(reason: string): void;
 }
 
 export function createBrain<C>(deps: BrainDeps<C>): Brain {
   const { backend, planner, tally } = deps;
   let state: State<C> = { kind: "idle" };
   /* The settled result of the request in flight, picked up on the next call. */
-  let landed: { readonly result: AskResult; readonly question: Question<C>; readonly token: Token | null } | null = null;
+  let landed: { readonly result: AskResult; readonly question: Question<C>; readonly token: Token | null; readonly epoch: number | null } | null = null;
+  /* Counts the questions sent, so an answer to one that `drop` forgot is ignored when it lands. */
+  let sent = 0;
   let attempt = 0;
   let emptyDecisions = 0;
   /* Labels of the plans that ended with no command since the last command. */
@@ -320,13 +334,18 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       return null;
     }
     const token = deps.token();
+    const epoch = deps.epoch?.() ?? null;
+    const serial = ++sent;
     state = { kind: "asking", token, question };
     deps.status("thinking");
     deps.send(question.request).then(
       (result) => {
-        landed = { result, question, token };
+        if (serial === sent) landed = { result, question, token, epoch };
+        /* A forgotten question's answer is not used, but it was still paid for. */
+        else if (result.ok) tally.record(backend, result.usage, deps.now());
       },
       (error: unknown) => {
+        if (serial !== sent) return;
         /* `ask` never rejects; this guards a send that someone else wrote. */
         landed = {
           result: {
@@ -336,6 +355,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
           },
           question,
           token,
+          epoch,
         };
       },
     );
@@ -344,7 +364,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
 
   function takeLanded(view: AgentView): null | "planned" {
     if (landed === null) return null;
-    const { result, question, token } = landed;
+    const { result, question, token, epoch } = landed;
     landed = null;
 
     if (!result.ok) {
@@ -356,6 +376,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     if (rulesReason !== null) deps.log("Squire resumes model decisions.");
     rulesReason = null;
 
+    if (epoch !== null && deps.epoch !== undefined && epoch !== deps.epoch()) {
+      /* Asked before the keyboard last changed hands: the situation it answers
+       * is not this one, whatever the token says. */
+      deps.log("Squire drops an answer asked before the keyboard changed hands.");
+      state = { kind: "idle" };
+      return null;
+    }
     if (!sameToken(token, deps.token())) {
       /* The game moved while the model was thinking: the player took the
        * keyboard back and gave it again, or a level changed. Ask afresh. */
@@ -485,5 +512,16 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     controller,
     state: () => state.kind,
     stoppedBecause: () => (state.kind === "stopped" ? state.message : null),
+    drop(reason) {
+      if (state.kind === "stopped") return;
+      if (state.kind === "running") {
+        deps.onPlanEnd?.({ stop: "interrupted", reason, commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: null });
+        deps.log(`${state.plan.label}: ${reason}`);
+      }
+      sent += 1;
+      landed = null;
+      breakLoop = false;
+      state = { kind: "idle" };
+    },
   };
 }

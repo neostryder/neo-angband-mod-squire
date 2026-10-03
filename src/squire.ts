@@ -25,6 +25,8 @@ export interface SquireOptions {
   readonly log: (message: string) => void;
   /** Publish a fixed errand's ending through the host's autoplayer status. */
   readonly status?: (reason: string) => void;
+  /** Give the keyboard back, with the reason shown. Absent on a game too old to let a mod do it. */
+  readonly release?: (reason: string) => void;
 }
 
 /** A live Squire. */
@@ -62,7 +64,7 @@ export function chooseMission(
 
 /** Build a Squire. One per handover: it holds the errand and its progress. */
 export function createSquire(options: SquireOptions): Squire {
-  const { cfg, terrain, log, status } = options;
+  const { cfg, terrain, log, status, release } = options;
   let mission: Mission | null = null;
   let progress: Progress | null = null;
   let finished: Stop | null = null;
@@ -72,7 +74,11 @@ export function createSquire(options: SquireOptions): Squire {
     log(`errand ended (${stop.reason}): ${stop.detail}`);
     status?.(stopText(stop));
     if (mission?.id !== "campaign") {
-      log("the errand is over; press any key to take the keyboard back from Squire");
+      if (release === undefined) log("the errand is over; press Escape to take the keyboard back from Squire");
+      else {
+        log("the errand is over; Squire gives the keyboard back");
+        release(stopText(stop));
+      }
     }
     return null;
   }
