@@ -8,6 +8,7 @@ import { signatureForView } from "./lessons/evidence.js";
 import type { DecisionListener, Runtime } from "./runtime.js";
 import type { DecisionRecord } from "./brain/brain.js";
 import type { GoalDigest } from "./brain/goals.js";
+import { defaultCfg } from "./settings.js";
 
 it("persists command evidence and saves an inferred style", async () => {
   const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
@@ -38,6 +39,32 @@ it("persists command evidence and saves an inferred style", async () => {
   expect(rt.config().activePersona).toBe(0);
   lessons.savePersona(true);
   expect(rt.config().activePersona).toBe(rt.config().personas.length - 1);
+});
+
+it("learns from a player's command that comes right after one of Squire's", async () => {
+  const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
+  const store = memoryStore();
+  const handlers = new Map<string, (name: string, payload: { code?: string; dir?: number }) => void>();
+  const host: AttachHost = {
+    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, state: {} as NonNullable<AttachHost["state"]>, character: { key: () => "Mira" },
+    core: { createAgentView: () => w.view },
+    events: {
+      on: (name, handler) => { handlers.set(name, (eventName, payload) => handler(eventName as never, payload as never)); },
+      off: () => {},
+    },
+  };
+  const rt = createRuntime(host, { store });
+  attachSquire(host, rt);
+  await Promise.resolve();
+  await Promise.resolve();
+  const controller = rt.controllerFor({ ...defaultCfg(), useModel: false }, w.terrain, () => () => ({ code: "walk", dir: 6 }));
+  expect(controller(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  handlers.get("player-command")?.("player-command", { code: "rest" });
+  const saved = await store.get("squire/apprentice") as Apprentice;
+  expect(saved.commands).toMatchObject([{ kind: "rest" }]);
+  /* Squire's own command still matches if the game ever reports it. */
+  expect(rt.takeOwnCommand({ code: "walk", dir: 6 }, Date.now())).toBe(true);
+  expect(rt.takeOwnCommand({ code: "walk", dir: 6 }, Date.now())).toBe(false);
 });
 
 it("stores the exam result after 20 Squire decisions", async () => {

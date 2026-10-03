@@ -157,10 +157,10 @@ export interface Runtime {
   /** The brain, while one is running. */
   brain(): Brain | null;
   /**
-   * Whether the command the game just reported came from Squire, used once.
-   * Knight's Lessons learns only from the player's own commands.
+   * Whether the command the game just reported is the one Squire gave last,
+   * used once. Knight's Lessons learns only from the player's own commands.
    */
-  takeOwnCommand(now: number): boolean;
+  takeOwnCommand(command: { readonly code: string; readonly dir?: number; readonly args?: unknown }, now: number): boolean;
   recordKill(race: string, unique: boolean, view: AgentView | null): void;
   /** Where this character's hatred and fear of its ancestors' killers come from, one line each. */
   grudgeLines(): readonly string[];
@@ -190,6 +190,11 @@ export interface Runtime {
   decisions(): Promise<readonly LoggedDecision[]>;
   /** The host's HTTP relay, or null on a game too old to have one. */
   net(): NetLike | null;
+}
+
+/** A command's code, direction and arguments, for telling one command from another. */
+function commandKey(command: { readonly code: string; readonly dir?: number; readonly args?: unknown }): string {
+  return JSON.stringify([command.code, command.dir ?? null, command.args ?? null]);
 }
 
 let current: Runtime | null = null;
@@ -227,9 +232,22 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   const listeners = new Set<DecisionListener>();
   let brain: Brain | null = null;
   let lastTurn = 0;
-  /* When Squire last handed the game a command, so the player-command event for it is not taken for the player's. */
-  let ownCommandAt: number | null = null;
+  /*
+   * The command Squire last handed the game, and when. The game reports the
+   * player's commands and never an autoplayer's. If a host ever does report
+   * one, a report that repeats Squire's last command within two seconds counts
+   * as Squire's. Any other command is the player's.
+   */
+  let ownCommand: { readonly key: string; readonly at: number } | null = null;
   const OWN_COMMAND_WINDOW_MS = 2_000;
+  /* Whether Squire has played on this page, and whether the player played after it: the next Squire step is a resume. */
+  let squirePlayed = false;
+  let playerPlayed = false;
+  function commandGiven(command: AgentCommand): void {
+    ownCommand = { key: commandKey(command), at: Date.now() };
+    squirePlayed = true;
+    strategy.acted(command);
+  }
   const tracked = (controller: AgentController, terrain: Terrain): AgentController => (view, act) => {
     lastTurn = view.turn();
     lastView = view;
@@ -238,13 +256,15 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     observeWays(view);
     strategy.remember(view, terrain);
     channel.tick();
+    if (playerPlayed) strategy.resumed();
+    playerPlayed = false;
     if (brain !== null) {
       strategy.observe(view);
       orders.observe(view);
     }
     const command = controller(view, act);
     if (command !== null) rememberUse(command, view);
-    if (command !== null) ownCommandAt = Date.now();
+    if (command !== null) commandGiven(command);
     return command;
   };
   let lastView: AgentView | null = null;
@@ -450,20 +470,22 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         observeFamily(view);
         observeWays(view);
         strategy.remember(view, terrain);
+        if (playerPlayed) strategy.resumed();
+        playerPlayed = false;
         if (brain !== null) {
           strategy.observe(view);
           orders.observe(view);
         }
         const command = chosen(view, act);
         if (command !== null) rememberUse(command, view);
-        if (command !== null) ownCommandAt = Date.now();
+        if (command !== null) commandGiven(command);
         return command;
       };
     },
     brain: () => brain,
-    takeOwnCommand(now) {
-      const own = ownCommandAt !== null && now - ownCommandAt >= 0 && now - ownCommandAt <= OWN_COMMAND_WINDOW_MS;
-      ownCommandAt = null;
+    takeOwnCommand(command, now) {
+      const own = ownCommand !== null && ownCommand.key === commandKey(command) && now - ownCommand.at >= 0 && now - ownCommand.at <= OWN_COMMAND_WINDOW_MS;
+      if (own) ownCommand = null;
       return own;
     },
     recordKill(race, unique, view) {
@@ -503,7 +525,10 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       return [...self.grudgeLines(), ...(persona.toggles.epitaphs ? epitaphs.slice(-3).map((e) => e.line) : []), ...(persona.toggles.milestones ? milestones.slice(-5).map(milestoneFact) : [])];
     },
     flourishLines: () => flourishLines(character.flourishes ?? emptyFlourishes(), character.persona),
-    recordCommand: rememberUse,
+    recordCommand(command, view) {
+      if (squirePlayed) playerPlayed = true;
+      rememberUse(command, view);
+    },
     observe(view, terrain) {
       lastView = view;
       const player = view.player();

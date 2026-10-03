@@ -13,11 +13,17 @@ describe("goal sentences", () => {
   });
 
   it("states how a goal ended, and adds the aim's detail when it was met", () => {
-    expect(outcomeSentence(met)).toBe("The mid-term goal lantern over torch was met after 12 turns, from dungeon level 1 to dungeon level 1, because the aim was satisfied. Use a Lantern instead of a wooden torch.");
+    expect(outcomeSentence(met)).toBe("The mid-term goal lantern over torch was met after 12 turns on dungeon level 1, because the aim was satisfied. Use a Lantern instead of a wooden torch.");
     expect(outcomeSentence({ ...met, reward: "Already finished." })).toContain("Already finished.");
     expect(outcomeSentence({ ...met, reward: "Already finished." })).not.toContain("..");
-    expect(outcomeSentence({ ...met, end: "failed", reward: "unused" })).toBe("The mid-term goal lantern over torch failed after 12 turns, from dungeon level 1 to dungeon level 1, because the aim was satisfied.");
-    expect(outcomeSentence({ ...met, level: "near", end: "abandoned", reward: null, goal: "explore this level", reason: "the character left the level" })).toBe("The near-term goal explore this level was abandoned after 12 turns, from dungeon level 1 to dungeon level 1, because the character left the level.");
+    expect(outcomeSentence({ ...met, end: "failed", reward: "unused" })).toBe("The mid-term goal lantern over torch failed after 12 turns on dungeon level 1, because the aim was satisfied.");
+    expect(outcomeSentence({ ...met, level: "near", end: "abandoned", reward: null, goal: "explore this level", reason: "the character left the level" })).toBe("The near-term goal explore this level was abandoned after 12 turns on dungeon level 1, because the character left the level.");
     expect(outcomeSentence({ ...met, level: "long", end: "abandoned", reward: null })).toContain("The long-term goal");
+  });
+
+  it("names the level once when the goal started and ended on the same one", () => {
+    const moved = { ...met, end: "abandoned" as const, reward: null, reason: "the character left the level", endDepth: 3 };
+    expect(outcomeSentence(moved)).toBe("The mid-term goal lantern over torch was abandoned after 12 turns, from dungeon level 1 to dungeon level 3, because the character left the level.");
+    expect(outcomeSentence({ ...moved, startDepth: 3 })).toBe("The mid-term goal lantern over torch was abandoned after 12 turns on dungeon level 3, because the character left the level.");
   });
 });

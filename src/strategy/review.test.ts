@@ -1,12 +1,13 @@
-import type { StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
 import { JEV, type AskResult } from "../brain/backend.js";
 import { createTally } from "../brain/tally.js";
-import type { SystemOneRequest } from "../brain/systemone.js";
-import { defaultPersona } from "../persona/persona.js";
+import type { Answer, SystemOneRequest } from "../brain/systemone.js";
+import { defaultPersona, type Persona } from "../persona/persona.js";
 import type { RunEvent } from "../report/events.js";
 import { createStrategy, midGoalRequest, REVIEW_TURNS, reviewDue, type Strategy } from "./review.js";
+import { CHECKPOINT_ACTIONS } from "./revise.js";
 import { candidateAims } from "./aims.js";
 import { LEAD_FACTOR, leadPursuits, pursuitFacts, pursuitsFor } from "./pursuits.js";
 import { TV } from "../gear/compare.js";
@@ -614,3 +615,221 @@ function longAnswer(choice: string): AskResult {
     server: "test",
   };
 }
+
+describe("the revise-goal check", () => {
+  function answer(answers: Readonly<Record<string, Answer>>): AskResult {
+    return { ok: true, answers, usage: { inputTokens: 10, outputTokens: 2, estimated: false }, model: null, latencyMs: 1, server: "test" };
+  }
+
+  /** A strategy whose revise answer the test sets; every other question gets no answer, so the fixed order stands. */
+  function reviseRig(p: () => number | null, persona: Persona | null = null) {
+    const logs: string[] = [];
+    const events: RunEvent[] = [];
+    const asked: SystemOneRequest[] = [];
+    const strategy = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        if (request.questions["revise_goal"] === undefined) return Promise.resolve(answer({}));
+        asked.push(request);
+        const value = p();
+        return Promise.resolve(answer(value === null ? {} : { revise_goal: { type: "noul", p: value } }));
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: (m) => logs.push(m),
+      persona: () => persona,
+      record: (event) => events.push(event),
+    });
+    return { strategy, logs, events, asked };
+  }
+
+  async function look(strategy: Strategy, view: AgentView): Promise<void> {
+    strategy.observe(view);
+    await strategy.settled();
+  }
+
+  async function walk(strategy: Strategy, view: AgentView, steps: number): Promise<void> {
+    for (let n = 0; n < steps; n += 1) strategy.acted({ code: "walk" });
+    await look(strategy, view);
+  }
+
+  const start = () => world({ map: ROOM, worn: ["Wooden Torch"], player: { depth: 1, level: 5, hp: 100, maxHp: 100 } });
+
+  it("asks once at a trigger, and not again on the steps after", async () => {
+    const w = start();
+    const { strategy, asked } = reviseRig(() => 0.1);
+    await look(strategy, w.view);
+    expect(strategy.midLine()).not.toBeNull();
+    w.setPlayer({ hp: 10 });
+    await look(strategy, w.view);
+    w.setPlayer({ hp: 60 });
+    await look(strategy, w.view);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.state["moment"]).toBe("This check comes because the character nearly died and then recovered.");
+  });
+
+  it("drops the mid-term goal on a yes, records why, and chooses mid and near again", async () => {
+    const w = start();
+    const { strategy, events, logs } = reviseRig(() => 0.9);
+    await look(strategy, w.view);
+    const before = strategy.ranked()[0]?.label ?? "";
+    w.setPlayer({ hp: 10 });
+    await look(strategy, w.view);
+    w.setPlayer({ hp: 60 });
+    await look(strategy, w.view);
+    const dropped = events.find((event) => event.text.startsWith("The mid-term goal"));
+    expect(dropped?.text).toContain(`The mid-term goal ${before} was abandoned`);
+    expect(dropped?.text).toContain("because the character nearly died and then recovered.");
+    expect(logs).toContain(`Squire gave up ${before} after the character nearly died and then recovered, and will pick a new mid-term goal.`);
+    await look(strategy, w.view);
+    expect(strategy.ranked()[0]?.label).not.toBe(before);
+    expect(strategy.midLine()).toContain("Chosen to replace the goal it gave up.");
+    expect(strategy.nearLine()).toContain("Chosen because the mid-term goal was given up.");
+  });
+
+  it("changes nothing when no answer comes back", async () => {
+    const w = start();
+    const { strategy, events, asked, logs } = reviseRig(() => null);
+    await look(strategy, w.view);
+    const mid = strategy.midLine();
+    await walk(strategy, w.view, 150);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(1);
+    expect(strategy.midLine()).toBe(mid);
+    expect(events.filter((event) => event.text.startsWith("The mid-term goal"))).toHaveLength(0);
+    expect(logs.some((line) => line.endsWith("after the character took 150 actions since the last check, because no answer came back."))).toBe(true);
+  });
+
+  it("checks after 150 meaningful actions, and resting does not count", async () => {
+    const w = start();
+    const { strategy, asked } = reviseRig(() => 0.1);
+    await look(strategy, w.view);
+    for (let n = 0; n < 40; n += 1) strategy.acted({ code: "rest" });
+    await walk(strategy, w.view, 149);
+    expect(asked).toHaveLength(0);
+    expect(strategy.nextCheck()?.actions).toBe(1);
+    await walk(strategy, w.view, 1);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.state["moment"]).toBe("This check comes because the character took 150 actions since the last check.");
+    expect(strategy.nextCheck()?.actions).toBe(150);
+  });
+
+  it("checks when the player hands play back", async () => {
+    const w = start();
+    const { strategy, asked } = reviseRig(() => 0.1);
+    await look(strategy, w.view);
+    strategy.resumed();
+    await look(strategy, w.view);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.state["moment"]).toBe("This check comes because a stretch of manual play ended.");
+  });
+
+  it("needs a firmer yes from a stubborn persona", async () => {
+    const plain = defaultPersona("Plain");
+    const stubborn = { ...plain, sliders: { ...plain.sliders, stubbornness: 85 } };
+    for (const [persona, dropped] of [[plain, true], [stubborn, false]] as const) {
+      const w = start();
+      const { strategy, events, logs } = reviseRig(() => 0.6, persona);
+      await look(strategy, w.view);
+      await walk(strategy, w.view, 150);
+      expect(events.some((event) => event.text.includes("was abandoned"))).toBe(dropped);
+      if (!dropped) expect(logs.some((line) => line.endsWith("A less stubborn character would have dropped it."))).toBe(true);
+    }
+  });
+
+  it("keeps a dropped goal from leading again for 2,000 game turns", async () => {
+    const w = start();
+    const { strategy } = reviseRig(() => 0.9);
+    await look(strategy, w.view);
+    const first = strategy.ranked()[0]?.kind;
+    await walk(strategy, w.view, 150);
+    await look(strategy, w.view);
+    expect(strategy.ranked()[0]?.kind).not.toBe(first);
+    expect(strategy.ranked().at(-1)?.kind).toBe(first);
+    w.advance(REVIEW_TURNS);
+    await look(strategy, w.view);
+    expect(strategy.ranked()[0]?.kind).toBe(first);
+  });
+
+  it("drops at most two goals on one dungeon level for the whole run, and keeps a checkpoint it could not ask", async () => {
+    const w = start();
+    const { strategy, asked, events } = reviseRig(() => 0.9);
+    await look(strategy, w.view);
+    for (let n = 0; n < 3; n += 1) {
+      await walk(strategy, w.view, 150);
+      await look(strategy, w.view);
+    }
+    expect(asked).toHaveLength(2);
+    expect(events.filter((event) => event.text.includes("was abandoned after"))).toHaveLength(2);
+    expect(strategy.nextCheck()?.capped).toBe(true);
+    expect(strategy.nextCheck()?.actions).toBe(0);
+    /* On level 2 the overdue checkpoint is asked right away. */
+    w.setPlayer({ depth: 2 });
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(3);
+    expect(strategy.nextCheck()?.capped).toBe(false);
+    /* Going back up does not reset the first level's count. */
+    w.setPlayer({ depth: 1 });
+    await look(strategy, w.view);
+    expect(strategy.nextCheck()?.capped).toBe(true);
+    await walk(strategy, w.view, 150);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(3);
+    w.setPlayer({ depth: 2 });
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(4);
+    expect(strategy.nextCheck()?.capped).toBe(true);
+  });
+
+  it("asks about healing potions Squire drank, and not about ones it dropped", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], pack: ["4 Potions of Cure Light Wounds"], player: { depth: 1, level: 5, hp: 100, maxHp: 100 } });
+    const { strategy, asked } = reviseRig(() => 0.1);
+    await look(strategy, w.view);
+    strategy.acted({ code: "drop", args: { handle: 1, quantity: 2 } });
+    w.setPack(["2 Potions of Cure Light Wounds"]);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(0);
+    strategy.acted({ code: "quaff", args: { handle: 1 } });
+    w.setPack(["a Potion of Cure Light Wounds"]);
+    await look(strategy, w.view);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.state["moment"]).toBe("This check comes because the character used up half of its healing potions.");
+  });
+
+  it("sends one question at a time, and drops a late answer after a reset", async () => {
+    const w = start();
+    const releases: ((r: AskResult) => void)[] = [];
+    const events: RunEvent[] = [];
+    const strategy = createStrategy({
+      backend: () => JEV,
+      send: (request) => request.questions["revise_goal"] === undefined
+        ? Promise.resolve(answer({}))
+        : new Promise<AskResult>((resolve) => { releases.push(resolve); }),
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: () => {},
+      record: (event) => events.push(event),
+    });
+    await look(strategy, w.view);
+    for (let n = 0; n < 150; n += 1) strategy.acted({ code: "walk" });
+    strategy.observe(w.view);
+    strategy.resumed();
+    strategy.observe(w.view);
+    for (let n = 0; n < 150; n += 1) strategy.acted({ code: "walk" });
+    strategy.observe(w.view);
+    expect(releases).toHaveLength(1);
+    /* The checkpoint that came due while the first question was out stays due, and goes out once that question answers. */
+    expect(strategy.nextCheck()?.actions).toBe(0);
+    releases[0]!(answer({ revise_goal: { type: "noul", p: 0.1 } }));
+    await strategy.settled();
+    strategy.observe(w.view);
+    expect(releases).toHaveLength(2);
+    expect(strategy.nextCheck()?.actions).toBe(CHECKPOINT_ACTIONS);
+    strategy.reset();
+    releases[1]!(answer({ revise_goal: { type: "noul", p: 0.9 } }));
+    await strategy.settled();
+    expect(events).toHaveLength(0);
+  });
+});
