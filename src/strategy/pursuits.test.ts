@@ -5,7 +5,7 @@ import { readPack } from "../brain/pack.js";
 import { supplyNeeds } from "../town/needs.js";
 import { candidateAims } from "./aims.js";
 import { inheritAims } from "./heirs.js";
-import { nudgePursuits, paceFactor, pursuitFacts, pursuitsFor, pursuitWeight, sameRace, winStep, type Pursuit } from "./pursuits.js";
+import { leadPursuits, LEAD_FACTOR, longDue, longGoalRequest, longProgress, nudgePursuits, paceFactor, pursuitFacts, pursuitsFor, pursuitWeight, sameRace, winStep, type Pursuit } from "./pursuits.js";
 
 const IDS = Object.keys(ARCHETYPES) as ArchetypeId[];
 
@@ -183,5 +183,56 @@ describe("the grudge in sight", () => {
     expect(lift("Fang, Farmer Maggot's Dog")).toBeGreaterThan(0.5);
     expect(lift("Dog")).toBe(0.5);
     expect(lift("Grip, Farmer Maggot's Dog")).toBe(0.5);
+  });
+});
+
+describe("the long-term goal", () => {
+  const win: Pursuit = { kind: "win", label: "win the game", weight: 0.4, detail: "Defeat Morgoth." };
+  const depth: Pursuit = { kind: "depth", label: "go deep for its own sake", weight: 0.8, detail: "Take the stairs." };
+
+  it("asks on the first look and stamps milestones the character has already passed", () => {
+    const first = longDue(null, 25, 40);
+    expect(first?.trigger).toBe("on the first look at this character");
+    expect(first?.stamp).toEqual({ levels: [20], depths: [30] });
+    expect(longDue(first?.stamp ?? null, 25, 40)).toBeNull();
+  });
+
+  it("names each milestone the character just crossed", () => {
+    const quiet = { levels: [] as number[], depths: [] as number[] };
+    expect(longDue(quiet, 20, 1)?.trigger).toBe("at character level 20");
+    expect(longDue(quiet, 1, 30)?.trigger).toBe("at maximum depth 30");
+    expect(longDue(quiet, 20, 30)?.trigger).toBe("at character level 20 and maximum depth 30");
+    expect(longDue(quiet, 40, 60)?.trigger).toBe("at character levels 20 and 30 and 40 and maximum depths 30 and 60");
+  });
+
+  it("raises the chosen goal from its own weight and leaves the others", () => {
+    const led = leadPursuits([win, depth], "depth");
+    expect(depth.weight).toBe(0.8);
+    expect(led[0]).toMatchObject({ kind: "depth", weight: 1 });
+    expect(led.find((item) => item.kind === "win")?.weight).toBe(0.4);
+    const again = leadPursuits([win, depth], "depth");
+    expect(again[0]?.weight).toBe(Math.min(1, Math.round(0.8 * LEAD_FACTOR * 100) / 100));
+    const tied = leadPursuits([{ ...depth, weight: 0.6 }, { ...win, weight: 0.4 }], "win");
+    expect(tied.map((item) => item.kind)).toEqual(["win", "depth"]);
+    expect(leadPursuits([win], null)[0]?.weight).toBe(0.4);
+  });
+
+  it("states a depth when the code has one", () => {
+    expect(longProgress("win", 12, null)).toBe("deepest dungeon level 12");
+    expect(longProgress("depth", 12, null)).toBe("deepest dungeon level 12");
+    expect(longProgress("record", 12, 20)).toBe("deepest 12 of family 20");
+    expect(longProgress("record", 12, null)).toBeNull();
+    expect(longProgress("riches", 12, null)).toBeNull();
+  });
+
+  it("asks one Choice and names the weight band", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"] });
+    const request = longGoalRequest(w.view, [depth, win]);
+    const question = request.questions["long_goal"];
+    expect(question?.type).toBe("choice");
+    if (question?.type !== "choice") return;
+    expect(question.criteria["depth"]).toContain("strongly wanted");
+    expect(question.criteria["win"]).toContain("somewhat wanted");
+    expect(question.criteria["none_of_these"]).toBe("None of the listed options suits this moment.");
   });
 });

@@ -7,7 +7,7 @@
 
 import type { Runtime } from "../runtime.js";
 import { fill, h } from "./dom.js";
-import { AIMS_HEADING, aimLines } from "../strategy/panel.js";
+import { AIMS_HEADING, panelLines } from "../strategy/panel.js";
 
 interface Row {
   readonly turn: number;
@@ -95,7 +95,12 @@ export function mountDashboard(body: HTMLElement, rt: Runtime): () => void {
 
   function drawAims(): void {
     const player = rt.decisionView()?.player();
-    const lines = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
+    const strategy = rt.strategy();
+    const lines = panelLines(strategy.ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 }, {
+      near: strategy.nearLine(),
+      long: strategy.longLine(),
+      showLong: strategy.showLongGoal(),
+    });
     fill(aimsBox, ...lines.map((l) => h("div", { class: "entry" }, l)));
     const grudges = [...rt.familyMemoryLines(), ...rt.flourishLines()];
     fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));

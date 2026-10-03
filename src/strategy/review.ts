@@ -1,33 +1,38 @@
 /**
- * When Squire reviews its aims, and how it ranks them.
+ * The goal keeper. It chooses the long-term goal, ranks the aims as the
+ * mid-term goal, and picks a near-term goal the character can do right now.
  *
  * A review happens on arrival at a new level, after a town trip, at a
- * character level-up, and every 2,000 game turns otherwise. Code builds the
- * candidate aims (aims.ts); one Score request to the same server the tactical
- * planner uses ranks them, and a fixed order stands in when that request is not
- * sent or does not come back. A review never stops Squire: the tactical brain
- * owns backing off and stopping, and a review that fails only ranks by code.
+ * character level-up, and every 2,000 game turns otherwise. A met aim, a
+ * stocked aim whose item has sold out, and one whose shop memory has grown too
+ * old to count on, review again at once. Code builds the
+ * candidates; one Choice ranks the aims, and the fixed order stands in when
+ * that request is not sent or does not come back. A review never stops
+ * Squire: the tactical brain owns backing off and stopping.
  */
 
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import type { AskResult, Backend } from "../brain/backend.js";
-import type { Answer, ScoreQuestion, SystemOneRequest } from "../brain/systemone.js";
+import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";
-import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim } from "./aims.js";
+import type { RunEvent } from "../report/events.js";
+import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim, type AimKind } from "./aims.js";
 import { stillInherited, withAvenge, withInherited, type InheritedAim } from "./heirs.js";
 import type { Feeling } from "../learning/grudges.js";
 import { createLevelPacing } from "./pacing.js";
-import { createStoreMemory, wareName, type StoreMemory } from "../town/memory.js";
+import { createStoreMemory, LASTING_MEMORY, wareName, type StoreMemory } from "../town/memory.js";
 import { UNKNOWN_HOME, type HomeStock } from "../town/home.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
-import { pursuitFacts, pursuitsFor, type FamilyFacts, type Pursuit } from "./pursuits.js";
+import { leadPursuits, longDue, longGoalRequest, longProgress, pursuitFacts, pursuitsFor, type FamilyFacts, type LongStamp, type Pursuit, type PursuitKind } from "./pursuits.js";
 import { judgmentsFor, purchaseOrder, townChance, type Judgments, type PurchaseKind } from "./judgment.js";
+import { NEAR_ORDER, nearCandidates, nearEnded, nearGoalRequest, nearProgress, pickNear, type LeaveDanger, type NearFacts, type NearKind } from "./near.js";
+import { goalSentence, outcomeSentence, type GoalEnd, type GoalLevel, type GoalOutcome } from "./outcomes.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
 
-export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget" | "stock";
+export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget" | "stock" | "met" | "failed" | "lapsed";
 
 const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   arrival: "on reaching a new level",
@@ -36,6 +41,9 @@ const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   periodic: "after 2,000 game turns",
   budget: "when the level's game-turn budget runs out",
   stock: "after looking in a shop",
+  met: "because the aim was satisfied",
+  failed: "after a stocked item sold out",
+  lapsed: "after the character stopped trusting what it remembered of a shop",
 };
 
 /** What the last look at the game showed, and when the last review ran. */
@@ -61,43 +69,39 @@ export function reviewDue(memory: ReviewMemory | null, now: ReviewMoment): Revie
   return null;
 }
 
-const WORTH: readonly string[] = [
-  "not worth pursuing now",
-  "worth pursuing later",
-  "worth pursuing soon",
-  "worth pursuing first",
-];
+const NONE_OF_THESE = "None of the listed options suits this moment.";
 
-/** The one request that ranks the candidates: a Score question for each aim. */
-export function scoreRequest(view: AgentView, aims: readonly Aim[], pursuits: readonly Pursuit[] = []): SystemOneRequest {
+/** The one request that ranks the candidates: a Choice over the aims. */
+export function midGoalRequest(view: AgentView, aims: readonly Aim[], pursuits: readonly Pursuit[] = []): SystemOneRequest {
   const player = view.player();
-  const questions: Record<string, ScoreQuestion> = {};
-  const described: Record<string, string> = {};
+  const criteria: Record<string, string | null> = {};
   for (const aim of aims) {
-    questions[aim.kind] = {
-      type: "score",
-      instructions: `How worth pursuing right now is this aim: ${aim.label}? Judge it against the character's other aims and its chance of surviving.`,
-      criteria: WORTH,
-    };
-    described[aim.kind] = aim.stock === undefined ? aim.detail : `${aim.detail} I last saw this item ${String(Math.max(0, view.turn() - aim.stock.turn))} game turns ago. I should check the shop before counting on it.`;
+    criteria[aim.kind] = aim.stock === undefined
+      ? aim.detail
+      : `${aim.detail} I last saw this item ${String(Math.max(0, view.turn() - aim.stock.turn))} game turns ago. I should check the shop before counting on it.`;
   }
+  criteria["none_of_these"] = NONE_OF_THESE;
   return {
     state: {
       rules: "An aim is something worth working toward over the next few dungeon levels. Dying early ends every aim, so a safe gain outranks a risky one. Rank the aims the way this character would, given the goals it holds.",
       character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
-      aims: described,
       ...(pursuits.length === 0 ? {} : pursuitFacts(pursuits)),
     },
-    questions,
+    questions: {
+      mid_goal: {
+        type: "choice",
+        instructions: "Which aim should this character work toward over the next few dungeon levels?",
+        criteria,
+      },
+    },
   };
 }
 
-/** Highest score first; equal scores keep the fixed order. */
+/** Highest probability first. A dim shop memory discounts the probability, and equal scores keep the fixed order. */
 export function rankByScore(aims: readonly Aim[], answers: Readonly<Record<string, Answer>>): Aim[] {
-  const scoreOf = (aim: Aim): number => {
-    const answer = answers[aim.kind];
-    return (answer?.type === "score" ? answer.score : 0) * (aim.stock?.confidence ?? 1);
-  };
+  const answer = answers["mid_goal"];
+  const probs = answer?.type === "choice" ? answer.probabilities : {};
+  const scoreOf = (aim: Aim): number => (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
   return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 
@@ -121,6 +125,12 @@ export interface StrategyDeps {
   homeStock?(): HomeStock;
   saveHomeStock?(stock: HomeStock): void;
   rng?(): number;
+  /** A goal that ended, for the run report. */
+  record?(event: RunEvent): void;
+  /** The panel shows the long-term goal only when this is on. The model sees it either way. */
+  revealLongGoal?(): boolean;
+  /** A Choice the model answered, for the training rows. */
+  onAsked?(request: SystemOneRequest, answers: Readonly<Record<string, Answer>>): void;
 }
 
 export interface ReviewSummary {
@@ -140,7 +150,7 @@ export interface Strategy {
   saveHomeStock(stock: HomeStock): void;
   /** The current aims, best first. Empty until the first review. */
   ranked(): readonly Aim[];
-  /** The long goals the persona holds now, most wanted first. */
+  /** The long goals the persona holds now, most wanted first, with the chosen goal in the lead. */
   pursuits(): readonly Pursuit[];
   /** Why the persona chose to head home before the supply margin forced it, or null. */
   townCall(): string | null;
@@ -158,10 +168,56 @@ export interface Strategy {
   reset(): void;
   /** Resolves when no review is in flight. */
   settled(): Promise<void>;
+  /** The long-term goal, for the model. Null until the first look. */
+  longLine(): string | null;
+  /** The mid-term goal, for the model. Null until the first review. */
+  midLine(): string | null;
+  /** The near-term goal, for the model and the panel. Null when none is feasible. */
+  nearLine(): string | null;
+  /** The last three goals that ended, newest first. */
+  outcomeLines(): readonly string[];
+  /** The panel line for the long-term goal. Off unless the player turned the switch on. */
+  showLongGoal(): boolean;
 }
 
 /** Gold must grow by half again before another trip for an aim is offered. */
 const TRIP_GOLD_GROWTH = 1.5;
+
+interface Hold {
+  readonly id: string;
+  readonly label: string;
+  readonly detail: string;
+  readonly trigger: string;
+  readonly turn: number;
+  readonly depth: number;
+  /** For a leave goal, what made the level one to leave. */
+  readonly danger?: LeaveDanger;
+  /** For an aim with a shop item, the item and the shop as remembered when the aim was taken. */
+  readonly stock?: NonNullable<Aim["stock"]>;
+  readonly shelf?: StoreMemory;
+}
+
+function choiceOf(answer: Answer | null): string | null {
+  if (answer?.type !== "choice" || answer.choice === "none_of_these") return null;
+  return answer.choice;
+}
+
+function longLog(trigger: string, label: string, by: string): string {
+  return `Squire looked over its long-term goals ${trigger}: ${label}.${by}`;
+}
+
+function nearLog(trigger: string, label: string, by: string): string {
+  return `Squire looked over what it can do right now ${trigger}: ${label}.${by}`;
+}
+
+function midProgress(aim: Aim, view: AgentView): string | null {
+  const player = view.player();
+  if ((aim.kind === "depth" || aim.kind === "win" || aim.kind === "preparation") && aim.depth !== null) {
+    return `dungeon level ${String(player.depth)} of ${String(aim.depth)}`;
+  }
+  if (aim.how === "save" && aim.price !== null) return `${String(player.gold)} of ${String(aim.price)} gold`;
+  return null;
+}
 
 export function createStrategy(deps: StrategyDeps): Strategy {
   let memory: ReviewMemory | null = null;
@@ -180,9 +236,25 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   /* The persona's own call to go home before the margin forces it, and its buying order for this town visit. */
   let townCall: string | null = null;
   let buying: readonly PurchaseKind[] | null = null;
+  let terrain: Terrain | null = null;
+  let lastView: AgentView | null = null;
+  let longStamp: LongStamp | null = null;
+  let longKind: PursuitKind | null = null;
+  let longHold: Hold | null = null;
+  /* Set while a long-term question is out, so no second one is sent before it answers. */
+  let longAsking = false;
+  let midHold: Hold | null = null;
+  let nearHold: Hold | null = null;
+  let failedKind: AimKind | null = null;
+  let failedReason = "";
+  const outcomeHistory: string[] = [];
+
+  function basePursuits(): Pursuit[] {
+    return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null, deps.seed?.() ?? null);
+  }
 
   function pursuitsNow(): Pursuit[] {
-    return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null, deps.seed?.() ?? null);
+    return leadPursuits(basePursuits(), longKind);
   }
 
   function clear(): void {
@@ -197,6 +269,17 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     generation += 1;
     answers = null;
     stockReview = false;
+    terrain = null;
+    lastView = null;
+    longStamp = null;
+    longKind = null;
+    longHold = null;
+    longAsking = false;
+    midHold = null;
+    nearHold = null;
+    failedKind = null;
+    failedReason = "";
+    outcomeHistory.length = 0;
   }
 
   function reset(): void {
@@ -205,25 +288,86 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     shops.reset();
   }
 
-  async function rank(view: AgentView, candidates: readonly Aim[]): Promise<{ readonly ranked: Aim[]; readonly source: "model" | "fixed"; readonly by: string; readonly answers?: Readonly<Record<string, Answer>> }> {
-    const fixed = inFixedOrder(candidates);
-    /* The win is always a candidate, so it alone does not justify a model call. */
-    const askAims = candidates.filter((aim) => aim.kind !== "win").length >= 2;
-    if (!askAims) return { ranked: fixed, source: "fixed", by: "" };
+  function push(level: GoalLevel, hold: Hold, end: GoalEnd, reason: string, turn: number, depth: number, reward: string | null): void {
+    const outcome: GoalOutcome = {
+      level, goal: hold.label, end, reason, held: Math.max(0, turn - hold.turn), startDepth: hold.depth, endDepth: depth, reward,
+    };
+    const text = outcomeSentence(outcome);
+    outcomeHistory.push(text);
+    deps.record?.({ kind: "goal", turn, depth, text });
+  }
+
+  function takeLong(pursuit: Pursuit, trigger: string, turn: number, depth: number): void {
+    if (longHold !== null && longHold.id !== pursuit.kind) {
+      push("long", longHold, "abandoned", trigger, turn, depth, null);
+      longHold = null;
+    }
+    longKind = pursuit.kind;
+    if (longHold !== null) {
+      longHold = { ...longHold, label: pursuit.label, detail: pursuit.detail, trigger };
+      return;
+    }
+    longHold = { id: pursuit.kind, label: pursuit.label, detail: pursuit.detail, trigger, turn, depth };
+  }
+
+  function factsFor(view: AgentView, startDepth: number, danger?: LeaveDanger): NearFacts {
+    const home = deps.homeStock?.();
+    return {
+      terrain, persona: deps.persona?.() ?? null, aims, memories: shops.all(), startDepth,
+      ...(home === undefined ? {} : { home }),
+      ...(danger === undefined ? {} : { danger }),
+    };
+  }
+
+  /** The aim held as the mid-term goal, with its shop item and shop as remembered now. */
+  function midHoldFor(aim: Aim, trigger: string, turn: number, depth: number): Hold {
+    const shelf = aim.stock === undefined ? undefined : shops.all().find((memory) => memory.feat === aim.stock?.feat);
+    return {
+      id: aim.kind, label: aim.label, detail: aim.detail, trigger, turn, depth,
+      ...(aim.stock === undefined || shelf === undefined ? {} : { stock: aim.stock, shelf }),
+    };
+  }
+
+  /**
+   * Why a held aim with a shop item left the candidates without being
+   * satisfied, or null when it was satisfied. The aim is built again with the
+   * shop as remembered when it was taken: when it comes back, only the shop
+   * memory dropped it.
+   */
+  function shopLapse(hold: Hold, view: AgentView): { readonly end: "failed" | "abandoned"; readonly reason: string } | null {
+    const { stock, shelf } = hold;
+    if (stock === undefined || shelf === undefined) return null;
+    const memories = shops.all();
+    const restored = [...memories.filter((memory) => memory.feat !== shelf.feat), { ...shelf, turn: view.turn(), lifetime: LASTING_MEMORY }];
+    if (!candidateAims(view, restored, deps.persona?.() ?? null).some((aim) => aim.kind === hold.id)) return null;
+    const now = memories.find((memory) => memory.feat === shelf.feat);
+    const listed = now !== undefined && now.stock.some((item) => wareName(item.name) === wareName(stock.name));
+    if (!listed) return { end: "failed", reason: `the shop sold out of ${stock.name}` };
+    return { end: "abandoned", reason: `the memory of ${stock.name} in the shop grew too old to count on` };
+  }
+
+  function buildCandidates(view: AgentView): Aim[] {
+    const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
+    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
+    return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
+  }
+
+  async function ask(request: SystemOneRequest): Promise<{ readonly answer: Answer | null; readonly why: string; readonly backend: string }> {
     const backend = deps.backend();
-    if (backend === null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because no model server is set up." };
-    const capped = deps.tally.overCap(backend, deps.now());
-    if (capped !== null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the spend limit is reached." };
-    const request: SystemOneRequest = scoreRequest(view, candidates, pursuitsNow());
+    if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
+    if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
     let result: AskResult;
     try {
       result = await deps.send(request);
     } catch {
-      return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the request failed." };
+      return { answer: null, why: "the request failed", backend: backend.label };
     }
-    if (!result.ok) return { ranked: fixed, source: "fixed", by: ` It kept the usual order, because ${backend.label} answered with ${result.failure.kind}.` };
+    if (!result.ok) return { answer: null, why: `${backend.label} answered with ${result.failure.kind}`, backend: backend.label };
     deps.tally.record(backend, result.usage, deps.now());
-    return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.`, answers: result.answers };
+    const key = Object.keys(request.questions)[0] ?? "";
+    const answer = result.answers[key] ?? null;
+    if (answer !== null) deps.onAsked?.(request, result.answers);
+    return { answer, why: "", backend: backend.label };
   }
 
   /** Read the town answers in code: draw the trip home once, and set the buying order for this visit. */
@@ -242,36 +386,109 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     }
   }
 
-  async function review(view: AgentView, trigger: ReviewTrigger, turn: number, mine: number): Promise<void> {
-    const seq = ++latest;
-    const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
-    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
-    const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
-    aims = inFixedOrder(candidates);
-    const depth = view.player().depth;
-    const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
-    const done = await rank(view, candidates);
-    if (mine !== generation) return;
-    /* A level change during the model call makes these judgments stale; the next review makes fresh ones. */
-    if (view.player().depth === depth) judge(depth, judgments);
-    /* A slow answer for an older review must not overwrite the aims of a newer one. */
-    if (seq !== latest) return;
-    answers = done.source === "model" ? done.answers ?? null : null;
-    aims = done.ranked;
-    last = { trigger, turn, source: done.source };
-    const names = done.ranked.map((aim) => aim.label).join(", ");
-    deps.log(`Squire looked over its aims ${TRIGGER_TEXT[trigger]}: ${names === "" ? "none apply" : names}.${done.by}`);
+  async function keep(args: {
+    readonly view: AgentView;
+    readonly mine: number;
+    readonly turn: number;
+    readonly depth: number;
+    readonly candidates: readonly Aim[];
+    readonly midTrigger: ReviewTrigger | null;
+    readonly judgments: Judgments;
+    readonly pursuits: readonly Pursuit[];
+    readonly longDue: { readonly trigger: string; readonly stamp: LongStamp } | null;
+    readonly nearReason: string | null;
+    readonly nearList: ReturnType<typeof nearCandidates>;
+    readonly previousMid: string | null;
+  }): Promise<void> {
+    const ranks = args.midTrigger !== null || (args.nearReason !== null && args.nearList.length > 0);
+    /* A keep that only asks the long-term goal does not supersede a ranking still in flight. */
+    const seq = ranks ? ++latest : latest;
+    if (args.midTrigger !== null) aims = inFixedOrder(args.candidates);
+    if (args.longDue !== null) {
+      let longSent: Awaited<ReturnType<typeof ask>>;
+      try {
+        longSent = await ask(longGoalRequest(args.view, args.pursuits));
+      } finally {
+        if (args.mine === generation) longAsking = false;
+      }
+      if (args.mine === generation) {
+        longStamp = args.longDue.stamp;
+        const picked = args.pursuits.find((pursuit) => pursuit.kind === choiceOf(longSent.answer)) ?? args.pursuits[0];
+        if (picked !== undefined) {
+          takeLong(picked, args.longDue.trigger, args.turn, args.depth);
+          const by = longSent.why === "" && choiceOf(longSent.answer) !== null
+            ? ` ${longSent.backend} ranked them.`
+            : ` It kept the heaviest one, because ${longSent.why === "" ? "none of the options was chosen" : longSent.why}.`;
+          deps.log(longLog(args.longDue.trigger, picked.label, by));
+        }
+      }
+    }
+    if (!ranks || args.mine !== generation) return;
+    const askAims = args.candidates.filter((aim) => aim.kind !== "win").length >= 2;
+    const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, args.candidates, pursuitsNow())) : null;
+    const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
+    const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
+    const rankedPreview = args.midTrigger === null ? args.candidates : midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates);
+    let nearReason = args.nearReason;
+    const topKind = rankedPreview[0]?.kind ?? null;
+    if (nearReason === null && args.midTrigger !== null && args.previousMid !== null && topKind !== null && topKind !== args.previousMid) {
+      nearReason = "because the mid-term goal changed";
+    }
+    const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
+    if (args.mine !== generation || seq !== latest) return;
+    if (args.midTrigger !== null && args.view.player().depth === args.depth) judge(args.depth, args.judgments);
+    if (args.midTrigger !== null) {
+      const source = midModel ? "model" : "fixed";
+      const by = midSent === null || !askAims ? "" : midModel
+        ? ` ${midSent.backend} ranked them.`
+        : ` It kept the usual order, because ${midSent.why === "" ? "none of the options was chosen" : midSent.why}.`;
+      answers = midModel && midAnswer !== null ? { mid_goal: midAnswer } : null;
+      aims = rankedPreview;
+      last = { trigger: args.midTrigger, turn: args.turn, source };
+      const names = rankedPreview.map((aim) => aim.label).join(", ");
+      deps.log(`Squire looked over its aims ${TRIGGER_TEXT[args.midTrigger]}: ${names === "" ? "none apply" : names}.${by}`);
+      const top = rankedPreview[0];
+      if (top !== undefined) {
+        if (midHold !== null && midHold.id === top.kind) midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], midHold.turn, midHold.depth);
+        else {
+          if (midHold !== null) push("mid", midHold, "abandoned", TRIGGER_TEXT[args.midTrigger], args.turn, args.depth, null);
+          midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], args.turn, args.depth);
+        }
+      }
+    }
+    if (nearSent !== null && nearReason !== null) {
+      const picked = pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
+      if (picked !== null) {
+        const model = nearSent.why === "" && choiceOf(nearSent.answer) === picked.kind;
+        const by = model
+          ? ` ${nearSent.backend} ranked them.`
+          : ` It kept the first one, because ${nearSent.why === "" ? "none of the options was chosen" : nearSent.why}.`;
+        if (nearHold !== null && nearHold.id !== picked.kind) push("near", nearHold, "abandoned", nearReason, args.turn, args.depth, null);
+        const danger = picked.danger === undefined ? {} : { danger: picked.danger };
+        if (nearHold === null || nearHold.id !== picked.kind) nearHold = { id: picked.kind, label: picked.label, detail: picked.detail, trigger: nearReason, turn: args.turn, depth: args.depth, ...danger };
+        else nearHold = { id: nearHold.id, label: picked.label, detail: picked.detail, trigger: nearReason, turn: nearHold.turn, depth: nearHold.depth, ...danger };
+        deps.log(nearLog(nearReason, picked.label, by));
+      }
+    }
   }
 
   return {
-    remember(view, terrain) {
-      const seen = shops.observe(view, terrain, deps.persona?.() ?? null);
+    remember(view, terrainNow) {
+      terrain = terrainNow;
+      const seen = shops.observe(view, terrainNow, deps.persona?.() ?? null);
       if (!seen.changed) return;
       for (const aim of aims) {
         const stock = aim.stock;
         if (!seen.entered || stock === undefined || stock.feat !== seen.memory?.feat || seen.memory.stock.some((item) => wareName(item.name) === wareName(stock.name))) continue;
         const owned = [...view.inventory(), ...view.equipment().filter((item) => item !== null)].some((item) => wareName((item as { name?: string }).name ?? "") === wareName(stock.name));
-        if (!owned) deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
+        if (!owned) {
+          deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
+          if (midHold?.id === aim.kind) {
+            failedKind = aim.kind;
+            failedReason = `the shop sold out of ${stock.name}`;
+          }
+        }
       }
       const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
       const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
@@ -288,6 +505,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       if (player.dead) return;
       const turn = view.turn();
       if (memory !== null && turn < memory.reviewTurn) reset();
+      lastView = view;
       if (aims.some((aim) => aim.stock !== undefined)) {
         const fresh = candidateAims(view, shops.all(), deps.persona?.() ?? null);
         const updated = aims.flatMap((aim) => aim.stock === undefined ? [aim] : fresh.filter((entry) => entry.kind === aim.kind));
@@ -296,15 +514,79 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       deepest = Math.max(deepest, player.maxDepth);
       if (player.depth === 0) townCall = null;
       else buying = null;
+      const heldNear = nearHold;
+      let nearEndText: string | null = null;
+      if (heldNear !== null && (NEAR_ORDER as readonly string[]).includes(heldNear.id)) {
+        const ended = nearEnded(heldNear.id as NearKind, view, factsFor(view, heldNear.depth, heldNear.danger));
+        if (ended !== null) {
+          push("near", heldNear, ended.end, ended.reason, turn, player.depth, null);
+          nearHold = null;
+          nearEndText = ended.end === "failed" ? "because the near-term goal failed" : ended.end === "abandoned" ? "because the near-term goal was abandoned" : "because the near-term goal was met";
+        }
+      }
       const budget = pacing.observe(view);
-      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (stockReview ? "stock" : budget.review ? "budget" : null);
-      memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? (memory?.reviewTurn ?? turn) : turn };
-      if (trigger === null) return;
-      stockReview = false;
-      if (trigger === "town") tripGold = player.gold;
-      inFlight = review(view, trigger, turn, generation).catch((error: unknown) => {
+      const firstLook = memory === null;
+      const scheduled = reviewDue(memory, { depth: player.depth, level: player.level, turn });
+      const candidates = buildCandidates(view);
+      let midTrigger: ReviewTrigger | null = scheduled ?? (stockReview ? "stock" : budget.review ? "budget" : null);
+      const previousMid = midHold?.id ?? null;
+      const heldMid = midHold;
+      if (heldMid !== null && failedKind === heldMid.id) {
+        push("mid", heldMid, "failed", failedReason === "" ? "the shop sold out" : failedReason, turn, player.depth, null);
+        midHold = null;
+        midTrigger = "failed";
+      } else if (heldMid !== null && !candidates.some((aim) => aim.kind === heldMid.id)) {
+        const lapse = shopLapse(heldMid, view);
+        if (lapse === null) push("mid", heldMid, "met", "the aim was satisfied", turn, player.depth, heldMid.detail);
+        else push("mid", heldMid, lapse.end, lapse.reason, turn, player.depth, null);
+        midHold = null;
+        midTrigger = lapse === null ? "met" : lapse.end === "failed" ? "failed" : "lapsed";
+      }
+      failedKind = null;
+      failedReason = "";
+      const pursuits = basePursuits();
+      const reached = Math.max(deepest, player.maxDepth);
+      const heldLong = longHold;
+      let longEnded: string | null = null;
+      if (heldLong !== null && !longAsking && !pursuits.some((pursuit) => pursuit.kind === heldLong.id)) {
+        const familyDeepest = deps.family?.()?.deepest ?? null;
+        const met = heldLong.id === "record" && familyDeepest !== null && reached >= familyDeepest;
+        push("long", heldLong, met ? "met" : "abandoned", met
+          ? `the character reached dungeon level ${String(reached)}, past the family's deepest of ${String(familyDeepest)}`
+          : "the goal stopped fitting this character", turn, player.depth, null);
+        longHold = null;
+        longKind = null;
+        longEnded = met ? "after the long-term goal was met" : "after the old long-term goal stopped fitting";
+      }
+      const milestone = longAsking ? null : longDue(longStamp, player.level, reached);
+      const due = longEnded === null ? milestone : { trigger: longEnded, stamp: milestone?.stamp ?? longStamp ?? { levels: [], depths: [] } };
+      if (due !== null && pursuits.length < 2) {
+        longStamp = due.stamp;
+        const only = pursuits[0];
+        if (only !== undefined) {
+          takeLong(only, due.trigger, turn, player.depth);
+          if (!firstLook) deps.log(longLog(due.trigger, only.label, " It kept the heaviest one, because only one long-term goal applies."));
+        }
+      }
+      memory = { depth: player.depth, level: player.level, reviewTurn: midTrigger === null ? (memory?.reviewTurn ?? turn) : turn };
+      if (midTrigger !== null) stockReview = false;
+      if (scheduled === "town") tripGold = player.gold;
+      const arrival = firstLook || scheduled === "arrival" || scheduled === "town";
+      const nearList = nearCandidates(view, factsFor(view, player.depth));
+      const reason = nearEndText ?? (arrival ? "on reaching a new level" : null);
+      const longAsk = due !== null && pursuits.length >= 2;
+      if (midTrigger === null && !longAsk && (reason === null || nearList.length === 0)) return;
+      const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
+      if (longAsk) longAsking = true;
+      const kept = keep({
+        view, mine: generation, turn, depth: player.depth, candidates, midTrigger, judgments, pursuits,
+        longDue: longAsk && due !== null ? due : null,
+        nearReason: nearList.length === 0 ? null : reason,
+        nearList, previousMid,
+      }).catch((error: unknown) => {
         deps.log(`Squire couldn't look over its aims: ${String(error)}`);
       });
+      inFlight = Promise.all([inFlight, kept]).then(() => undefined);
     },
     ranked: () => aims,
     pursuits: pursuitsNow,
@@ -317,5 +599,23 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     },
     reset,
     settled: () => inFlight,
+    longLine() {
+      if (longHold === null) return null;
+      const pursuit = pursuitsNow().find((item) => item.kind === longHold?.id);
+      const family = deps.family?.() ?? null;
+      return goalSentence(longHold.label, pursuit === undefined ? null : longProgress(pursuit.kind, deepest, family?.deepest ?? null), longHold.trigger);
+    },
+    midLine() {
+      if (midHold === null) return null;
+      const aim = aims.find((item) => item.kind === midHold?.id);
+      return goalSentence(aim?.label ?? midHold.label, aim !== undefined && lastView !== null ? midProgress(aim, lastView) : null, midHold.trigger);
+    },
+    nearLine() {
+      if (nearHold === null || lastView === null) return null;
+      const kind = (NEAR_ORDER as readonly string[]).includes(nearHold.id) ? nearHold.id as NearKind : null;
+      return goalSentence(nearHold.label, kind === null ? null : nearProgress(kind, lastView, terrain), nearHold.trigger);
+    },
+    outcomeLines: () => outcomeHistory.slice(-3).reverse(),
+    showLongGoal: () => deps.revealLongGoal?.() === true,
   };
 }

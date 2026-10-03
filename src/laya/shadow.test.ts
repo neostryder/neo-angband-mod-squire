@@ -3,7 +3,7 @@ import type { NetLike } from "../brain/backend.js";
 import type { DecisionRecord } from "../brain/brain.js";
 import { createTally } from "../brain/tally.js";
 import { memoryStore } from "../memory/kv.js";
-import { attachHuman, createRows, exportRows, rowId } from "./rows.js";
+import { attachHuman, createRows, exportRows, GOAL_SEQ_BASE, goalSeqCounter, rowId } from "./rows.js";
 import { createShadow } from "./shadow.js";
 
 const INSTALL = "12345678-1234-4234-8234-123456789abc";
@@ -120,6 +120,29 @@ describe("Laya shadow rows", () => {
     expect(parsed.filter((row) => "laya" in row).every((row) => (row["laya"] as { adapter: string }).adapter === "base")).toBe(true);
   });
 
+  it("sends a goal question while the per-decision goal call on the same pilot is still pending", async () => {
+    const store = memoryStore();
+    const rows = createRows(store, "run-4");
+    const release: (() => void)[] = [];
+    const asked: string[] = [];
+    const net: NetLike = {
+      transport: "relay",
+      request(request) {
+        asked.push(Object.keys((JSON.parse(request.body ?? "{}") as { questions: Record<string, unknown> }).questions)[0] ?? "");
+        return new Promise((resolve) => release.push(() => resolve({ ok: true, status: 200, headers: {}, body: reply(request) })));
+      },
+    };
+    const shadow = createShadow({ net, rows, install: Promise.resolve(INSTALL), runId: "run-4", now: () => 0, log: () => {} });
+    const question = { type: "choice" as const, instructions: "Which aim?", criteria: { depth: "Depth.", none_of_these: null } };
+    const answer = { type: "choice" as const, choice: "depth", confidence: 0.8, probabilities: { depth: 1 } };
+    const first = shadow.record(decision(), 0, true, URL);
+    const second = shadow.record({ ...decision(), request: { state: { hp: 12 }, questions: { mid_goal: question } }, answers: { mid_goal: answer } }, 1, true, URL);
+    await vi.waitFor(() => expect(asked).toContain("mid_goal"));
+    expect(asked).toContain("goal");
+    for (const done of release) done();
+    await Promise.all([first, second]);
+  });
+
   it("exports across runs and can attach a human correction", async () => {
     const store = memoryStore();
     const first = createRows(store, "a");
@@ -132,5 +155,45 @@ describe("Laya shadow rows", () => {
     expect(lines).toHaveLength(2);
     expect(lines[0]?.["human"]).toEqual({ goal: "retreat" });
     expect(lines[1]?.["human"]).toBeUndefined();
+  });
+
+  it("gives the goal questions their own row ids", async () => {
+    const store = memoryStore();
+    const rows = createRows(store, "run-9");
+    const shadow = createShadow({ net: null, rows, install: Promise.resolve(INSTALL), runId: "run-9", now: () => 0, log: () => {} });
+    const question = { type: "choice" as const, instructions: "Which goal?", criteria: { win: "Win.", none_of_these: null } };
+    const answer = { type: "choice" as const, choice: "win", confidence: 0.8, probabilities: { win: 1 } };
+    await shadow.record({
+      ...decision(),
+      request: { state: { hp: 12 }, questions: { long_goal: question, mid_goal: question, near_goal: question } },
+      answers: { long_goal: answer, mid_goal: answer, near_goal: answer },
+    }, 4, false, URL);
+    const parsed = (await exportRows(store)).trim().split("\n").map((line) => JSON.parse(line) as { id: string });
+    expect(parsed.map((row) => row.id)).toEqual([
+      rowId(INSTALL, "run-9", 4, "squire_goal", "long"),
+      rowId(INSTALL, "run-9", 4, "squire_goal", "mid"),
+      rowId(INSTALL, "run-9", 4, "squire_goal", "near"),
+    ]);
+  });
+
+  it("numbers goal rows past a reload and keeps them when old decision chunks are pruned", async () => {
+    const store = memoryStore();
+    const question = { type: "choice" as const, instructions: "Which aim?", criteria: { depth: "Depth.", none_of_these: null } };
+    const answer = { type: "choice" as const, choice: "depth", confidence: 0.8, probabilities: { depth: 1 } };
+    const goalRecord = { ...decision(), request: { state: { hp: 12 }, questions: { mid_goal: question } }, answers: { mid_goal: answer } };
+    const before = createRows(store, "run-5");
+    const first = createShadow({ net: null, rows: before, install: Promise.resolve(INSTALL), runId: "run-5", now: () => 0, log: () => {} });
+    const seq = await goalSeqCounter(before)();
+    expect(seq).toBe(GOAL_SEQ_BASE);
+    await first.record(goalRecord, seq, false, URL);
+    const after = createRows(store, "run-5");
+    const second = createShadow({ net: null, rows: after, install: Promise.resolve(INSTALL), runId: "run-5", now: () => 0, log: () => {} });
+    const next = await goalSeqCounter(after)();
+    expect(next).toBe(GOAL_SEQ_BASE + 1);
+    await second.record(goalRecord, next, false, URL);
+    for (let n = 0; n < 2_600; n += 1) await second.record({ ...decision(), request: { state: {}, questions: { goal } }, answers: { goal: goalAnswer } }, n, false, URL);
+    const ids = (await exportRows(store)).trim().split("\n").map((line) => (JSON.parse(line) as { id: string }).id);
+    expect(ids).toContain(rowId(INSTALL, "run-5", GOAL_SEQ_BASE, "squire_goal", "mid"));
+    expect(ids).toContain(rowId(INSTALL, "run-5", GOAL_SEQ_BASE + 1, "squire_goal", "mid"));
   });
 });

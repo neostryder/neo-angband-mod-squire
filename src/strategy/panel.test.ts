@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AIMS_EMPTY, AIMS_HEADING, aimLines } from "./panel.js";
+import { AIMS_EMPTY, AIMS_HEADING, aimLines, panelLines } from "./panel.js";
 import type { Aim } from "./aims.js";
 
 const book: Aim = { kind: "spellbook", label: "next spellbook", detail: "", how: "save", price: 100, depth: null };
@@ -24,5 +24,17 @@ describe("aim panel lines", () => {
 
   it("says buy once the gold covers the price", () => {
     expect(aimLines([book], { gold: 100, depth: 0 })).toEqual(["1. Next spellbook: buy for 100 gold"]);
+  });
+
+  it("adds the near-term goal, and the long-term goal only when the switch is on", () => {
+    const near = "Rest to full. 10 of 40 hit points. Chosen on reaching a new level.";
+    const long = "Win the game. Chosen on the first look at this character.";
+    const state = { gold: 0, depth: 2 };
+    const hidden = panelLines([dive], state, { near, long, showLong: false });
+    expect(hidden.some((line) => line.startsWith("Long-term goal:"))).toBe(false);
+    expect(hidden.at(-1)).toBe(`Near-term goal: ${near}`);
+    const shown = panelLines([dive], state, { near: null, long, showLong: true });
+    expect(shown.at(-1)).toBe(`Long-term goal: ${long}`);
+    expect(panelLines([], state, { near: "", long: "", showLong: true })).toEqual([AIMS_EMPTY]);
   });
 });

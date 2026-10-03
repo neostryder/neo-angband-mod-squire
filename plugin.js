@@ -1,4 +1,4 @@
-// neo-angband-mod-squire - generated from plugin.ts by neo-angband-mod-build
+// s10-goals - generated from plugin.ts by neo-angband-mod-build
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
@@ -575,8 +575,8 @@ function autoexplore(options = {}) {
     label: "explore this floor",
     begin(ctx) {
       const cfg = ctx.cfg;
-      const awake = options.allowAwake === true ? [] : awakeInSight(ctx.view.monsters());
-      const first = awake[0];
+      const awake2 = options.allowAwake === true ? [] : awakeInSight(ctx.view.monsters());
+      const first = awake2[0];
       if (first !== void 0) {
         return {
           reason: "unsafe",
@@ -679,15 +679,15 @@ function campaign() {
         ctx.progress.idle = 0;
       }
       lastDepth = player.depth;
-      const hurt = player.maxHp > 0 && player.hp <= player.maxHp * ctx.cfg.retreatFraction;
-      const awake = awakeInSight(ctx.view.monsters());
+      const hurt2 = player.maxHp > 0 && player.hp <= player.maxHp * ctx.cfg.retreatFraction;
+      const awake2 = awakeInSight(ctx.view.monsters());
       if (standingOnHarm(ctx.view, ctx.terrain, at)) {
         const away = retreatFrom(ctx, [at]);
         if (away.kind === "step") return issue(away.command);
       }
-      if (hurt) {
-        if (awake.length > 0) {
-          const away = retreatFrom(ctx, awake.map((monster) => monster.grid));
+      if (hurt2) {
+        if (awake2.length > 0) {
+          const away = retreatFrom(ctx, awake2.map((monster) => monster.grid));
           if (away.kind === "step") return issue(away.command);
         } else {
           return issue(ctx.act.rest());
@@ -734,7 +734,7 @@ function campaign() {
       if (stairs.some((grid) => grid.x === at.x && grid.y === at.y)) return issue(ctx.act.ascend());
       const home = travelTo(ctx, stairs);
       if (home.kind === "step") return issue(home.command);
-      const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, ctx.terrain, grid) && !standingOnHarm(ctx.view, ctx.terrain, grid) && !awake.some((m) => adjacent(grid, m.grid)));
+      const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, ctx.terrain, grid) && !standingOnHarm(ctx.view, ctx.terrain, grid) && !awake2.some((m) => adjacent(grid, m.grid)));
       const next = safe[Math.floor(Math.random() * safe.length)];
       const dir = next === void 0 ? null : directionToward(at, next);
       return issue(dir === null ? ctx.act.hold() : ctx.act.move(dir));
@@ -1886,11 +1886,11 @@ function incomingDamage(view, at = view.player().grid, actions = 1, terrain, fac
 function threatWindow(view, at = view.player().grid, terrain, facts = {}) {
   return { one: incomingDamage(view, at, 1, terrain, facts), two: incomingDamage(view, at, 2, terrain, facts) };
 }
-function assessThreat(monster, player, awake, view, dreaded = /* @__PURE__ */ new Set(), terrain, energy) {
+function assessThreat(monster, player, awake2, view, dreaded = /* @__PURE__ */ new Set(), terrain, energy) {
   const town = townsperson(monster, player.depth);
   const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
   const recall = view.monsterRecall?.(monster.raceIndex);
-  const window2 = threatWindow(view, player.grid, terrain, { monsters: awake.some((m) => m.id === monster.id) ? awake : [...awake, monster], ...energy === void 0 ? {} : { energy } });
+  const window2 = threatWindow(view, player.grid, terrain, { monsters: awake2.some((m) => m.id === monster.id) ? awake2 : [...awake2, monster], ...energy === void 0 ? {} : { energy } });
   let lethality = player.hp <= window2.one.damage / 2 && window2.one.damage > 0 ? 3 : player.hp <= window2.one.damage && window2.one.damage > 0 ? 2 : player.hp <= window2.two.damage && window2.two.damage > 0 ? 1 : 0;
   if (recall === void 0 || recall === null) {
     const capability2 = Math.max(uniqueFloor, threatIndex(monster, player.level, Infinity, dreaded));
@@ -2481,7 +2481,7 @@ var DIR_DELTA = {
 function goalOfCommand(command, view) {
   const player = view.player();
   const at = player.grid;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+  const awake2 = view.monsters().filter((m) => m.visible && !m.asleep);
   const handle = typeof command.args?.["handle"] === "number" ? command.args["handle"] : null;
   const pack = readPack(view);
   const detection = detectionSources(view);
@@ -2494,9 +2494,9 @@ function goalOfCommand(command, view) {
       if (delta !== void 0) {
         const to = { x: at.x + delta[0], y: at.y + delta[1] };
         if (view.monsters().some((m) => m.grid.x === to.x && m.grid.y === to.y)) return "fight";
-        if (awake.length > 0) {
-          const nearestNow = Math.min(...awake.map((m) => steps(at, m.grid)));
-          const nearestAfter = Math.min(...awake.map((m) => steps(to, m.grid)));
+        if (awake2.length > 0) {
+          const nearestNow = Math.min(...awake2.map((m) => steps(at, m.grid)));
+          const nearestAfter = Math.min(...awake2.map((m) => steps(to, m.grid)));
           if (nearestAfter > nearestNow) return "retreat";
           if (nearestAfter < nearestNow) return "fight";
         }
@@ -2644,8 +2644,8 @@ function rankOf(apprentice) {
 function momentOf(view) {
   const p = view.player();
   const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
-  return { awake, hpBand: share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3, depth: p.depth };
+  const awake2 = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => m.id).sort((a, b) => a - b).join(",");
+  return { awake: awake2, hpBand: share3 >= 0.9 ? 0 : share3 >= 0.6 ? 1 : share3 >= 0.35 ? 2 : 3, depth: p.depth };
 }
 function isDecisionPoint(previous, now, goal) {
   if (goal === null) return false;
@@ -2816,12 +2816,65 @@ function pursuitsFor(persona, maxDepth, feelings = [], family = null, seed = nul
 function pursuitWeight(pursuits, kind) {
   return pursuits.find((p) => p.kind === kind)?.weight ?? 0;
 }
+function weightBand(weight) {
+  return weight >= 0.7 ? "strongly" : weight >= 0.5 ? "clearly" : "somewhat";
+}
 function pursuitFacts(pursuits) {
   const win = pursuits.find((p) => p.kind === "win");
   if (pursuits.length === 0) return {};
   return {
-    goals: `Goals, most wanted first: ${pursuits.map((p) => `${p.label} (${p.weight >= 0.7 ? "strongly" : p.weight >= 0.5 ? "clearly" : "somewhat"} wanted)`).join(", ")}.`,
+    goals: `Goals, most wanted first: ${pursuits.map((p) => `${p.label} (${weightBand(p.weight)} wanted)`).join(", ")}.`,
     ...win === void 0 ? {} : { win_urgency: `Winning the game matters ${winUrgency(win.weight) === "driven" ? "above everything" : winUrgency(win.weight) === "high" ? "a great deal" : winUrgency(win.weight) === "moderate" ? "somewhat" : "little"} to this character. ${win.detail}` }
+  };
+}
+var LEAD_FACTOR = 1.5;
+var LONG_LEVELS = [20, 30, 40];
+var LONG_DEPTHS = [30, 60];
+function longDue(stamp, level, maxDepth) {
+  const levels = LONG_LEVELS.filter((n) => level >= n);
+  const depths = LONG_DEPTHS.filter((n) => maxDepth >= n);
+  if (stamp === null) return { trigger: "on the first look at this character", stamp: { levels, depths } };
+  const nextLevels = levels.filter((n) => !stamp.levels.includes(n));
+  const nextDepths = depths.filter((n) => !stamp.depths.includes(n));
+  if (nextLevels.length === 0 && nextDepths.length === 0) return null;
+  const parts = [];
+  if (nextLevels.length === 1) parts.push(`character level ${String(nextLevels[0])}`);
+  else if (nextLevels.length > 1) parts.push(`character levels ${nextLevels.map(String).join(" and ")}`);
+  if (nextDepths.length === 1) parts.push(`maximum depth ${String(nextDepths[0])}`);
+  else if (nextDepths.length > 1) parts.push(`maximum depths ${nextDepths.map(String).join(" and ")}`);
+  return {
+    trigger: `at ${parts.join(" and ")}`,
+    stamp: { levels: [...stamp.levels, ...nextLevels], depths: [...stamp.depths, ...nextDepths] }
+  };
+}
+function leadPursuits(pursuits, kind) {
+  const led = kind === null ? pursuits.map((pursuit) => ({ ...pursuit })) : pursuits.map((pursuit) => pursuit.kind === kind ? { ...pursuit, weight: rounded(pursuit.weight * LEAD_FACTOR) } : { ...pursuit });
+  return led.sort((a, b) => b.weight - a.weight || (a.kind === "win" ? -1 : b.kind === "win" ? 1 : 0));
+}
+function longProgress(kind, maxDepth, familyDeepest) {
+  if (kind === "win" || kind === "depth") return `deepest dungeon level ${String(maxDepth)}`;
+  if (kind === "record" && familyDeepest !== null) return `deepest ${String(maxDepth)} of family ${String(familyDeepest)}`;
+  return null;
+}
+var NONE_OF_THESE2 = "None of the listed options suits this moment.";
+function longGoalRequest(view, pursuits) {
+  const player = view.player();
+  const criteria = {};
+  for (const pursuit of pursuits) criteria[pursuit.kind] = `${pursuit.label} (${weightBand(pursuit.weight)} wanted). ${pursuit.detail}`;
+  criteria["none_of_these"] = NONE_OF_THESE2;
+  return {
+    state: {
+      rules: "A long-term goal leads the character's play. The chosen goal's pull is raised. The others keep their weights, and winning the game stays a pull.",
+      character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
+      ...pursuitFacts(pursuits)
+    },
+    questions: {
+      long_goal: {
+        type: "choice",
+        instructions: "Which long-term goal should lead this character's play from here?",
+        criteria
+      }
+    }
   };
 }
 function sameRace(race, target) {
@@ -2838,7 +2891,7 @@ function nudgePursuits(dist, offers, pursuits, view, ceiling, escaping) {
   const uniqueInSight = view.monsters().some((m) => m.visible && m.raceFlags.includes("UNIQUE"));
   const grudge = pursuits.find((p) => p.kind === "grudge");
   const grudgeInSight = grudge?.target !== void 0 && view.monsters().some((m) => m.visible && sameRace(m.race, grudge.target));
-  const awake = view.monsters().some((m) => m.visible && !m.asleep);
+  const awake2 = view.monsters().some((m) => m.visible && !m.asleep);
   for (const offer of offers) {
     if (offer.risk > ceiling) continue;
     const current2 = out[offer.goal];
@@ -2863,7 +2916,7 @@ function nudgePursuits(dist, offers, pursuits, view, ceiling, escaping) {
         break;
       default:
         if (ATTACKS.has(offer.goal)) lift = (uniqueInSight ? 0.7 * w("uniques") : 0) + (grudgeInSight ? 0.8 * w("grudge") : 0);
-        else if (ESCAPES.has(offer.goal) && awake && player.hp < player.maxHp) lift = 0.5 * w("lineage");
+        else if (ESCAPES.has(offer.goal) && awake2 && player.hp < player.maxHp) lift = 0.5 * w("lineage");
     }
     out[offer.goal] = current2 * Math.max(0.4, 1 + PURSUIT_NUDGE * lift);
   }
@@ -3288,8 +3341,8 @@ function gearCandidates(view, favouredKind = null) {
       if (result !== null) {
         if (!keepsLauncher(equipment, result.after.equipment, hasAmmo)) continue;
         if (result.placements.some((place) => place.displaced !== null && cursed(shownName2(place.displaced) ?? ""))) continue;
-        const candidate = simulated(view, name, item.handle, result);
-        if (candidate !== null) out.push(candidate);
+        const candidate2 = simulated(view, name, item.handle, result);
+        if (candidate2 !== null) out.push(candidate2);
         continue;
       }
     }
@@ -3600,7 +3653,7 @@ function sellList(pack, view, persona, trophies = /* @__PURE__ */ new Set(), dar
   const out = [];
   const seen = /* @__PURE__ */ new Set();
   const keptDevice = /* @__PURE__ */ new Map();
-  const upgrades = new Set(gearCandidates(view).filter((candidate) => !candidate.unknown).map((candidate) => candidate.handle));
+  const upgrades = new Set(gearCandidates(view).filter((candidate2) => !candidate2.unknown).map((candidate2) => candidate2.handle));
   const remainingByKind = /* @__PURE__ */ new Map();
   const keep = keepTargets(view, persona, darkLesson);
   for (const [kind, total] of countByKind(view)) remainingByKind.set(kind, Math.max(0, total - (keep.get(kind) ?? 0)));
@@ -3879,6 +3932,7 @@ function defaultCfg() {
     wakeSleepers: false,
     collect: true,
     descend: true,
+    revealLongGoal: false,
     retreatFraction: DEFAULT_RETREAT_PERCENT / 100,
     errandSteps: DEFAULT_ERRAND_STEPS,
     idleSteps: 3
@@ -3893,7 +3947,8 @@ var RULE_CFG = {
   "squire.stopOnNewCreature": "stopOnNewCreature",
   "squire.wakeSleepers": "wakeSleepers",
   "squire.collect": "collect",
-  "squire.descend": "descend"
+  "squire.descend": "descend",
+  "squire.revealLongGoal": "revealLongGoal"
 };
 var RETREAT_PERCENT_SETTING = "squire.retreatPercent";
 var ERRAND_STEPS_SETTING = "squire.errandSteps";
@@ -4935,8 +4990,8 @@ var MAX_NUDGE = 0.2;
 var ARMOUR2 = [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR];
 var WEAPONS4 = [TV.HAFTED, TV.POLEARM, TV.SWORD];
 function wornKind(view, criteria) {
-  const candidate = gearCandidates(view).find((c) => c.criteria === criteria);
-  const item = candidate === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate.handle);
+  const candidate2 = gearCandidates(view).find((c) => c.criteria === criteria);
+  const item = candidate2 === void 0 ? void 0 : view.inventory().find((i) => i.handle === candidate2.handle);
   if (item === void 0) return null;
   const name = shownName2(item) ?? "";
   if (/Free Action/i.test(name)) return "free-action";
@@ -5253,8 +5308,8 @@ function createJourney(terrain, unseenDanger) {
     if (front.length === 0) return false;
     if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return true;
     if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return true;
-    const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
-    const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, void 0, terrain).band >= 2);
+    const awake2 = view.monsters().filter((monster) => monster.visible && !monster.asleep);
+    const dangerous = awake2.some((monster) => assessThreat(monster, player, awake2, view, void 0, terrain).band >= 2);
     if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth2 + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return true;
     return false;
   }
@@ -5712,7 +5767,7 @@ function num2(value) {
 }
 
 // src/brain/goals.ts
-var NONE_OF_THESE2 = "None of the listed options suits this moment.";
+var NONE_OF_THESE3 = "None of the listed options suits this moment.";
 var RETREAT_STEPS = 4;
 var MISSILE_RANGE = 10;
 function healthBand(hp, maxHp) {
@@ -5792,18 +5847,18 @@ function hardContactGroup(s) {
 function situationOf(view, dreaded = /* @__PURE__ */ new Set(), stationary = /* @__PURE__ */ new Set(), remembered3 = [], unseenDamage = 0, terrain, speedEnergy, harmless) {
   const player = view.player();
   const monsters = view.monsters();
-  const awake = awakeInSight(monsters).filter((monster) => harmless?.(monster) !== true);
+  const awake2 = awakeInSight(monsters).filter((monster) => harmless?.(monster) !== true);
   const target = pickTarget(monsters, player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
-  const worst = awake.reduce((max, m) => Math.max(max, assessThreat(m, player, awake, view, dreaded, terrain, speedEnergy).band), -1);
+  const worst = awake2.reduce((max, m) => Math.max(max, assessThreat(m, player, awake2, view, dreaded, terrain, speedEnergy).band), -1);
   const swarm = swarmOf(monsters);
   return {
     dreaded,
     stationary,
     swarm,
-    swarming: player.level <= 5 && awake.filter((monster) => monster.raceFlags.includes("MULTIPLY")).length >= 3 || swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
+    swarming: player.level <= 5 && awake2.filter((monster) => monster.raceFlags.includes("MULTIPLY")).length >= 3 || swarm !== null && swarm.count >= (dreaded.has(swarm.race) ? SWARM_LEAVE_DREADED : SWARM_LEAVE),
     view,
     pack: readPack(view),
-    awake,
+    awake: awake2,
     target,
     worst,
     hpShare: player.maxHp > 0 ? player.hp / player.maxHp : 1,
@@ -6042,7 +6097,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const view = s.view;
   const player = view.player();
   const at = player.grid;
-  const hurt = player.hp < player.maxHp;
+  const hurt2 = player.hp < player.maxHp;
   const out = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
@@ -6124,7 +6179,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const bleeding = player.status.cut > NASTY_CUT && s.pack.heal[0] !== void 0;
   const potion = healingPotion(view, incoming.damage);
   const cureStatus = player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0;
-  if ((hurt || cutBad) && potion !== void 0 && (!recovery || cureStatus)) {
+  if ((hurt2 || cutBad) && potion !== void 0 && (!recovery || cureStatus)) {
     const healed = healingAmount(view, potion);
     const after = Math.min(player.maxHp, player.hp + healed);
     if (healed >= incoming.damage || incoming.damage >= player.hp || cureStatus) {
@@ -6132,7 +6187,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     }
   }
   const healSpell = healingSpell(view, incoming.damage);
-  if (hurt && healSpell !== void 0) {
+  if (hurt2 && healSpell !== void 0) {
     const after = Math.min(player.maxHp, player.hp + healingAmount(view, healSpell));
     const bound = healSpell.fail === 0 ? after : player.hp;
     if (incoming.damage === 0 || after > incoming.damage && (after - player.hp >= incoming.damage || incoming.damage >= player.hp && after - player.hp > incoming.damage / 3)) add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, Math.max(healSpell.fail / 100, damageRisk(incoming.damage, bound)), false, bound - incoming.damage, healSpell.fail > 0);
@@ -6203,7 +6258,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const retreat = retreatStep(s, terrain, flight);
     if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add2("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
   }
-  if (!bleeding && s.awake.length === 0 && recovery && (hurt || player.sp < player.maxSp)) {
+  if (!bleeding && s.awake.length === 0 && recovery && (hurt2 || player.sp < player.maxSp)) {
     add2("rest", "Rest until hit points and mana recover.", 0.01, recallActive);
   }
   if (hungry(view) && s.pack.food[0] !== void 0) {
@@ -6234,7 +6289,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const activation = activationUse(view);
     if (activation !== null) add2("activate", `Activate ${activation.name} before the fight.`, exposure(s) * 0.6);
   }
-  if (!bleeding && hurt) {
+  if (!bleeding && hurt2) {
     const device = deviceHealUse(view);
     if (device !== null && !recovery) {
       const after = Math.min(player.maxHp, player.hp + healingAmount(view, device));
@@ -6246,8 +6301,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const resist = resistUse(view);
     if (resist !== null) add2("resist", `Use ${resist.name} before the ${breather.race} breathes${breather.element === null ? "" : ` ${breather.element}`}.`, exposure(s) * 0.6);
   }
-  const full = packFull(view);
-  if (!bleeding && !full) {
+  const full2 = packFull(view);
+  if (!bleeding && !full2) {
     const loot = floorTarget(view, terrain, saving, persona);
     if (loot?.look === true) add2("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to look at ${loot.name} on the floor.`, exposure(s) + 0.02);
     else if (loot !== null) {
@@ -6255,11 +6310,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add2("fetch", `Walk ${String(loot.away)} step${loot.away === 1 ? "" : "s"} to the ${loot.name} on the floor and pick it up.${why}`, exposure(s) + 0.02);
     }
   }
-  if (!bleeding && full) {
+  if (!bleeding && full2) {
     const junk = junkInPack(view);
     if (junk !== null) add2("drop_junk", `The pack is full; drop ${junk.name} to make room.`, exposure(s));
   }
-  if (hasFloorObject(view, at) && !full) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
+  if (hasFloorObject(view, at) && !full2) add2("pick_up", "Pick up the object on the floor under the character.", exposure(s));
   const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
   const townStairsReached = player.depth === 0 && !townNeedsStairs && reachableStairs(view, terrain);
   if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (reachableFrontier(view, terrain) || townNeedsStairs)) {
@@ -6513,8 +6568,8 @@ function createGoalPlanner(options) {
   }
   function whereNow(v) {
     const p = v.player();
-    const awake = awakeInSight(v.monsters()).map((m) => `${String(m.id)}@${String(m.grid.x)},${String(m.grid.y)}`).sort();
-    return JSON.stringify([p.depth, p.grid.x, p.grid.y, healthBand(p.hp, p.maxHp), statusOf(v, canRead(v)), awake]);
+    const awake2 = awakeInSight(v.monsters()).map((m) => `${String(m.id)}@${String(m.grid.x)},${String(m.grid.y)}`).sort();
+    return JSON.stringify([p.depth, p.grid.x, p.grid.y, healthBand(p.hp, p.maxHp), statusOf(v, canRead(v)), awake2]);
   }
   const fightCfg = { ...cfg, wakeSleepers: true };
   function context(view, act, progress, with_ = cfg) {
@@ -6541,16 +6596,16 @@ function createGoalPlanner(options) {
   }
   function watch(view) {
     const player = view.player();
-    const hurt = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
+    const hurt2 = player.maxHp > 0 && player.hp <= player.maxHp * cfg.retreatFraction;
     noteSeen(view);
     const watcher = createWatcher(view, {
       /* Already under the line: crossing it again is not news, but every
        * further blow is, so the model is asked again after each one. Poison
        * and bleeding cost a point every turn, which would end every plan at
        * once, so then only the damage-share rule below applies. */
-      stopOnAnyDamage: (hurt || !view.monsters().some((monster) => monster.visible && !monster.asleep)) && player.status.poisoned === 0 && player.status.cut === 0,
+      stopOnAnyDamage: (hurt2 || !view.monsters().some((monster) => monster.visible && !monster.asleep)) && player.status.poisoned === 0 && player.status.cut === 0,
       stopOnNewCreature: true,
-      stopOnLowHealth: !hurt,
+      stopOnLowHealth: !hurt2,
       retreatFraction: cfg.retreatFraction,
       /* Above the line, a big blow or a run of smaller ones is news too. */
       stopOnDamageShare: DAMAGE_SHARE_REDECIDE,
@@ -6569,8 +6624,8 @@ function createGoalPlanner(options) {
   function missionPlan(label, mission, view, with_ = cfg, limit = Infinity) {
     const progress = newProgress(view.player().depth);
     const player = view.player();
-    const hurt = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
-    const missionCfg = { ...with_, stopOnNewCreature: false, ...hurt ? { stopOnLowHealth: false } : {} };
+    const hurt2 = player.maxHp > 0 && player.hp <= player.maxHp * with_.retreatFraction;
+    const missionCfg = { ...with_, stopOnNewCreature: false, ...hurt2 ? { stopOnLowHealth: false } : {} };
     let begun = false;
     let done = false;
     let lastTurn = null;
@@ -6827,8 +6882,8 @@ function createGoalPlanner(options) {
       case "wear": {
         const personaNow = personaOf();
         const tieBreakKind = personaNow?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null;
-        const candidate = gearCandidates(view, tieBreakKind).find((gear) => !gear.unknown || (personaNow?.sliders.curiosity ?? 0) >= 50);
-        return once(`wear ${candidate?.name ?? "gear"}`, view, (ctx) => candidate === void 0 || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view, personaOf()?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null).some((gear) => gear.handle === candidate.handle) ? null : ctx.act.wear(candidate.handle));
+        const candidate2 = gearCandidates(view, tieBreakKind).find((gear) => !gear.unknown || (personaNow?.sliders.curiosity ?? 0) >= 50);
+        return once(`wear ${candidate2?.name ?? "gear"}`, view, (ctx) => candidate2 === void 0 || damageFor(situationNow(ctx.view)).damage >= ctx.view.player().hp || !gearCandidates(ctx.view, personaOf()?.toggles.favouredWeapons === true ? flourishesNow().favouredKind : null).some((gear) => gear.handle === candidate2.handle) ? null : ctx.act.wear(candidate2.handle));
       }
       case "detect": {
         const reactive = situationNow(view).unseenDamage > 0;
@@ -7190,11 +7245,14 @@ function createGoalPlanner(options) {
         }
         log(`goal: Squire widens its choices. ${reason}`);
       }
-      const aimList = options.strategy?.().aims ?? [];
+      const steeringNow = options.strategy?.();
+      const aimList = steeringNow?.aims ?? [];
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
+      const ended = steeringNow?.outcomes ?? [];
+      const textOf = (value) => value === void 0 || value === "" ? void 0 : value;
       const criteria = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
-      criteria["none_of_these"] = NONE_OF_THESE2;
+      criteria["none_of_these"] = NONE_OF_THESE3;
       const goal = {
         type: "choice",
         instructions: "You are playing Angband, a dungeon game where death is permanent. Which option gives this character the best chance to survive and keep making progress?",
@@ -7272,12 +7330,19 @@ function createGoalPlanner(options) {
         ["memory", "status", statusOf(view, canRead(view))],
         ["purpose", "gaps", gapFacts(view)],
         ["outcomes", "last", lastOutcome ?? void 0],
-        ["long_goal", "aims", aimNote ?? void 0],
+        /* The aim note sits with the mid-term goal. The three sentences use their own keys because a state key can be filed only once. */
+        ["outcomes", "recent", textOf(ended[0])],
+        ["outcomes", "prior", textOf(ended[1])],
+        ["outcomes", "older", textOf(ended[2])],
+        ["long_goal", "long_goal", textOf(steeringNow?.longGoal)],
+        ["mid_goal", "mid_goal", textOf(steeringNow?.midGoal)],
+        ["mid_goal", "aims", aimNote ?? void 0],
+        ["near_goal", "near_goal", textOf(steeringNow?.nearGoal)],
         ["orders", "orders", orderNote ?? void 0],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : void 0],
         ...entriesOf("memory", swarmNote(seen)),
         ...entriesOf("knowledge", lessonsFor(view)),
-        ["persona", "persona", persona === null ? void 0 : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }, ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } }]
+        ["persona", "persona", persona === null ? void 0 : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(steeringNow?.pursuits ?? []), ...flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }, ...believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` } }]
       ]);
       const fitted2 = fitToBudget(compiled);
       if (fitted2.shed.length > 0) log(`goal: the request was over ${String(STATE_TOKEN_CAP)} tokens, so it leaves out ${fitted2.shed.join(", ")}`);
@@ -7302,8 +7367,8 @@ function createGoalPlanner(options) {
       if (pick2 === "none_of_these") {
         const p = view.player();
         const s = situationNow(view);
-        const hurt = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
-        const danger = hurt && (s.awake.length > 0 || p.status.poisoned > 0 || p.status.cut > 0) || s.unseenDamage > 0 || s.worst >= 2 || digest.offers.some((o) => o.risk > 0.3);
+        const hurt2 = p.maxHp > 0 && p.hp <= p.maxHp * cfg.retreatFraction;
+        const danger = hurt2 && (s.awake.length > 0 || p.status.poisoned > 0 || p.status.cut > 0) || s.unseenDamage > 0 || s.worst >= 2 || digest.offers.some((o) => o.risk > 0.3);
         if (danger) {
           const priority2 = [
             ...stairsUnderfoot(s, terrain) ? ["leave_level", "retreat"] : [],
@@ -7585,6 +7650,196 @@ function judgmentsFor(view, persona, aims, wantTown, pursuits = []) {
   return { town, purchases: purchases.length > 1 ? purchases : [] };
 }
 
+// src/strategy/near.ts
+var NEAR_ORDER = ["explore", "rest", "down", "leave", "recall", "shop", "try", "position"];
+var TEXT = {
+  explore: { label: "explore this level", detail: "Walk the unexplored frontier of this level." },
+  rest: { label: "rest to full", detail: "Rest until hit points and spell points are full. Nothing is awake in view." },
+  down: { label: "go down", detail: "Take the stairs down. The journey offers it, and nothing hard is missing for the next level." },
+  leave: { label: "leave this level", detail: "Leave this level. It reads as dangerous, or a dangerous unique is in view." },
+  recall: { label: "recall to town", detail: "Read Word of Recall. Supplies are short and a scroll is in the pack." },
+  shop: { label: "shop or sell", detail: "Visit a shop the plan already wants." },
+  try: { label: "try an unknown item", detail: "Try an unknown item in the pack. Nothing is awake in view." },
+  position: { label: "take a defensible position", detail: "Take a defensible position. A creature in view is stronger than the character." }
+};
+var NONE_OF_THESE4 = "None of the listed options suits this moment.";
+var DANGER_NOW = {
+  feeling: "Leave this level, which feels dangerous.",
+  unique: "Leave this level while a dangerous unique is in view."
+};
+var DANGER_LEFT = {
+  feeling: "the character got off a level that felt dangerous",
+  unique: "the character got away from the dangerous unique it saw"
+};
+function awake(view) {
+  return view.monsters().some((monster) => monster.visible && !monster.asleep);
+}
+function hurt(view) {
+  const player = view.player();
+  return player.hp < player.maxHp || player.maxSp > 0 && player.sp < player.maxSp;
+}
+function full(view) {
+  const player = view.player();
+  return player.hp >= player.maxHp && (player.maxSp === 0 || player.sp >= player.maxSp);
+}
+function unknownInPack(view) {
+  return view.inventory().some((item) => /\{\?\?\}/.test(shownName2(item) ?? ""));
+}
+function stronger(view) {
+  const player = view.player();
+  return view.monsters().some((monster) => monster.visible && threatIndex(monster, player.level, player.hp, /* @__PURE__ */ new Set(), player.depth === 0) >= 2);
+}
+function dangerousUnique(view) {
+  const player = view.player();
+  return view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && (threatIndex(monster, player.level, player.hp, /* @__PURE__ */ new Set(), player.depth === 0) >= 2 || fastUniqueAtLowLevel(monster, player)));
+}
+function journeyKeeps(view, terrain, persona, goal) {
+  const journey = createJourney(terrain);
+  const kept = journey.apply([
+    { goal: "explore", criteria: "Explore this level.", risk: 0.1 },
+    { goal: "descend", criteria: "Take the stairs down.", risk: 0.1 }
+  ], view, persona, /* @__PURE__ */ new Set(), false);
+  return kept.some((offer) => offer.goal === goal);
+}
+function shopsWanted(view, facts) {
+  if (facts.terrain === null || view.player().depth !== 0) return false;
+  const entrances = facts.home === void 0 ? neededEntrances(view, facts.terrain, facts.persona, /* @__PURE__ */ new Set(), facts.aims, emptyFlourishes(), facts.memories) : neededEntrances(view, facts.terrain, facts.persona, /* @__PURE__ */ new Set(), facts.aims, emptyFlourishes(), facts.memories, facts.home);
+  return entrances.length > 0;
+}
+function downOpen(view, facts) {
+  if (facts.terrain === null) return true;
+  if (descentGaps(view, view.player().depth + 1).hard.length > 0) return false;
+  return journeyKeeps(view, facts.terrain, facts.persona, "descend");
+}
+function candidate(kind) {
+  return { kind, label: TEXT[kind].label, detail: TEXT[kind].detail };
+}
+function recallTurns(view) {
+  const reported = view.player().recall;
+  return typeof reported === "number" ? reported : null;
+}
+function nearCandidates(view, facts) {
+  const player = view.player();
+  const out = [];
+  if (facts.terrain !== null && frontiers(view, facts.terrain).length > 0 && journeyKeeps(view, facts.terrain, facts.persona, "explore")) out.push(candidate("explore"));
+  if (hurt(view) && !awake(view)) out.push(candidate("rest"));
+  if (facts.terrain !== null && descentGaps(view, player.depth + 1).hard.length === 0 && journeyKeeps(view, facts.terrain, facts.persona, "descend")) out.push(candidate("down"));
+  const danger = badLevelFeeling(view.messages()) !== null ? "feeling" : dangerousUnique(view) ? "unique" : null;
+  if (danger !== null) out.push({ ...candidate("leave"), detail: DANGER_NOW[danger], danger });
+  if (player.depth > 0 && recallItem(view) !== null && supplyMargin(view) !== null && canRead(view)) out.push(candidate("recall"));
+  if (shopsWanted(view, facts)) out.push(candidate("shop"));
+  if (unknownInPack(view) && !awake(view)) out.push(candidate("try"));
+  if (stronger(view)) out.push(candidate("position"));
+  return out;
+}
+function recallStuck(view) {
+  const turns = recallTurns(view);
+  if (turns !== null && turns > 0) return null;
+  if (recallItem(view) !== null) return canRead(view) ? null : { end: "failed", reason: "the character cannot read the Word of Recall" };
+  return turns === null ? null : { end: "failed", reason: "no Word of Recall is in the pack" };
+}
+function nearEnded(kind, view, facts) {
+  const depth2 = view.player().depth;
+  const left = depth2 !== facts.startDepth;
+  switch (kind) {
+    case "explore":
+      if (left) return { end: "abandoned", reason: "the character left the level" };
+      if (facts.terrain === null) return null;
+      if (frontiers(view, facts.terrain).length === 0) return { end: "met", reason: "the level has no unexplored frontier" };
+      if (!journeyKeeps(view, facts.terrain, facts.persona, "explore")) return { end: "met", reason: "the explore offer is gone" };
+      return null;
+    case "rest":
+      if (full(view)) return { end: "met", reason: "hit points and spell points are full" };
+      if (left) return { end: "abandoned", reason: "the character left the level" };
+      if (awake(view)) return { end: "failed", reason: "a creature is awake in view" };
+      return null;
+    case "down":
+      if (depth2 > facts.startDepth) return { end: "met", reason: "dungeon level increased" };
+      if (depth2 < facts.startDepth) return { end: "failed", reason: "dungeon level decreased" };
+      if (!downOpen(view, facts)) return { end: "failed", reason: "the way down is no longer open" };
+      return null;
+    case "leave":
+      if (left) return { end: "met", reason: facts.danger === void 0 ? "the character left the level" : DANGER_LEFT[facts.danger] };
+      return null;
+    case "recall":
+      if (depth2 === 0) return { end: "met", reason: "the character is in town" };
+      if (supplyMargin(view) === null) return { end: "met", reason: "supplies are no longer short" };
+      if (left) return { end: "abandoned", reason: "the character left the level" };
+      return recallStuck(view);
+    case "shop":
+      if (left && facts.startDepth === 0) return { end: "abandoned", reason: "left town" };
+      if (facts.terrain !== null && !shopsWanted(view, facts)) return { end: "met", reason: "no shop trip is wanted" };
+      return null;
+    case "try":
+      if (!unknownInPack(view)) return { end: "met", reason: "no unknown item is in the pack" };
+      if (left) return { end: "abandoned", reason: "the character left the level" };
+      if (awake(view)) return { end: "failed", reason: "a creature is awake in view" };
+      return null;
+    case "position":
+      if (!stronger(view)) return { end: "met", reason: "no creature in view is stronger than the character" };
+      if (left) return { end: "abandoned", reason: "the character left the level" };
+      return null;
+  }
+}
+function nearProgress(kind, view, terrain) {
+  const player = view.player();
+  if (kind === "rest") {
+    const hp = `${String(player.hp)} of ${String(player.maxHp)} hit points`;
+    return player.maxSp > 0 ? `${hp}, ${String(player.sp)} of ${String(player.maxSp)} spell points` : hp;
+  }
+  if (kind === "explore" && terrain !== null) {
+    const n = frontiers(view, terrain).length;
+    return n === 1 ? "1 unexplored frontier" : `${String(n)} unexplored frontiers`;
+  }
+  return null;
+}
+function nearGoalRequest(view, candidates, midLabel) {
+  const player = view.player();
+  const criteria = {};
+  for (const item of candidates) criteria[item.kind] = `${item.label}. ${item.detail}`;
+  criteria["none_of_these"] = NONE_OF_THESE4;
+  return {
+    state: {
+      rules: "A near-term goal is something the character can do right now. Pick one that can be finished on this visit.",
+      character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
+      ...midLabel === null ? {} : { mid_goal: midLabel }
+    },
+    questions: {
+      near_goal: {
+        type: "choice",
+        instructions: "Which of these should the character do next?",
+        criteria
+      }
+    }
+  };
+}
+function pickNear(candidates, answers) {
+  if (candidates.length === 0) return null;
+  const answer = answers["near_goal"];
+  if (answer?.type === "choice" && answer.choice !== "none_of_these") {
+    const found = candidates.find((item) => item.kind === answer.choice);
+    if (found !== void 0) return found;
+  }
+  return [...candidates].sort((a, b) => NEAR_ORDER.indexOf(a.kind) - NEAR_ORDER.indexOf(b.kind))[0] ?? null;
+}
+
+// src/strategy/outcomes.ts
+function cap(text) {
+  return text.length === 0 ? text : text.charAt(0).toUpperCase() + text.slice(1);
+}
+function goalSentence(label, progress, trigger) {
+  const head = `${cap(label)}.`;
+  const why = `Chosen ${trigger}.`;
+  return progress === null ? `${head} ${why}` : `${head} ${cap(progress)}. ${why}`;
+}
+function outcomeSentence(outcome) {
+  const name = outcome.level === "long" ? "long-term" : outcome.level === "mid" ? "mid-term" : "near-term";
+  const verb = outcome.end === "abandoned" ? "was abandoned" : outcome.end === "met" ? "was met" : "failed";
+  const line = `The ${name} goal ${outcome.goal} ${verb} after ${String(outcome.held)} turns, from dungeon level ${String(outcome.startDepth)} to dungeon level ${String(outcome.endDepth)}, because ${outcome.reason}.`;
+  if (outcome.end !== "met" || outcome.reward === null || outcome.reward.length === 0) return line;
+  return `${line} ${outcome.reward.endsWith(".") ? outcome.reward : `${outcome.reward}.`}`;
+}
+
 // src/strategy/review.ts
 var REVIEW_TURNS = 2e3;
 var TRIGGER_TEXT = {
@@ -7593,7 +7848,10 @@ var TRIGGER_TEXT = {
   level: "after gaining a level",
   periodic: "after 2,000 game turns",
   budget: "when the level's game-turn budget runs out",
-  stock: "after looking in a shop"
+  stock: "after looking in a shop",
+  met: "because the aim was satisfied",
+  failed: "after a stocked item sold out",
+  lapsed: "after the character stopped trusting what it remembered of a shop"
 };
 function reviewDue(memory, now) {
   if (memory === null) return "arrival";
@@ -7603,42 +7861,54 @@ function reviewDue(memory, now) {
   if (now.turn - memory.reviewTurn >= REVIEW_TURNS) return "periodic";
   return null;
 }
-var WORTH = [
-  "not worth pursuing now",
-  "worth pursuing later",
-  "worth pursuing soon",
-  "worth pursuing first"
-];
-function scoreRequest(view, aims, pursuits = []) {
+var NONE_OF_THESE5 = "None of the listed options suits this moment.";
+function midGoalRequest(view, aims, pursuits = []) {
   const player = view.player();
-  const questions = {};
-  const described = {};
+  const criteria = {};
   for (const aim of aims) {
-    questions[aim.kind] = {
-      type: "score",
-      instructions: `How worth pursuing right now is this aim: ${aim.label}? Judge it against the character's other aims and its chance of surviving.`,
-      criteria: WORTH
-    };
-    described[aim.kind] = aim.stock === void 0 ? aim.detail : `${aim.detail} I last saw this item ${String(Math.max(0, view.turn() - aim.stock.turn))} game turns ago. I should check the shop before counting on it.`;
+    criteria[aim.kind] = aim.stock === void 0 ? aim.detail : `${aim.detail} I last saw this item ${String(Math.max(0, view.turn() - aim.stock.turn))} game turns ago. I should check the shop before counting on it.`;
   }
+  criteria["none_of_these"] = NONE_OF_THESE5;
   return {
     state: {
       rules: "An aim is something worth working toward over the next few dungeon levels. Dying early ends every aim, so a safe gain outranks a risky one. Rank the aims the way this character would, given the goals it holds.",
       character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
-      aims: described,
       ...pursuits.length === 0 ? {} : pursuitFacts(pursuits)
     },
-    questions
+    questions: {
+      mid_goal: {
+        type: "choice",
+        instructions: "Which aim should this character work toward over the next few dungeon levels?",
+        criteria
+      }
+    }
   };
 }
 function rankByScore(aims, answers) {
-  const scoreOf = (aim) => {
-    const answer = answers[aim.kind];
-    return (answer?.type === "score" ? answer.score : 0) * (aim.stock?.confidence ?? 1);
-  };
+  const answer = answers["mid_goal"];
+  const probs = answer?.type === "choice" ? answer.probabilities : {};
+  const scoreOf = (aim) => (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
   return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 var TRIP_GOLD_GROWTH = 1.5;
+function choiceOf(answer) {
+  if (answer?.type !== "choice" || answer.choice === "none_of_these") return null;
+  return answer.choice;
+}
+function longLog(trigger, label, by) {
+  return `Squire looked over its long-term goals ${trigger}: ${label}.${by}`;
+}
+function nearLog(trigger, label, by) {
+  return `Squire looked over what it can do right now ${trigger}: ${label}.${by}`;
+}
+function midProgress(aim, view) {
+  const player = view.player();
+  if ((aim.kind === "depth" || aim.kind === "win" || aim.kind === "preparation") && aim.depth !== null) {
+    return `dungeon level ${String(player.depth)} of ${String(aim.depth)}`;
+  }
+  if (aim.how === "save" && aim.price !== null) return `${String(player.gold)} of ${String(aim.price)} gold`;
+  return null;
+}
 function createStrategy(deps) {
   let memory = null;
   let pacing2 = createLevelPacing();
@@ -7655,8 +7925,22 @@ function createStrategy(deps) {
   let deepest = 0;
   let townCall = null;
   let buying = null;
-  function pursuitsNow() {
+  let terrain = null;
+  let lastView = null;
+  let longStamp = null;
+  let longKind = null;
+  let longHold = null;
+  let longAsking = false;
+  let midHold = null;
+  let nearHold = null;
+  let failedKind = null;
+  let failedReason = "";
+  const outcomeHistory = [];
+  function basePursuits() {
     return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null, deps.seed?.() ?? null);
+  }
+  function pursuitsNow() {
+    return leadPursuits(basePursuits(), longKind);
   }
   function clear() {
     memory = null;
@@ -7670,30 +7954,106 @@ function createStrategy(deps) {
     generation += 1;
     answers = null;
     stockReview = false;
+    terrain = null;
+    lastView = null;
+    longStamp = null;
+    longKind = null;
+    longHold = null;
+    longAsking = false;
+    midHold = null;
+    nearHold = null;
+    failedKind = null;
+    failedReason = "";
+    outcomeHistory.length = 0;
   }
   function reset() {
     clear();
     inherited = [];
     shops.reset();
   }
-  async function rank2(view, candidates) {
-    const fixed = inFixedOrder(candidates);
-    const askAims = candidates.filter((aim) => aim.kind !== "win").length >= 2;
-    if (!askAims) return { ranked: fixed, source: "fixed", by: "" };
+  function push(level, hold, end, reason, turn, depth2, reward) {
+    const outcome = {
+      level,
+      goal: hold.label,
+      end,
+      reason,
+      held: Math.max(0, turn - hold.turn),
+      startDepth: hold.depth,
+      endDepth: depth2,
+      reward
+    };
+    const text = outcomeSentence(outcome);
+    outcomeHistory.push(text);
+    deps.record?.({ kind: "goal", turn, depth: depth2, text });
+  }
+  function takeLong(pursuit, trigger, turn, depth2) {
+    if (longHold !== null && longHold.id !== pursuit.kind) {
+      push("long", longHold, "abandoned", trigger, turn, depth2, null);
+      longHold = null;
+    }
+    longKind = pursuit.kind;
+    if (longHold !== null) {
+      longHold = { ...longHold, label: pursuit.label, detail: pursuit.detail, trigger };
+      return;
+    }
+    longHold = { id: pursuit.kind, label: pursuit.label, detail: pursuit.detail, trigger, turn, depth: depth2 };
+  }
+  function factsFor(view, startDepth, danger) {
+    const home = deps.homeStock?.();
+    return {
+      terrain,
+      persona: deps.persona?.() ?? null,
+      aims,
+      memories: shops.all(),
+      startDepth,
+      ...home === void 0 ? {} : { home },
+      ...danger === void 0 ? {} : { danger }
+    };
+  }
+  function midHoldFor(aim, trigger, turn, depth2) {
+    const shelf = aim.stock === void 0 ? void 0 : shops.all().find((memory2) => memory2.feat === aim.stock?.feat);
+    return {
+      id: aim.kind,
+      label: aim.label,
+      detail: aim.detail,
+      trigger,
+      turn,
+      depth: depth2,
+      ...aim.stock === void 0 || shelf === void 0 ? {} : { stock: aim.stock, shelf }
+    };
+  }
+  function shopLapse(hold, view) {
+    const { stock, shelf } = hold;
+    if (stock === void 0 || shelf === void 0) return null;
+    const memories = shops.all();
+    const restored = [...memories.filter((memory2) => memory2.feat !== shelf.feat), { ...shelf, turn: view.turn(), lifetime: LASTING_MEMORY }];
+    if (!candidateAims(view, restored, deps.persona?.() ?? null).some((aim) => aim.kind === hold.id)) return null;
+    const now = memories.find((memory2) => memory2.feat === shelf.feat);
+    const listed = now !== void 0 && now.stock.some((item) => wareName(item.name) === wareName(stock.name));
+    if (!listed) return { end: "failed", reason: `the shop sold out of ${stock.name}` };
+    return { end: "abandoned", reason: `the memory of ${stock.name} in the shop grew too old to count on` };
+  }
+  function buildCandidates(view) {
+    const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
+    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
+    return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
+  }
+  async function ask2(request2) {
     const backend = deps.backend();
-    if (backend === null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because no model server is set up." };
-    const capped = deps.tally.overCap(backend, deps.now());
-    if (capped !== null) return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the spend limit is reached." };
-    const request2 = scoreRequest(view, candidates, pursuitsNow());
+    if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
+    if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
     let result;
     try {
       result = await deps.send(request2);
     } catch {
-      return { ranked: fixed, source: "fixed", by: " It kept the usual order, because the request failed." };
+      return { answer: null, why: "the request failed", backend: backend.label };
     }
-    if (!result.ok) return { ranked: fixed, source: "fixed", by: ` It kept the usual order, because ${backend.label} answered with ${result.failure.kind}.` };
+    if (!result.ok) return { answer: null, why: `${backend.label} answered with ${result.failure.kind}`, backend: backend.label };
     deps.tally.record(backend, result.usage, deps.now());
-    return { ranked: rankByScore(candidates, result.answers), source: "model", by: ` ${backend.label} ranked them.`, answers: result.answers };
+    const key2 = Object.keys(request2.questions)[0] ?? "";
+    const answer = result.answers[key2] ?? null;
+    if (answer !== null) deps.onAsked?.(request2, result.answers);
+    return { answer, why: "", backend: backend.label };
   }
   function judge2(depth2, judgments) {
     const persona = deps.persona?.() ?? null;
@@ -7709,33 +8069,88 @@ function createStrategy(deps) {
       buying = purchaseOrder(judgments.purchases, persona, pursuits, rng);
     }
   }
-  async function review(view, trigger, turn, mine) {
-    const seq = ++latest;
-    const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
-    inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
-    const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
-    aims = inFixedOrder(candidates);
-    const depth2 = view.player().depth;
-    const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
-    const done = await rank2(view, candidates);
-    if (mine !== generation) return;
-    if (view.player().depth === depth2) judge2(depth2, judgments);
-    if (seq !== latest) return;
-    answers = done.source === "model" ? done.answers ?? null : null;
-    aims = done.ranked;
-    last = { trigger, turn, source: done.source };
-    const names = done.ranked.map((aim) => aim.label).join(", ");
-    deps.log(`Squire looked over its aims ${TRIGGER_TEXT[trigger]}: ${names === "" ? "none apply" : names}.${done.by}`);
+  async function keep(args) {
+    const ranks = args.midTrigger !== null || args.nearReason !== null && args.nearList.length > 0;
+    const seq = ranks ? ++latest : latest;
+    if (args.midTrigger !== null) aims = inFixedOrder(args.candidates);
+    if (args.longDue !== null) {
+      let longSent;
+      try {
+        longSent = await ask2(longGoalRequest(args.view, args.pursuits));
+      } finally {
+        if (args.mine === generation) longAsking = false;
+      }
+      if (args.mine === generation) {
+        longStamp = args.longDue.stamp;
+        const picked2 = args.pursuits.find((pursuit) => pursuit.kind === choiceOf(longSent.answer)) ?? args.pursuits[0];
+        if (picked2 !== void 0) {
+          takeLong(picked2, args.longDue.trigger, args.turn, args.depth);
+          const by = longSent.why === "" && choiceOf(longSent.answer) !== null ? ` ${longSent.backend} ranked them.` : ` It kept the heaviest one, because ${longSent.why === "" ? "none of the options was chosen" : longSent.why}.`;
+          deps.log(longLog(args.longDue.trigger, picked2.label, by));
+        }
+      }
+    }
+    if (!ranks || args.mine !== generation) return;
+    const askAims = args.candidates.filter((aim) => aim.kind !== "win").length >= 2;
+    const midSent = args.midTrigger !== null && askAims ? await ask2(midGoalRequest(args.view, args.candidates, pursuitsNow())) : null;
+    const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
+    const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
+    const rankedPreview = args.midTrigger === null ? args.candidates : midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates);
+    let nearReason = args.nearReason;
+    const topKind = rankedPreview[0]?.kind ?? null;
+    if (nearReason === null && args.midTrigger !== null && args.previousMid !== null && topKind !== null && topKind !== args.previousMid) {
+      nearReason = "because the mid-term goal changed";
+    }
+    const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask2(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
+    if (args.mine !== generation || seq !== latest) return;
+    if (args.midTrigger !== null && args.view.player().depth === args.depth) judge2(args.depth, args.judgments);
+    if (args.midTrigger !== null) {
+      const source = midModel ? "model" : "fixed";
+      const by = midSent === null || !askAims ? "" : midModel ? ` ${midSent.backend} ranked them.` : ` It kept the usual order, because ${midSent.why === "" ? "none of the options was chosen" : midSent.why}.`;
+      answers = midModel && midAnswer !== null ? { mid_goal: midAnswer } : null;
+      aims = rankedPreview;
+      last = { trigger: args.midTrigger, turn: args.turn, source };
+      const names = rankedPreview.map((aim) => aim.label).join(", ");
+      deps.log(`Squire looked over its aims ${TRIGGER_TEXT[args.midTrigger]}: ${names === "" ? "none apply" : names}.${by}`);
+      const top = rankedPreview[0];
+      if (top !== void 0) {
+        if (midHold !== null && midHold.id === top.kind) midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], midHold.turn, midHold.depth);
+        else {
+          if (midHold !== null) push("mid", midHold, "abandoned", TRIGGER_TEXT[args.midTrigger], args.turn, args.depth, null);
+          midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], args.turn, args.depth);
+        }
+      }
+    }
+    if (nearSent !== null && nearReason !== null) {
+      const picked2 = pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
+      if (picked2 !== null) {
+        const model = nearSent.why === "" && choiceOf(nearSent.answer) === picked2.kind;
+        const by = model ? ` ${nearSent.backend} ranked them.` : ` It kept the first one, because ${nearSent.why === "" ? "none of the options was chosen" : nearSent.why}.`;
+        if (nearHold !== null && nearHold.id !== picked2.kind) push("near", nearHold, "abandoned", nearReason, args.turn, args.depth, null);
+        const danger = picked2.danger === void 0 ? {} : { danger: picked2.danger };
+        if (nearHold === null || nearHold.id !== picked2.kind) nearHold = { id: picked2.kind, label: picked2.label, detail: picked2.detail, trigger: nearReason, turn: args.turn, depth: args.depth, ...danger };
+        else nearHold = { id: nearHold.id, label: picked2.label, detail: picked2.detail, trigger: nearReason, turn: nearHold.turn, depth: nearHold.depth, ...danger };
+        deps.log(nearLog(nearReason, picked2.label, by));
+      }
+    }
   }
   return {
-    remember(view, terrain) {
-      const seen = shops.observe(view, terrain, deps.persona?.() ?? null);
+    remember(view, terrainNow) {
+      terrain = terrainNow;
+      const seen = shops.observe(view, terrainNow, deps.persona?.() ?? null);
       if (!seen.changed) return;
       for (const aim of aims) {
         const stock = aim.stock;
         if (!seen.entered || stock === void 0 || stock.feat !== seen.memory?.feat || seen.memory.stock.some((item) => wareName(item.name) === wareName(stock.name))) continue;
         const owned = [...view.inventory(), ...view.equipment().filter((item) => item !== null)].some((item) => wareName(item.name ?? "") === wareName(stock.name));
-        if (!owned) deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
+        if (!owned) {
+          deps.log(`I put coins aside for ${stock.name}. Now the shopkeeper has none. I should have come back sooner.`);
+          if (midHold?.id === aim.kind) {
+            failedKind = aim.kind;
+            failedReason = `the shop sold out of ${stock.name}`;
+          }
+        }
       }
       const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
       const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
@@ -7751,6 +8166,7 @@ function createStrategy(deps) {
       if (player.dead) return;
       const turn = view.turn();
       if (memory !== null && turn < memory.reviewTurn) reset();
+      lastView = view;
       if (aims.some((aim) => aim.stock !== void 0)) {
         const fresh = candidateAims(view, shops.all(), deps.persona?.() ?? null);
         const updated = aims.flatMap((aim) => aim.stock === void 0 ? [aim] : fresh.filter((entry) => entry.kind === aim.kind));
@@ -7759,15 +8175,85 @@ function createStrategy(deps) {
       deepest = Math.max(deepest, player.maxDepth);
       if (player.depth === 0) townCall = null;
       else buying = null;
+      const heldNear = nearHold;
+      let nearEndText = null;
+      if (heldNear !== null && NEAR_ORDER.includes(heldNear.id)) {
+        const ended = nearEnded(heldNear.id, view, factsFor(view, heldNear.depth, heldNear.danger));
+        if (ended !== null) {
+          push("near", heldNear, ended.end, ended.reason, turn, player.depth, null);
+          nearHold = null;
+          nearEndText = ended.end === "failed" ? "because the near-term goal failed" : ended.end === "abandoned" ? "because the near-term goal was abandoned" : "because the near-term goal was met";
+        }
+      }
       const budget = pacing2.observe(view);
-      const trigger = reviewDue(memory, { depth: player.depth, level: player.level, turn }) ?? (stockReview ? "stock" : budget.review ? "budget" : null);
-      memory = { depth: player.depth, level: player.level, reviewTurn: trigger === null ? memory?.reviewTurn ?? turn : turn };
-      if (trigger === null) return;
-      stockReview = false;
-      if (trigger === "town") tripGold = player.gold;
-      inFlight = review(view, trigger, turn, generation).catch((error) => {
+      const firstLook = memory === null;
+      const scheduled = reviewDue(memory, { depth: player.depth, level: player.level, turn });
+      const candidates = buildCandidates(view);
+      let midTrigger = scheduled ?? (stockReview ? "stock" : budget.review ? "budget" : null);
+      const previousMid = midHold?.id ?? null;
+      const heldMid = midHold;
+      if (heldMid !== null && failedKind === heldMid.id) {
+        push("mid", heldMid, "failed", failedReason === "" ? "the shop sold out" : failedReason, turn, player.depth, null);
+        midHold = null;
+        midTrigger = "failed";
+      } else if (heldMid !== null && !candidates.some((aim) => aim.kind === heldMid.id)) {
+        const lapse = shopLapse(heldMid, view);
+        if (lapse === null) push("mid", heldMid, "met", "the aim was satisfied", turn, player.depth, heldMid.detail);
+        else push("mid", heldMid, lapse.end, lapse.reason, turn, player.depth, null);
+        midHold = null;
+        midTrigger = lapse === null ? "met" : lapse.end === "failed" ? "failed" : "lapsed";
+      }
+      failedKind = null;
+      failedReason = "";
+      const pursuits = basePursuits();
+      const reached = Math.max(deepest, player.maxDepth);
+      const heldLong = longHold;
+      let longEnded = null;
+      if (heldLong !== null && !longAsking && !pursuits.some((pursuit) => pursuit.kind === heldLong.id)) {
+        const familyDeepest = deps.family?.()?.deepest ?? null;
+        const met = heldLong.id === "record" && familyDeepest !== null && reached >= familyDeepest;
+        push("long", heldLong, met ? "met" : "abandoned", met ? `the character reached dungeon level ${String(reached)}, past the family's deepest of ${String(familyDeepest)}` : "the goal stopped fitting this character", turn, player.depth, null);
+        longHold = null;
+        longKind = null;
+        longEnded = met ? "after the long-term goal was met" : "after the old long-term goal stopped fitting";
+      }
+      const milestone = longAsking ? null : longDue(longStamp, player.level, reached);
+      const due = longEnded === null ? milestone : { trigger: longEnded, stamp: milestone?.stamp ?? longStamp ?? { levels: [], depths: [] } };
+      if (due !== null && pursuits.length < 2) {
+        longStamp = due.stamp;
+        const only = pursuits[0];
+        if (only !== void 0) {
+          takeLong(only, due.trigger, turn, player.depth);
+          if (!firstLook) deps.log(longLog(due.trigger, only.label, " It kept the heaviest one, because only one long-term goal applies."));
+        }
+      }
+      memory = { depth: player.depth, level: player.level, reviewTurn: midTrigger === null ? memory?.reviewTurn ?? turn : turn };
+      if (midTrigger !== null) stockReview = false;
+      if (scheduled === "town") tripGold = player.gold;
+      const arrival = firstLook || scheduled === "arrival" || scheduled === "town";
+      const nearList = nearCandidates(view, factsFor(view, player.depth));
+      const reason = nearEndText ?? (arrival ? "on reaching a new level" : null);
+      const longAsk = due !== null && pursuits.length >= 2;
+      if (midTrigger === null && !longAsk && (reason === null || nearList.length === 0)) return;
+      const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
+      if (longAsk) longAsking = true;
+      const kept = keep({
+        view,
+        mine: generation,
+        turn,
+        depth: player.depth,
+        candidates,
+        midTrigger,
+        judgments,
+        pursuits,
+        longDue: longAsk && due !== null ? due : null,
+        nearReason: nearList.length === 0 ? null : reason,
+        nearList,
+        previousMid
+      }).catch((error) => {
         deps.log(`Squire couldn't look over its aims: ${String(error)}`);
       });
+      inFlight = Promise.all([inFlight, kept]).then(() => void 0);
     },
     ranked: () => aims,
     pursuits: pursuitsNow,
@@ -7779,7 +8265,25 @@ function createStrategy(deps) {
       inherited = list;
     },
     reset,
-    settled: () => inFlight
+    settled: () => inFlight,
+    longLine() {
+      if (longHold === null) return null;
+      const pursuit = pursuitsNow().find((item) => item.kind === longHold?.id);
+      const family = deps.family?.() ?? null;
+      return goalSentence(longHold.label, pursuit === void 0 ? null : longProgress(pursuit.kind, deepest, family?.deepest ?? null), longHold.trigger);
+    },
+    midLine() {
+      if (midHold === null) return null;
+      const aim = aims.find((item) => item.kind === midHold?.id);
+      return goalSentence(aim?.label ?? midHold.label, aim !== void 0 && lastView !== null ? midProgress(aim, lastView) : null, midHold.trigger);
+    },
+    nearLine() {
+      if (nearHold === null || lastView === null) return null;
+      const kind = NEAR_ORDER.includes(nearHold.id) ? nearHold.id : null;
+      return goalSentence(nearHold.label, kind === null ? null : nearProgress(kind, lastView, terrain), nearHold.trigger);
+    },
+    outcomeLines: () => outcomeHistory.slice(-3).reverse(),
+    showLongGoal: () => deps.revealLongGoal?.() === true
   };
 }
 
@@ -7952,8 +8456,8 @@ function fade(memory, turns, levelChanges, persona) {
   const l = Number.isFinite(levelChanges) ? Math.max(0, levelChanges) : 0;
   return Math.max(0, memory - (t * TURN_FADE + l * LEVEL_FADE) * fadeRate(persona));
 }
-function refreshed(memory, full) {
-  return full ? 1 : Math.min(1, memory + ACT_REFRESH);
+function refreshed(memory, full2) {
+  return full2 ? 1 : Math.min(1, memory + ACT_REFRESH);
 }
 function isForgotten(memory) {
   return memory < FORGET_BELOW;
@@ -10284,7 +10788,8 @@ var TEMPLATES = {
   "divergence": [(f, d) => `Chose my own way at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I went against advice: ${f}.`, (f, d) => `${f} at ${d} ft. I made the call.`],
   "lesson": [(f, d) => `Learned at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I learned: ${f}.`, (f, d) => `${f} That lesson came at ${d} ft.`],
   "instruction": [(f, d) => `Kept to my orders at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} That was at ${d} ft.`],
-  "lineage": [(f, d) => `Carried the family story to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} The line reached ${d} ft.`]
+  "lineage": [(f, d) => `Carried the family story to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} The line reached ${d} ft.`],
+  "goal": [(f, d) => `${f} That was at ${d} ft.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} I was at ${d} ft.`]
 };
 function chronicleLine(event, persona, rng) {
   const templates = TEMPLATES[event.kind];
@@ -10311,7 +10816,8 @@ var KINDS = /* @__PURE__ */ new Set([
   "divergence",
   "lesson",
   "lineage",
-  "instruction"
+  "instruction",
+  "goal"
 ]);
 function eventFrom(value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
@@ -10413,10 +10919,10 @@ var ABILITY_WORDS = [
 var RESIST_WORDS = /\b(resists|is unaffected|is immune)\b/i;
 function culprit(view) {
   const at = view.player().grid;
-  const awake = view.monsters().filter((m) => m.visible && !m.asleep);
-  const adjacent2 = awake.filter((m) => steps(at, m.grid) <= 1);
+  const awake2 = view.monsters().filter((m) => m.visible && !m.asleep);
+  const adjacent2 = awake2.filter((m) => steps(at, m.grid) <= 1);
   if (adjacent2.length === 1) return adjacent2[0];
-  if (adjacent2.length === 0 && awake.length === 1) return awake[0];
+  if (adjacent2.length === 0 && awake2.length === 1) return awake2[0];
   return void 0;
 }
 function named2(view, message) {
@@ -10530,13 +11036,13 @@ function createJournal(initial, deps) {
     });
   }
   function worstRace(view) {
-    const awake = view.monsters().filter((m) => m.visible && !m.asleep);
-    return awake.sort((a, b) => b.level - a.level)[0]?.race;
+    const awake2 = view.monsters().filter((m) => m.visible && !m.asleep);
+    return awake2.sort((a, b) => b.level - a.level)[0]?.race;
   }
   return {
     observe(view) {
       const p = view.player();
-      const awake = view.monsters().filter((m) => m.visible && !m.asleep);
+      const awake2 = view.monsters().filter((m) => m.visible && !m.asleep);
       const breeders = /* @__PURE__ */ new Map();
       for (const m of view.monsters()) if (m.visible && m.raceFlags.includes("MULTIPLY")) breeders.set(m.race, (breeders.get(m.race) ?? 0) + 1);
       const now = {
@@ -10547,7 +11053,7 @@ function createJournal(initial, deps) {
         hpShare: p.maxHp > 0 ? p.hp / p.maxHp : 1,
         dead: p.dead,
         status: { paralyzed: p.status.paralyzed, confused: p.status.confused, blind: p.status.blind, afraid: p.status.afraid },
-        away: new Map(awake.map((m) => [m.id, steps(p.grid, m.grid)])),
+        away: new Map(awake2.map((m) => [m.id, steps(p.grid, m.grid)])),
         breeders
       };
       const turn = view.turn();
@@ -10788,13 +11294,16 @@ function summaryForTelemetry(model) {
 
 // src/laya/rows.ts
 var PREFIX2 = "squire/laya/";
+var GOAL_SEQ_BASE = 25e4;
+var GOAL_SUFFIXES = ["long", "mid", "near"];
 var CHUNK2 = 100;
 var MAX_CHUNKS = 50;
 var activeHuman = null;
 function chunkKey2(runId, seq) {
   return `${PREFIX2}${runId}/${String(Math.floor(seq / CHUNK2)).padStart(8, "0")}`;
 }
-function rowId(install, runId, seq, pilot) {
+function rowId(install, runId, seq, pilot, suffix) {
+  if (suffix !== void 0) return `squire-${install}-${runId}-${String(seq)}-${suffix}`;
   if (pilot === "squire_gate") return `squire-${install}-${runId}-${String(seq)}-gate`;
   return `squire-${install}-${runId}-${String(seq * 2 + (pilot === "squire_goal" ? 0 : 1))}`;
 }
@@ -10854,14 +11363,45 @@ function createRows(store, runId) {
     attachHuman(rowId2, answers) {
       return write(() => change(rowId2, { human: answers }));
     },
+    /** The highest sequence number among this run's rows with one of these id suffixes, or null when there are none. */
+    lastSeq(suffixes) {
+      return write(async () => {
+        let best = null;
+        for (const key2 of await store.keys(`${PREFIX2}${runId}/`)) {
+          const value = await store.get(key2);
+          if (!Array.isArray(value)) continue;
+          for (const row2 of value) {
+            const match = /-(\d+)-([a-z]+)$/.exec(row2.id);
+            if (match === null || !suffixes.includes(match[2])) continue;
+            const seq = Number(match[1]);
+            if (best === null || seq > best) best = seq;
+          }
+        }
+        return best;
+      });
+    },
     async idle() {
       await pending;
     }
   };
 }
+function goalSeqCounter(rows) {
+  let last = rows.lastSeq(GOAL_SUFFIXES).then((seq) => Math.max(GOAL_SEQ_BASE - 1, seq ?? -1), () => GOAL_SEQ_BASE - 1);
+  return () => {
+    last = last.then((seq) => seq + 1);
+    return last;
+  };
+}
 
 // src/laya/shadow.ts
-var PILOTS = [["goal", "squire_goal"], ["in_character", "squire_in_character"], ["ready_to_descend", "squire_gate"]];
+var PILOTS = [
+  { id: "goal", pilot: "squire_goal" },
+  { id: "in_character", pilot: "squire_in_character" },
+  { id: "ready_to_descend", pilot: "squire_gate" },
+  { id: "long_goal", pilot: "squire_goal", suffix: "long" },
+  { id: "mid_goal", pilot: "squire_goal", suffix: "mid" },
+  { id: "near_goal", pilot: "squire_goal", suffix: "near" }
+];
 function capturingNet(net, adapter) {
   return {
     transport: net.transport,
@@ -10899,12 +11439,12 @@ function createShadow(options) {
       if (record6.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks = [];
-      for (const [questionId, pilot] of PILOTS) {
-        const question = record6.request.questions[questionId];
-        const answer = record6.answers[questionId];
+      for (const entry of PILOTS) {
+        const question = record6.request.questions[entry.id];
+        const answer = record6.answers[entry.id];
         if (question === void 0 || answer === void 0) continue;
-        const shouldSend = enabled && record6.backend === "Jev" && options.net !== null && !busy.has(pilot);
-        if (shouldSend) busy.add(pilot);
+        const shouldSend = enabled && record6.backend === "Jev" && options.net !== null && !busy.has(entry.id);
+        if (shouldSend) busy.add(entry.id);
         let rowWritten = () => {
         };
         const written = new Promise((resolve) => {
@@ -10914,15 +11454,15 @@ function createShadow(options) {
         tasks.push((async () => {
           try {
             const install = await options.install;
-            const id = rowId(install, options.runId, seq, pilot);
-            const questions = { [questionId]: question };
+            const id = entry.suffix === void 0 ? rowId(install, options.runId, seq, entry.pilot) : rowId(install, options.runId, seq, entry.pilot, entry.suffix);
+            const questions = { [entry.id]: question };
             const row2 = {
               id,
-              pilot,
+              pilot: entry.pilot,
               ts,
               state: record6.request.state,
               questions,
-              jev: { model: record6.model ?? "jev-latest", answers: { [questionId]: answer } },
+              jev: { model: record6.model ?? "jev-latest", answers: { [entry.id]: answer } },
               outcome: { plan: record6.outcome }
             };
             await options.rows.append(row2, seq);
@@ -10930,7 +11470,7 @@ function createShadow(options) {
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
             const request2 = { state: record6.request.state, questions };
-            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
+            const backend = selfHosted("laya", "Laya", url, `laya:${entry.pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => {
               adapter = value;
             }), backend, request2, options.now);
@@ -10944,7 +11484,7 @@ function createShadow(options) {
           } finally {
             rowWritten();
             pendingRows.delete(written);
-            if (shouldSend) busy.delete(pilot);
+            if (shouldSend) busy.delete(entry.id);
           }
         })());
       }
@@ -11069,12 +11609,32 @@ function createRuntime(host, options = {}) {
       for (const l of chronicleListeners) l(line);
     }
   });
+  const nextGoalSeq = goalSeqCounter(layaRows);
+  let goalRecorded = Promise.resolve();
   const strategy = createStrategy({
     backend: () => backendFor(config),
     send: (request2) => self.send(request2),
     tally,
     now,
     log: (message) => host.log(message),
+    record: (event) => journal.event(event, false),
+    revealLongGoal: () => host.flags?.["squire.revealLongGoal"] === true,
+    onAsked: (request2, answers) => {
+      if (backendFor(config)?.label !== "Jev") return;
+      goalRecorded = nextGoalSeq().then((seq) => {
+        void shadow.record({
+          token: null,
+          backend: "Jev",
+          request: request2,
+          context: null,
+          answers,
+          usage: { inputTokens: 0, outputTokens: 0, estimated: true },
+          model: null,
+          latencyMs: 0,
+          outcome: "goal"
+        }, seq, config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+      });
+    },
     feelings: () => feelingsNow(),
     persona: () => character.persona ?? activePersona(config),
     family: () => {
@@ -11331,12 +11891,14 @@ function createRuntime(host, options = {}) {
     },
     async exportLayaRows() {
       await logLoaded;
+      await goalRecorded;
       await shadow.rowsReady();
       await layaRows.idle();
       return exportRows(store);
     },
     async layaRowCount() {
       await logLoaded;
+      await goalRecorded;
       await shadow.rowsReady();
       await layaRows.idle();
       return countRows(store);
@@ -11518,7 +12080,24 @@ function createRuntime(host, options = {}) {
         familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? []]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits() }),
+        strategy: () => {
+          const longGoal = strategy.longLine();
+          const midGoal = strategy.midLine();
+          const nearGoal = strategy.nearLine();
+          const outcomes = strategy.outcomeLines();
+          return {
+            aims: orders.promote(strategy.ranked()),
+            tripAllowed: (gold) => strategy.tripAllowed(gold),
+            storeMemory: strategy.shops(),
+            homeStock: strategy.homeStock(),
+            saveHomeStock: (stock) => strategy.saveHomeStock(stock),
+            pursuits: strategy.pursuits(),
+            ...longGoal === null ? {} : { longGoal },
+            ...midGoal === null ? {} : { midGoal },
+            ...nearGoal === null ? {} : { nearGoal },
+            ...outcomes.length === 0 ? {} : { outcomes }
+          };
+        },
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
@@ -12410,6 +12989,12 @@ function aimLines(aims, state) {
   if (aims.length === 0) return [AIMS_EMPTY];
   return aims.map((aim, i) => `${String(i + 1)}. ${aim.label.charAt(0).toUpperCase()}${aim.label.slice(1)}: ${how(aim, state)}`);
 }
+function panelLines(aims, state, goals) {
+  const lines2 = aimLines(aims, state);
+  if (goals.near !== null && goals.near !== "") lines2.push(`Near-term goal: ${goals.near}`);
+  if (goals.showLong && goals.long !== null && goals.long !== "") lines2.push(`Long-term goal: ${goals.long}`);
+  return lines2;
+}
 
 // src/ui/dashboard.ts
 function mountDashboard(body2, rt) {
@@ -12483,7 +13068,12 @@ function mountDashboard(body2, rt) {
   }
   function drawAims() {
     const player = rt.decisionView()?.player();
-    const lines2 = aimLines(rt.strategy().ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 });
+    const strategy = rt.strategy();
+    const lines2 = panelLines(strategy.ranked(), { gold: player?.gold ?? 0, depth: player?.depth ?? 0 }, {
+      near: strategy.nearLine(),
+      long: strategy.longLine(),
+      showLong: strategy.showLongGoal()
+    });
     fill(aimsBox, ...lines2.map((l) => h("div", { class: "entry" }, l)));
     const grudges = [...rt.familyMemoryLines(), ...rt.flourishLines()];
     fill(grudgesBox, grudges.length === 0 ? null : h("h3", {}, "Family memory"), ...grudges.map((l) => h("div", { class: "entry" }, l)));

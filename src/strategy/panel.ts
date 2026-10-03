@@ -29,3 +29,18 @@ export function aimLines(aims: readonly Aim[], state: AimPanelState): string[] {
   if (aims.length === 0) return [AIMS_EMPTY];
   return aims.map((aim, i) => `${String(i + 1)}. ${aim.label.charAt(0).toUpperCase()}${aim.label.slice(1)}: ${how(aim, state)}`);
 }
+
+export interface PanelGoals {
+  readonly near: string | null;
+  /** Shown only when the player turned the long-term goal on. */
+  readonly long: string | null;
+  readonly showLong: boolean;
+}
+
+/** The aim lines, then the near-term goal, then the long-term goal when the switch is on. */
+export function panelLines(aims: readonly Aim[], state: AimPanelState, goals: PanelGoals): string[] {
+  const lines = aimLines(aims, state);
+  if (goals.near !== null && goals.near !== "") lines.push(`Near-term goal: ${goals.near}`);
+  if (goals.showLong && goals.long !== null && goals.long !== "") lines.push(`Long-term goal: ${goals.long}`);
+  return lines;
+}

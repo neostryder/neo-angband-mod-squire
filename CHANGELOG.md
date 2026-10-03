@@ -21,6 +21,7 @@ Fixed.
 
 ### Added
 - [Visible] **Squire's model is told how its character works.** A Mage hears that it casts with Intelligence, a Necromancer that lit ground spoils its spells, a Blackguard that its mana comes from hitting things. Birth options that change the game, like no up staircases or no selling, go in too. Reading them takes one new permission: the game's options.
+- [Visible] **Squire works toward goals at three ranges.** It picks a long-term goal from its persona's pursuits, such as winning or going deeper than the family ever has, and that goal pulls harder on its choices. It works on one mid-term aim at a time, like a spellbook or a lantern, and picks a step for the level it's on, like exploring, resting or taking the stairs. The panel shows the step and the aim, and the new Show the long-term goal setting adds the long one. Each goal that ends goes into the run report as met, failed or dropped.
 
 ### Changed
 - [Visible] [Balance] **Going deeper with something missing is a judgment call now.** Squire used to refuse the stairs down until the character passed every check for the next depth. Light, food and at least half the levels and hit points that depth asks for are still required. Past those, Squire asks its model whether the character is ready anyway, and a cautious persona needs a firmer yes than a bold one. When no answer comes back, the character stays on its level.

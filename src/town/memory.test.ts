@@ -88,8 +88,8 @@ describe("shop memory", () => {
     const depth = aims.find((aim) => aim.kind === "depth")!;
     expect(lantern.stock?.confidence).toBe(0.5);
     expect(aims.findIndex((aim) => aim.kind === "armour")).toBeLessThan(aims.indexOf(lantern));
-    const score = (value: number) => ({ type: "score" as const, score: value, confidence: 1, probabilities: [] });
-    expect(rankByScore([lantern, depth], { lantern: score(3), depth: score(2) })[0]?.kind).toBe("depth");
+    const choice = { type: "choice" as const, choice: "lantern", confidence: 1, probabilities: { lantern: 0.9, depth: 0.5 } };
+    expect(rankByScore([lantern, depth], { mid_goal: choice })[0]?.kind).toBe("depth");
     w.advance(200);
     strategy.observe(view);
     expect(stockConfidence(strategy.shops()[0]!, view.turn())).toBe(0);
@@ -184,9 +184,9 @@ describe("shop memory", () => {
   it("drops a sold weapon aim and rejects a late ranking of the old shelf", async () => {
     const w = world({ map: ["#####", "#@.G#", "#####"], player: { depth: 0 }, stores: [shop("a Dagger (1d4) of Slay Evil", 900)] });
     const logs: string[] = [];
-    let release!: (value: AskResult) => void;
+    const releases: ((value: AskResult) => void)[] = [];
     const strategy = createStrategy({
-      backend: () => JEV, send: () => new Promise((resolve) => { release = resolve; }),
+      backend: () => JEV, send: () => new Promise((resolve) => { releases.push(resolve); }),
       tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), now: () => 0, log: (line) => logs.push(line),
     });
     w.moveTo({ x: 3, y: 1 });
@@ -197,7 +197,17 @@ describe("shop memory", () => {
     w.setStores([{ ...shop(), stock: [] }]);
     w.moveTo({ x: 3, y: 1 });
     strategy.remember(w.view, w.terrain);
-    release({ ok: true, answers: {}, usage: { inputTokens: 0, outputTokens: 0, estimated: false }, model: null, latencyMs: 0, server: "test" });
+    const dropped = { ok: true, answers: {}, usage: { inputTokens: 0, outputTokens: 0, estimated: false }, model: null, latencyMs: 0, server: "test" } as AskResult;
+    for (let step = 0; step < 6; step += 1) {
+      if (releases.length === 0) {
+        await Promise.resolve();
+        if (releases.length === 0) break;
+      }
+      for (const done of releases.splice(0)) done(dropped);
+      /* ask() and the keeper each resume on their own turn, so the next request is not queued yet. */
+      await Promise.resolve();
+      await Promise.resolve();
+    }
     await strategy.settled();
     expect(strategy.ranked().some((aim) => aim.kind === "weapon")).toBe(false);
     expect(logs).toHaveLength(1);

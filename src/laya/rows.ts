@@ -18,6 +18,14 @@ export interface LayaRow {
 }
 
 const PREFIX = "squire/laya/";
+
+/**
+ * Where goal question row numbers start: above every decision and below every
+ * Knight's Lessons row, so goal chunks outlast old decision chunks and the
+ * kinds never share an id.
+ */
+export const GOAL_SEQ_BASE = 250_000;
+const GOAL_SUFFIXES: readonly string[] = ["long", "mid", "near"];
 const CHUNK = 100;
 const MAX_CHUNKS = 50;
 let activeHuman: ((rowId: string, answers: Readonly<Record<string, string>>) => Promise<void>) | null = null;
@@ -26,8 +34,9 @@ function chunkKey(runId: string, seq: number): string {
   return `${PREFIX}${runId}/${String(Math.floor(seq / CHUNK)).padStart(8, "0")}`;
 }
 
-/** The pilot's fixed slot makes each id unique without adding a variable suffix. Yes-or-no gates came later and take a fixed suffix, so older ids keep their train or test side. */
-export function rowId(install: string, runId: string, seq: number, pilot: Pilot): string {
+/** The pilot's fixed slot makes each id unique without adding a variable suffix. Yes-or-no gates came later and take a fixed suffix, and the goal questions take their own, so older ids keep their train or test side. */
+export function rowId(install: string, runId: string, seq: number, pilot: Pilot, suffix?: string): string {
+  if (suffix !== undefined) return `squire-${install}-${runId}-${String(seq)}-${suffix}`;
   if (pilot === "squire_gate") return `squire-${install}-${runId}-${String(seq)}-gate`;
   return `squire-${install}-${runId}-${String(seq * 2 + (pilot === "squire_goal" ? 0 : 1))}`;
 }
@@ -103,6 +112,32 @@ export function createRows(store: KvStore, runId: string) {
     attachHuman(rowId: string, answers: Readonly<Record<string, string>>): Promise<void> {
       return write(() => change(rowId, { human: answers }));
     },
+    /** The highest sequence number among this run's rows with one of these id suffixes, or null when there are none. */
+    lastSeq(suffixes: readonly string[]): Promise<number | null> {
+      return write(async () => {
+        let best: number | null = null;
+        for (const key of await store.keys(`${PREFIX}${runId}/`)) {
+          const value = await store.get(key);
+          if (!Array.isArray(value)) continue;
+          for (const row of value as LayaRow[]) {
+            const match = /-(\d+)-([a-z]+)$/.exec(row.id);
+            if (match === null || !suffixes.includes(match[2]!)) continue;
+            const seq = Number(match[1]);
+            if (best === null || seq > best) best = seq;
+          }
+        }
+        return best;
+      });
+    },
     async idle(): Promise<void> { await pending; },
+  };
+}
+
+/** Goal question row numbers for one run, continuing from the stored rows so a reload never reuses an id. */
+export function goalSeqCounter(rows: { lastSeq(suffixes: readonly string[]): Promise<number | null> }): () => Promise<number> {
+  let last = rows.lastSeq(GOAL_SUFFIXES).then((seq) => Math.max(GOAL_SEQ_BASE - 1, seq ?? -1), () => GOAL_SEQ_BASE - 1);
+  return () => {
+    last = last.then((seq) => seq + 1);
+    return last;
   };
 }

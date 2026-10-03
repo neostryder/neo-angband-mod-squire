@@ -26,6 +26,14 @@ export interface Steering {
   readonly saveHomeStock?: (stock: HomeStock) => void;
   /** The long goals the persona holds, most wanted first, with the win among them. */
   readonly pursuits?: readonly Pursuit[];
+  /** One sentence for the long-term goal. The model sees it even when the panel hides it. */
+  readonly longGoal?: string;
+  /** One sentence for the mid-term goal. */
+  readonly midGoal?: string;
+  /** One sentence for the near-term goal. */
+  readonly nearGoal?: string;
+  /** The last goals that ended, newest first. */
+  readonly outcomes?: readonly string[];
 }
 
 /** The aim an offer serves, kept on the offer for the nudge. */
