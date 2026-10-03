@@ -3,7 +3,7 @@
 import type { Answer, Question } from "../brain/systemone.js";
 import type { KvStore } from "../memory/kv.js";
 
-export type Pilot = "squire_goal" | "squire_in_character";
+export type Pilot = "squire_goal" | "squire_in_character" | "squire_gate";
 
 export interface LayaRow {
   readonly id: string;
@@ -26,8 +26,9 @@ function chunkKey(runId: string, seq: number): string {
   return `${PREFIX}${runId}/${String(Math.floor(seq / CHUNK)).padStart(8, "0")}`;
 }
 
-/** The pilot's fixed slot makes both ids unique without adding a variable suffix. */
+/** The pilot's fixed slot makes each id unique without adding a variable suffix. Yes-or-no gates came later and take a fixed suffix, so older ids keep their train or test side. */
 export function rowId(install: string, runId: string, seq: number, pilot: Pilot): string {
+  if (pilot === "squire_gate") return `squire-${install}-${runId}-${String(seq)}-gate`;
   return `squire-${install}-${runId}-${String(seq * 2 + (pilot === "squire_goal" ? 0 : 1))}`;
 }
 

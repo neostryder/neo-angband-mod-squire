@@ -54,6 +54,7 @@ describe("Laya shadow rows", () => {
     expect(exported.endsWith("\n")).toBe(true);
     expect(rowId(INSTALL, "run-1", 3, "squire_goal")).toBe(`squire-${INSTALL}-run-1-6`);
     expect(rowId(INSTALL, "run-1", 3, "squire_in_character")).toBe(`squire-${INSTALL}-run-1-7`);
+    expect(rowId(INSTALL, "run-1", 3, "squire_gate")).toBe(`squire-${INSTALL}-run-1-3-gate`);
     const parsed = exported.trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(parsed).toEqual([
       {

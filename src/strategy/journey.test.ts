@@ -213,7 +213,10 @@ describe("journey offer and execution guards", () => {
     const journey = createJourney(w.terrain);
     expect(goals(w, journey)).toContain("descend");
     const plan = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
+    /* A small shortfall is the readiness answer's to weigh; under half the floor the guard stops it. */
     w.setPlayer({ maxHp: 20 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
+    w.setPlayer({ maxHp: 14 });
     expect(plan.step(w.view, w.act)).toBeNull();
   });
 
@@ -313,15 +316,24 @@ describe("journey offer and execution guards", () => {
 });
 
 describe("bounded exploration and earning", () => {
-  it("stops optional exploration and offers only a prepared deeper or safer level after the budget", () => {
+  it("stops optional exploration and names the gaps of an unprepared descent after the budget", () => {
     const w = suppliedWorld({ map: ROOM, player: { level: 1, maxLevel: 1, hp: 20, maxHp: 20 } });
     const journey = createJourney(w.terrain);
     goals(w, journey);
     w.advance(500);
-    const available = goals(w, journey);
-    expect(available).toContain("leave_level");
-    expect(available).not.toContain("descend");
-    expect(available).not.toContain("explore");
+    const available = journey.apply(offers("explore", "descend", "recall_town", "wait", "rest", "fight"), w.view, null, new Set(), false);
+    expect(available.map((offer) => offer.goal)).toContain("leave_level");
+    expect(available.map((offer) => offer.goal)).not.toContain("explore");
+    const descend = available.find((offer) => offer.goal === "descend");
+    expect(descend?.gaps).toEqual(["maximum character level 2", "30 maximum hit points"]);
+    expect(descend?.criteria).toContain("The next level still asks for maximum character level 2; 30 maximum hit points.");
+  });
+
+  it("never offers a descent without light, without food or far below the level floor", () => {
+    const base = { map: ROOM, player: { level: 2, maxLevel: 2, hp: 30, maxHp: 30 } };
+    expect(goals(suppliedWorld(base))).toContain("descend");
+    expect(goals(suppliedWorld({ ...base, player: { ...base.player, maxHp: 14, hp: 14 } }))).not.toContain("descend");
+    expect(goals(suppliedWorld({ ...base, player: { ...base.player, status: { food: 100 } } }))).not.toContain("descend");
   });
 
   it("keeps a prepared descent available when the level budget runs out", () => {

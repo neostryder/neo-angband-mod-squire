@@ -22,7 +22,12 @@ Fixed.
 ### Added
 - [Visible] **Squire's model is told how its character works.** A Mage hears that it casts with Intelligence, a Necromancer that lit ground spoils its spells, a Blackguard that its mana comes from hitting things. Birth options that change the game, like no up staircases or no selling, go in too. Reading them takes one new permission: the game's options.
 
+### Changed
+- [Visible] [Balance] **Going deeper with something missing is a judgment call now.** Squire used to refuse the stairs down until the character passed every check for the next depth. Light, food and at least half the levels and hit points that depth asks for are still required. Past those, Squire asks its model whether the character is ready anyway, and a cautious persona needs a firmer yes than a bold one. When no answer comes back, the character stays on its level.
+
 ### Fixed
+- [Visible] **Squire only fears the spells it has seen.** It used to count every spell a kind of creature can cast, so a creature the character had never met was already feared for magic nobody had watched it use. Its spells now count once the monster memory shows it casting or breathing.
+- [Visible] **Race and class protection counts toward the deep levels.** A Dwarf cannot be blinded, yet Squire still sent it looking for blindness protection before dungeon level 56. Protection from blindness and confusion now counts whether it comes from race, class or a worn item.
 - [Visible] **No more trips down on a dying torch.** Whenever its other choices had run out, Squire could leave town, or Recall back down, with a single torch and nothing to replace it. Going down now takes a light that never runs out, or a lit one plus a spare torch or flask of oil. Stairs taken to escape are exempt.
 - [Visible] **Laya plays with Squire's trained model.** With the Model name setting empty, Squire asked Laya's base model, so a trained Squire model on the server was never used. It now asks for `laya:squire_goal`, and a server without that model answers with its base model as before.
 - [Visible] **Squire sells at every shop that buys.** The Bookseller, Magic Shop and Black Market were taken for the home, so a spare wand, ring or book never made it to the store that buys it. Each shop now goes by its own name, and the Black Market is a stop only for goods no other store buys.

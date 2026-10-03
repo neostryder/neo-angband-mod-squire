@@ -22,7 +22,9 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -30,6 +32,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
 {
   "character": "Level 5 Human Warrior, on dungeon level 2 (deepest reached 1).",
   "creatures": "3 giant white mouse: an easy kill each, the nearest 2 steps away",
+  "gaps": "The character is prepared for dungeon level 3.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 33 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -65,7 +68,9 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   "persona": [
     "persona",
   ],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -73,6 +78,7 @@ exports[`decision context > compiles a cautious persona with lessons into layers
 {
   "character": "Level 5 Human Warrior, on dungeon level 1 (deepest reached 1).",
   "creatures": "No creatures in sight.",
+  "gaps": "The character is prepared for dungeon level 2.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 0 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -110,7 +116,9 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -118,6 +126,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
 {
   "character": "Level 5 Human Warrior, on dungeon level 1 (deepest reached 1).",
   "creatures": "No creatures in sight.",
+  "gaps": "For dungeon level 2 the character still lacks: working light; five food units and no hunger.",
   "ground": "Safe ground.",
   "health": "full: 40 of 40 hit points",
   "hunger": "The character is hungry.",
@@ -151,7 +160,9 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -159,6 +170,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
 {
   "character": "Level 5 Human Mage, on dungeon level 2 (deepest reached 1).",
   "creatures": "kobold: an easy kill, 4 steps away",
+  "gaps": "For dungeon level 3 the character still lacks: maximum character level 11.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 0 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -192,7 +204,9 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -200,6 +214,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
 {
   "character": "Level 5 Human Warrior, on dungeon level 6 (deepest reached 1).",
   "creatures": "3 jackal: an easy kill each, the nearest 3 steps away, faster than the character",
+  "gaps": "For dungeon level 7 the character still lacks: maximum character level 7; one usable Word of Recall.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 33 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -233,7 +248,9 @@ exports[`decision context > compiles a persona with a grudge into layers and the
   "persona": [
     "persona",
   ],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -241,6 +258,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
 {
   "character": "Level 5 Human Warrior, on dungeon level 4 (deepest reached 1).",
   "creatures": "cave spider: an easy kill, 3 steps away",
+  "gaps": "For dungeon level 5 the character still lacks: maximum character level 6; one usable Word of Recall.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 0 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -276,7 +294,9 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -284,6 +304,7 @@ exports[`decision context > compiles a sleeping monster into layers and the same
 {
   "character": "Level 5 Human Warrior, on dungeon level 3 (deepest reached 1).",
   "creatures": "cave bear: dangerous, 4 steps away, asleep",
+  "gaps": "The character is prepared for dungeon level 4.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 0 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -314,7 +335,9 @@ exports[`decision context > compiles a stationary floating eye into layers and t
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -322,6 +345,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
 {
   "character": "Level 5 Human Warrior, on dungeon level 1 (deepest reached 1).",
   "creatures": "floating eye: an easy kill, 1 steps away",
+  "gaps": "The character is prepared for dungeon level 2.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 11 HP damage in one action and 22 in two. Status danger 0; uncertainty 11. These are conservative bounds, not death probabilities.",
@@ -352,7 +376,9 @@ exports[`decision context > compiles a unique in view into layers and the same s
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -360,6 +386,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
 {
   "character": "Level 5 Human Warrior, on dungeon level 5 (deepest reached 1).",
   "creatures": "Bullroarer the Hobbit: deadly, 4 steps away, unique, faster than the character",
+  "gaps": "For dungeon level 6 the character still lacks: maximum character level 6; one usable Word of Recall.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action and 38 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
@@ -390,7 +417,9 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -398,6 +427,7 @@ exports[`decision context > compiles an unseen attacker into layers and the same
 {
   "character": "Level 5 Human Warrior, on dungeon level 1 (deepest reached 1).",
   "creatures": "No creatures in sight.",
+  "gaps": "The character is prepared for dungeon level 2.",
   "ground": "Safe ground.",
   "health": "full: 56 of 60 hit points",
   "incoming": "Up to 4 HP damage in one action and 8 in two. Status danger 0; uncertainty 4. These are conservative bounds, not death probabilities.",
@@ -428,7 +458,9 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   "orders": [],
   "outcomes": [],
   "persona": [],
-  "purpose": [],
+  "purpose": [
+    "gaps",
+  ],
 }
 `;
 
@@ -436,6 +468,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
 {
   "character": "Level 5 Human Warrior, on dungeon level 3 (deepest reached 1).",
   "creatures": "Grip, Farmer Maggot's Dog: a fair fight, 2 steps away",
+  "gaps": "For dungeon level 4 the character still lacks: 50 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
   "ground": "Safe ground.",
   "health": "near death: 6 of 30 hit points",
   "incoming": "Up to 1 HP damage in one action and 16 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",

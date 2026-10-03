@@ -55,6 +55,15 @@ describe("decision context", () => {
     expect(hidden.context.stateHash).toBe(plain.context.stateHash);
   });
 
+  it("keeps the context the same when a creature has abilities the character has not learned", () => {
+    const kobold = { grid: { x: 7, y: 3 }, race: "kobold", level: 2 };
+    const recall = () => "Nothing is known about its attacks.";
+    const plain = requestFor({ map: ROOM, player: { depth: 3 }, monsters: [kobold], monsterRecall: recall });
+    const gifted = requestFor({ map: ROOM, player: { depth: 3 }, monsters: [{ ...kobold, spellFlags: ["BO_FIRE", "BLINK", "SCARE"] }], monsterRecall: recall });
+    expect(gifted.request.state).toEqual(plain.request.state);
+    expect(gifted.context.stateHash).toBe(plain.context.stateHash);
+  });
+
   it("files each key once and leaves undefined facts out", () => {
     const context = contextOf([["manual", "rules", "r"], ["memory", "hunger", undefined], ...entriesOf("knowledge", { lessons: "l" })]);
     expect(stateOf(context)).toEqual({ rules: "r", lessons: "l" });

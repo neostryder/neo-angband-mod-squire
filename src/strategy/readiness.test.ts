@@ -2,7 +2,8 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
-import { missingEssentials, missingPreparation, supplies, supplyMargin } from "./readiness.js";
+import { descentGaps, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin } from "./readiness.js";
+import { archetype } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
 
@@ -115,6 +116,14 @@ describe("prepared depths", () => {
     expect(missingPreparation(w.view, 47)).toEqual([]);
   });
 
+  it("counts race and class protection from blindness and confusion beside worn items", () => {
+    const resists = "Provides resistance to acid, lightning, fire, cold, poison, chaos and disenchantment.";
+    const w = suppliedWorld({ map: ROOM, player: deepPlayer, pack: deepPack, inspect: () => resists });
+    expect(missingPreparation(w.view, 60).map((need) => need.reason)).toEqual(["poison and confusion resistance", "blindness resistance"]);
+    w.setPlayer({ objectFlags: [...deepPlayer.objectFlags, "PROT_BLIND", "PROT_CONF"] });
+    expect(missingPreparation(w.view, 60)).toEqual([]);
+  });
+
   it("requires known deep protections, telepathy, healing and speed at depth 98", () => {
     const w = suppliedWorld({ map: ROOM, player: { ...deepPlayer, speed: 129, objectFlags: ["SEE_INVIS", "FREE_ACT"] }, pack: [...deepPack.slice(0, 2), "a Potion of Healing"], inspect: () => basicResists });
     expect(missingPreparation(w.view, 98).map((need) => need.reason)).toEqual(expect.arrayContaining(["blindness resistance", "chaos and disenchantment resistance", "telepathy", "+20 speed", "two Healing potions or one *Healing* or Life potion"]));
@@ -221,5 +230,33 @@ describe("supply evidence and margins", () => {
     expect(supplyMargin(w.view)).toBe("healing");
     w.setPack([`${String(cures + 1)} Potions of Cure Light Wounds`, ...(phase > 0 ? [`${String(phase)} Scrolls of Phase Door`] : []), ...rest]);
     expect(supplyMargin(w.view)).toBe("Phase Door");
+  });
+});
+
+describe("descent gaps", () => {
+  it("keeps light, food and a severe shortfall out of the persona's hands", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1, hp: 20, maxHp: 20, light: 0 } });
+    const gaps = descentGaps(w.view, 2);
+    expect(gaps.hard.map((gap) => gap.kind)).toEqual(["light"]);
+    expect(gaps.soft.map((gap) => gap.kind)).toEqual(["level", "hp"]);
+    w.setPlayer({ maxHp: 14 });
+    expect(descentGaps(w.view, 2).hard.map((gap) => gap.kind)).toEqual(["hp", "light"]);
+  });
+
+  it("states the next level's gaps, or that the character is prepared", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1, level: 1, maxLevel: 1, hp: 30, maxHp: 30 } });
+    expect(gapFacts(w.view)).toBe("For dungeon level 2 the character still lacks: maximum character level 2.");
+    w.setPlayer({ level: 2, maxLevel: 2 });
+    expect(gapFacts(w.view)).toBe("The character is prepared for dungeon level 2.");
+    w.setPlayer({ depth: 0 });
+    expect(gapFacts(w.view)).toBeUndefined();
+  });
+
+  it("asks a cautious persona to be surer than a driven one, within bounds", () => {
+    const [coward, plain, berserker] = [readinessThreshold(archetype("coward")), readinessThreshold(null), readinessThreshold(archetype("berserker"))];
+    expect(coward).toBeGreaterThan(plain);
+    expect(plain).toBeGreaterThan(berserker);
+    expect(Math.min(coward, plain, berserker)).toBeGreaterThanOrEqual(0.3);
+    expect(Math.max(coward, plain, berserker)).toBeLessThanOrEqual(0.85);
   });
 });

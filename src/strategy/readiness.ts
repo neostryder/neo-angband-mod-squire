@@ -5,7 +5,7 @@ import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
-import { readinessExtra } from "./pursuits.js";
+import { drive, readinessExtra } from "./pursuits.js";
 
 const TV_FLASK = 27;
 
@@ -72,6 +72,8 @@ export function tripLight(view: AgentView): boolean {
 export interface Requirement {
   readonly kind: "level" | "hp" | "light" | "food" | "healing" | "phase" | "recall" | "protection";
   readonly reason: string;
+  /** Short of half the floor: no persona weighs this gap away. */
+  readonly severe?: true;
 }
 
 /** Unknown classes use the strictest early class floor. */
@@ -95,12 +97,12 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
   const out: Requirement[] = [];
-  const need = (kind: Requirement["kind"], enough: boolean, reason: string) => { if (!enough) out.push({ kind, reason }); };
+  const need = (kind: Requirement["kind"], enough: boolean, reason: string, severe = false) => { if (!enough) out.push(severe ? { kind, reason, severe } : { kind, reason }); };
   const [hpFloor, classLevel] = depth >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth) : [30, 2];
   const caster = ["Mage", "Necromancer"].includes(player.cls);
   const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, level * 2 < levelFloor);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, player.maxHp * 2 < hpFloor);
   need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
   if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
@@ -121,11 +123,13 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
     const inspect = view as AgentView & { inspectItem?: (handle: number) => { readonly text: string } | null };
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
     const has = (element: string) => texts.some((text) => [...text.matchAll(/Provides (?:(?:resistance|immunity) to|protection from) ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
+    /* Race, class and known worn flags count as well as item text: a Dwarf is never blinded. */
+    const protects = (element: string, flag: string) => has(element) || player.objectFlags.includes(flag);
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
     need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
     need("protection", player.stats.length >= 5 && [0, 3, 4, ...(caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : [])].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
-    if (depth >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
-    if (depth >= 56) need("protection", has("blindness"), "blindness resistance");
+    if (depth >= 40) need("protection", has("poison") && protects("confusion", "PROT_CONF"), "poison and confusion resistance");
+    if (depth >= 56) need("protection", protects("blindness", "PROT_BLIND"), "blindness resistance");
     if (depth >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
   }
   if (depth >= 46) {
@@ -146,6 +150,36 @@ export function missingPreparation(view: AgentView, depth: number): Requirement[
     if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= 15, "fifteen Restore Mana potions");
   }
   return out;
+}
+
+/** Light and food are never weighed: without them a trip down is lost whatever else is carried. A severe level or HP gap is not weighed either. */
+const HARD_GAPS: ReadonlySet<Requirement["kind"]> = new Set(["light", "food"]);
+
+/**
+ * The preparation a level asks for, split into gaps that always forbid the trip and gaps the
+ * model weighs against the persona's readiness threshold.
+ */
+export function descentGaps(view: AgentView, depth: number): { readonly hard: Requirement[]; readonly soft: Requirement[] } {
+  const all = missingPreparation(view, depth);
+  const hard = (gap: Requirement) => HARD_GAPS.has(gap.kind) || gap.severe === true;
+  return { hard: all.filter(hard), soft: all.filter((gap) => !hard(gap)) };
+}
+
+/**
+ * How sure the model must be that the character is ready before it goes down with soft gaps.
+ * 0.52 for the default persona; a driven persona accepts less, a cautious one asks more.
+ */
+export function readinessThreshold(persona: Persona | null): number {
+  return Math.min(0.85, Math.max(0.3, 0.8 - 0.6 * drive(persona)));
+}
+
+/** One sentence on what the next level down still asks for, for the purpose layer. */
+export function gapFacts(view: AgentView): string | undefined {
+  const depth = view.player().depth + 1;
+  const gaps = missingPreparation(view, depth);
+  if (depth <= 1) return undefined;
+  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)}.`;
+  return `For dungeon level ${String(depth)} the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;
 }
 
 /**

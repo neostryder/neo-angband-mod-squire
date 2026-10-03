@@ -5,7 +5,7 @@ import type { DecisionRecord } from "../brain/brain.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import { rowId, type LayaRow, type Pilot } from "./rows.js";
 
-const PILOTS: readonly [string, Pilot][] = [["goal", "squire_goal"], ["in_character", "squire_in_character"]];
+const PILOTS: readonly [string, Pilot][] = [["goal", "squire_goal"], ["in_character", "squire_in_character"], ["ready_to_descend", "squire_gate"]];
 
 export interface RowSink {
   append(row: LayaRow, seq: number): Promise<void>;

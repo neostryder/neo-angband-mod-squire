@@ -1667,9 +1667,14 @@ function fastUniqueAtLowLevel(monster, player) {
   return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
 }
 var HARMLESS_CONTACTS = 3;
+function knownSpellFlags(view, monster) {
+  if (monster.spellFlags.length === 0) return monster.spellFlags;
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
+  return /\bmay (?:breathe|cast spells)\b|\(\d+\)/i.test(text) ? monster.spellFlags : [];
+}
 var HARMLESS_SPELLS = /* @__PURE__ */ new Set(["BLINK", "TPORT", "HASTE", "HEAL", "SHRIEK"]);
 function harmlessKind(monster, view, contacts = 0) {
-  if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
+  if (knownSpellFlags(view, monster).some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
   if (monster.raceFlags.includes("NEVER_BLOW")) return true;
@@ -1745,16 +1750,17 @@ function attackFacts(view, monster, stats) {
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const fallback = townsperson(monster, player.depth) ? TOWN_ROUND : roundEstimate(monster.level);
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
+  const spellFlags = knownSpellFlags(view, monster);
   const melee = monster.raceFlags.includes("NEVER_BLOW") ? 0 : blows.length === 0 ? fallback : blows.reduce((sum, blow) => {
     const ceiling = Number(blow[2]) * Number(blow[3]);
     return sum + Math.max(ceiling, resistedDamage(ceiling, blow[1], player, stats));
   }, 0);
-  const magic = /\bmay (?:breathe|cast spells)\b/i.test(text) || monster.spellFlags.length > 0;
+  const magic = /\bmay (?:breathe|cast spells)\b/i.test(text) || spellFlags.length > 0;
   const spells = [...text.matchAll(/([^().]*?)\((\d+)\)/g)];
   const ranged = magic ? Math.max(spells.length === 0 ? fallback : 0, ...spells.map((spell) => resistedDamage(Number(spell[2]), spell[1], player, stats))) : 0;
   const flags = player.objectFlags;
-  const status = (/\b(?:paraly[sz]|hold)\w*\b/i.test(text) || monster.spellFlags.includes("HOLD")) && !flags.includes("FREE_ACT") ? 150 : (/\bconfus\w*\b/i.test(text) || monster.spellFlags.includes("CONF")) && !flags.includes("PROT_CONF") ? 10 : monster.spellFlags.includes("SLOW") ? 5 : 0;
-  return { melee, ranged, status, uncertain: blows.length === 0 || magic && spells.length === 0 || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || monster.spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !monster.spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
+  const status = (/\b(?:paraly[sz]|hold)\w*\b/i.test(text) || spellFlags.includes("HOLD")) && !flags.includes("FREE_ACT") ? 150 : (/\bconfus\w*\b/i.test(text) || spellFlags.includes("CONF")) && !flags.includes("PROT_CONF") ? 10 : spellFlags.includes("SLOW") ? 5 : 0;
+  return { melee, ranged, status, uncertain: blows.length === 0 || magic && spells.length === 0 || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
 }
 function rangedPath(view, from, to, bolt, monsters, openedDoor) {
   const distance = steps(from, to);
@@ -2921,14 +2927,14 @@ function missingPreparation(view, depth2) {
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
   const out = [];
-  const need = (kind, enough, reason) => {
-    if (!enough) out.push({ kind, reason });
+  const need = (kind, enough, reason, severe = false) => {
+    if (!enough) out.push(severe ? { kind, reason, severe } : { kind, reason });
   };
   const [hpFloor, classLevel] = depth2 >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth2, 4) : depth2) : [30, 2];
   const caster = ["Mage", "Necromancer"].includes(player.cls);
   const levelFloor = Math.max(depth2, classLevel, depth2 >= 10 && caster && level <= 28 ? depth2 + 5 : 0);
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`);
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, level * 2 < levelFloor);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, player.maxHp * 2 < hpFloor);
   need("light", (depth2 >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth2 >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
   if (depth2 >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
@@ -2948,11 +2954,12 @@ function missingPreparation(view, depth2) {
     const inspect = view;
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
     const has = (element) => texts.some((text) => [...text.matchAll(/Provides (?:(?:resistance|immunity) to|protection from) ([^.\n]+)/gi)].some((line) => new RegExp(`\\b${element}\\b`, "i").test(line[1] ?? "")));
+    const protects = (element, flag) => has(element) || player.objectFlags.includes(flag);
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
     need("protection", has("fire") && basics.length >= (depth2 > 25 ? 4 : 3), depth2 > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
     need("protection", player.stats.length >= 5 && [0, 3, 4, ...caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : []].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
-    if (depth2 >= 40) need("protection", has("poison") && has("confusion"), "poison and confusion resistance");
-    if (depth2 >= 56) need("protection", has("blindness"), "blindness resistance");
+    if (depth2 >= 40) need("protection", has("poison") && protects("confusion", "PROT_CONF"), "poison and confusion resistance");
+    if (depth2 >= 56) need("protection", protects("blindness", "PROT_BLIND"), "blindness resistance");
     if (depth2 >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
   }
   if (depth2 >= 46) {
@@ -2973,6 +2980,22 @@ function missingPreparation(view, depth2) {
     if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= 15, "fifteen Restore Mana potions");
   }
   return out;
+}
+var HARD_GAPS = /* @__PURE__ */ new Set(["light", "food"]);
+function descentGaps(view, depth2) {
+  const all = missingPreparation(view, depth2);
+  const hard = (gap) => HARD_GAPS.has(gap.kind) || gap.severe === true;
+  return { hard: all.filter(hard), soft: all.filter((gap) => !hard(gap)) };
+}
+function readinessThreshold(persona) {
+  return Math.min(0.85, Math.max(0.3, 0.8 - 0.6 * drive(persona)));
+}
+function gapFacts(view) {
+  const depth2 = view.player().depth + 1;
+  const gaps = missingPreparation(view, depth2);
+  if (depth2 <= 1) return void 0;
+  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth2)}.`;
+  return `For dungeon level ${String(depth2)} the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;
 }
 function missingEssentials(view, persona = null) {
   const stock = supplies(view);
@@ -5289,7 +5312,7 @@ function createJourney(terrain, unseenDanger) {
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
+      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && descentGaps(view, player.depth + 1).hard.length === 0);
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (offer.goal === "explore" && search()) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
@@ -5301,6 +5324,8 @@ function createJourney(terrain, unseenDanger) {
       if (offer.goal === "pick_up") return leashed(view, player.grid);
       return true;
     });
+    const soft = player.depth > 0 ? descentGaps(view, player.depth + 1).soft.map((gap) => gap.reason) : [];
+    if (soft.length > 0) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `${offer.criteria} The next level still asks for ${soft.join("; ")}.`, gaps: soft } : offer);
     if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns and stays within ${String(EARNING_LEASH)} path steps of the up stairs.` } : offer);
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
@@ -5343,7 +5368,7 @@ function createJourney(terrain, unseenDanger) {
       if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
+        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1).hard.length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
       }
       if (goal === null) {
@@ -5731,6 +5756,20 @@ var HANDBOOK = Object.freeze([
   "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
   "While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit."
 ]);
+function withoutDescent(dist) {
+  return Object.fromEntries(Object.entries(dist).filter(([goal]) => goal !== "descend"));
+}
+function withoutHeld(dist, held2) {
+  return held2 ? withoutDescent(dist) : dist;
+}
+var READY_TO_DESCEND = {
+  type: "noul",
+  instructions: "The next dungeon level asks for preparation this character lacks. Is it ready to go down anyway?",
+  criteria: {
+    true: "Its level, health, escapes and supplies cover what the next level is likely to throw at it, so the gaps are an acceptable risk.",
+    false: "The gaps could get it killed on the next level; it should gain experience or supplies first."
+  }
+};
 function swarmOf(monsters) {
   const counts = /* @__PURE__ */ new Map();
   for (const m of monsters) {
@@ -5744,7 +5783,7 @@ function hardContactGroup(s) {
   if (s.swarm !== null || s.awake.length >= TAKE_POSITION_GROUP_SIZE) return true;
   const recall = s.view.monsterRecall;
   for (const m of s.awake) {
-    if (m.spellFlags.some((flag) => flag.startsWith("S_"))) return true;
+    if (knownSpellFlags(s.view, m).some((flag) => flag.startsWith("S_"))) return true;
     const lore = recall?.call(s.view, m.raceIndex);
     if (lore !== null && lore !== void 0 && (/\bbreathe\b/i.test(lore.text) || /\bsummon/i.test(lore.text))) return true;
   }
@@ -6378,7 +6417,7 @@ function createGoalPlanner(options) {
       const awakeVisible = visible.filter((monster) => !monster.asleep);
       const adjacent2 = awakeVisible.filter((monster) => steps(player.grid, monster.grid) <= 1 || observed !== null && steps(observed.grid, monster.grid) <= 1);
       if (observed !== null && observed.depth === player.depth && observed.hp > player.hp) {
-        const blamed = adjacent2.length > 0 ? adjacent2 : awakeVisible.filter((monster) => monster.spellFlags.length > 0);
+        const blamed = adjacent2.length > 0 ? adjacent2 : awakeVisible.filter((monster) => knownSpellFlags(view, monster).length > 0);
         for (const monster of blamed) hurtBy.add(monster.race);
       } else {
         for (const monster of adjacent2) contacts.set(monster.id, (contacts.get(monster.id) ?? 0) + 1);
@@ -6985,7 +7024,9 @@ function createGoalPlanner(options) {
     const persona = personaOf();
     const probs = options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities);
     const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
-    const best = { ...raw, probabilities: probs, choice: top };
+    const held2 = descentHeld(digest, answers);
+    const kept = held2 ? withoutDescent(probs) : probs;
+    const best = { ...raw, probabilities: kept, choice: held2 ? Object.entries(kept).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "none_of_these" : top };
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal));
     const advice = best.choice;
@@ -6999,12 +7040,12 @@ function createGoalPlanner(options) {
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
       if (away !== void 0) return record6(away, { ...blank, quirk: "craven" });
     }
-    const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
+    const inChar = inCharacter?.type === "choice" ? held2 ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities : null;
     const strength = jitteredStrength(persona, rng);
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const weighted = options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view, digest.offers);
+    const weighted = withoutHeld(options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view, digest.offers), held2);
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
@@ -7014,10 +7055,21 @@ function createGoalPlanner(options) {
     const cursed2 = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed2, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const positioned = nudgePosition(unseen, digest.offers, persona);
-    const nudged = holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const nudged = withoutHeld(holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent), held2);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick2 = pick(floor.dist) ?? advice;
     return record6(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+  }
+  function descentHeld(digest, answers) {
+    if (!digest.offers.some((offer) => offer.goal === "descend" && offer.gaps !== void 0)) return false;
+    const answer = answers["ready_to_descend"];
+    const first = digest.readiness === void 0;
+    const p = answer?.type === "noul" ? answer.p : digest.readiness?.p ?? null;
+    const threshold = readinessThreshold(personaOf());
+    digest.readiness = { p, threshold };
+    const held2 = p === null || p < threshold;
+    if (held2 && first) log(`goal: not ready to go down (${p === null ? "no readiness answer" : `readiness ${p.toFixed(2)} under ${threshold.toFixed(2)}`})`);
+    return held2;
   }
   function reflexFor(offers, persona, situation, turn, passes, s) {
     if (options.reflex === false) return null;
@@ -7031,10 +7083,10 @@ function createGoalPlanner(options) {
     }
     const only = offers.length === 1 ? offers[0] : void 0;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
-    if (only !== void 0 && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
+    if (only !== void 0 && only.risk <= ceiling && only.gaps === void 0) return { goal: only.goal, why: "the only option" };
     const last = lastAnswer;
     const again = last === null ? void 0 : offers.find((o) => o.goal === last.pick);
-    const allowed = again !== void 0 && (persona === null || again.risk <= ceiling || passes.has(again.goal));
+    const allowed = again !== void 0 && again.gaps === void 0 && (persona === null || again.risk <= ceiling || passes.has(again.goal));
     if (last !== null && allowed && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS) {
       return { goal: last.pick, why: "same situation as the last answer" };
     }
@@ -7055,7 +7107,7 @@ function createGoalPlanner(options) {
     }
     const answer = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
     const picked2 = decide(answer, void 0, digest, { goal: answer }, view);
-    const offer = digest.offers.find((offer2) => offer2.goal === picked2) ?? [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+    const offer = digest.offers.find((offer2) => offer2.goal === picked2) ?? [...digest.offers].filter((offer2) => offer2.gaps === void 0).sort((a, b) => a.risk - b.risk)[0];
     if (offer === void 0) return { plan: build("step_aside", view) };
     digest.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
     options.orders?.decided(offer.goal, view);
@@ -7218,6 +7270,7 @@ function createGoalPlanner(options) {
         ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
         ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
         ["memory", "status", statusOf(view, canRead(view))],
+        ["purpose", "gaps", gapFacts(view)],
         ["outcomes", "last", lastOutcome ?? void 0],
         ["long_goal", "aims", aimNote ?? void 0],
         ["orders", "orders", orderNote ?? void 0],
@@ -7231,10 +7284,11 @@ function createGoalPlanner(options) {
       if (fitted2.over) log(`goal: the request is still over ${String(STATE_TOKEN_CAP)} tokens`);
       const layers = fitted2.context;
       const state = stateOf(layers);
+      const ready = offers.some((offer) => offer.goal === "descend" && offer.gaps !== void 0) ? { ready_to_descend: READY_TO_DESCEND } : {};
       const question = {
         request: {
           state,
-          questions: persona === null ? { goal } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...options.orders?.ask(offers, view) ?? {} }
+          questions: persona === null ? { goal, ...ready } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...ready, ...options.orders?.ask(offers, view) ?? {} }
         },
         context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state) }
       };
@@ -10741,6 +10795,7 @@ function chunkKey2(runId, seq) {
   return `${PREFIX2}${runId}/${String(Math.floor(seq / CHUNK2)).padStart(8, "0")}`;
 }
 function rowId(install, runId, seq, pilot) {
+  if (pilot === "squire_gate") return `squire-${install}-${runId}-${String(seq)}-gate`;
   return `squire-${install}-${runId}-${String(seq * 2 + (pilot === "squire_goal" ? 0 : 1))}`;
 }
 async function allRows(store) {
@@ -10806,7 +10861,7 @@ function createRows(store, runId) {
 }
 
 // src/laya/shadow.ts
-var PILOTS = [["goal", "squire_goal"], ["in_character", "squire_in_character"]];
+var PILOTS = [["goal", "squire_goal"], ["in_character", "squire_in_character"], ["ready_to_descend", "squire_gate"]];
 function capturingNet(net, adapter) {
   return {
     transport: net.transport,

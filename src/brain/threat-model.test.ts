@@ -129,7 +129,7 @@ describe("incoming damage windows", () => {
   });
 
   it("retains a damage fallback and uncertainty for unseen blows and magic", () => {
-    const w = world({ map: MAP, monsters: [{ grid: { x: 7, y: 1 }, level: 2, spellFlags: ["BO_FIRE"], raceFlags: ["NEVER_BLOW"] }] });
+    const w = world({ map: MAP, monsters: [{ grid: { x: 7, y: 1 }, level: 2, spellFlags: ["BO_FIRE"], raceFlags: ["NEVER_BLOW"] }], monsterRecall: () => "It may cast spells." });
     const incoming = incomingDamage(w.view, undefined, 1, w.terrain);
     expect(incoming.damage).toBe(14);
     expect(incoming.uncertainty).toBeGreaterThan(0);

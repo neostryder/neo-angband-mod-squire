@@ -14,6 +14,7 @@ import { goalLabel, goalOfCommand } from "../knight.js";
 import { healingAmount } from "./combat-kit.js";
 import { pursuitsFor } from "../strategy/pursuits.js";
 import { createJourney } from "../strategy/journey.js";
+import { readinessThreshold } from "../strategy/readiness.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
@@ -1797,10 +1798,16 @@ describe("soak findings", () => {
     expect(w.issued.some((command) => command.code === "descend")).toBe(false);
   });
 
-  it("does not offer an exit through blocked down stairs when no up stairs are known", () => {
+  it("does not leave through unprepared down stairs when no up stairs are known", () => {
     const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1 } });
-    expect(offered(planner(w).p.ask(w.view))).toContain("step_aside");
-    expect(offered(planner(w).p.ask(w.view))).not.toContain("descend");
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).not.toContain("leave_level");
+    expect(q.context.offers.find((offer) => offer.goal === "descend")?.gaps).toEqual(["maximum character level 2"]);
+    const choice = p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p: 0.1 } }, q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.label).not.toContain("down");
+    expect(w.issued.some((command) => command.code === "descend")).toBe(false);
   });
 
   it("rechecks readiness before taking the down stairs in a leave plan", () => {
@@ -1898,7 +1905,10 @@ describe("harmless creatures", () => {
   it("never calls a creature harmless once its recall shows a damaging blow or spell", () => {
     const bite = world({ map: TOWN, player: mage, monsters: [maggot(9)], monsterRecall: () => "He can bite to hurt (1d3)." });
     expect(harmlessKind(bite.view.monsters()[0]!, bite.view)).toBe(false);
-    const caster = world({ map: TOWN, player: mage, monsters: [{ ...maggot(9), spellFlags: ["BLIND"] }] });
+    const caster = world({ map: TOWN, player: mage, monsters: [{ ...maggot(9), spellFlags: ["BLIND"] }], monsterRecall: () => "He may cast spells which blind." });
+    /* Flags the character has not seen used are not evidence either way. */
+    const unseen = world({ map: TOWN, player: mage, monsters: [{ ...maggot(9), spellFlags: ["BLIND"] }] });
+    expect(harmlessKind(unseen.view.monsters()[0]!, unseen.view)).toBe(true);
     expect(harmlessKind(caster.view.monsters()[0]!, caster.view)).toBe(false);
     const deep = world({ map: TOWN, player: { ...mage, depth: 1 }, monsters: [maggot(9)] });
     expect(harmlessKind(deep.view.monsters()[0]!, deep.view)).toBe(false);
@@ -1994,6 +2004,7 @@ describe("defensible positions", () => {
     "##########",
   ];
   const summoner = { grid: { x: 7, y: 2 }, race: "novice summoner", level: 2, spellFlags: ["S_MONSTER"] };
+  const summons = () => "It may cast spells which summon a monster.";
   /* An open room whose corners sit five steps out, past the few-step reach. */
   const OPEN_ROOM = [
     "#############",
@@ -2025,7 +2036,7 @@ describe("defensible positions", () => {
   const STEP: Readonly<Record<number, readonly [number, number]>> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
 
   it("offers a defensible square against a summoner and the plan reaches the corridor", () => {
-    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner], monsterRecall: summons });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(offered(q)).toContain("take_position");
@@ -2053,7 +2064,7 @@ describe("defensible positions", () => {
   });
 
   it("offers no move to a character already standing in a choke point", () => {
-    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner], monsterRecall: summons });
     w.moveTo({ x: 4, y: 1 });
     expect(offered(planner(w).p.ask(w.view))).not.toContain("take_position");
   });
@@ -2083,7 +2094,7 @@ describe("defensible positions", () => {
     const weight = (sliders: Partial<ReturnType<typeof defaultPersona>["sliders"]>): number => {
       const persona = defaultPersona("Weigher");
       persona.sliders = { ...persona.sliders, ...sliders, strength: 35, volatility: 0 };
-      const w = world({ map: SUMMON_ROOM, player: { hp: 200, maxHp: 200 }, monsters: [summoner] });
+      const w = world({ map: SUMMON_ROOM, player: { hp: 200, maxHp: 200 }, monsters: [summoner], monsterRecall: summons });
       const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, rng: seeded(7), reflex: false });
       const q = asked(p.ask(w.view));
       const answers: Readonly<Record<string, Answer>> = {
@@ -2098,7 +2109,7 @@ describe("defensible positions", () => {
   });
 
   it("ends on the spot and does not offer another move from there", () => {
-    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner], monsterRecall: summons });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const choice = p.choose(pick("take_position"), q.context, w.view);
@@ -2122,7 +2133,7 @@ describe("defensible positions", () => {
   });
 
   it("drops the offer once the character stands in the choke, even with an ally beside it", () => {
-    const w = world({ map: SUMMON_ROOM, monsters: [summoner] });
+    const w = world({ map: SUMMON_ROOM, monsters: [summoner], monsterRecall: summons });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     const choice = p.choose(pick("take_position"), q.context, w.view);
@@ -2231,5 +2242,57 @@ describe("take_position offer and the rules-only choice", () => {
     const q = reflexed(p.rules!(w.view, "own rules"));
     expect(q.answers["goal"]).toMatchObject({ choice: "take_position" });
     expect(q.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+});
+
+describe("the readiness answer", () => {
+  /* A level 1 Warrior with full health on level 1: the next level asks for character level 2. */
+  const spec = { map: ["########", "#<@..>.#", "########"], player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1, hp: 60, maxHp: 60 } };
+
+  it("asks whether the character is ready only when the descent has soft gaps", () => {
+    const w = suppliedWorld(spec);
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.request.questions["ready_to_descend"]).toMatchObject({ type: "noul" });
+    expect(q.request.state["gaps"]).toBe("For dungeon level 2 the character still lacks: maximum character level 2.");
+    const ready = suppliedWorld({ ...spec, player: { ...spec.player, level: 2, maxLevel: 2 } });
+    const plain = asked(planner(ready).p.ask(ready.view));
+    expect(plain.request.questions["ready_to_descend"]).toBeUndefined();
+    expect(plain.request.state["gaps"]).toBe("The character is prepared for dungeon level 2.");
+  });
+
+  it("goes down only when the answer clears the persona's threshold", () => {
+    for (const [p, down] of [[0.3, false], [0.7, true]] as const) {
+      const w = suppliedWorld(spec);
+      const planned = planner(w);
+      const q = asked(planned.p.ask(w.view));
+      planned.p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p } }, q.context, w.view);
+      expect(q.context.readiness).toEqual({ p, threshold: readinessThreshold(null) });
+      expect(planned.logged.some((line) => line.startsWith("goal: not ready to go down"))).toBe(!down);
+    }
+  });
+
+  it("holds a cautious persona back where a driven one goes", () => {
+    expect(readinessThreshold(archetype("coward"))).toBeGreaterThan(readinessThreshold(null));
+    expect(readinessThreshold(archetype("berserker"))).toBeLessThan(readinessThreshold(null));
+    const answers = (p: number) => ({ ...pick("descend"), in_character: { type: "choice" as const, choice: "descend", confidence: 0.9, probabilities: { descend: 0.9 } }, ready_to_descend: { type: "noul" as const, p } });
+    const picks = (name: "coward" | "berserker") => {
+      const w = suppliedWorld(spec);
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, rng: () => 0.5, persona: archetype(name) });
+      const q = asked(p.ask(w.view));
+      p.choose(answers(0.6), q.context, w.view);
+      return q.context.trace?.pick;
+    };
+    expect(picks("berserker")).toBe("descend");
+    expect(picks("coward")).not.toBe("descend");
+  });
+
+  it("never descends past a gap without an answer, by reflex or by its own rules", () => {
+    const w = suppliedWorld(spec);
+    const planned = planner(w, true);
+    const q = asked(planned.p.ask(w.view));
+    const choice = planned.p.choose({}, q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(q.context.readiness?.p).toBeNull();
+    expect(w.issued.some((command) => command.code === "descend")).toBe(false);
   });
 });

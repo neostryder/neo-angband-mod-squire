@@ -31,7 +31,7 @@ import { engineTravel } from "../travel-engine.js";
 import { volleyAvailable, volleySteps, type RangedGoal } from "./volley.js";
 import { AUTOFIGHT_REACH, autofight } from "../missions/autofight.js";
 import { autoexplore } from "../missions/autoexplore.js";
-import type { Answer, ChoiceQuestion } from "./systemone.js";
+import type { Answer, ChoiceQuestion, NoulQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question, Reflex } from "./brain.js";
 import { proceduralPick } from "../knight.js";
 import { attackSpellsOutOfMana, canRead, unseenAttacks, detectionSource, hungry, readPack, studyable, unseenSources, type Pack } from "./pack.js";
@@ -44,7 +44,7 @@ import { STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, stateHash, stateOf,
 import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 import type { HomeStock } from "../town/home.js";
-import { assessThreat, bestBallAim, clearShot, fastUniqueAtLowLevel, harmlessKind, incomingDamage, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
+import { assessThreat, bestBallAim, knownSpellFlags, clearShot, fastUniqueAtLowLevel, harmlessKind, incomingDamage, threatIndex, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
 export { threatIndex, roundEstimate, THREAT_BANDS } from "./threat-model.js";
 export type { ThreatBand } from "./threat-model.js";
 import type { Orders } from "../orders/book.js";
@@ -53,7 +53,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney } from "../strategy/journey.js";
-import { missingPreparation } from "../strategy/readiness.js";
+import { gapFacts, missingPreparation, readinessThreshold } from "../strategy/readiness.js";
 import { createManual, type BirthOption } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -208,6 +208,8 @@ export interface Offer {
   /** HP left under the conservative next-action bound, when this action has one. */
   readonly survival?: number;
   readonly uncertain?: true;
+  /** Preparation the next level asks for that the character lacks, on a descent the model may still take. */
+  readonly gaps?: readonly string[];
 }
 
 /** How the persona bent one decision, kept for the decision log. */
@@ -241,7 +243,27 @@ export interface GoalDigest {
   readonly stateHash?: string;
   /** Filled in by `choose`. */
   trace?: PersonaTrace;
+  /** The readiness answer and the persona's threshold, when a descent with gaps was offered. */
+  readiness?: { readonly p: number | null; readonly threshold: number };
 }
+
+function withoutDescent<T extends Readonly<Record<string, number>>>(dist: T): Record<string, number> {
+  return Object.fromEntries(Object.entries(dist).filter(([goal]) => goal !== "descend"));
+}
+
+function withoutHeld(dist: Record<string, number>, held: boolean): Record<string, number> {
+  return held ? withoutDescent(dist) : dist;
+}
+
+/** The yes-or-no question asked when the way down is open but the character is not fully prepared. */
+const READY_TO_DESCEND: NoulQuestion = {
+  type: "noul",
+  instructions: "The next dungeon level asks for preparation this character lacks. Is it ready to go down anyway?",
+  criteria: {
+    true: "Its level, health, escapes and supplies cover what the next level is likely to throw at it, so the gaps are an acceptable risk.",
+    false: "The gaps could get it killed on the next level; it should gain experience or supplies first.",
+  },
+};
 
 export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
@@ -327,15 +349,15 @@ export function swarmOf(monsters: readonly MonsterView[]): { race: string; count
  * Whether the awake creatures in sight are worth taking a defensible square over
  * for: a creature that splits, one that breathes or summons, or a group that
  * arrives together. A single easy melee fighter is not, since a stand-and-fight
- * leaves no room for a positional read. A summoner is read from its spell
- * flags, which is how the player knows it before it has called anything; a
- * breather is read from the recall, matching how the resist offer reads one.
+ * leaves no room for a positional read. A summoner is read from its known
+ * spell flags or its recall, and a breather from the recall, matching how the
+ * resist offer reads one.
  */
 function hardContactGroup(s: Situation): boolean {
   if (s.swarm !== null || s.awake.length >= TAKE_POSITION_GROUP_SIZE) return true;
   const recall = s.view.monsterRecall;
   for (const m of s.awake) {
-    if (m.spellFlags.some((flag) => flag.startsWith("S_"))) return true;
+    if (knownSpellFlags(s.view, m).some((flag) => flag.startsWith("S_"))) return true;
     const lore = recall?.call(s.view, m.raceIndex);
     if (lore !== null && lore !== undefined && (/\bbreathe\b/i.test(lore.text) || /\bsummon/i.test(lore.text))) return true;
   }
@@ -1232,7 +1254,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const awakeVisible = visible.filter((monster) => !monster.asleep);
       const adjacent = awakeVisible.filter((monster) => steps(player.grid, monster.grid) <= 1 || observed !== null && steps(observed.grid, monster.grid) <= 1);
       if (observed !== null && observed.depth === player.depth && observed.hp > player.hp) {
-        const blamed = adjacent.length > 0 ? adjacent : awakeVisible.filter((monster) => monster.spellFlags.length > 0);
+        const blamed = adjacent.length > 0 ? adjacent : awakeVisible.filter((monster) => knownSpellFlags(view, monster).length > 0);
         for (const monster of blamed) hurtBy.add(monster.race);
       } else {
         for (const monster of adjacent) contacts.set(monster.id, (contacts.get(monster.id) ?? 0) + 1);
@@ -1954,7 +1976,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const persona = personaOf();
     const probs = options.calibrate === undefined ? raw.probabilities : options.calibrate(raw.probabilities);
     const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
-    const best = { ...raw, probabilities: probs, choice: top };
+    const held = descentHeld(digest, answers);
+    const kept = held ? withoutDescent(probs) : probs;
+    const best = { ...raw, probabilities: kept, choice: held ? Object.entries(kept).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "none_of_these" : top };
     if (persona === null) return best.choice;
     const offered = new Set(digest.offers.map((o) => o.goal as string));
     const advice = best.choice;
@@ -1968,12 +1992,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
       if (away !== undefined) return record(away, { ...blank, quirk: "craven" });
     }
-    const inChar = inCharacter?.type === "choice" ? inCharacter.probabilities : null;
+    const inChar = inCharacter?.type === "choice" ? held ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities : null;
     const strength = jitteredStrength(persona, rng);
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk: Record<string, number> = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
-    const weighted = options.orders === undefined ? blended : options.orders.weigh(blended, answers, view, digest.offers);
+    const weighted = withoutHeld(options.orders === undefined ? blended : options.orders.weigh(blended, answers, view, digest.offers), held);
     /* An order at high adherence carries its options past the ceiling, as Death wish does for every option. */
     for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
     /* A level with nothing left to explore has nothing safe and useful left, and the depth target no longer holds the character on it. */
@@ -1985,10 +2009,27 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const cursed = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const positioned = nudgePosition(unseen, digest.offers, persona);
-    const nudged = holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent);
+    const nudged = withoutHeld(holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent), held);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const pick = pickTop(floor.dist) ?? advice;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+  }
+
+  /**
+   * A descent with soft gaps goes ahead only when the readiness answer clears the persona's
+   * threshold. With no answer, as when Squire picks by its own rules, the character stays.
+   */
+  function descentHeld(digest: GoalDigest, answers: Readonly<Record<string, Answer>>): boolean {
+    if (!digest.offers.some((offer) => offer.goal === "descend" && offer.gaps !== undefined)) return false;
+    const answer = answers["ready_to_descend"];
+    /* A fallback pick after a refusal keeps the answer the model already gave. */
+    const first = digest.readiness === undefined;
+    const p = answer?.type === "noul" ? answer.p : digest.readiness?.p ?? null;
+    const threshold = readinessThreshold(personaOf());
+    digest.readiness = { p, threshold };
+    const held = p === null || p < threshold;
+    if (held && first) log(`goal: not ready to go down (${p === null ? "no readiness answer" : `readiness ${p.toFixed(2)} under ${threshold.toFixed(2)}`})`);
+    return held;
   }
 
   /**
@@ -2011,11 +2052,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
     const only = offers.length === 1 ? offers[0] : undefined;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
-    if (only !== undefined && only.risk <= ceiling) return { goal: only.goal, why: "the only option" };
+    if (only !== undefined && only.risk <= ceiling && only.gaps === undefined) return { goal: only.goal, why: "the only option" };
     const last = lastAnswer;
     const again = last === null ? undefined : offers.find((o) => o.goal === last.pick);
     /* A reused answer still has to clear today's ceiling, which an order may have lifted. */
-    const allowed = again !== undefined && (persona === null || again.risk <= ceiling || passes.has(again.goal));
+    const allowed = again !== undefined && again.gaps === undefined && (persona === null || again.risk <= ceiling || passes.has(again.goal));
     if (last !== null && allowed && last.situation === situation && turn - last.turn >= 0 && turn - last.turn <= SAME_SITUATION_TURNS) {
       return { goal: last.pick, why: "same situation as the last answer" };
     }
@@ -2037,7 +2078,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
     const answer: Answer & { type: "choice" } = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
     const picked = decide(answer, undefined, digest, { goal: answer }, view);
-    const offer = digest.offers.find((offer) => offer.goal === picked) ?? [...digest.offers].sort((a, b) => a.risk - b.risk)[0];
+    const offer = digest.offers.find((offer) => offer.goal === picked) ?? [...digest.offers].filter((offer) => offer.gaps === undefined).sort((a, b) => a.risk - b.risk)[0];
     if (offer === undefined) return { plan: build("step_aside", view) };
     digest.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
     options.orders?.decided(offer.goal, view);
@@ -2203,6 +2244,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
         ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
         ["memory", "status", statusOf(view, canRead(view))],
+        ["purpose", "gaps", gapFacts(view)],
         ["outcomes", "last", lastOutcome ?? undefined],
         ["long_goal", "aims", aimNote ?? undefined],
         ["orders", "orders", orderNote ?? undefined],
@@ -2216,13 +2258,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (fitted.over) log(`goal: the request is still over ${String(STATE_TOKEN_CAP)} tokens`);
       const layers = fitted.context;
       const state = stateOf(layers);
+      const ready = offers.some((offer) => offer.goal === "descend" && offer.gaps !== undefined) ? { ready_to_descend: READY_TO_DESCEND } : {};
       const question: Question<GoalDigest> = {
         request: {
           state,
           questions:
             persona === null
-              ? { goal }
-              : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...(options.orders?.ask(offers, view) ?? {}) },
+              ? { goal, ...ready }
+              : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...ready, ...(options.orders?.ask(offers, view) ?? {}) },
         },
         context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state) },
       };

@@ -46,6 +46,17 @@ export function fastUniqueAtLowLevel(monster: MonsterView, player: PlayerView): 
 
 /** Turns spent next to the character without hurting it before a town creature with unseen blows counts as harmless. */
 export const HARMLESS_CONTACTS = 3;
+/**
+ * The race's spell flags, once the character's recall shows the creature casting or breathing.
+ * The view reports every flag the race has, learned or not, so before then none of them count.
+ * Once one is seen the whole set counts: the recall text names spells but not their flags.
+ */
+export function knownSpellFlags(view: AgentView, monster: MonsterView): readonly string[] {
+  if (monster.spellFlags.length === 0) return monster.spellFlags;
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
+  return /\bmay (?:breathe|cast spells)\b|\(\d+\)/i.test(text) ? monster.spellFlags : [];
+}
+
 /* Spells that only move the caster, or call attention, cannot hurt the character. */
 const HARMLESS_SPELLS: ReadonlySet<string> = new Set(["BLINK", "TPORT", "HASTE", "HEAL", "SHRIEK"]);
 
@@ -59,7 +70,7 @@ const HARMLESS_SPELLS: ReadonlySet<string> = new Set(["BLINK", "TPORT", "HASTE",
  * the character is never harmless; the caller keeps that record.
  */
 export function harmlessKind(monster: MonsterView, view: AgentView, contacts = 0): boolean {
-  if (monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
+  if (knownSpellFlags(view, monster).some((flag) => !HARMLESS_SPELLS.has(flag))) return false;
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
   if (monster.raceFlags.includes("NEVER_BLOW")) return true;
@@ -187,19 +198,20 @@ function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<No
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const fallback = townsperson(monster, player.depth) ? TOWN_ROUND : roundEstimate(monster.level);
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
+  const spellFlags = knownSpellFlags(view, monster);
   /* Recall omits method flags, so resistance cannot erase a physical component. */
   const melee = monster.raceFlags.includes("NEVER_BLOW") ? 0 : blows.length === 0 ? fallback : blows.reduce((sum, blow) => {
     const ceiling = Number(blow[2]) * Number(blow[3]);
     return sum + Math.max(ceiling, resistedDamage(ceiling, blow[1]!, player, stats));
   }, 0);
-  const magic = /\bmay (?:breathe|cast spells)\b/i.test(text) || monster.spellFlags.length > 0;
+  const magic = /\bmay (?:breathe|cast spells)\b/i.test(text) || spellFlags.length > 0;
   const spells = [...text.matchAll(/([^().]*?)\((\d+)\)/g)];
   const ranged = magic ? Math.max(spells.length === 0 ? fallback : 0, ...spells.map((spell) => resistedDamage(Number(spell[2]), spell[1]!, player, stats))) : 0;
   const flags = player.objectFlags;
-  const status = (/\b(?:paraly[sz]|hold)\w*\b/i.test(text) || monster.spellFlags.includes("HOLD")) && !flags.includes("FREE_ACT") ? 150
-    : (/\bconfus\w*\b/i.test(text) || monster.spellFlags.includes("CONF")) && !flags.includes("PROT_CONF") ? 10
-      : monster.spellFlags.includes("SLOW") ? 5 : 0;
-  return { melee, ranged, status, uncertain: blows.length === 0 || (magic && spells.length === 0) || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || monster.spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !monster.spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
+  const status = (/\b(?:paraly[sz]|hold)\w*\b/i.test(text) || spellFlags.includes("HOLD")) && !flags.includes("FREE_ACT") ? 150
+    : (/\bconfus\w*\b/i.test(text) || spellFlags.includes("CONF")) && !flags.includes("PROT_CONF") ? 10
+      : spellFlags.includes("SLOW") ? 5 : 0;
+  return { melee, ranged, status, uncertain: blows.length === 0 || (magic && spells.length === 0) || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
 }
 
 function rangedPath(view: AgentView, from: Loc, to: Loc, bolt: boolean, monsters: readonly MonsterView[], openedDoor?: Loc): { clear: boolean; uncertain: boolean } {
