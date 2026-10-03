@@ -19,6 +19,7 @@ import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createLevelPacing, stairLeash } from "./pacing.js";
 import { descentGaps, missingPreparation, supplies, supplyMargin, tripLight } from "./readiness.js";
+import { stepsBand, turnsBand } from "../brain/bands.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
 
@@ -246,7 +247,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     /* Soft gaps leave the descent to the model's readiness answer; the goal planner holds it back below the persona's threshold. */
     const soft = player.depth > 0 ? descentGaps(view, player.depth + 1).soft.map((gap) => gap.reason) : [];
     if (soft.length > 0) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `${offer.criteria} The next level still asks for ${soft.join("; ")}.`, gaps: soft } : offer);
-    if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns and stays within ${String(EARNING_LEASH)} path steps of the up stairs.` } : offer);
+    if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns (${turnsBand(EARNING_TURNS)}) and stays within ${String(EARNING_LEASH)} path steps (${stepsBand(EARNING_LEASH)}) of the up stairs.` } : offer);
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
       const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || search());

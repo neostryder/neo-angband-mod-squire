@@ -71,8 +71,8 @@ export interface Planner<C> {
   rules?(view: AgentView, reason: string, stuck?: boolean): Reflex<C> | { readonly handBack: string; readonly context?: C };
   /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back, with the context to log it under when the planner has one. */
   ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string; readonly context?: C };
-  /** Turn the answers into a plan. */
-  choose(answers: Readonly<Record<string, Answer>>, context: C, view: AgentView): Choice;
+  /** Turn the answers into a plan. `answeredBy` is the model that gave them, when a model did. */
+  choose(answers: Readonly<Record<string, Answer>>, context: C, view: AgentView, answeredBy?: string | null): Choice;
   /** A reason to drop the running plan and decide again, or null to keep going. */
   trigger(view: AgentView, plan: Plan): string | null;
 }
@@ -363,7 +363,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       return null;
     }
 
-    const choice = planner.choose(result.answers, question.context, view);
+    const choice = planner.choose(result.answers, question.context, view, result.model);
     const outcome = "plan" in choice ? choice.plan.label : `try again: ${choice.handBack}`;
     deps.onDecision?.({
       token,

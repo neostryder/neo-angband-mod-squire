@@ -13,6 +13,7 @@ import { bestBallAim, incomingDamage, type ThreatFacts } from "./threat-model.js
 import { readPack, type PackItem, type CastableSpell } from "./pack.js";
 import { steps } from "../grid.js";
 import type { Terrain } from "../terrain.js";
+import { countBand, failBand, shareBand, targetShare } from "./bands.js";
 
 export interface AttackContext {
   readonly terrain?: Terrain;
@@ -170,13 +171,16 @@ export function attackOptions(view: AgentView, target: MonsterView, kind: Attack
     Number(b.kill) - Number(a.kill) || (b.damage === null ? -1 : b.damage * (1 - b.failure)) - (a.damage === null ? -1 : a.damage * (1 - a.failure)) || a.failure - b.failure);
 }
 
-export function attackDescription(outcome: AttackOutcome, view: AgentView): string {
-  const damage = outcome.damage === null ? "Damage per action is unknown" : `Estimated damage per action is ${String(Math.round(outcome.damage * (1 - outcome.failure) * 10) / 10)}`;
-  const accuracy = outcome.accuracyKnown ? `${String(Math.round(outcome.failure * 100))}% failure or miss chance` : "accuracy is unknown; the estimate discounts damage by half";
+/** The attack in numbers, each beside its band; with the target given, damage is also put against its health. */
+export function attackDescription(outcome: AttackOutcome, view: AgentView, target?: MonsterView): string {
+  const expected = outcome.damage === null ? null : Math.round(outcome.damage * (1 - outcome.failure) * 10) / 10;
+  const damage = expected === null ? "Damage per action is unknown" : `Estimated damage per action is ${String(expected)}${target === undefined ? "" : ` (${targetShare(expected, target.hp)})`}`;
+  const miss = Math.round(outcome.failure * 100);
+  const accuracy = outcome.accuracyKnown ? `${String(miss)}% failure or miss chance (${failBand(miss)})` : "accuracy is unknown; the estimate discounts damage by half";
   const source = outcome.source;
   const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (view.spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
   const spendsFuel = outcome.kind === "throw_oil" && outcome.fuelReserve > 0 && oilCount(view) <= outcome.fuelReserve;
-  return ` ${damage}; ${accuracy}. ${outcome.kill ? "A hit could kill the target now." : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana and ${String(outcome.fuelReserve)} fuel units.${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
+  return ` ${damage}; ${accuracy}. ${outcome.kill ? `A hit could kill the ${target?.race ?? "target"} now.` : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana (${shareBand(outcome.manaReserve, view.player().maxSp)} of the maximum) and ${String(outcome.fuelReserve)} fuel units (${countBand(outcome.fuelReserve)}).${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
 }
 
 /** One usable object or spell, with how the game consumes it. */

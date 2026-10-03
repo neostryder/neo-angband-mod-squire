@@ -13,7 +13,7 @@ import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import type { DecisionContext } from "./brain/context.js";
-import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
+import { answerKeyOf, createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { tacticalLog } from "./brain/tactics.js";
 import { chaosEntry } from "./brain/chaos.js";
 import { createTally, type Tally } from "./brain/tally.js";
@@ -205,6 +205,17 @@ function commandKey(command: { readonly code: string; readonly dir?: number; rea
   return JSON.stringify([command.code, command.dir ?? null, command.args ?? null]);
 }
 
+/**
+ * The view with its messages read once. The game's `messages()` empties its
+ * buffer as it reads, so without this the first reader in a decision (the
+ * journal) would leave nothing for the level feeling, the runes learned or the
+ * travel checks that read after it.
+ */
+export function messagesOnce(view: AgentView): AgentView {
+  const messages = view.messages();
+  return { ...view, messages: () => [...messages] };
+}
+
 let current: Runtime | null = null;
 
 /** The page's runtime, created on first use. */
@@ -258,7 +269,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     squirePlayed = true;
     strategy.acted(command);
   }
-  const tracked = (controller: AgentController, terrain: Terrain): AgentController => (view, act) => {
+  const tracked = (controller: AgentController, terrain: Terrain): AgentController => (live, act) => {
+    const view = messagesOnce(live);
     lastTurn = view.turn();
     lastView = view;
     journal.observe(view);
@@ -470,7 +482,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         (ok) => (picked = ok),
         () => (picked = false),
       );
-      return (view, act) => {
+      return (live, act) => {
+        const view = messagesOnce(live);
         channel.tick();
         if (chosen === null) {
           if (picked === null) return null;
@@ -867,6 +880,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       ...chaosEntry(record.context.chaos),
       state: record.request.state,
       ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
+      ...(record.context.stateHash === undefined || record.reflex !== undefined ? {} : { answerKey: record.context.answerKey ?? answerKeyOf(record.model, record.context.stateHash) }),
       options: record.context.offers.map((o) => o.goal),
       plan: record.outcome,
       latencyMs: record.latencyMs,

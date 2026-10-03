@@ -245,9 +245,9 @@ describe("descent gaps", () => {
 
   it("states the next level's gaps, or that the character is prepared", () => {
     const w = suppliedWorld({ map: ROOM, player: { depth: 1, level: 1, maxLevel: 1, hp: 30, maxHp: 30 } });
-    expect(gapFacts(w.view)).toBe("For dungeon level 2 the character still lacks: maximum character level 2.");
+    expect(gapFacts(w.view)).toBe("For dungeon level 2 (shallow) the character still lacks: maximum character level 2.");
     w.setPlayer({ level: 2, maxLevel: 2 });
-    expect(gapFacts(w.view)).toBe("The character is prepared for dungeon level 2.");
+    expect(gapFacts(w.view)).toBe("The character is prepared for dungeon level 2 (shallow).");
     w.setPlayer({ depth: 0 });
     expect(gapFacts(w.view)).toBeUndefined();
   });

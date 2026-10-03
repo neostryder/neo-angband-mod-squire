@@ -83,13 +83,17 @@ export function allowedGoals(band: EscapeBand, offers: readonly Offer[]): Readon
 }
 
 /** The question for the gate. */
-export const ESCAPE_QUESTION: NoulQuestion = {
-  type: "noul",
-  instructions: "Should the character stop what it is doing and get to safety now?",
-  criteria: {
+export function escapeQuestion(facts: string): NoulQuestion {
+  return {
+    type: "noul",
+    instructions: `${facts} Should the character break off what it is doing now and use an escape or a heal before anything else?`,
+    criteria: ESCAPE_CRITERIA,
+  };
+}
+
+const ESCAPE_CRITERIA: NoulQuestion["criteria"] = {
     true: "Staying risks death or a loss it cannot recover from soon; escaping or healing comes before anything else.",
     false: "The character can keep fighting or carry on; nothing here needs it to break off now.",
-  },
 };
 
 /** Under this confidence the option answer is not trusted on its own. */
@@ -174,6 +178,12 @@ const NEAR_SERVED: Readonly<Record<string, readonly string[]>> = {
   position: ["take_position", "step_aside", "close_door"],
 };
 
+/* What each near-goal kind is, said in full, so an option's purpose does not point at another block of the state. */
+const NEAR_NAMED: Readonly<Record<string, string>> = {
+  explore: "exploring this level", rest: "recovering", down: "going deeper", leave: "leaving this level",
+  recall: "recalling", shop: "restocking", try: "trying unknown items", position: "a better position",
+};
+
 const SERVES_BY_CLASS: Readonly<Record<ActionClass, string>> = {
   escape: "survival", heal: "survival", gamble: "a cure or a way out", attack: "the fight", wait: "time", position: "a better position", errand: "upkeep",
 };
@@ -183,7 +193,7 @@ const SERVES_ERRAND: Readonly<Record<string, string>> = {
 };
 
 function servesOf(offer: Offer, nearKind: string | null): string {
-  if (nearKind !== null && (NEAR_SERVED[nearKind] ?? []).includes(offer.goal)) return "the near goal";
+  if (nearKind !== null && (NEAR_SERVED[nearKind] ?? []).includes(offer.goal)) return `the near goal of ${NEAR_NAMED[nearKind] ?? nearKind}`;
   return SERVES_ERRAND[offer.goal] ?? SERVES_BY_CLASS[classOf(offer.goal)];
 }
 
@@ -199,8 +209,9 @@ export function riskWord(risk: number): string {
  * One short clause per option on what it serves, how far it gets, what it
  * costs and how risky it is. A field the options all share says nothing to
  * choose by, so it is left out; with nothing left the option gets no clause.
+ * A birth option the choice runs into is always named.
  */
-export function purposeClauses(offers: readonly Offer[], nearKind: string | null): Map<Goal, string> {
+export function purposeClauses(offers: readonly Offer[], nearKind: string | null, constraints: ReadonlyMap<Goal, readonly string[]> = new Map()): Map<Goal, string> {
   const fields = offers.map((offer) => ({
     goal: offer.goal,
     serves: `serves ${servesOf(offer, nearKind)}`,
@@ -212,7 +223,8 @@ export function purposeClauses(offers: readonly Offer[], nearKind: string | null
   const use = { serves: differs((f) => f.serves), progress: differs((f) => f.progress), cost: differs((f) => f.cost), risk: differs((f) => f.risk) };
   const out = new Map<Goal, string>();
   for (const f of fields) {
-    const parts = [use.serves ? f.serves : undefined, use.progress ? f.progress : undefined, use.cost ? f.cost : undefined, use.risk ? f.risk : undefined].filter((p): p is string => p !== undefined);
+    const birth = (constraints.get(f.goal) ?? []).map((text) => `birth option: ${text}`);
+    const parts = [use.serves ? f.serves : undefined, use.progress ? f.progress : undefined, use.cost ? f.cost : undefined, use.risk ? f.risk : undefined, ...birth].filter((p): p is string => p !== undefined);
     if (parts.length > 0) out.set(f.goal, `Purpose: ${parts.join("; ")}.`);
   }
   return out;

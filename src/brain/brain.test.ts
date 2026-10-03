@@ -362,6 +362,37 @@ describe("brain", () => {
   });
 });
 
+describe("nothing pre-submitted", () => {
+  it("issues no engine command, not even a wait, until a slow answer arrives", async () => {
+    let deliver: ((result: AskResult) => void) | null = null;
+    let clock = 1_000_000;
+    const chosenBy: (string | null | undefined)[] = [];
+    const brain = createBrain({
+      backend: JEV,
+      planner: { ...planner(() => walks(1)), choose: (_answers, _context, _view, answeredBy) => (chosenBy.push(answeredBy), { plan: walks(1) }) },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => new Promise<AskResult>((resolve) => (deliver = resolve)),
+      token: () => ({ epoch: 1, revision: 1 }),
+      now: () => clock,
+      log: () => {},
+      status: () => {},
+      gauge: () => ({ turn: 10, hp: 30 }),
+    });
+    /* Two minutes of ticks with the request out: well past every progress limit. */
+    for (let i = 0; i < 120; i += 1) {
+      expect(brain.controller(view, act)).toBeNull();
+      clock += 1000;
+      await flush();
+    }
+    expect(brain.state()).toBe("asking");
+    expect(chosenBy).toHaveLength(0);
+    deliver!(answered());
+    await flush();
+    expect(brain.controller(view, act)).toEqual(WALK);
+    expect(chosenBy).toEqual(["jev-1.13.0"]);
+  });
+});
+
 describe("reflexes", () => {
   it.each(["session", "day"])("plays under a %s spend cap and resumes when it allows requests", async (kind) => {
     const caps = { perSessionUsd: kind === "session" ? 0.001 : 0, perDayUsd: kind === "day" ? 0.001 : 0 };
