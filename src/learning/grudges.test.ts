@@ -13,7 +13,7 @@ import { avengeAim, withAvenge } from "../strategy/heirs.js";
 import { nudgeAims, steerOffers } from "../strategy/steer.js";
 import { inherit, type Lineage } from "./lineage.js";
 import {
-  fearedBand, feelingKind, feelingLine, feelingsFor, intensityOf, killerOf, nudgeGrudges, readFeelings, readKillers,
+  fearedBand, feelingBelief, feelingKind, feelingLine, feelingsFor, intensityOf, killerOf, nudgeGrudges, readFeelings, readKillers,
   recordDeath, remembered, settle, type Feeling, type Killer,
 } from "./grudges.js";
 
@@ -88,8 +88,9 @@ describe("hatred or fear, by persona", () => {
 
   it("grows with the number of ancestors killed: one mild, two strong, three or more lasting", () => {
     expect([0, 1, 2, 3, 5].map(intensityOf)).toEqual([null, "mild", "strong", "lasting", "lasting"]);
-    const line = generations([GRIP, GRIP, GRIP], [], persona({ boldness: 90 }));
-    expect(line.feelings).toEqual([{ name: GRIP, unique: true, kind: "hatred", intensity: "lasting", count: 3 }]);
+    /* An heir's temperament is rolled, here at the middle, so it fears a creature that killed several. */
+    const line = generations([GRIP, GRIP, GRIP]);
+    expect(line.feelings).toEqual([{ name: GRIP, unique: true, kind: "fear", intensity: "lasting", count: 3 }]);
   });
 
   it("says where each feeling comes from", () => {
@@ -97,6 +98,16 @@ describe("hatred or fear, by persona", () => {
       .toBe(`Remembers that ${GRIP} killed two of the family, and hates it (strong).`);
     expect(feelingLine({ name: "cave spider", unique: false, kind: "fear", intensity: "mild", count: 1 }))
       .toBe("Remembers that the cave spider killed one of the family, and fears it (mild).");
+  });
+
+  it("states a grudge for the model as a fact and the family's feeling, open to vengeance or caution", () => {
+    expect(feelingBelief({ name: GRIP, unique: true, kind: "hatred", intensity: "strong", count: 2 }))
+      .toBe(`${GRIP} killed two of the family, and the family hates it, which can call for vengeance or for caution`);
+    expect(feelingBelief({ name: "cave spider", unique: false, kind: "fear", intensity: "mild", count: 1 }))
+      .toBe("the cave spider killed one of the family, and the family fears it, which can call for vengeance or for caution");
+    for (const kind of ["hatred", "fear"] as const) {
+      expect(feelingBelief({ name: "orc", unique: false, kind, intensity: "mild", count: 1 })).toMatch(/vengeance or for caution$/);
+    }
   });
 });
 
@@ -226,7 +237,7 @@ describe("in the planner", () => {
     const q = asked(planner(w, heir, [fear], logged).ask(w.view));
     const believes = String((q.request.state["persona"] as Record<string, string>)["believes"]);
     expect(believes).toContain("the cave spider is");
-    expect(believes).toContain("the cave spider killed three of the family, and the character fears it");
+    expect(believes).toContain("the cave spider killed three of the family, and the family fears it, which can call for vengeance or for caution");
     expect(q.context.offers.map((o) => o.goal)).toContain("leave_level");
     expect(logged).toContain("Bea remembers that the cave spider killed three of the family, and fears it (lasting).");
     const plain = asked(planner(w, heir, []).ask(w.view));

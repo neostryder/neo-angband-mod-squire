@@ -1,5 +1,5 @@
 import { PARAMETERS } from "./catalog.js";
-import type { Persona } from "./persona.js";
+import { presetRule, type Persona } from "./persona.js";
 
 function traitWord(id: string, scale: string, value: number): string {
   const [low, high] = scale.split(" to ");
@@ -31,6 +31,10 @@ export function personaState(persona: Persona, budgetTokens: number): Record<str
   }
   if (traits.length > 0) state["traits"] = traits.join("; ");
   if (activeQuirks.length > 0) state["quirks"] = activeQuirks.join(", ");
+  /* A style preset's rule is context like the traits: it says how the
+   * character tends to play, and the model weighs it with everything else. */
+  const rule = presetRule(persona);
+  if (rule !== null) state["play_rule"] = rule;
   const tokens = Math.max(0, Math.min(persona.backstoryCap, Number.isFinite(budgetTokens) ? budgetTokens : 0));
   const limit = Math.floor(tokens * 4 * persona.sliders.backstory / 100);
   if (limit > 0 && persona.backstory.trim()) {

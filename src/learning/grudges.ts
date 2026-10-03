@@ -220,9 +220,14 @@ export function feelingLog(who: string, feeling: Feeling): string {
   return `${who} ${line.charAt(0).toLowerCase()}${line.slice(1)}`;
 }
 
-/** What the character believes of a creature in sight, for the in-character question. */
+/**
+ * What the character believes of a creature in sight, for the in-character
+ * question: the deaths as a fact, then the family's feeling. A grudge can argue
+ * for vengeance or for caution, and the persona weighs which, so the line names
+ * both and settles neither.
+ */
 export function feelingBelief(feeling: Feeling): string {
-  return `${named(feeling)} killed ${killedWhom(feeling.count)}, and the character ${feeling.kind === "hatred" ? "hates" : "fears"} it`;
+  return `${named(feeling)} killed ${killedWhom(feeling.count)}, and the family ${feeling.kind === "hatred" ? "hates" : "fears"} it, which can call for vengeance or for caution`;
 }
 
 /** The log line when a character kills a unique the family held a grudge against. */

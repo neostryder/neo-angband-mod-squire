@@ -1,5 +1,6 @@
 import { PARAMETERS } from "../persona/catalog.js";
-import type { Persona } from "../persona/persona.js";
+import type { ListId, SliderId } from "../persona/catalog.js";
+import { randomPersona, type Persona } from "../persona/persona.js";
 import { familyOf } from "./signature.js";
 import type { Lesson } from "./lessons.js";
 import { inheritCreeds } from "../orders/creed.js";
@@ -59,23 +60,74 @@ function killerRace(cause: string): string {
   return cause.replace(/^killed by\s+/i, "").replace(/^(?:an?|the)\s+/i, "").trim();
 }
 
-/** Carries character lore only; calibration and coaching remain outside lineage. */
+/**
+ * The levers an heir inherits, pulled toward its parent by the parent's Family
+ * resemblance. They are what a family stands for: its values, loyalties and
+ * enmities, its relations with a patron, and its household habits. Every
+ * other trait, list and quirk is rolled fresh for each heir.
+ */
+export const FAMILY_LEVERS = [
+  "mercy", "glory", "goodevil", "hated", "greed", "devotion", "superstitions", "honour",
+  "gratitude", "distrusted", "home", "hoarding", "lawchaos", "feared", "resentment", "ambition",
+] as const satisfies readonly (SliderId | ListId)[];
+
+const FAMILY: ReadonlySet<string> = new Set(FAMILY_LEVERS);
+
+export type HeirTreatment = "inherited" | "rolled" | "kept";
+
+/**
+ * How an heir gets one persona lever. Lineage and meta settings are the
+ * player's configuration and come from the persona the heir starts from, as
+ * does the backstory cap. Patron sliders pass from the parent, listed or not.
+ * Favoured weapons are rolled here; the Favoured weapon kinds toggle carries
+ * the family's weapon preference separately.
+ */
+export function heirTreatment(parameter: (typeof PARAMETERS)[number]): HeirTreatment {
+  if (FAMILY.has(parameter.id)) return "inherited";
+  if (parameter.kind === "toggle" || parameter.kind === "number" || parameter.group === "lineage" || parameter.group === "meta") return "kept";
+  if (parameter.group === "patron" && parameter.kind === "slider") return "inherited";
+  return "rolled";
+}
+
+/** The first share of the parent's entries, in its order, joined to the heir's own. */
+function inheritedList(parent: readonly string[], own: readonly string[], resemblance: number): string[] {
+  const out = [...own];
+  for (const item of parent.slice(0, Math.round(parent.length * resemblance))) if (!out.includes(item)) out.push(item);
+  return out.slice(0, 12);
+}
+
+/**
+ * Carries character lore only; calibration and coaching remain outside lineage.
+ *
+ * The heir's name, backstory, lineage toggles and Squire's own dials come from
+ * `heirPersona`. Its traits, lists and quirks are rolled with `rng`, and the
+ * family levers are then pulled toward the parent.
+ */
 export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPersona: Persona, rng: () => number): { lineage: Lineage; persona: Persona } {
   const resemblance = fraction(parentPersona.sliders.resemblance);
+  const rolled = randomPersona(rng, heirPersona.name);
   const sliders = { ...heirPersona.sliders };
+  const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key, values]) => [key, [...values]])) as Persona["lists"];
   for (const parameter of PARAMETERS) {
-    if (parameter.kind === "slider" && parameter.group !== "meta" && parameter.group !== "lineage") {
+    const treatment = heirTreatment(parameter);
+    if (treatment === "kept") continue;
+    if (parameter.kind === "slider") {
       const id = parameter.id;
-      sliders[id] = Math.round(sliders[id] + (parentPersona.sliders[id] - sliders[id]) * resemblance);
+      const own = rolled.sliders[id];
+      sliders[id] = treatment === "rolled" ? own : Math.round(own + (parentPersona.sliders[id] - own) * resemblance);
+    } else if (parameter.kind === "list") {
+      const id = parameter.id;
+      lists[id] = treatment === "rolled" ? [...rolled.lists[id]] : inheritedList(parentPersona.lists[id], rolled.lists[id], resemblance);
     }
   }
+  const quirks = rolled.quirks;
 
-  const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key, values]) => [key, [...values]])) as Persona["lists"];
   const grudges = [...parentLineage.grudges];
   const death = parentLineage.died ?? null;
   const killers = parentLineage.killers ?? [];
   const heirGeneration = parentLineage.generation + 1;
-  const shaped = { ...heirPersona, sliders };
+  /* An heir's traits are rolled, so a style preset's rule no longer describes it. */
+  const shaped: Persona = { ...heirPersona, sliders, lists, quirks, preset: null };
   const bloodGrudges = parentPersona.sliders.inheritance > 0 && parentPersona.toggles.grudges && heirPersona.toggles.grudges;
   if (bloodGrudges && death !== null) {
     const race = killerRace(death.cause);
@@ -114,6 +166,6 @@ export function inherit(parentLineage: Lineage, parentPersona: Persona, heirPers
       flourishRecord: { ...family, motto: nextMotto },
       flourishes: inheritWays(family, parentPersona, shaped, rng),
     },
-    persona: { ...heirPersona, sliders, lists },
+    persona: shaped,
   };
 }

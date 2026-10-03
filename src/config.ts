@@ -14,7 +14,7 @@
 import { JEV, selfHosted, type Backend } from "./brain/backend.js";
 import type { ConsentLevel } from "./telemetry/consent.js";
 import { DEFAULT_ENDPOINT } from "./telemetry/sender.js";
-import { defaultPersona, normalize, type Persona } from "./persona/persona.js";
+import { neutralPersona, normalize, type Persona } from "./persona/persona.js";
 import type { Lineage } from "./learning/lineage.js";
 import { readFeelings, readKillers } from "./learning/grudges.js";
 import { readFlourishes } from "./learning/flourishes.js";
@@ -87,7 +87,8 @@ export function defaultConfig(): SquireConfig {
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
-    personas: [defaultPersona("Squire")],
+    /* A character the player makes plays as the active entry, so a new install starts it neutral. */
+    personas: [neutralPersona("Squire")],
     activePersona: 0,
     rollOn: "wait",
     knightsLessons: { enabled: true, ghost: false },

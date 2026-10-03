@@ -1,4 +1,4 @@
-// neo-angband-mod-squire - generated from plugin.ts by neo-angband-mod-build
+// s12-persona-a - generated from plugin.ts by neo-angband-mod-build
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
@@ -2281,12 +2281,14 @@ var PARAMETERS = [
   { id: "optimism", group: "temperament", name: "Optimism", kind: "slider", scale: "expects the worst to expects the best", description: "Shifts perceived threat bands by one step." },
   { id: "volatility", group: "temperament", name: "Volatility", kind: "slider", scale: "steady to mood swings", description: "How much persona strength wanders between decisions." },
   { id: "pride", group: "temperament", name: "Pride", kind: "slider", scale: "humble to glory-seeking", description: "Hunting uniques and chasing depth records." },
+  { id: "lawchaos", group: "temperament", name: "Law to Chaos", kind: "slider", scale: "lawful to chaotic", description: "How often the character skips its best-rated option, and how quickly it drops a goal for a new one." },
   { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 70 },
   { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
-  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to driven to win", description: "Controls the dive rate." },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate." },
   { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
   { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
   { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
+  { id: "goodevil", group: "values", name: "Good to Evil", kind: "slider", scale: "good to evil", description: "Whether the character attacks harmless or fleeing creatures, fights dirty, steals and harms townspeople, and how dark its chronicle reads." },
   { id: "hated", group: "affinities", name: "Hated monster families", kind: "list", scale: "orcs, dragons, undead", description: "Fights these on sight and takes more risk against them." },
   { id: "feared", group: "affinities", name: "Feared monster families", kind: "list", scale: "spiders, ghosts", description: "Avoids these and leaves levels early when they appear." },
   { id: "weapons", group: "affinities", name: "Favoured weapons", kind: "list", scale: "blades, hafted, polearms, bows", description: "Keeps a favoured type when another is slightly better." },
@@ -2302,7 +2304,7 @@ var PARAMETERS = [
   { id: "range", group: "tactics", name: "Engagement range", kind: "slider", scale: "melee to ranged and kiting", description: "Closing to melee versus firing from afar." },
   { id: "escapes", group: "tactics", name: "Escape readiness", kind: "slider", scale: "keeps none to keeps many", description: "How many escapes to keep before descending." },
   { id: "healat", group: "tactics", name: "Heal threshold", kind: "slider", scale: "heals late to heals early", description: "Hit-point level at which healing becomes an option." },
-  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds to the end to leaves early", description: "Hit-point level at which fleeing becomes an option." },
+  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds out to leaves early", description: "Hit-point level at which fleeing becomes an option." },
   { id: "targets", group: "tactics", name: "Target priority", kind: "slider", scale: "weakest first to most dangerous first", description: "Which monster in a group is attacked first." },
   { id: "consumables", group: "tactics", name: "Consumable use", kind: "slider", scale: "saves for emergencies to uses freely", description: "How readily potions, scrolls, and charges are spent." },
   { id: "corridors", group: "tactics", name: "Corridor discipline", kind: "slider", scale: "fights in the open to always backs into a corridor", description: "Pulling groups into corridors before fighting." },
@@ -2374,7 +2376,10 @@ function defaultPersona(name = "Squire") {
         break;
     }
   }
-  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "" };
+  return { name, sliders, lists, quirks, toggles, backstoryCap: 600, backstory: "", preset: null };
+}
+function neutralPersona(name = "Squire") {
+  return defaultPersona(name);
 }
 function normalize(input) {
   try {
@@ -2413,6 +2418,7 @@ function normalize(input) {
     }
     result.backstoryCap = bounded(raw["backstoryCap"], 600, 4e3);
     result.backstory = typeof raw["backstory"] === "string" ? raw["backstory"].slice(0, 2e4) : "";
+    result.preset = isPreset(raw["preset"]) ? raw["preset"] : null;
     return result;
   } catch {
     return defaultPersona();
@@ -2437,18 +2443,31 @@ function randomPersona(rng, name = "Squire") {
   return result;
 }
 var ARCHETYPES = {
-  coward: { sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
-  berserker: { sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
-  miser: { sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
-  scholar: { sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
-  zealot: { sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
-  tourist: { sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } }
+  coward: { rule: "retreats at the first real loss of hit points", sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  berserker: { rule: "closes to melee and presses every fight", sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
+  miser: { rule: "spends gold only on what keeps it alive", sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
+  scholar: { rule: "studies every unknown item it finds", sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
+  zealot: { rule: "obeys its patron and hunts the undead first", sliders: { devotion: 95, honour: 85, stubbornness: 85, mercy: 20, strength: 75 }, lists: { hated: ["undead"] } },
+  tourist: { rule: "sees each level before going deeper", sliders: { curiosity: 85, levelfeel: 90, ambition: 20, boldness: 30, towntrips: 80, strength: 60 } },
+  diver: { rule: "ignores minor loot and heads down", sliders: { ambition: 90, levelfeel: 15, greed: 25, patience: 30, boldness: 70, strength: 65 } },
+  completionist: { rule: "maps the whole level and keeps identify scrolls", sliders: { levelfeel: 95, detection: 85, curiosity: 80, patience: 80, strength: 65 } },
+  paranoid: { rule: "will not fight a unique without an escape path", sliders: { paranoia: 90, escapes: 85, detection: 80, selfpreservation: 85, pride: 25, strength: 65 } }
 };
+function isPreset(value) {
+  return typeof value === "string" && Object.hasOwn(ARCHETYPES, value);
+}
+function presetRule(persona) {
+  return persona.preset === null ? null : ARCHETYPES[persona.preset].rule;
+}
+function presetName(id) {
+  return id[0].toUpperCase() + id.slice(1);
+}
 function archetype(id) {
   const override = ARCHETYPES[id];
   return normalize({
     ...defaultPersona(),
-    name: id[0].toUpperCase() + id.slice(1),
+    name: presetName(id),
+    preset: id,
     sliders: { ...defaultPersona().sliders, ...override.sliders },
     lists: { ...defaultPersona().lists, ...override.lists },
     quirks: { ...defaultPersona().quirks, ...override.quirks }
@@ -3524,6 +3543,8 @@ function personaState(persona, budgetTokens) {
   }
   if (traits.length > 0) state["traits"] = traits.join("; ");
   if (activeQuirks.length > 0) state["quirks"] = activeQuirks.join(", ");
+  const rule = presetRule(persona);
+  if (rule !== null) state["play_rule"] = rule;
   const tokens = Math.max(0, Math.min(persona.backstoryCap, Number.isFinite(budgetTokens) ? budgetTokens : 0));
   const limit = Math.floor(tokens * 4 * persona.sliders.backstory / 100);
   if (limit > 0 && persona.backstory.trim()) {
@@ -5785,7 +5806,7 @@ function feelingLog(who, feeling) {
   return `${who} ${line.charAt(0).toLowerCase()}${line.slice(1)}`;
 }
 function feelingBelief(feeling) {
-  return `${named(feeling)} killed ${killedWhom(feeling.count)}, and the character ${feeling.kind === "hatred" ? "hates" : "fears"} it`;
+  return `${named(feeling)} killed ${killedWhom(feeling.count)}, and the family ${feeling.kind === "hatred" ? "hates" : "fears"} it, which can call for vengeance or for caution`;
 }
 function settledLine(who, name, _count) {
   return `${who} has slain ${name}. The family's grudge is settled.`;
@@ -10395,7 +10416,8 @@ function defaultConfig() {
     contextTokens: 4096,
     caps: { perSessionUsd: 0, perDayUsd: 0 },
     telemetry: { level: "off", backstoryConsent: false, endpoint: DEFAULT_ENDPOINT, asked: false },
-    personas: [defaultPersona("Squire")],
+    /* A character the player makes plays as the active entry, so a new install starts it neutral. */
+    personas: [neutralPersona("Squire")],
     activePersona: 0,
     rollOn: "wait",
     knightsLessons: { enabled: true, ghost: false },
@@ -11255,21 +11277,59 @@ function fraction(value) {
 function killerRace(cause) {
   return cause.replace(/^killed by\s+/i, "").replace(/^(?:an?|the)\s+/i, "").trim();
 }
+var FAMILY_LEVERS = [
+  "mercy",
+  "glory",
+  "goodevil",
+  "hated",
+  "greed",
+  "devotion",
+  "superstitions",
+  "honour",
+  "gratitude",
+  "distrusted",
+  "home",
+  "hoarding",
+  "lawchaos",
+  "feared",
+  "resentment",
+  "ambition"
+];
+var FAMILY = new Set(FAMILY_LEVERS);
+function heirTreatment(parameter) {
+  if (FAMILY.has(parameter.id)) return "inherited";
+  if (parameter.kind === "toggle" || parameter.kind === "number" || parameter.group === "lineage" || parameter.group === "meta") return "kept";
+  if (parameter.group === "patron" && parameter.kind === "slider") return "inherited";
+  return "rolled";
+}
+function inheritedList(parent, own, resemblance) {
+  const out = [...own];
+  for (const item of parent.slice(0, Math.round(parent.length * resemblance))) if (!out.includes(item)) out.push(item);
+  return out.slice(0, 12);
+}
 function inherit(parentLineage, parentPersona, heirPersona, rng) {
   const resemblance = fraction(parentPersona.sliders.resemblance);
+  const rolled = randomPersona(rng, heirPersona.name);
   const sliders = { ...heirPersona.sliders };
+  const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key2, values]) => [key2, [...values]]));
   for (const parameter of PARAMETERS) {
-    if (parameter.kind === "slider" && parameter.group !== "meta" && parameter.group !== "lineage") {
+    const treatment = heirTreatment(parameter);
+    if (treatment === "kept") continue;
+    if (parameter.kind === "slider") {
       const id = parameter.id;
-      sliders[id] = Math.round(sliders[id] + (parentPersona.sliders[id] - sliders[id]) * resemblance);
+      const own = rolled.sliders[id];
+      sliders[id] = treatment === "rolled" ? own : Math.round(own + (parentPersona.sliders[id] - own) * resemblance);
+    } else if (parameter.kind === "list") {
+      const id = parameter.id;
+      lists[id] = treatment === "rolled" ? [...rolled.lists[id]] : inheritedList(parentPersona.lists[id], rolled.lists[id], resemblance);
     }
   }
-  const lists = Object.fromEntries(Object.entries(heirPersona.lists).map(([key2, values]) => [key2, [...values]]));
+  const quirks = rolled.quirks;
   const grudges = [...parentLineage.grudges];
   const death = parentLineage.died ?? null;
   const killers = parentLineage.killers ?? [];
   const heirGeneration = parentLineage.generation + 1;
-  const shaped = { ...heirPersona, sliders };
+  const shaped = { ...heirPersona, sliders, lists, quirks, preset: null };
   const bloodGrudges = parentPersona.sliders.inheritance > 0 && parentPersona.toggles.grudges && heirPersona.toggles.grudges;
   if (bloodGrudges && death !== null) {
     const race = killerRace(death.cause);
@@ -11312,7 +11372,7 @@ function inherit(parentLineage, parentPersona, heirPersona, rng) {
       flourishRecord: { ...family, motto: nextMotto },
       flourishes: inheritWays(family, parentPersona, shaped, rng)
     },
-    persona: { ...heirPersona, sliders, lists }
+    persona: shaped
   };
 }
 
@@ -12118,7 +12178,9 @@ function createRuntime(host, options = {}) {
   const now = options.now ?? (() => Date.now());
   const store = options.store ?? indexedDbStore("neo-angband-squire");
   let config = readConfig(host.prefs?.get());
-  let character = readCharacter(host.characterStore?.get()) ?? {
+  const stored = readCharacter(host.characterStore?.get());
+  const firstMeeting = stored === null;
+  let character = stored ?? {
     persona: null,
     runId: runIdFor(host.character?.key?.(), now()),
     kills: {},
@@ -12268,6 +12330,7 @@ function createRuntime(host, options = {}) {
       character = next;
       host.characterStore?.set({ format: CHARACTER_FORMAT, schemaVersion: 1, data: next });
     },
+    firstMeeting: () => firstMeeting,
     backend: () => backendFor(config),
     async setJevKey(value) {
       const net = host.net;
@@ -12463,8 +12526,8 @@ function createRuntime(host, options = {}) {
     orders: () => orders,
     async lastSummary() {
       if (summary !== null) return summary;
-      const stored = await store.get(`squire/reports/${character.runId}`);
-      return stored === void 0 ? null : stored;
+      const stored2 = await store.get(`squire/reports/${character.runId}`);
+      return stored2 === void 0 ? null : stored2;
     },
     onChronicle(listener) {
       chronicleListeners.add(listener);
@@ -13347,12 +13410,12 @@ function mountPersona(body2, rt) {
     draw();
   });
   const presets = h("select");
-  presets.append(h("option", { value: "" }, "Start a new persona from..."), h("option", { value: "default" }, "Default"), h("option", { value: "random" }, "Random"));
-  for (const id of Object.keys(ARCHETYPES)) presets.append(h("option", { value: id }, id[0].toUpperCase() + id.slice(1)));
+  presets.append(h("option", { value: "" }, "Start a new persona from..."), h("option", { value: "neutral" }, "Neutral"), h("option", { value: "random" }, "Random"));
+  for (const id of PRESET_IDS) presets.append(h("option", { value: id }, styleLabel(id)));
   presets.addEventListener("change", () => {
     const v = presets.value;
     presets.value = "";
-    if (v === "default") add2(defaultPersona("New persona"));
+    if (v === "neutral") add2(neutralPersona("New persona"));
     else if (v === "random") add2(randomPersona(Math.random, "Wanderer"));
     else if (v !== "") add2(archetype(v));
   });
@@ -13367,6 +13430,10 @@ function mountPersona(body2, rt) {
       store({ ...current2(), name: name.value.trim() || "Squire" });
       draw();
     });
+    const style = h("select");
+    style.append(h("option", { value: "", selected: p.preset === null }, "No style"));
+    for (const id of PRESET_IDS) style.append(h("option", { value: id, selected: p.preset === id }, styleLabel(id)));
+    style.addEventListener("change", () => store({ ...current2(), preset: style.value === "" ? null : style.value }));
     const backstory = h("textarea", { placeholder: "Who is this character? Where are they from, what do they want, what do they fear?" }, p.backstory);
     backstory.addEventListener("change", () => store({ ...current2(), backstory: backstory.value }));
     const groups = GROUPS.map((group) => {
@@ -13377,6 +13444,7 @@ function mountPersona(body2, rt) {
       sheet,
       playing === null ? null : h("p", { class: "muted" }, `This character plays as ${playing.name}. Changes here apply to new characters.`),
       h("label", {}, "Name", name),
+      h("label", {}, "Play style", style),
       h("label", {}, "Backstory", backstory),
       ...groups
     );
@@ -13385,6 +13453,7 @@ function mountPersona(body2, rt) {
     h("h3", {}, "Personas"),
     h("div", { class: "row" }, library, presets),
     h("label", {}, active2, " New characters play as this persona"),
+    h("p", { class: "muted" }, HEIR_NOTE),
     h(
       "div",
       {},
@@ -13421,6 +13490,11 @@ function mountPersona(body2, rt) {
   draw();
   return () => {
   };
+}
+var PRESET_IDS = Object.keys(ARCHETYPES);
+var HEIR_NOTE = "A character you make starts from the persona marked here. An heir Squire starts after a death rolls its own traits and takes its family's values, loyalties and habits from its parent.";
+function styleLabel(id) {
+  return `${presetName(id)}: ${ARCHETYPES[id].rule}`;
 }
 function row(param, get, save) {
   const [low, high] = param.scale.split(" to ");
@@ -14104,7 +14178,8 @@ function mountPanel(host, rt, lessons) {
     applyScale(SCALES[Math.max(0, Math.min(SCALES.length - 1, at + by))] ?? 1);
   };
   let cleanup = null;
-  let current2 = rt.config().setupDone ? "dashboard" : "setup";
+  const playerMade = rt.firstMeeting() && rt.config().pendingHeir === null;
+  let current2 = !rt.config().setupDone ? "setup" : playerMade ? "persona" : "dashboard";
   function show(tab, source = "panel") {
     current2 = tab;
     cleanup?.();
