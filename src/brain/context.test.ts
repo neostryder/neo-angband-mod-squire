@@ -64,6 +64,23 @@ describe("decision context", () => {
     expect(gifted.context.stateHash).toBe(plain.context.stateHash);
   });
 
+  it("files each goal sentence on its own layer", () => {
+    const longGoal = "Win the game. Chosen on the first look at this character.";
+    const midGoal = "Depth target. Chosen on reaching a new level.";
+    const nearGoal = "Explore this level. Chosen on reaching a new level.";
+    const recent = "The near-term goal explore this level was met after 4 turns, from dungeon level 2 to dungeon level 2, because the level has no unexplored frontier.";
+    const q = requestFor({ map: ROOM, player: { depth: 2 } }, {
+      strategy: () => ({ aims: [], tripAllowed: () => false, longGoal, midGoal, nearGoal, outcomes: [recent] }),
+    });
+    const context = q.context.layers;
+    expect(context).toBeDefined();
+    if (context === undefined) return;
+    expect(layerOf(context, "long_goal")).toEqual({ long_goal: longGoal });
+    expect(layerOf(context, "mid_goal")).toEqual({ mid_goal: midGoal });
+    expect(layerOf(context, "near_goal")).toEqual({ near_goal: nearGoal });
+    expect(layerOf(context, "outcomes")["recent"]).toBe(recent);
+  });
+
   it("files each key once and leaves undefined facts out", () => {
     const context = contextOf([["manual", "rules", "r"], ["memory", "hunger", undefined], ...entriesOf("knowledge", { lessons: "l" })]);
     expect(stateOf(context)).toEqual({ rules: "r", lessons: "l" });

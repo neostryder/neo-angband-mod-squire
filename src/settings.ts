@@ -38,6 +38,8 @@ export interface SquireCfg {
   collect: boolean;
   /** Take a known down staircase during the long errand. */
   descend: boolean;
+  /** Put the long-term goal on the Squire panel. The model sees the goal either way. */
+  revealLongGoal: boolean;
   /**
    * The share of maximum hit points at or below which an errand breaks off.
    * Half, which is where a character stops being able to absorb one bad turn.
@@ -73,6 +75,7 @@ export function defaultCfg(): SquireCfg {
     wakeSleepers: false,
     collect: true,
     descend: true,
+    revealLongGoal: false,
     retreatFraction: DEFAULT_RETREAT_PERCENT / 100,
     errandSteps: DEFAULT_ERRAND_STEPS,
     idleSteps: 3,
@@ -90,6 +93,7 @@ export const RULE_CFG: Readonly<Record<string, keyof SquireCfg>> = {
   "squire.wakeSleepers": "wakeSleepers",
   "squire.collect": "collect",
   "squire.descend": "descend",
+  "squire.revealLongGoal": "revealLongGoal",
 };
 
 export const RETREAT_PERCENT_SETTING = "squire.retreatPercent";

@@ -25,6 +25,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Attack sleeping creatures | `squire.wakeSleepers` | off | Let the fighting errand pick a sleeping creature as its target. |
 | Pick things up on the way | `squire.collect` | on | During the long errand, pick up whatever is lying on a square the character has already walked onto. |
 | Take the stairs down | `squire.descend` | on | During the long errand, walk to a known down staircase and use it once the floor has been walked out. |
+| Show the long-term goal | `squire.revealLongGoal` | off | Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal. |
 
 ## Shop memory
 

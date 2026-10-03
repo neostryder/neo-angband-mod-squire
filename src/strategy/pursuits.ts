@@ -10,6 +10,7 @@
  */
 
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { SystemOneRequest } from "../brain/systemone.js";
 import type { Feeling } from "../learning/grudges.js";
 import type { Persona } from "../persona/persona.js";
 import { jitteredStrength } from "../persona/blend.js";
@@ -169,13 +170,97 @@ export function pursuitWeight(pursuits: readonly Pursuit[], kind: PursuitKind): 
   return pursuits.find((p) => p.kind === kind)?.weight ?? 0;
 }
 
+/** How strongly a weight reads, in the words the model and the panel already use. */
+export function weightBand(weight: number): "strongly" | "clearly" | "somewhat" {
+  return weight >= 0.7 ? "strongly" : weight >= 0.5 ? "clearly" : "somewhat";
+}
+
 /** The goals as facts for a model request, one fact per key. */
 export function pursuitFacts(pursuits: readonly Pursuit[]): Record<string, string> {
   const win = pursuits.find((p) => p.kind === "win");
   if (pursuits.length === 0) return {};
   return {
-    goals: `Goals, most wanted first: ${pursuits.map((p) => `${p.label} (${p.weight >= 0.7 ? "strongly" : p.weight >= 0.5 ? "clearly" : "somewhat"} wanted)`).join(", ")}.`,
+    goals: `Goals, most wanted first: ${pursuits.map((p) => `${p.label} (${weightBand(p.weight)} wanted)`).join(", ")}.`,
     ...(win === undefined ? {} : { win_urgency: `Winning the game matters ${winUrgency(win.weight) === "driven" ? "above everything" : winUrgency(win.weight) === "high" ? "a great deal" : winUrgency(win.weight) === "moderate" ? "somewhat" : "little"} to this character. ${win.detail}` }),
+  };
+}
+
+/** The chosen long-term goal's weight is raised by this much, and never past 1. */
+export const LEAD_FACTOR = 1.5;
+
+/** Character levels and maximum depths that ask the long-term goal again. */
+export const LONG_LEVELS: readonly number[] = [20, 30, 40];
+export const LONG_DEPTHS: readonly number[] = [30, 60];
+
+/** Milestones already asked, so a character who starts past one does not get it twice. */
+export interface LongStamp {
+  readonly levels: readonly number[];
+  readonly depths: readonly number[];
+}
+
+export interface LongMoment {
+  readonly trigger: string;
+  readonly stamp: LongStamp;
+}
+
+/** The first look asks once. Later, only a milestone the character just crossed. */
+export function longDue(stamp: LongStamp | null, level: number, maxDepth: number): LongMoment | null {
+  const levels = LONG_LEVELS.filter((n) => level >= n);
+  const depths = LONG_DEPTHS.filter((n) => maxDepth >= n);
+  if (stamp === null) return { trigger: "on the first look at this character", stamp: { levels, depths } };
+  const nextLevels = levels.filter((n) => !stamp.levels.includes(n));
+  const nextDepths = depths.filter((n) => !stamp.depths.includes(n));
+  if (nextLevels.length === 0 && nextDepths.length === 0) return null;
+  const parts: string[] = [];
+  if (nextLevels.length === 1) parts.push(`character level ${String(nextLevels[0])}`);
+  else if (nextLevels.length > 1) parts.push(`character levels ${nextLevels.map(String).join(" and ")}`);
+  if (nextDepths.length === 1) parts.push(`maximum depth ${String(nextDepths[0])}`);
+  else if (nextDepths.length > 1) parts.push(`maximum depths ${nextDepths.map(String).join(" and ")}`);
+  return {
+    trigger: `at ${parts.join(" and ")}`,
+    stamp: { levels: [...stamp.levels, ...nextLevels], depths: [...stamp.depths, ...nextDepths] },
+  };
+}
+
+/**
+ * Raise one goal to the lead. The factor applies to the persona's own weight,
+ * so asking again does not stack it, and every other goal keeps its weight.
+ */
+export function leadPursuits(pursuits: readonly Pursuit[], kind: PursuitKind | null): Pursuit[] {
+  const led = kind === null ? pursuits.map((pursuit) => ({ ...pursuit })) : pursuits.map((pursuit) => (
+    pursuit.kind === kind ? { ...pursuit, weight: rounded(pursuit.weight * LEAD_FACTOR) } : { ...pursuit }
+  ));
+  return led.sort((a, b) => b.weight - a.weight || (a.kind === "win" ? -1 : b.kind === "win" ? 1 : 0));
+}
+
+/** A number the long-term goal can show, or null when the code has none. */
+export function longProgress(kind: PursuitKind, maxDepth: number, familyDeepest: number | null): string | null {
+  if (kind === "win" || kind === "depth") return `deepest dungeon level ${String(maxDepth)}`;
+  if (kind === "record" && familyDeepest !== null) return `deepest ${String(maxDepth)} of family ${String(familyDeepest)}`;
+  return null;
+}
+
+const NONE_OF_THESE = "None of the listed options suits this moment.";
+
+/** One Choice over the pursuits the persona holds. */
+export function longGoalRequest(view: AgentView, pursuits: readonly Pursuit[]): SystemOneRequest {
+  const player = view.player();
+  const criteria: Record<string, string | null> = {};
+  for (const pursuit of pursuits) criteria[pursuit.kind] = `${pursuit.label} (${weightBand(pursuit.weight)} wanted). ${pursuit.detail}`;
+  criteria["none_of_these"] = NONE_OF_THESE;
+  return {
+    state: {
+      rules: "A long-term goal leads the character's play. The chosen goal's pull is raised. The others keep their weights, and winning the game stays a pull.",
+      character: `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}), ${String(player.hp)} of ${String(player.maxHp)} hit points, ${String(player.gold)} gold.`,
+      ...pursuitFacts(pursuits),
+    },
+    questions: {
+      long_goal: {
+        type: "choice",
+        instructions: "Which long-term goal should lead this character's play from here?",
+        criteria,
+      },
+    },
   };
 }
 

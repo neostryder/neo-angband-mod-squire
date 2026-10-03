@@ -2168,8 +2168,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         log(`goal: Squire widens its choices. ${reason}`);
       }
 
-      const aimList = options.strategy?.().aims ?? [];
+      const steeringNow = options.strategy?.();
+      const aimList = steeringNow?.aims ?? [];
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`
+      const ended = steeringNow?.outcomes ?? [];
+      const textOf = (value: string | undefined): string | undefined => value === undefined || value === "" ? undefined : value;
       const criteria: Record<string, string | null> = {};
       for (const offer of offers) criteria[offer.goal] = offer.criteria;
       criteria["none_of_these"] = NONE_OF_THESE;
@@ -2246,12 +2249,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         ["memory", "status", statusOf(view, canRead(view))],
         ["purpose", "gaps", gapFacts(view)],
         ["outcomes", "last", lastOutcome ?? undefined],
-        ["long_goal", "aims", aimNote ?? undefined],
+        /* The aim note sits with the mid-term goal. The three sentences use their own keys because a state key can be filed only once. */
+        ["outcomes", "recent", textOf(ended[0])],
+        ["outcomes", "prior", textOf(ended[1])],
+        ["outcomes", "older", textOf(ended[2])],
+        ["long_goal", "long_goal", textOf(steeringNow?.longGoal)],
+        ["mid_goal", "mid_goal", textOf(steeringNow?.midGoal)],
+        ["mid_goal", "aims", aimNote ?? undefined],
+        ["near_goal", "near_goal", textOf(steeringNow?.nearGoal)],
         ["orders", "orders", orderNote ?? undefined],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : undefined],
         ...entriesOf("memory", swarmNote(seen)),
         ...entriesOf("knowledge", lessonsFor(view)),
-        ["persona", "persona", persona === null ? undefined : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(options.strategy?.().pursuits ?? []), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) }],
+        ["persona", "persona", persona === null ? undefined : { name: persona.name, ...personaState(persona, backstoryTokens), ...pursuitFacts(steeringNow?.pursuits ?? []), ...(flourishLines(flourishesNow(), persona).length === 0 ? {} : { family: flourishLines(flourishesNow(), persona).join(" ") }), ...(believed.length === 0 ? {} : { believes: `${believed.join("; ")}.` }) }],
       ]);
       const fitted = fitToBudget(compiled);
       if (fitted.shed.length > 0) log(`goal: the request was over ${String(STATE_TOKEN_CAP)} tokens, so it leaves out ${fitted.shed.join(", ")}`);

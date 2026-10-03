@@ -41,6 +41,7 @@ const TEMPLATES: Record<RunEvent["kind"], readonly [Template, Template, Template
   "lesson": [(f, d) => `Learned at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, I learned: ${f}.`, (f, d) => `${f} That lesson came at ${d} ft.`],
   "instruction": [(f, d) => `Kept to my orders at ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} That was at ${d} ft.`],
   "lineage": [(f, d) => `Carried the family story to ${d} ft: ${f}.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} The line reached ${d} ft.`],
+  "goal": [(f, d) => `${f} That was at ${d} ft.`, (f, d) => `At ${d} ft, ${f}.`, (f, d) => `${f} I was at ${d} ft.`],
 };
 
 export function chronicleLine(event: RunEvent, persona: Persona, rng: () => number): string {

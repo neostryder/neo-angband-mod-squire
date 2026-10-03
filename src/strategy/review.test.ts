@@ -1,25 +1,32 @@
+import type { StoreView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
-import { suppliedWorld, world } from "../harness.js";
+import { FEAT, itemNamed, suppliedWorld, world } from "../harness.js";
 import { JEV, type AskResult } from "../brain/backend.js";
 import { createTally } from "../brain/tally.js";
-import type { ScoreAnswer, SystemOneRequest } from "../brain/systemone.js";
-import { createStrategy, REVIEW_TURNS, reviewDue, scoreRequest, type Strategy } from "./review.js";
+import type { SystemOneRequest } from "../brain/systemone.js";
+import { defaultPersona } from "../persona/persona.js";
+import type { RunEvent } from "../report/events.js";
+import { createStrategy, midGoalRequest, REVIEW_TURNS, reviewDue, type Strategy } from "./review.js";
 import { candidateAims } from "./aims.js";
+import { LEAD_FACTOR, leadPursuits, pursuitFacts, pursuitsFor } from "./pursuits.js";
+import { TV } from "../gear/compare.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
-function score(value: number): ScoreAnswer {
-  return { type: "score", score: value, confidence: 0.9, probabilities: [] };
-}
-
-function reply(scores: Record<string, number>): AskResult {
+function reply(probs: Record<string, number>): AskResult {
+  const choice = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "none_of_these";
   return {
     ok: true,
-    answers: Object.fromEntries(Object.entries(scores).map(([k, v]) => [k, score(v)])),
+    answers: { mid_goal: { type: "choice", choice, confidence: 0.9, probabilities: probs } },
     usage: { inputTokens: 100, outputTokens: 10, estimated: false },
     model: null,
     latencyMs: 1,
-  } as AskResult;
+    server: "test",
+  };
+}
+
+function aimLogs(logs: readonly string[]): string[] {
+  return logs.filter((line) => line.startsWith("Squire looked over its aims"));
 }
 
 function rig(send: (request: SystemOneRequest) => Promise<AskResult>, backend: typeof JEV | null = JEV, caps = { perSessionUsd: 0, perDayUsd: 0 }) {
@@ -78,21 +85,21 @@ describe("review triggers", () => {
     const { strategy, logs } = rig(never, null);
     strategy.observe(w.view);
     await strategy.settled();
-    expect(logs).toHaveLength(1);
+    expect(aimLogs(logs)).toHaveLength(1);
     strategy.observe(w.view);
     w.advance(REVIEW_TURNS - 1);
     strategy.observe(w.view);
     await strategy.settled();
-    expect(logs).toHaveLength(1);
+    expect(aimLogs(logs)).toHaveLength(1);
     w.advance(1);
     strategy.observe(w.view);
     await strategy.settled();
-    expect(logs).toHaveLength(2);
+    expect(aimLogs(logs)).toHaveLength(2);
     expect(strategy.last()?.trigger).toBe("periodic");
     w.advance(REVIEW_TURNS - 1);
     strategy.observe(w.view);
     await strategy.settled();
-    expect(logs).toHaveLength(3);
+    expect(aimLogs(logs)).toHaveLength(3);
     expect(strategy.last()?.trigger).toBe("budget");
     w.setPlayer({ level: 6 });
     strategy.observe(w.view);
@@ -102,7 +109,7 @@ describe("review triggers", () => {
     strategy.observe(w.view);
     await strategy.settled();
     expect(strategy.last()?.trigger).toBe("arrival");
-    expect(logs).toHaveLength(5);
+    expect(aimLogs(logs)).toHaveLength(5);
   });
 
   it("reviews when the character goes from the town to the dungeon", async () => {
@@ -114,7 +121,7 @@ describe("review triggers", () => {
     strategy.observe(w.view);
     await strategy.settled();
     expect(strategy.last()?.trigger).toBe("town");
-    expect(logs).toHaveLength(2);
+    expect(aimLogs(logs)).toHaveLength(2);
   });
 
   it("keeps only the newest review when an older one answers later", async () => {
@@ -125,10 +132,10 @@ describe("review triggers", () => {
     w.setPlayer({ depth: 2 });
     strategy.observe(w.view);
     expect(releases).toHaveLength(2);
-    releases[1]!(reply({ lantern: 10, depth: 90 }));
+    releases[1]!(reply({ lantern: 0.1, depth: 0.9 }));
     await Promise.resolve();
     await new Promise((r) => setTimeout(r, 0));
-    releases[0]!(reply({ lantern: 90, depth: 10 }));
+    releases[0]!(reply({ lantern: 0.9, depth: 0.1 }));
     await strategy.settled();
     await new Promise((r) => setTimeout(r, 0));
     expect(strategy.ranked()[0]?.kind).toBe("depth");
@@ -137,15 +144,18 @@ describe("review triggers", () => {
 });
 
 describe("ranking", () => {
-  it("sends one Score request with a question for each aim and ranks by score", async () => {
+  it("sends one Choice over the aims and ranks by its probabilities", async () => {
     const w = world({ map: ROOM, player: { level: 1, depth: 1, maxHp: 20 }, worn: ["Wooden Torch"], spells: [{ name: "Magic Missile", sidx: 0 }] });
     const { strategy, requests, logs, tally } = rig(() => Promise.resolve(reply({ depth: 3, lantern: 2, spellbook: 1, armour: 0 })));
     strategy.observe(w.view);
     await strategy.settled();
     expect(requests).toHaveLength(1);
-    const questions = Object.values(requests[0]?.questions ?? {});
-    expect(questions).toHaveLength(candidateAims(w.view).length);
-    expect(questions.every((q) => q.type === "score")).toBe(true);
+    const question = requests[0]?.questions["mid_goal"];
+    expect(question?.type).toBe("choice");
+    if (question?.type === "choice") {
+      for (const aim of candidateAims(w.view)) expect(question.criteria).toHaveProperty(aim.kind);
+      expect(question.criteria).toHaveProperty("none_of_these");
+    }
     expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "lantern", "spellbook", "armour", "preparation", "win"]);
     expect(strategy.last()?.source).toBe("model");
     expect(logs).toHaveLength(1);
@@ -153,9 +163,10 @@ describe("ranking", () => {
     expect(tally.byBackend()["Jev"]?.requests).toBe(1);
   });
 
-  it("keeps the fixed order on equal scores", async () => {
+  it("keeps the fixed order when the probabilities tie", async () => {
     const w = world({ map: ROOM, player: { level: 1, maxHp: 20 }, worn: ["Wooden Torch"] });
-    const { strategy } = rig(() => Promise.resolve(reply({})));
+    const probs = Object.fromEntries(candidateAims(w.view).map((aim) => [aim.kind, 1]));
+    const { strategy } = rig(() => Promise.resolve(reply(probs)));
     strategy.observe(w.view);
     await strategy.settled();
     expect(strategy.ranked().map((a) => a.kind)).toEqual(candidateAims(w.view).map((a) => a.kind));
@@ -206,10 +217,12 @@ describe("ranking", () => {
     expect(strategy.ranked().map((a) => a.kind)).toEqual(["depth", "win"]);
   });
 
-  it("writes the aims and the character into the request state", () => {
+  it("writes each aim into the Choice and the character into the request state", () => {
     const w = world({ map: ROOM, worn: ["Wooden Torch"] });
-    const request = scoreRequest(w.view, candidateAims(w.view));
-    expect(Object.keys(request.state["aims"] as object)).toContain("lantern");
+    const request = midGoalRequest(w.view, candidateAims(w.view));
+    const question = request.questions["mid_goal"];
+    expect(question?.type).toBe("choice");
+    if (question?.type === "choice") expect(question.criteria).toHaveProperty("lantern");
     expect(typeof request.state["character"]).toBe("string");
   });
 });
@@ -321,3 +334,283 @@ describe("town trip gate", () => {
     expect(strategy.tripAllowed(300)).toBe(true);
   });
 });
+
+function shop(): StoreView {
+  return {
+    feat: FEAT.GENERAL, featName: "STORE_GENERAL", isHome: false, owner: { name: "Bilbo", purse: 5000 },
+    stock: [{ ...itemNamed("a Lantern", 0), index: 0, number: 1, price: 100 }],
+  } as StoreView;
+}
+
+describe("the three goals", () => {
+  it("raises the chosen pursuit once, and asks again at character level 20", async () => {
+    const persona = defaultPersona("Mira");
+    persona.sliders.ambition = 0;
+    const w = world({ map: ROOM, player: { depth: 1, hp: 40, maxHp: 40 } });
+    const requests: SystemOneRequest[] = [];
+    const logs: string[] = [];
+    const played = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        requests.push(request);
+        const key = Object.keys(request.questions)[0] ?? "";
+        if (key !== "long_goal") return Promise.resolve(reply({}));
+        return Promise.resolve({
+          ok: true,
+          answers: { long_goal: { type: "choice", choice: "win", confidence: 0.9, probabilities: { win: 1 } } },
+          usage: { inputTokens: 10, outputTokens: 2, estimated: false },
+          model: null,
+          latencyMs: 1,
+          server: "test",
+        });
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: (line) => logs.push(line),
+      persona: () => persona,
+      seed: () => "run-1",
+    });
+    const base = pursuitsFor(persona, 0, [], null, "run-1").find((item) => item.kind === "win")?.weight ?? 0;
+    const led = Math.round(Math.min(1, base * LEAD_FACTOR) * 100) / 100;
+    played.observe(w.view);
+    await played.settled();
+    expect(played.pursuits().find((item) => item.kind === "win")?.weight).toBe(led);
+    expect(played.longLine()).toContain("Chosen on the first look at this character.");
+    expect(played.showLongGoal()).toBe(false);
+    expect(logs.some((line) => line.includes("Jev ranked them."))).toBe(true);
+    expect(requests.some((request) => request.questions["long_goal"] !== undefined)).toBe(true);
+    w.setPlayer({ level: 20 });
+    played.observe(w.view);
+    await played.settled();
+    expect(played.pursuits().find((item) => item.kind === "win")?.weight).toBe(led);
+    expect(logs.some((line) => line.includes("at character level 20"))).toBe(true);
+  });
+
+  it("does not log the only pursuit on the first look, and does on a later milestone", async () => {
+    const w = world({ map: ROOM, player: { depth: 1, hp: 40, maxHp: 40 } });
+    const { strategy, logs } = rig(never, null);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(logs.some((line) => line.includes("long-term"))).toBe(false);
+    expect(strategy.longLine()).toContain("Win the game");
+    w.setPlayer({ level: 20 });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(logs.some((line) => line.includes("only one long-term goal applies"))).toBe(true);
+  });
+
+  it("hides the long-term line unless the switch is on, and still keeps the sentence", async () => {
+    const w = world({ map: ROOM, player: { hp: 40, maxHp: 40 } });
+    const open = createStrategy({
+      backend: () => null,
+      send: never,
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: () => {},
+      revealLongGoal: () => true,
+    });
+    open.observe(w.view);
+    await open.settled();
+    expect(open.showLongGoal()).toBe(true);
+    expect(open.longLine()).not.toBeNull();
+  });
+
+  it("reviews at once when the current mid-term goal is satisfied", async () => {
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { hp: 40, maxHp: 40 } });
+    const events: RunEvent[] = [];
+    const strategy = createStrategy({
+      backend: () => null, send: never, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), now: () => 0, log: () => {},
+      record: (event) => events.push(event),
+    });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked()[0]?.kind).toBe("lantern");
+    const armed = world({ map: ROOM, worn: ["a Lantern"], player: { hp: 40, maxHp: 40 } });
+    strategy.observe(armed.view);
+    await strategy.settled();
+    expect(strategy.last()?.trigger).toBe("met");
+    expect(strategy.ranked().some((aim) => aim.kind === "lantern")).toBe(false);
+    expect(events[0]?.kind).toBe("goal");
+    expect(events[0]?.text).toContain("was met");
+    expect(strategy.outcomeLines()[0]).toContain("was met");
+  });
+
+  it("reviews at once when the current mid-term goal's item sells out", async () => {
+    const w = world({ map: ["#####", "#@.G#", "#####"], player: { depth: 0, hp: 40, maxHp: 40, gold: 20 }, worn: ["a Wooden Torch"], stores: [shop()] });
+    const events: RunEvent[] = [];
+    const logs: string[] = [];
+    const strategy = createStrategy({
+      backend: () => null, send: never, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), now: () => 0, log: (line) => logs.push(line),
+      record: (event) => events.push(event),
+    });
+    w.moveTo({ x: 3, y: 1 });
+    strategy.remember(w.view, w.terrain);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked()[0]?.kind).toBe("lantern");
+    w.moveTo({ x: 1, y: 1 });
+    strategy.remember(w.view, w.terrain);
+    w.setStores([{ ...shop(), stock: [] }]);
+    w.moveTo({ x: 3, y: 1 });
+    strategy.remember(w.view, w.terrain);
+    expect(logs.some((line) => line.includes("shopkeeper has none"))).toBe(true);
+    expect(events).toEqual([]);
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.last()?.trigger).toBe("failed");
+    expect(events[0]?.text).toContain("failed");
+    expect(events[0]?.text).toContain("sold out");
+  });
+
+  it("keeps the first feasible near-term goal when nothing answers, and records it when it is met", async () => {
+    const w = world({ map: ROOM, player: { depth: 2, hp: 10, maxHp: 40 } });
+    const events: RunEvent[] = [];
+    const logs: string[] = [];
+    const strategy = createStrategy({
+      backend: () => null, send: never, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), now: () => 0, log: (line) => logs.push(line),
+      record: (event) => events.push(event),
+    });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.nearLine()).toContain("Rest to full");
+    expect(strategy.nearLine()).toContain("10 of 40 hit points");
+    expect(logs.some((line) => line.includes("kept the first one"))).toBe(true);
+    w.setPlayer({ hp: 40 });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(events.some((event) => event.text.includes("was met") && event.text.includes("hit points and spell points are full"))).toBe(true);
+  });
+
+  it("sends one long-term question while it is out, and keeps the first look's ranking", async () => {
+    const persona = defaultPersona("Mira");
+    persona.sliders.ambition = 0;
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { depth: 1, hp: 40, maxHp: 40 } });
+    const held: ((result: AskResult) => void)[] = [];
+    const requests: SystemOneRequest[] = [];
+    const logs: string[] = [];
+    const played = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        requests.push(request);
+        if (request.questions["long_goal"] === undefined) return Promise.resolve(reply({ depth: 3, lantern: 1 }));
+        return new Promise<AskResult>((resolve) => { held.push(resolve); });
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: (line) => logs.push(line),
+      persona: () => persona,
+      seed: () => "run-1",
+    });
+    played.observe(w.view);
+    w.advance(1);
+    played.observe(w.view);
+    w.advance(1);
+    played.observe(w.view);
+    expect(requests.filter((request) => request.questions["long_goal"] !== undefined)).toHaveLength(1);
+    held[0]!(longAnswer("win"));
+    await played.settled();
+    expect(played.last()?.trigger).toBe("arrival");
+    expect(played.ranked()[0]?.kind).toBe("depth");
+    expect(played.midLine()).not.toBeNull();
+    expect(aimLogs(logs)).toHaveLength(1);
+    w.advance(1);
+    played.observe(w.view);
+    await played.settled();
+    expect(requests.filter((request) => request.questions["long_goal"] !== undefined)).toHaveLength(1);
+  });
+
+  it("tells the mid-term question the raised weight of the chosen long-term goal", async () => {
+    const persona = defaultPersona("Mira");
+    persona.sliders.ambition = 0;
+    const base = pursuitsFor(persona, 0, [], null, "run-1");
+    const lifted = base.slice(1).find((item) => pursuitFacts(leadPursuits(base, item.kind))["goals"] !== pursuitFacts(base)["goals"]);
+    expect(lifted).toBeDefined();
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { depth: 1, hp: 40, maxHp: 40 } });
+    const requests: SystemOneRequest[] = [];
+    const played = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        requests.push(request);
+        return Promise.resolve(request.questions["long_goal"] === undefined ? reply({ depth: 1 }) : longAnswer(lifted!.kind));
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: () => {},
+      persona: () => persona,
+      seed: () => "run-1",
+    });
+    played.observe(w.view);
+    await played.settled();
+    const mid = requests.find((request) => request.questions["mid_goal"] !== undefined);
+    expect(mid?.state["goals"]).toBe(pursuitFacts(leadPursuits(base, lifted!.kind))["goals"]);
+  });
+
+  it("does not count a shop item the character stopped trusting as a met aim", async () => {
+    const w = suppliedWorld({ map: ROOM, worn: ["Lantern (5000 turns)", "Soft Leather Armour", "Cloak", "Leather Shield", "Hard Helm", "Leather Boots", "Leather Gloves"], player: { depth: 1, hp: 40, maxHp: 40 } });
+    const events: RunEvent[] = [];
+    const strategy = createStrategy({
+      backend: () => null, send: never, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), now: () => 0, log: () => {},
+      record: (event) => events.push(event),
+      storeMemory: [{
+        feat: FEAT.WEAPON, name: "Weapon Smiths", owner: null, turn: 0, lifetime: 1000,
+        stock: [{ name: "a Dagger of Slay Evil (1d4) (+3,+4)", tval: TV.SWORD, price: 300, count: 1 }],
+      }],
+    });
+    strategy.observe(w.view);
+    await strategy.settled();
+    expect(strategy.ranked()[0]?.kind).toBe("weapon");
+    w.advance(1001);
+    strategy.observe(w.view);
+    await strategy.settled();
+    const mid = events.find((event) => event.text.startsWith("The mid-term goal"));
+    expect(mid?.text).toContain("was abandoned");
+    expect(mid?.text).toContain("grew too old to count on");
+    expect(strategy.last()?.trigger).toBe("lapsed");
+  });
+
+  it("records a family record that is beaten as met and chooses a new long-term goal", async () => {
+    const persona = defaultPersona("Mira");
+    persona.sliders.pride = 100;
+    persona.sliders.ambition = 100;
+    const w = world({ map: ROOM, player: { depth: 1, maxDepth: 1, hp: 40, maxHp: 40 } });
+    const events: RunEvent[] = [];
+    const longAsked: SystemOneRequest[] = [];
+    const played = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        if (request.questions["long_goal"] === undefined) return Promise.resolve(reply({}));
+        longAsked.push(request);
+        return Promise.resolve(longAnswer(longAsked.length === 1 ? "record" : "win"));
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: () => {},
+      persona: () => persona,
+      family: () => ({ deepest: 5, heir: true }),
+      seed: () => "run-1",
+      record: (event) => events.push(event),
+    });
+    played.observe(w.view);
+    await played.settled();
+    expect(played.longLine()).toContain("Beat the family's deepest level");
+    w.setPlayer({ depth: 5, maxDepth: 5 });
+    played.observe(w.view);
+    await played.settled();
+    const long = events.find((event) => event.text.startsWith("The long-term goal"));
+    expect(long?.text).toContain("was met");
+    expect(long?.text).toContain("past the family's deepest of 5");
+    expect(longAsked).toHaveLength(2);
+    expect(played.longLine()).toContain("Chosen after the long-term goal was met.");
+  });
+});
+
+function longAnswer(choice: string): AskResult {
+  return {
+    ok: true,
+    answers: { long_goal: { type: "choice", choice, confidence: 0.9, probabilities: { [choice]: 1 } } },
+    usage: { inputTokens: 10, outputTokens: 2, estimated: false },
+    model: null,
+    latencyMs: 1,
+    server: "test",
+  };
+}

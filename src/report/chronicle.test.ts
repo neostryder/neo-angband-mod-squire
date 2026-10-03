@@ -20,7 +20,7 @@ describe("Chronicle", () => {
   it("has three distinct templates for every event kind", () => {
     const persona = defaultPersona("Mira");
     for (const kind of ["kill", "unique-kill", "near-death", "escape", "level-up", "descend",
-      "item-found", "death", "divergence", "lesson", "lineage"] as const) {
+      "item-found", "death", "divergence", "lesson", "lineage", "goal"] as const) {
       const lines = [0, 0.4, 0.9].map((draw) => chronicleLine({ ...event, kind }, persona, () => draw));
       expect(new Set(lines).size, kind).toBe(3);
     }

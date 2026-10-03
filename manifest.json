@@ -104,6 +104,13 @@
       "description": "During the long errand, walk to a known down staircase and use it once the floor has been walked out. With this off, the character stays on its current floor.",
       "default": true,
       "requiresReload": true
+    },
+    {
+      "flag": "squire.revealLongGoal",
+      "title": "Show the long-term goal",
+      "description": "Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal.",
+      "default": false,
+      "requiresReload": true
     }
   ],
   "settings": [

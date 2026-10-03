@@ -5,7 +5,14 @@ import type { DecisionRecord } from "../brain/brain.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import { rowId, type LayaRow, type Pilot } from "./rows.js";
 
-const PILOTS: readonly [string, Pilot][] = [["goal", "squire_goal"], ["in_character", "squire_in_character"], ["ready_to_descend", "squire_gate"]];
+const PILOTS: readonly { readonly id: string; readonly pilot: Pilot; readonly suffix?: string }[] = [
+  { id: "goal", pilot: "squire_goal" },
+  { id: "in_character", pilot: "squire_in_character" },
+  { id: "ready_to_descend", pilot: "squire_gate" },
+  { id: "long_goal", pilot: "squire_goal", suffix: "long" },
+  { id: "mid_goal", pilot: "squire_goal", suffix: "mid" },
+  { id: "near_goal", pilot: "squire_goal", suffix: "near" },
+];
 
 export interface RowSink {
   append(row: LayaRow, seq: number): Promise<void>;
@@ -43,7 +50,8 @@ export function createShadow(options: {
   readonly now: () => number;
   readonly log: (message: string) => void;
 }) {
-  const busy = new Set<Pilot>();
+  /* One call in flight per question, so a rare goal question is not skipped behind the per-decision one that shares its pilot. */
+  const busy = new Set<string>();
   const pendingRows = new Set<Promise<void>>();
   let reportedFailure = false;
 
@@ -59,27 +67,29 @@ export function createShadow(options: {
       if (record.backend !== "Jev") return Promise.resolve();
       const ts = new Date(options.now()).toISOString();
       const tasks: Promise<void>[] = [];
-      for (const [questionId, pilot] of PILOTS) {
-        const question = record.request.questions[questionId];
-        const answer = record.answers[questionId];
+      for (const entry of PILOTS) {
+        const question = record.request.questions[entry.id];
+        const answer = record.answers[entry.id];
         if (question === undefined || answer === undefined) continue;
-        const shouldSend = enabled && record.backend === "Jev" && options.net !== null && !busy.has(pilot);
-        if (shouldSend) busy.add(pilot);
+        const shouldSend = enabled && record.backend === "Jev" && options.net !== null && !busy.has(entry.id);
+        if (shouldSend) busy.add(entry.id);
         let rowWritten = (): void => {};
         const written = new Promise<void>((resolve) => { rowWritten = resolve; });
         pendingRows.add(written);
         tasks.push((async () => {
           try {
             const install = await options.install;
-            const id = rowId(install, options.runId, seq, pilot);
-            const questions = { [questionId]: question };
+            const id = entry.suffix === undefined
+              ? rowId(install, options.runId, seq, entry.pilot)
+              : rowId(install, options.runId, seq, entry.pilot, entry.suffix);
+            const questions = { [entry.id]: question };
             const row: LayaRow = {
               id,
-              pilot,
+              pilot: entry.pilot,
               ts,
               state: record.request.state,
               questions,
-              jev: { model: record.model ?? "jev-latest", answers: { [questionId]: answer } },
+              jev: { model: record.model ?? "jev-latest", answers: { [entry.id]: answer } },
               outcome: { plan: record.outcome },
             };
             await options.rows.append(row, seq);
@@ -87,7 +97,7 @@ export function createShadow(options: {
             if (!shouldSend || options.net === null) return;
             let adapter = "base";
             const request: SystemOneRequest = { state: record.request.state, questions };
-            const backend = selfHosted("laya", "Laya", url, `laya:${pilot}`, fallbacks);
+            const backend = selfHosted("laya", "Laya", url, `laya:${entry.pilot}`, fallbacks);
             const result = await ask(capturingNet(options.net, (value) => { adapter = value; }), backend, request, options.now);
             if (!result.ok) { failed(); return; }
             await options.rows.attachLaya(id, adapter, result.answers, backend.fallbacks === undefined ? undefined : result.server);
@@ -96,7 +106,7 @@ export function createShadow(options: {
           } finally {
             rowWritten();
             pendingRows.delete(written);
-            if (shouldSend) busy.delete(pilot);
+            if (shouldSend) busy.delete(entry.id);
           }
         })());
       }

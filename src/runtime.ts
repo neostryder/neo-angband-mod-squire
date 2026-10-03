@@ -42,7 +42,7 @@ import { createJournal, emptyJournal, heirFrom, withAncestor, type Journal, type
 import { buildRunSummary, summaryForTelemetry, type RunReport, type RunSummary } from "./report/summary.js";
 import { defaultPersona } from "./persona/persona.js";
 import { createSender } from "./telemetry/sender.js";
-import { createRows, countRows, exportRows, rowId } from "./laya/rows.js";
+import { createRows, countRows, exportRows, goalSeqCounter, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import { unknownFlavour } from "./brain/items.js";
 import type { Apprentice } from "./knight.js";
@@ -59,6 +59,8 @@ export type SquireHost = Pick<ModPluginContext, "log"> & {
   readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
   readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
   readonly controllerArmed?: boolean;
+  /** Resolved manifest rules. Absent in tests that build a host by hand. */
+  readonly flags?: Readonly<Record<string, boolean>>;
 };
 
 /** The host's run report. */
@@ -280,12 +282,25 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
   });
 
+  const nextGoalSeq = goalSeqCounter(layaRows);
+  let goalRecorded: Promise<void> = Promise.resolve();
   const strategy = createStrategy({
     backend: () => backendFor(config),
     send: (request) => self.send(request),
     tally,
     now,
     log: (message) => host.log(message),
+    record: (event) => journal.event(event, false),
+    revealLongGoal: () => host.flags?.["squire.revealLongGoal"] === true,
+    onAsked: (request, answers) => {
+      if (backendFor(config)?.label !== "Jev") return;
+      goalRecorded = nextGoalSeq().then((seq) => {
+        void shadow.record({
+          token: null, backend: "Jev", request, context: null, answers,
+          usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model: null, latencyMs: 0, outcome: "goal",
+        }, seq, config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+      });
+    },
     feelings: () => feelingsNow(),
     persona: () => character.persona ?? activePersona(config),
     family: () => {
@@ -550,8 +565,8 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
       await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
     },
-    async exportLayaRows() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
-    async layaRowCount() { await logLoaded; await shadow.rowsReady(); await layaRows.idle(); return countRows(store); },
+    async exportLayaRows() { await logLoaded; await goalRecorded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
+    async layaRowCount() { await logLoaded; await goalRecorded; await shadow.rowsReady(); await layaRows.idle(); return countRows(store); },
     decisions: () => logLoaded.then(() => log.records()),
     net: () => host.net ?? null,
   };
@@ -745,7 +760,19 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         familyFlourishes: () => familyNow()?.flourishRecord ?? null,
         dreaded: () => dreadedRaces([...journal.lessons(), ...(config.lineages[character.lineage?.trim() || "Squire"]?.lore ?? [])]),
         calibrate: (probs) => journal.calibrate(probs),
-        strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits() }),
+        strategy: () => {
+          const longGoal = strategy.longLine();
+          const midGoal = strategy.midLine();
+          const nearGoal = strategy.nearLine();
+          const outcomes = strategy.outcomeLines();
+          return {
+            aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits(),
+            ...(longGoal === null ? {} : { longGoal }),
+            ...(midGoal === null ? {} : { midGoal }),
+            ...(nearGoal === null ? {} : { nearGoal }),
+            ...(outcomes.length === 0 ? {} : { outcomes }),
+          };
+        },
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
