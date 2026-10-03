@@ -1030,13 +1030,14 @@ function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
  * any staircase will do when the danger is pressing; otherwise only a down
  * staircase, because backing up the stairs from the first level at good health
  * is a trip to town and back that never gets deeper.
+ * Below the first level, down is ruled out too while the next depth's checklist has gaps. With connected stairs, a character who just climbed up is standing on a down staircase, and stepping onto it during a retreat sends it back to the level it was walking away from.
  */
 function retreatStairs(s: Situation, terrain: Terrain, widen: boolean): "any" | "down" | "none" {
   const player = s.view.player();
   if (player.depth === 0) return "none";
   const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
   if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
-  return reachableStairs(s.view, terrain) ? "down" : "none";
+  return reachableStairs(s.view, terrain) && (player.depth === 1 || missingPreparation(s.view, player.depth + 1).length === 0) ? "down" : "none";
 }
 
 function reachableFrontier(view: AgentView, terrain: Terrain): boolean {

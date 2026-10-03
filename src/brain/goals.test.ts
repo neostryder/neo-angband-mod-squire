@@ -364,6 +364,27 @@ describe("third soak survival regressions", () => {
     expect(offered(p.ask(w.view))).not.toContain("retreat");
   });
 
+  it("backs away instead of taking a down staircase to a depth the character is not ready for", () => {
+    /* From a bench run: no potions, so the Warrior went up from 4 to 3, landed on a down staircase, and the first creature that woke sent it back down. */
+    const map = ["##########", "#..>.....#", "##########"];
+    const spec = { map, player: { cls: "Warrior", depth: 3, maxDepth: 4, level: 6, maxLevel: 6, hp: 77, maxHp: 77 }, monsters: [{ grid: { x: 8, y: 1 }, race: "jackal", level: 5 }] };
+    const bare = world({ ...spec, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
+    bare.moveTo({ x: 3, y: 1 });
+    const q = asked(planner(bare).p.ask(bare.view));
+    expect(q.context.offers.find((o) => o.goal === "retreat")?.criteria).toMatch(/^Step up to three steps/);
+    const supplied = suppliedWorld(spec);
+    supplied.moveTo({ x: 3, y: 1 });
+    expect(asked(planner(supplied).p.ask(supplied.view)).context.offers.find((o) => o.goal === "retreat")?.criteria).toMatch(/^Head for a known down staircase/);
+    const firstStep = (w: ReturnType<typeof world>) => {
+      const { p } = planner(w);
+      const choice = p.choose(pick("retreat"), asked(p.ask(w.view)).context, w.view);
+      if (!("plan" in choice)) throw new Error("expected a retreat plan");
+      return choice.plan.step(w.view, w.act)?.code;
+    };
+    expect(firstStep(bare)).not.toBe("descend");
+    expect(firstStep(supplied)).toBe("descend");
+  });
+
   it("takes stairs underfoot instead of walking toward a distant down staircase", () => {
     const w = world({ map: ["#########", "#<@....>#", "#.......#", "#########"], player: { level: 1, hp: 1, maxHp: 14 },
       monsters: [{ ...grip, grid: { x: 2, y: 2 } }] });
