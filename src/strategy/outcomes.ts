@@ -30,7 +30,10 @@ export function goalSentence(label: string, progress: string | null, trigger: st
 export function outcomeSentence(outcome: GoalOutcome): string {
   const name = outcome.level === "long" ? "long-term" : outcome.level === "mid" ? "mid-term" : "near-term";
   const verb = outcome.end === "abandoned" ? "was abandoned" : outcome.end === "met" ? "was met" : "failed";
-  const line = `The ${name} goal ${outcome.goal} ${verb} after ${String(outcome.held)} turns, from dungeon level ${String(outcome.startDepth)} to dungeon level ${String(outcome.endDepth)}, because ${outcome.reason}.`;
+  const where = outcome.startDepth === outcome.endDepth
+    ? ` on dungeon level ${String(outcome.endDepth)}`
+    : `, from dungeon level ${String(outcome.startDepth)} to dungeon level ${String(outcome.endDepth)}`;
+  const line = `The ${name} goal ${outcome.goal} ${verb} after ${String(outcome.held)} turns${where}, because ${outcome.reason}.`;
   if (outcome.end !== "met" || outcome.reward === null || outcome.reward.length === 0) return line;
   return `${line} ${outcome.reward.endsWith(".") ? outcome.reward : `${outcome.reward}.`}`;
 }

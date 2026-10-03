@@ -99,11 +99,16 @@ function stronger(view: AgentView): boolean {
   return view.monsters().some((monster) => monster.visible && threatIndex(monster, player.level, player.hp, new Set(), player.depth === 0) >= 2);
 }
 
-function dangerousUnique(view: AgentView): boolean {
+/** The races of the dangerous uniques the character can see. An unseen monster is not a fact the character has. */
+export function dangerousUniquesInView(view: AgentView): string[] {
   const player = view.player();
-  return view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && (
+  return view.monsters().filter((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && (
     threatIndex(monster, player.level, player.hp, new Set(), player.depth === 0) >= 2 || fastUniqueAtLowLevel(monster, player)
-  ));
+  )).map((monster) => monster.race);
+}
+
+function dangerousUnique(view: AgentView): boolean {
+  return dangerousUniquesInView(view).length > 0;
 }
 
 function journeyKeeps(view: AgentView, terrain: Terrain, persona: Persona | null, goal: "explore" | "descend"): boolean {

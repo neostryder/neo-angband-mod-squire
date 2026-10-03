@@ -121,7 +121,7 @@ Knight's Lessons is on by default. With a model set up, Squire asks it for its o
 
 ## Reports
 
-When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and post the run on X or Reddit from its links. The decision log can be saved at any time, even before a report exists, and holds the latest 20,000 decisions. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions.
+When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and post the run on X or Reddit from its links. The decision log can be saved at any time, even before a report exists, and holds the latest 20,000 decisions. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions. Its Intent card shows the step Squire is on, the aim that step serves, the first thing the next level down asks for that the character lacks, and when Squire next checks whether to drop the aim.
 
 ## What Squire sends and stores
 

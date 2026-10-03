@@ -176,6 +176,18 @@ describe("Laya shadow rows", () => {
     ]);
   });
 
+  it("logs the revise-goal question as a gate row with its own suffix, numbered with the goal rows", async () => {
+    const store = memoryStore();
+    const rows = createRows(store, "run-7");
+    const shadow = createShadow({ net: null, rows, install: Promise.resolve(INSTALL), runId: "run-7", now: () => 0, log: () => {} });
+    const question = { type: "noul" as const, instructions: "Should the character drop its current mid-term goal and choose again?", criteria: { true: "Drop it.", false: "Keep it." } };
+    const seq = await goalSeqCounter(rows)();
+    await shadow.record({ ...decision(), request: { state: { hp: 12 }, questions: { revise_goal: question } }, answers: { revise_goal: { type: "noul", p: 0.7 } } }, seq, false, URL);
+    const parsed = (await exportRows(store)).trim().split("\n").map((line) => JSON.parse(line) as { id: string; pilot: string });
+    expect(parsed).toEqual([expect.objectContaining({ id: rowId(INSTALL, "run-7", GOAL_SEQ_BASE, "squire_gate", "revise"), pilot: "squire_gate" })]);
+    expect(await goalSeqCounter(createRows(store, "run-7"))()).toBe(GOAL_SEQ_BASE + 1);
+  });
+
   it("numbers goal rows past a reload and keeps them when old decision chunks are pruned", async () => {
     const store = memoryStore();
     const question = { type: "choice" as const, instructions: "Which aim?", criteria: { depth: "Depth.", none_of_these: null } };

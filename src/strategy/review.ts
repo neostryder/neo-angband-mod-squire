@@ -28,11 +28,15 @@ import { leadPursuits, longDue, longGoalRequest, longProgress, pursuitFacts, pur
 import { judgmentsFor, purchaseOrder, townChance, type Judgments, type PurchaseKind } from "./judgment.js";
 import { NEAR_ORDER, nearCandidates, nearEnded, nearGoalRequest, nearProgress, pickNear, type LeaveDanger, type NearFacts, type NearKind } from "./near.js";
 import { goalSentence, outcomeSentence, type GoalEnd, type GoalLevel, type GoalOutcome } from "./outcomes.js";
+import {
+  blockFor, checkpointEvent, CHECKPOINT_ACTIONS, guardAims, meaningfulAction, nextCheck, NOTHING_USED, openAims, resumeEvent, REVISE_LEVEL_CAP, reviseGoalRequest,
+  reviseThreshold, reviseYes, startWatch, usedBy, watchStep, type NextCheck, type ReviseBlock, type ReviseEvent, type ReviseWatch, type Used,
+} from "./revise.js";
 
 /** Game turns between reviews when nothing else prompts one. */
 export const REVIEW_TURNS = 2000;
 
-export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget" | "stock" | "met" | "failed" | "lapsed";
+export type ReviewTrigger = "arrival" | "town" | "level" | "periodic" | "budget" | "stock" | "met" | "failed" | "lapsed" | "revised";
 
 const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   arrival: "on reaching a new level",
@@ -44,6 +48,7 @@ const TRIGGER_TEXT: Readonly<Record<ReviewTrigger, string>> = {
   met: "because the aim was satisfied",
   failed: "after a stocked item sold out",
   lapsed: "after the character stopped trusting what it remembered of a shop",
+  revised: "to replace the goal it gave up",
 };
 
 /** What the last look at the game showed, and when the last review ran. */
@@ -178,6 +183,12 @@ export interface Strategy {
   outcomeLines(): readonly string[];
   /** The panel line for the long-term goal. Off unless the player turned the switch on. */
   showLongGoal(): boolean;
+  /** A command Squire gave. Ones that moved, fought, used or bought something count toward the periodic check. */
+  acted(command: { readonly code: string; readonly args?: Readonly<Record<string, unknown>> }): void;
+  /** The player played and then handed the game back to Squire. */
+  resumed(): void;
+  /** When the next check of the mid-term goal comes. Null until the first look. */
+  nextCheck(): NextCheck | null;
 }
 
 /** Gold must grow by half again before another trip for an aim is offered. */
@@ -208,6 +219,13 @@ function longLog(trigger: string, label: string, by: string): string {
 
 function nearLog(trigger: string, label: string, by: string): string {
   return `Squire looked over what it can do right now ${trigger}: ${label}.${by}`;
+}
+
+/** What a check of the mid-term goal did, and what prompted it. */
+function reviseLog(outcome: "drop" | "keep" | "stubborn", reason: string, label: string, why = ""): string {
+  if (outcome === "drop") return `Squire gave up ${label} after ${reason}, and will pick a new mid-term goal.`;
+  if (outcome === "stubborn") return `Squire kept ${label} after ${reason}. A less stubborn character would have dropped it.`;
+  return `Squire stuck with ${label} after ${reason}${why === "" ? "" : `, because ${why}`}.`;
 }
 
 function midProgress(aim: Aim, view: AgentView): string | null {
@@ -248,6 +266,22 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let failedKind: AimKind | null = null;
   let failedReason = "";
   const outcomeHistory: string[] = [];
+  /* State for the revise-goal check: the watch from the last look, the action count since the last check, what was used up since the last look, and a pending hand-back. */
+  let watch: ReviseWatch | null = null;
+  let actions = 0;
+  let used: Used = NOTHING_USED;
+  let resumePending = false;
+  /* Set while a revise question is out, so no second one is sent before it answers. */
+  let reviseAsking = false;
+  /* Goals the check dropped on each dungeon level this run, by level number, and the goals dropped recently enough to stay out of reach. */
+  const revisions = new Map<number, number>();
+  let blocks: ReviseBlock[] = [];
+  /* Why the mid-term goal was just dropped, so the next look chooses again. */
+  let dropped: string | null = null;
+
+  function guarded<T extends { readonly kind: string }>(list: readonly T[]): T[] {
+    return guardAims(list, blocks, lastView?.turn() ?? 0);
+  }
 
   function basePursuits(): Pursuit[] {
     return pursuitsFor(deps.persona?.() ?? null, deepest, deps.feelings?.() ?? [], deps.family?.() ?? null, deps.seed?.() ?? null);
@@ -280,6 +314,14 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     failedKind = null;
     failedReason = "";
     outcomeHistory.length = 0;
+    watch = null;
+    actions = 0;
+    used = NOTHING_USED;
+    resumePending = false;
+    reviseAsking = false;
+    revisions.clear();
+    blocks = [];
+    dropped = null;
   }
 
   function reset(): void {
@@ -403,7 +445,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     const ranks = args.midTrigger !== null || (args.nearReason !== null && args.nearList.length > 0);
     /* A keep that only asks the long-term goal does not supersede a ranking still in flight. */
     const seq = ranks ? ++latest : latest;
-    if (args.midTrigger !== null) aims = inFixedOrder(args.candidates);
+    if (args.midTrigger !== null) aims = guardAims(inFixedOrder(args.candidates), blocks, args.turn);
     if (args.longDue !== null) {
       let longSent: Awaited<ReturnType<typeof ask>>;
       try {
@@ -424,11 +466,14 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       }
     }
     if (!ranks || args.mine !== generation) return;
-    const askAims = args.candidates.filter((aim) => aim.kind !== "win").length >= 2;
-    const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, args.candidates, pursuitsNow())) : null;
+    /* A goal a check dropped is not offered again for a while, unless nothing else is left. */
+    const open = openAims(args.candidates, blocks, args.turn);
+    const askAims = open.filter((aim) => aim.kind !== "win").length >= 2;
+    const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, open, pursuitsNow())) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
-    const rankedPreview = args.midTrigger === null ? args.candidates : midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates);
+    const rankedPreview = args.midTrigger === null ? args.candidates
+      : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
     let nearReason = args.nearReason;
     const topKind = rankedPreview[0]?.kind ?? null;
     if (nearReason === null && args.midTrigger !== null && args.previousMid !== null && topKind !== null && topKind !== args.previousMid) {
@@ -473,6 +518,68 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     }
   }
 
+  function midSentence(): string | null {
+    if (midHold === null) return null;
+    const aim = aims.find((item) => item.kind === midHold?.id);
+    return goalSentence(aim?.label ?? midHold.label, aim !== undefined && lastView !== null ? midProgress(aim, lastView) : null, midHold.trigger);
+  }
+
+  function capped(depth: number): boolean {
+    return (revisions.get(depth) ?? 0) >= REVISE_LEVEL_CAP;
+  }
+
+  /**
+   * Ask the model whether to drop the mid-term goal, one question at a time.
+   * A yes at or above the persona's threshold drops the goal, blocks it for
+   * 2,000 game turns and makes the next look pick a new one. No answer changes
+   * nothing. The action count goes back to zero only when the question is sent.
+   */
+  function reviseCheck(event: ReviseEvent, view: AgentView, candidates: readonly Aim[]): void {
+    const held = midHold;
+    if (held === null || reviseAsking || capped(view.player().depth)) return;
+    if (!candidates.some((aim) => aim.kind !== held.id)) return;
+    actions = 0;
+    const others = openAims(candidates.filter((aim) => aim.kind !== held.id), blocks, view.turn());
+    const mine = generation;
+    const persona = deps.persona?.() ?? null;
+    const request = reviseGoalRequest(view, midSentence() ?? held.label, event.reason, others.map((aim) => aim.label), pursuitsNow());
+    reviseAsking = true;
+    const run = (async () => {
+      let sent: Awaited<ReturnType<typeof ask>>;
+      try {
+        sent = await ask(request);
+      } finally {
+        if (mine === generation) reviseAsking = false;
+      }
+      if (mine !== generation) return;
+      const threshold = reviseThreshold(persona);
+      const yes = reviseYes(sent.answer, threshold);
+      if (yes === null) {
+        deps.log(reviseLog("keep", event.reason, held.label, sent.why === "" ? "no answer came back" : sent.why));
+        return;
+      }
+      if (!yes) {
+        const leaned = sent.answer?.type === "noul" && sent.answer.p >= 0.5;
+        deps.log(reviseLog(leaned ? "stubborn" : "keep", event.reason, held.label));
+        return;
+      }
+      /* The goal asked about must still be the one held, and the level must still allow a drop. */
+      const now = lastView ?? view;
+      const depth = now.player().depth;
+      if (midHold === null || midHold.id !== held.id || capped(depth)) return;
+      const turn = now.turn();
+      push("mid", midHold, "abandoned", event.reason, turn, depth, null);
+      blocks = [...blocks.filter((block) => turn < block.until), blockFor(held.id, turn)];
+      revisions.set(depth, (revisions.get(depth) ?? 0) + 1);
+      midHold = null;
+      dropped = event.reason;
+      deps.log(reviseLog("drop", event.reason, held.label));
+    })().catch((error: unknown) => {
+      deps.log(`Squire could not check its mid-term goal: ${String(error)}`);
+    });
+    inFlight = Promise.all([inFlight, run]).then(() => undefined);
+  }
+
   return {
     remember(view, terrainNow) {
       terrain = terrainNow;
@@ -492,7 +599,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       }
       const own = candidateAims(view, shops.all(), deps.persona?.() ?? null);
       const candidates = withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
-      aims = answers === null ? inFixedOrder(candidates) : rankByScore(candidates, answers);
+      aims = guarded(answers === null ? inFixedOrder(candidates) : rankByScore(candidates, answers));
       /* A reply based on an older shelf cannot restore a sold item. */
       latest += 1;
       stockReview = true;
@@ -509,7 +616,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       if (aims.some((aim) => aim.stock !== undefined)) {
         const fresh = candidateAims(view, shops.all(), deps.persona?.() ?? null);
         const updated = aims.flatMap((aim) => aim.stock === undefined ? [aim] : fresh.filter((entry) => entry.kind === aim.kind));
-        aims = answers === null ? inFixedOrder(updated) : rankByScore(updated, answers);
+        aims = guarded(answers === null ? inFixedOrder(updated) : rankByScore(updated, answers));
       }
       deepest = Math.max(deepest, player.maxDepth);
       if (player.depth === 0) townCall = null;
@@ -544,6 +651,19 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       }
       failedKind = null;
       failedReason = "";
+      /* Look for revise triggers. A checkpoint stays due while it can't be asked: a question is out, no goal is held, or this level has had its two drops. */
+      const step = watch === null ? null : watchStep(watch, view, used);
+      used = NOTHING_USED;
+      watch = step === null ? startWatch(view) : step.watch;
+      const events: ReviseEvent[] = [...(step?.fired ?? [])];
+      if (resumePending && step !== null) events.push(resumeEvent());
+      resumePending = false;
+      if (actions >= CHECKPOINT_ACTIONS) events.push(checkpointEvent());
+      const event = events[0];
+      if (event !== undefined) reviseCheck(event, view, candidates);
+      const revised = dropped !== null;
+      dropped = null;
+      if (revised && midTrigger === null) midTrigger = "revised";
       const pursuits = basePursuits();
       const reached = Math.max(deepest, player.maxDepth);
       const heldLong = longHold;
@@ -573,7 +693,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       if (scheduled === "town") tripGold = player.gold;
       const arrival = firstLook || scheduled === "arrival" || scheduled === "town";
       const nearList = nearCandidates(view, factsFor(view, player.depth));
-      const reason = nearEndText ?? (arrival ? "on reaching a new level" : null);
+      const reason = nearEndText ?? (arrival ? "on reaching a new level" : revised ? "because the mid-term goal was given up" : null);
       const longAsk = due !== null && pursuits.length >= 2;
       if (midTrigger === null && !longAsk && (reason === null || nearList.length === 0)) return;
       const judgments = judgmentsFor(view, deps.persona?.() ?? null, candidates, townCall === null, pursuitsNow());
@@ -605,11 +725,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       const family = deps.family?.() ?? null;
       return goalSentence(longHold.label, pursuit === undefined ? null : longProgress(pursuit.kind, deepest, family?.deepest ?? null), longHold.trigger);
     },
-    midLine() {
-      if (midHold === null) return null;
-      const aim = aims.find((item) => item.kind === midHold?.id);
-      return goalSentence(aim?.label ?? midHold.label, aim !== undefined && lastView !== null ? midProgress(aim, lastView) : null, midHold.trigger);
-    },
+    midLine: midSentence,
     nearLine() {
       if (nearHold === null || lastView === null) return null;
       const kind = (NEAR_ORDER as readonly string[]).includes(nearHold.id) ? nearHold.id as NearKind : null;
@@ -617,5 +733,13 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     },
     outcomeLines: () => outcomeHistory.slice(-3).reverse(),
     showLongGoal: () => deps.revealLongGoal?.() === true,
+    acted(command) {
+      if (meaningfulAction(command)) actions += 1;
+      if (lastView !== null) used = usedBy(lastView, command, used);
+    },
+    resumed() {
+      resumePending = true;
+    },
+    nextCheck: () => lastView === null ? null : nextCheck(actions, Math.max(deepest, lastView.player().maxDepth), revisions.get(lastView.player().depth) ?? 0),
   };
 }

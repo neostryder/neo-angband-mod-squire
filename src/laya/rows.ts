@@ -25,7 +25,7 @@ const PREFIX = "squire/laya/";
  * kinds never share an id.
  */
 export const GOAL_SEQ_BASE = 250_000;
-const GOAL_SUFFIXES: readonly string[] = ["long", "mid", "near"];
+const GOAL_SUFFIXES: readonly string[] = ["long", "mid", "near", "revise"];
 const CHUNK = 100;
 const MAX_CHUNKS = 50;
 let activeHuman: ((rowId: string, answers: Readonly<Record<string, string>>) => Promise<void>) | null = null;

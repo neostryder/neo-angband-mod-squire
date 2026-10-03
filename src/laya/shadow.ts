@@ -12,6 +12,7 @@ const PILOTS: readonly { readonly id: string; readonly pilot: Pilot; readonly su
   { id: "long_goal", pilot: "squire_goal", suffix: "long" },
   { id: "mid_goal", pilot: "squire_goal", suffix: "mid" },
   { id: "near_goal", pilot: "squire_goal", suffix: "near" },
+  { id: "revise_goal", pilot: "squire_gate", suffix: "revise" },
 ];
 
 export interface RowSink {

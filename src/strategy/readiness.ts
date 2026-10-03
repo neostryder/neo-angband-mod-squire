@@ -1,6 +1,6 @@
 /** Preparation uses reported abilities and named supplies, never unidentified item effects. */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
 import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";
@@ -26,6 +26,39 @@ function namedCount(view: AgentView, pattern: RegExp): number {
   return view.inventory().reduce((sum, item) => sum + (pattern.test(shownName(item) ?? "") ? item.number : 0), 0);
 }
 
+export const HEALING_POTION = /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i;
+const PHASE_SCROLL = /\bScrolls? of Phase Door\b/i;
+const TELEPORT_SCROLL = /\bScrolls? of (Teleportation|Teleport Level)\b/i;
+const TELEPORT_STAFF = /\bStaff of Teleportation\b/i;
+const PHASE_SPELL = /^(Phase Door|Blink|Shadow Shift)$/i;
+const TELEPORT_SPELL = /^(Teleport Self|Portal|Warp)$/i;
+/** Fail rate, in percent, above which an escape spell is too unreliable to count. */
+const RELIABLE_FAIL = 15;
+
+function staffCharges(view: AgentView): number {
+  return view.inventory().reduce((sum, item) => {
+    const name = shownName(item) ?? "";
+    const charges = /\((\d+) charges?\)/i.exec(name);
+    return sum + (TELEPORT_STAFF.test(name) && charges !== null ? Number(charges[1]) : 0);
+  }, 0);
+}
+
+/** Whether using this item is an escape: a Phase Door or teleport scroll, or a Staff of Teleportation. */
+export function escapeItem(item: ItemView): boolean {
+  const name = shownName(item) ?? "";
+  return PHASE_SCROLL.test(name) || TELEPORT_SCROLL.test(name) || TELEPORT_STAFF.test(name);
+}
+
+/** Escape scrolls and Staff of Teleportation charges in the pack. Spells are not counted. */
+export function escapeItems(view: AgentView): number {
+  return namedCount(view, PHASE_SCROLL) + namedCount(view, TELEPORT_SCROLL) + staffCharges(view);
+}
+
+/** Whether the character knows an escape spell it casts reliably. */
+export function reliableEscapeSpell(view: AgentView): boolean {
+  return readPack(view).escapeSpell.some((spell) => spell.fail <= RELIABLE_FAIL && (PHASE_SPELL.test(spell.name) || TELEPORT_SPELL.test(spell.name)));
+}
+
 export function supplies(view: AgentView): Supplies {
   const player = view.player();
   const light = view.equipment().find((item) => item !== null && item.tval === TV.LIGHT) ?? null;
@@ -34,18 +67,14 @@ export function supplies(view: AgentView): Supplies {
   /* A lantern refills from flasks of oil; a torch is replaced by a spare torch. */
   const lantern = light !== null && /\bLantern\b/i.test(shownName(light) ?? "");
   const pack = readPack(view);
-  const reliable = pack.escapeSpell.filter((spell) => spell.fail <= 15);
+  const reliable = pack.escapeSpell.filter((spell) => spell.fail <= RELIABLE_FAIL);
   const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL") || permanent;
   return {
-    cures: namedCount(view, /\bPotions? of Cure (Light|Serious|Critical) Wounds\b/i),
+    cures: namedCount(view, HEALING_POTION),
     critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
     serious: namedCount(view, /\bPotions? of Cure (Serious|Critical) Wounds\b/i),
-    phase: namedCount(view, /\bScrolls? of Phase Door\b/i) + (reliable.some((spell) => /^(Phase Door|Blink|Shadow Shift)$/i.test(spell.name)) ? 2 : 0),
-    escapes: namedCount(view, /\bScrolls? of (Teleportation|Teleport Level)\b/i) + view.inventory().reduce((sum, item) => {
-      const name = shownName(item) ?? "";
-      const charges = /\((\d+) charges?\)/i.exec(name);
-      return sum + (/\bStaff of Teleportation\b/i.test(name) && charges !== null ? Number(charges[1]) : 0);
-    }, 0) + (reliable.some((spell) => /^(Teleport Self|Portal|Warp)$/i.test(spell.name)) ? 2 : 0),
+    phase: namedCount(view, PHASE_SCROLL) + (reliable.some((spell) => PHASE_SPELL.test(spell.name)) ? 2 : 0),
+    escapes: namedCount(view, TELEPORT_SCROLL) + staffCharges(view) + (reliable.some((spell) => TELEPORT_SPELL.test(spell.name)) ? 2 : 0),
     recall: namedCount(view, /\bScrolls? of Word of Recall\b/i),
     food: view.inventory().reduce((sum, item) => sum + (pack.food.some((food) => food.handle === item.handle) ? item.number : 0), 0),
     fuel: view.inventory().reduce((sum, item) => {
