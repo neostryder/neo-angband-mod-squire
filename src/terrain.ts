@@ -49,6 +49,10 @@ const SHOP_NAMES: Readonly<Record<string, string>> = {
   STORE_ALCHEMY: "Alchemy Shop",
   STORE_WEAPON: "Weapon Smiths",
   STORE_ARMOR: "Armoury",
+  STORE_BOOK: "Bookseller",
+  STORE_MAGIC: "Magic Shop",
+  STORE_BLACK: "Black Market",
+  HOME: "Home",
 };
 
 /** Terrain indices grouped by what an errand does about them. */

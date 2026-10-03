@@ -27,6 +27,11 @@ export interface ShopEntrance extends Loc {
   readonly name: string;
 }
 
+export const UNNAMED_SHOP = "Shop";
+
+/** Stores with a buy list, which get a sale before the Black Market does. */
+const SPECIALISTS: readonly string[] = ["General Store", "Alchemy Shop", "Weapon Smiths", "Armoury", "Bookseller", "Magic Shop"];
+
 /** Only remembered shop grids can be planned toward. */
 export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[] {
   const bounds = view.mapBounds();
@@ -36,10 +41,10 @@ export function shopEntrances(view: AgentView, terrain: Terrain): ShopEntrance[]
       const cell = view.cell(x, y);
       if (cell === null || !cell.known || !terrain.isShopEntrance(cell.feat)) continue;
       const name = terrain.shopName(cell.feat);
-      /* The home has the SHOP flag but its name comes from the engine, not
-       * terrain.txt; an unknown terrain returns null here, so fall back to the
-       * generic "Home" name and let the stock view's isHome be the truth. */
-      if (name === null && cell.feat !== 0 && !found.some((entry) => entry.feat === cell.feat)) found.push({ x, y, feat: cell.feat, name: "Home" });
+      /* A shop terrain.txt does not have, such as one a mod adds, is named
+       * "Shop": its buy list is unknown, so it is never taken for the home
+       * and is visited only to learn its stock. */
+      if (name === null && cell.feat !== 0 && !found.some((entry) => entry.feat === cell.feat)) found.push({ x, y, feat: cell.feat, name: UNNAMED_SHOP });
       else if (name !== null) found.push({ x, y, feat: cell.feat, name });
     }
   }
@@ -67,9 +72,13 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
     const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === undefined ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
     const exploring = memories !== undefined && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
-    return buying || aiming || exploring || sales.some((sale) => saleFits(sale.tval, entrance.name));
+    /* The Black Market buys anything, so it is a trip only for what no other store takes. */
+    const selling = entrance.name === "Black Market"
+      ? sales.some((sale) => !SPECIALISTS.some((shop) => saleFits(sale.tval, shop)))
+      : sales.some((sale) => saleFits(sale.tval, entrance.name));
+    return buying || aiming || exploring || selling;
   }).sort((a, b) => {
-    const rank = (shop: ShopEntrance): number => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
+    const rank = (shop: ShopEntrance): number => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : shop.name === "Black Market" ? 3 : 2;
     return rank(a) - rank(b);
   });
 }

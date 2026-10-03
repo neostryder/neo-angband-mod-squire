@@ -214,7 +214,7 @@ describe("each store's buy list, as in the game's store.txt", () => {
     ["Alchemy Shop", [25, 26], [29, 28, TV.SWORD, 23]],
     ["Armoury", [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR], [TV.SWORD, 26]],
     ["Weapon Smiths", [TV.HAFTED, TV.POLEARM, TV.SWORD, TV.BOW, TV.SHOT, TV.ARROW, TV.BOLT, TV.DIGGING], [TV.CLOAK, 25]],
-    ["Bookstore", [30, 31, 32, 33], [26, TV.SWORD]],
+    ["Bookseller", [30, 31, 32, 33], [26, TV.SWORD]],
     ["Magic Shop", [30, TV.AMULET, TV.RING, 22, 23, 24], [31, 26, TV.SWORD]],
   ];
   for (const [store, buys, refuses] of cases) {

@@ -6,7 +6,7 @@ import { defaultPersona } from "../persona/persona.js";
 import type { Aim } from "../strategy/aims.js";
 import { emptyFlourishes } from "../learning/family-ways.js";
 import { aimPurchase } from "./aims-shop.js";
-import { neededEntrances, townTripPlan } from "./plan.js";
+import { neededEntrances, shopEntrances, townTripPlan, UNNAMED_SHOP } from "./plan.js";
 import { readHomeStock, UNKNOWN_HOME, createHomeMemory, type HomeStock } from "./home.js";
 import { homeSpares, homeWithdrawal, sellList } from "./shop.js";
 import { readPack } from "../brain/pack.js";
@@ -454,5 +454,21 @@ describe("refused sales", () => {
     /* Only the quiver changes, as it does when the home hands over ammo. */
     Object.assign(w.view, { quiver: () => [itemNamed("20 Iron Shots", 200)] });
     expect(plan.step(w.view, w.act)).toMatchObject({ code: "shop-buy", args: { index: 1 } });
+  });
+
+  it("never takes a shop terrain.txt lacks for the home", () => {
+    const w = world({ map: ["#####", "#@.W#", "#####"], player: { cls: "Warrior", depth: 0, gold: 100 }, worn: ["a Wooden Torch (5000 turns)"] });
+    const terrain = { ...w.terrain, shopName: (feat: number) => feat === FEAT.WEAPON ? null : w.terrain.shopName(feat) };
+    expect(shopEntrances(w.view, terrain).map((entry) => entry.name)).toEqual([UNNAMED_SHOP]);
+    expect(neededEntrances(w.view, terrain, null, new Set(), [], emptyFlourishes(), undefined, UNKNOWN_HOME)).toEqual([]);
+  });
+
+  it("sells a spare device at the Magic Shop and keeps the Black Market for what no store buys", () => {
+    const greedy = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, selling: 100, hoarding: 0 } };
+    const w = world({ map: ["#######", "#@.W.U#", "#######"], player: { cls: "Warrior", depth: 0, gold: 0 }, pack: ["2 Wands of Stinking Cloud (10 charges)"], worn: ["a Wooden Torch (5000 turns)"] });
+    const names: Record<number, string> = { [FEAT.WEAPON]: "Magic Shop", [FEAT.ARMOUR]: "Black Market" };
+    const terrain = { ...w.terrain, shopName: (feat: number) => names[feat] ?? w.terrain.shopName(feat) };
+    expect(sellList(readPack(w.view), w.view, greedy).length).toBeGreaterThan(0);
+    expect(neededEntrances(w.view, terrain, greedy).map((entry) => entry.name)).toEqual(["Magic Shop"]);
   });
 });

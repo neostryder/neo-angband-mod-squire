@@ -3630,7 +3630,7 @@ var STORE_ALIASES = {
   STORE_ALCHEMY: "Alchemy Shop",
   STORE_WEAPON: "Weapon Smiths",
   STORE_ARMOR: "Armoury",
-  STORE_BOOK: "Bookstore",
+  STORE_BOOK: "Bookseller",
   STORE_MAGIC: "Magic Shop",
   STORE_BLACK: "Black Market"
 };
@@ -3639,7 +3639,7 @@ var BUY_TVALS = {
   "Alchemy Shop": [TV_MAGIC.SCROLL, TV_MAGIC.POTION],
   "Armoury": [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR],
   "Weapon Smiths": [TV.HAFTED, TV.POLEARM, TV.SWORD, TV.BOW, TV.SHOT, TV.ARROW, TV.BOLT, TV.DIGGING],
-  "Bookstore": [TV_TRADE.MAGIC_BOOK, TV_TRADE.PRAYER_BOOK, TV_TRADE.NATURE_BOOK, TV_TRADE.SHADOW_BOOK],
+  "Bookseller": [TV_TRADE.MAGIC_BOOK, TV_TRADE.PRAYER_BOOK, TV_TRADE.NATURE_BOOK, TV_TRADE.SHADOW_BOOK],
   "Magic Shop": [TV_TRADE.MAGIC_BOOK, TV.AMULET, TV.RING, TV_MAGIC.STAFF, TV_MAGIC.WAND, TV_MAGIC.ROD],
   "Black Market": null
 };
@@ -4709,6 +4709,8 @@ function createHomeMemory(initial = UNKNOWN_HOME, save = () => {
 }
 
 // src/town/plan.ts
+var UNNAMED_SHOP = "Shop";
+var SPECIALISTS = ["General Store", "Alchemy Shop", "Weapon Smiths", "Armoury", "Bookseller", "Magic Shop"];
 function shopEntrances(view, terrain) {
   const bounds = view.mapBounds();
   const found = [];
@@ -4717,7 +4719,7 @@ function shopEntrances(view, terrain) {
       const cell2 = view.cell(x, y);
       if (cell2 === null || !cell2.known || !terrain.isShopEntrance(cell2.feat)) continue;
       const name = terrain.shopName(cell2.feat);
-      if (name === null && cell2.feat !== 0 && !found.some((entry) => entry.feat === cell2.feat)) found.push({ x, y, feat: cell2.feat, name: "Home" });
+      if (name === null && cell2.feat !== 0 && !found.some((entry) => entry.feat === cell2.feat)) found.push({ x, y, feat: cell2.feat, name: UNNAMED_SHOP });
       else if (name !== null) found.push({ x, y, feat: cell2.feat, name });
     }
   }
@@ -4740,9 +4742,10 @@ function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new S
     const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === void 0 ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
     const exploring = memories !== void 0 && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
-    return buying || aiming || exploring || sales.some((sale) => saleFits(sale.tval, entrance.name));
+    const selling = entrance.name === "Black Market" ? sales.some((sale) => !SPECIALISTS.some((shop) => saleFits(sale.tval, shop))) : sales.some((sale) => saleFits(sale.tval, entrance.name));
+    return buying || aiming || exploring || selling;
   }).sort((a, b) => {
-    const rank2 = (shop) => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : 2;
+    const rank2 = (shop) => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : shop.name === "Black Market" ? 3 : 2;
     return rank2(a) - rank2(b);
   });
 }
@@ -11555,7 +11558,11 @@ var SHOP_NAMES = {
   STORE_GENERAL: "General Store",
   STORE_ALCHEMY: "Alchemy Shop",
   STORE_WEAPON: "Weapon Smiths",
-  STORE_ARMOR: "Armoury"
+  STORE_ARMOR: "Armoury",
+  STORE_BOOK: "Bookseller",
+  STORE_MAGIC: "Magic Shop",
+  STORE_BLACK: "Black Market",
+  HOME: "Home"
 };
 function readTerrain(features, tf) {
   const down = /* @__PURE__ */ new Set();

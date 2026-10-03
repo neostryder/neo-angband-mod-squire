@@ -277,7 +277,7 @@ const STORE_ALIASES: Readonly<Record<string, string>> = {
   STORE_ALCHEMY: "Alchemy Shop",
   STORE_WEAPON: "Weapon Smiths",
   STORE_ARMOR: "Armoury",
-  STORE_BOOK: "Bookstore",
+  STORE_BOOK: "Bookseller",
   STORE_MAGIC: "Magic Shop",
   STORE_BLACK: "Black Market",
 };
@@ -287,7 +287,7 @@ const BUY_TVALS: Readonly<Record<string, readonly number[] | null>> = {
   "Alchemy Shop": [TV_MAGIC.SCROLL, TV_MAGIC.POTION],
   "Armoury": [TV.BOOTS, TV.GLOVES, TV.HELM, TV.CROWN, TV.SHIELD, TV.CLOAK, TV.SOFT_ARMOR, TV.HARD_ARMOR, TV.DRAG_ARMOR],
   "Weapon Smiths": [TV.HAFTED, TV.POLEARM, TV.SWORD, TV.BOW, TV.SHOT, TV.ARROW, TV.BOLT, TV.DIGGING],
-  "Bookstore": [TV_TRADE.MAGIC_BOOK, TV_TRADE.PRAYER_BOOK, TV_TRADE.NATURE_BOOK, TV_TRADE.SHADOW_BOOK],
+  "Bookseller": [TV_TRADE.MAGIC_BOOK, TV_TRADE.PRAYER_BOOK, TV_TRADE.NATURE_BOOK, TV_TRADE.SHADOW_BOOK],
   "Magic Shop": [TV_TRADE.MAGIC_BOOK, TV.AMULET, TV.RING, TV_MAGIC.STAFF, TV_MAGIC.WAND, TV_MAGIC.ROD],
   "Black Market": null,
 };

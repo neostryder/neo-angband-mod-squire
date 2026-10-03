@@ -78,6 +78,14 @@ describe("readTerrain", () => {
   });
 });
 
+describe("shop names", () => {
+  it("names every town store and the home, and leaves a shop terrain.txt lacks unnamed", () => {
+    const codes = ["STORE_GENERAL", "STORE_ARMOR", "STORE_WEAPON", "STORE_BOOK", "STORE_ALCHEMY", "STORE_MAGIC", "STORE_BLACK", "HOME", "STORE_TAVERN"];
+    const shops = readTerrain(codes.map((code, i) => feature(30 + i, code, [TF.PASSABLE, TF.SHOP])), TF);
+    expect(codes.map((_code, i) => shops.shopName(30 + i))).toEqual(["General Store", "Armoury", "Weapon Smiths", "Bookseller", "Alchemy Shop", "Magic Shop", "Black Market", "Home", null]);
+  });
+});
+
 describe("noTerrain", () => {
   it("answers false to everything and reports its own emptiness", () => {
     const terrain = noTerrain();
