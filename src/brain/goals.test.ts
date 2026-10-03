@@ -1019,6 +1019,22 @@ describe("refusals", () => {
     expect(next.context.offers.map((o) => o.goal)).toContain("cast_attack");
   });
 
+  it("holds back a plan that found nothing to do here, as it would a refused one", () => {
+    const w = suppliedWorld({ map: CORRIDOR, floor: [{ x: 5, y: 1, name: "a Flask of Oil" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("fetch");
+    w.setFloor([]);
+    const choice = p.choose(pick("fetch"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    w.setFloor([{ x: 5, y: 1, name: "a Flask of Oil" }]);
+    w.advance(10);
+    expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
+    w.advance(300);
+    expect(offered(asked(p.ask(w.view)))).toContain("fetch");
+  });
+
   it("keeps a refused goal out until the character's situation changes", () => {
     const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 5, y: 1 }, race: "cave orc", level: 3 }], player: { sp: 5, maxSp: 5 }, spells: [{ name: "Magic Missile", sidx: 0 }] });
     const { p } = planner(w);
@@ -1662,6 +1678,16 @@ describe("soak findings", () => {
     const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 6, maxHp: 20 } });
     const { p } = planner(w);
     expect(offered(asked(p.ask(w.view)))).not.toContain("explore");
+  });
+
+  it("still takes a step when poison alone could kill the character, so game time passes", () => {
+    const w = world({ map: ["#######", "#..@..#", "#######"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 2, maxDepth: 2, hp: 1, maxHp: 20, status: { poisoned: 10 } } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toEqual(["step_aside"]);
+    const choice = p.choose(pick("step_aside"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a step");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
   });
 
   it("lets the town Warrior walk to the stairs after refusing every offer", () => {

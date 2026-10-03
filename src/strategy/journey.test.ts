@@ -438,6 +438,24 @@ describe("bounded exploration and earning", () => {
     expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
   });
 
+  /* The soak's Priest, at 13 gold, went down and back 22 times: each trip kept
+   * within six steps of the stairs, found nothing and came back with 13 gold. */
+  it("lets the trip after an empty one roam the ordinary stair leash", () => {
+    const w = world({ map: ["##############", "#<@.........,#", "##############"], player: { cls: "Priest", depth: 0, gold: 13, level: 1, maxLevel: 1, hp: 13, maxHp: 13, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    goals(w, journey, false, offers("descend"));
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    expect(goals(w, journey, false, offers("explore"))).not.toContain("explore");
+    w.setPlayer({ depth: 0 });
+    expect(goals(w, journey, false, offers("descend"))).toEqual([]);
+    const wide = journey.apply(offers("descend"), w.view, null, new Set(), false, true);
+    expect(wide.find((offer) => offer.goal === "descend")?.criteria).toContain("within 12 path steps");
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    expect(goals(w, journey, false, offers("explore"))).toContain("explore");
+  });
+
   it("never leaves town on a widened choice without spare fuel for the light", () => {
     const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain);

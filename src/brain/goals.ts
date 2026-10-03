@@ -1908,6 +1908,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           loops.failed(goal, codes, `the game refused it${why === null ? "" : ` ${why}`}`, v);
           noteOutcome(`${plan.label}: the game refused it${why === null ? "" : ` ${why}`}, and no game time passed.`);
         } else {
+          /* If this plan had nothing to do on this square, it will have nothing to do next turn either. Treat it as refused. */
+          if (goal !== null) refused.set(goal, { where: whereNow(v), turn: v.turn() });
           noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
         }
       } else if (outcomeVersion === version) {
@@ -2023,7 +2025,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /** The dashboard reason for handing back with nothing to offer. */
   function nothingToDo(v: AgentView, tried: readonly Goal[]): string {
     if (tried.length > 0) {
-      const wait = refused.has("wait") ? "the game refused to let it wait a turn here" : stalled.has("wait") ? "waiting a turn passed no game time" : "waiting a turn is not safe here";
+      const wait = refused.has("wait") ? "waiting a turn here either was refused by the game or did nothing" : stalled.has("wait") ? "waiting a turn passed no game time" : "waiting a turn is not safe here";
       return `Squire has nothing left to try here: ${tried.join(", ")} came to nothing this turn, and ${wait}.`;
     }
     if (knownDownStairs(v, terrain).length > 0 && !reachableStairs(v, terrain)) {
@@ -2274,7 +2276,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return once("try another safe step", view, (ctx) => {
           const s = situationNow(ctx.view);
           const at = ctx.view.player().grid;
-          const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, terrain, grid) && !standingOnHarm(ctx.view, terrain, grid) && !ctx.view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && damageFor(s, grid, 1, terrain).damage < ctx.view.player().hp);
+          /* Poison and cuts hurt on every square alike, so only creatures count here, as in the offer. */
+          const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, terrain, grid) && !standingOnHarm(ctx.view, terrain, grid) && !ctx.view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && creatureDamageFor(s, grid, terrain) < ctx.view.player().hp);
           const next = safe[Math.floor(rng() * safe.length)];
           const dir = next === undefined ? null : directionToward(at, next);
           return dir === null ? null : ctx.act.move(dir);
@@ -2920,7 +2923,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend") && !walksIntoDeath(s, terrain, "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
         offers = journey.apply(wider, view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
         if (offers.length === 0) {
-          if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && creatureDamageFor(s, grid, terrain) < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
+          if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && !view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && creatureDamageFor(s, grid, terrain) < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
           if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
           if (offers.length === 0 && player.status.afraid === 0) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });

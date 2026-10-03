@@ -41,6 +41,16 @@ describe("engine travel", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "navigate-down" });
   });
 
+  it("walks its own steps to stairs the game has no route to", () => {
+    const w = world({ ...STAIRS, travelPath: () => null });
+    expect(planFor(w, "descend").step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("walks its own steps while a sleeping creature is in view", () => {
+    const w = world({ map: ["#######", "#@.>..#", "#######"], player: { depth: 2, maxDepth: 2 }, travelPath: (to: { x: number; y: number }) => [to], monsters: [{ grid: { x: 5, y: 1 }, asleep: true }] });
+    expect(planFor(w, "descend").step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
   it("falls back to steps when the game refuses the engine command", () => {
     const w = world(STAIRS);
     const plan = planFor(w, "descend");
