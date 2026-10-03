@@ -179,6 +179,8 @@ export interface Strategy {
   midLine(): string | null;
   /** The near-term goal, for the model and the panel. Null when none is feasible. */
   nearLine(): string | null;
+  /** The kind of the near-term goal now held, or null. */
+  nearKind(): NearKind | null;
   /** The last three goals that ended, newest first. */
   outcomeLines(): readonly string[];
   /** The panel line for the long-term goal. Off unless the player turned the switch on. */
@@ -730,6 +732,10 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       if (nearHold === null || lastView === null) return null;
       const kind = (NEAR_ORDER as readonly string[]).includes(nearHold.id) ? nearHold.id as NearKind : null;
       return goalSentence(nearHold.label, kind === null ? null : nearProgress(kind, lastView, terrain), nearHold.trigger);
+    },
+    nearKind() {
+      if (nearHold === null) return null;
+      return (NEAR_ORDER as readonly string[]).includes(nearHold.id) ? nearHold.id as NearKind : null;
     },
     outcomeLines: () => outcomeHistory.slice(-3).reverse(),
     showLongGoal: () => deps.revealLongGoal?.() === true,

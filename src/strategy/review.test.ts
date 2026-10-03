@@ -475,6 +475,7 @@ describe("the three goals", () => {
     await strategy.settled();
     expect(strategy.nearLine()).toContain("Rest to full");
     expect(strategy.nearLine()).toContain("10 of 40 hit points");
+    expect(strategy.nearKind()).toBe("rest");
     expect(logs.some((line) => line.includes("kept the first one"))).toBe(true);
     w.setPlayer({ hp: 40 });
     strategy.observe(w.view);

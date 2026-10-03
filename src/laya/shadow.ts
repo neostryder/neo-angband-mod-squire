@@ -10,6 +10,7 @@ const PILOTS: readonly { readonly id: string; readonly pilot: Pilot; readonly su
   { id: "goal", pilot: "squire_goal" },
   { id: "in_character", pilot: "squire_in_character" },
   { id: "ready_to_descend", pilot: "squire_gate" },
+  { id: "escape", pilot: "squire_gate", suffix: "escape" },
   { id: "long_goal", pilot: "squire_goal", suffix: "long" },
   { id: "mid_goal", pilot: "squire_goal", suffix: "mid" },
   { id: "near_goal", pilot: "squire_goal", suffix: "near" },

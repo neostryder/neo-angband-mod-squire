@@ -1,4 +1,4 @@
-// neo-angband-mod-squire - generated from plugin.ts by neo-angband-mod-build
+// s11-tactical-b - generated from plugin.ts by neo-angband-mod-build
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
@@ -5825,6 +5825,315 @@ function num2(value) {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : null;
 }
 
+// src/brain/tactics.ts
+var CLASSES = {
+  phase: "escape",
+  teleport: "escape",
+  retreat: "escape",
+  leave_level: "escape",
+  recall_town: "escape",
+  deep_descent: "escape",
+  heal: "heal",
+  cast_heal: "heal",
+  device: "heal",
+  rest: "heal",
+  quaff_unknown: "gamble",
+  read_unknown: "gamble",
+  fight: "attack",
+  shoot: "attack",
+  throw_oil: "attack",
+  aim_wand: "attack",
+  cast_attack: "attack",
+  swing_unseen: "attack",
+  cast_area: "attack",
+  unseen_staff: "attack",
+  unseen_wand: "attack",
+  unseen_rod: "attack",
+  wait: "wait",
+  endure: "wait",
+  take_position: "position",
+  step_aside: "position",
+  close_door: "position"
+};
+function classOf(goal) {
+  return CLASSES[goal] ?? "errand";
+}
+var ESCAPE_LOW = 0.55;
+var ESCAPE_HIGH = 0.78;
+var MIN_BAND = 0.1;
+function escapeThresholds(persona) {
+  if (persona === null) return { low: ESCAPE_LOW, high: ESCAPE_HIGH };
+  const lean = (persona.sliders.selfpreservation - persona.sliders.boldness) / 100;
+  const low = Math.min(0.75, Math.max(0.35, ESCAPE_LOW - lean * 0.15));
+  const high = Math.min(0.92, Math.max(low + MIN_BAND, 0.6, ESCAPE_HIGH - lean * 0.12));
+  return { low: round2(low), high: round2(high) };
+}
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+function bandOf(p, bands) {
+  return p >= bands.high ? "get_out" : p >= bands.low ? "consider" : "stay";
+}
+var SAFE_CLASSES = /* @__PURE__ */ new Set(["escape", "heal", "gamble", "position"]);
+function allowedGoals(band, offers) {
+  if (band === "stay") return null;
+  const escapes = offers.filter((o) => classOf(o.goal) === "escape").map((o) => o.goal);
+  const safe = offers.filter((o) => SAFE_CLASSES.has(classOf(o.goal))).map((o) => o.goal);
+  const chosen = band === "get_out" && escapes.length > 0 ? escapes : safe;
+  return chosen.length === 0 ? null : /* @__PURE__ */ new Set([...chosen, "none_of_these"]);
+}
+var ESCAPE_QUESTION = {
+  type: "noul",
+  instructions: "Should the character stop what it is doing and get to safety now?",
+  criteria: {
+    true: "Staying risks death or a loss it cannot recover from soon; escaping or healing comes before anything else.",
+    false: "The character can keep fighting or carry on; nothing here needs it to break off now."
+  }
+};
+var CONFIDENCE_FLOOR = 0.3;
+function safestOf(offers, classes) {
+  return offers.filter((o) => classes.has(classOf(o.goal)) && o.gaps === void 0).sort((a, b) => Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
+}
+function lowConfidencePick(offers, escapeP, lowEdge) {
+  if (escapeP !== null && escapeP >= lowEdge) {
+    const out = safestOf(offers, /* @__PURE__ */ new Set(["escape"])) ?? safestOf(offers, /* @__PURE__ */ new Set(["heal"]));
+    if (out !== void 0) return out.goal;
+  }
+  return safestOf(offers, /* @__PURE__ */ new Set(["attack", "wait"]))?.goal ?? null;
+}
+var PRUNABLE = /* @__PURE__ */ new Set(["attack", "escape", "heal"]);
+function dominates(a, b, targetAdjacent) {
+  if (classOf(a.goal) !== classOf(b.goal)) return false;
+  if (a.progress === void 0 || b.progress === void 0 || a.cost === void 0 || b.cost === void 0) return false;
+  if (classOf(a.goal) === "attack" && !targetAdjacent && a.goal === "fight" !== (b.goal === "fight")) return false;
+  const attack = classOf(a.goal) === "attack";
+  if (!attack && a.uncertain === true && b.uncertain !== true) return false;
+  if (a.gaps !== void 0) return false;
+  const aSurv = a.survival ?? null;
+  const bSurv = b.survival ?? null;
+  if (aSurv === null !== (bSurv === null)) return false;
+  const noWorse = a.risk <= b.risk && a.cost <= b.cost && a.progress >= b.progress && (aSurv === null || bSurv === null || aSurv >= bSurv);
+  const better = a.risk < b.risk || a.cost < b.cost || a.progress > b.progress || aSurv !== null && bSurv !== null && aSurv > bSurv || !attack && a.uncertain !== true && b.uncertain === true;
+  return noWorse && better;
+}
+function pruneDominated(offers, targetAdjacent, keep = /* @__PURE__ */ new Set()) {
+  const beaten = (offer) => PRUNABLE.has(classOf(offer.goal)) && !keep.has(offer.goal) && offer.aim === void 0 ? offers.filter((other) => other !== offer && dominates(other, offer, targetAdjacent)) : [];
+  const out = new Set(offers.filter((offer) => beaten(offer).length > 0));
+  const pruned = [];
+  for (const offer of out) {
+    const by = beaten(offer);
+    pruned.push({ goal: offer.goal, by: (by.find((other) => !out.has(other)) ?? by[0]).goal });
+  }
+  return { kept: offers.filter((offer) => !out.has(offer)), pruned };
+}
+var NEAR_SERVED = {
+  explore: ["explore", "detect", "fetch", "pick_up", "tunnel", "disarm"],
+  rest: ["rest", "heal", "cast_heal", "device", "retreat"],
+  down: ["descend", "deep_descent"],
+  leave: ["leave_level", "retreat", "teleport", "deep_descent", "descend"],
+  recall: ["recall_town", "recall_dungeon"],
+  shop: ["shop", "recall_town"],
+  try: ["quaff_unknown", "read_unknown", "wear"],
+  position: ["take_position", "step_aside", "close_door"]
+};
+var SERVES_BY_CLASS = {
+  escape: "survival",
+  heal: "survival",
+  gamble: "a cure or a way out",
+  attack: "the fight",
+  wait: "time",
+  position: "a better position",
+  errand: "upkeep"
+};
+var SERVES_ERRAND = {
+  explore: "exploring",
+  descend: "going deeper",
+  shop: "supplies",
+  recall_dungeon: "going deeper",
+  fetch: "loot",
+  pick_up: "loot",
+  drop_junk: "loot"
+};
+function servesOf(offer, nearKind) {
+  if (nearKind !== null && (NEAR_SERVED[nearKind] ?? []).includes(offer.goal)) return "the near goal";
+  return SERVES_ERRAND[offer.goal] ?? SERVES_BY_CLASS[classOf(offer.goal)];
+}
+function progressWord(progress) {
+  return progress >= 0.95 ? "finishes it" : progress >= 0.6 ? "most of the way" : progress >= 0.3 ? "part of the way" : progress > 0 ? "a little" : "none";
+}
+function riskWord(risk) {
+  return risk < 0.1 ? "low risk" : risk < 0.3 ? "some risk" : risk < 0.6 ? "high risk" : "very high risk";
+}
+function purposeClauses(offers, nearKind) {
+  const fields = offers.map((offer) => ({
+    goal: offer.goal,
+    serves: `serves ${servesOf(offer, nearKind)}`,
+    progress: offer.progress === void 0 ? void 0 : `progress: ${progressWord(offer.progress)}`,
+    cost: offer.costNote === void 0 ? void 0 : `costs ${offer.costNote}`,
+    risk: riskWord(offer.risk)
+  }));
+  const differs = (pick2) => new Set(fields.map(pick2)).size > 1;
+  const use = { serves: differs((f) => f.serves), progress: differs((f) => f.progress), cost: differs((f) => f.cost), risk: differs((f) => f.risk) };
+  const out = /* @__PURE__ */ new Map();
+  for (const f of fields) {
+    const parts = [use.serves ? f.serves : void 0, use.progress ? f.progress : void 0, use.cost ? f.cost : void 0, use.risk ? f.risk : void 0].filter((p) => p !== void 0);
+    if (parts.length > 0) out.set(f.goal, `Purpose: ${parts.join("; ")}.`);
+  }
+  return out;
+}
+function tacticalLog(pack, loop) {
+  if (pack === void 0 && loop === void 0) return {};
+  const gate = pack?.gate;
+  return {
+    tactical: {
+      ...gate === void 0 ? {} : { escape: { p: gate.p ?? null, low: gate.low, high: gate.high, ...gate.band === void 0 ? {} : { band: gate.band } } },
+      ...pack === void 0 || pack.pruned.length === 0 ? {} : { pruned: pack.pruned.map((p) => p.goal) },
+      ...pack?.lowConfidence === void 0 ? {} : { lowConfidence: pack.lowConfidence },
+      ...loop === void 0 ? {} : { loop: { kind: loop.kind, tactic: loop.tactic, fellBack: loop.fellBack === true } }
+    }
+  };
+}
+
+// src/brain/loops.ts
+var REPEAT_RUN = 3;
+var CYCLE_WINDOW = 8;
+var CYCLE_MAX_GRIDS = 3;
+var CYCLE_MIN_MOVES = 5;
+var FLIP_WINDOW = 6;
+var FLIP_MIN_CHANGES = 4;
+var EQUIP_FLIP_TURNS = 1e3;
+var STILL_GOALS = /* @__PURE__ */ new Set(["wait", "rest", "endure"]);
+function normalName(name) {
+  return name.toLowerCase().replace(/\{[^}]*\}/g, "").replace(/^(?:a|an|the|\d+)\s+/, "").replace(/\b(\w+?)(?:es|s)\b(?=\s+of\b)/, "$1").replace(/\s+/g, " ").trim();
+}
+function itemName(view, handle) {
+  if (typeof handle !== "number") return null;
+  const item = view.inventory().find((entry) => entry.handle === handle);
+  const name = item === void 0 ? null : shownName2(item);
+  return name === null ? null : normalName(name);
+}
+function stockName(view, index) {
+  if (typeof index !== "number" || typeof view.stores !== "function") return null;
+  const grid = view.player().grid;
+  const feat = view.cell(grid.x, grid.y)?.feat;
+  const store = view.stores().find((entry) => entry.feat === feat);
+  const item = store?.stock.find((entry) => entry.index === index) ?? store?.stock[index];
+  const name = item === void 0 ? null : shownName2(item);
+  return name === null ? null : normalName(name);
+}
+function healthBar(hp, maxHp) {
+  return maxHp > 0 ? Math.ceil(10 * Math.max(0, hp) / maxHp) : 0;
+}
+function stateKey(view) {
+  const p = view.player();
+  const awake2 = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => [m.id, m.grid.x, m.grid.y, healthBar(m.hp, m.maxHp)]).sort((a, b) => a[0] - b[0]);
+  return JSON.stringify([p.depth, p.grid.x, p.grid.y, p.hp, p.sp, awake2]);
+}
+function createLoopGuard() {
+  let entries = [];
+  let worn = [];
+  let sold = /* @__PURE__ */ new Set();
+  let bought = /* @__PURE__ */ new Set();
+  let townVisit = false;
+  let flip = null;
+  function tacticOf(view) {
+    const p = view.player();
+    const here = `${String(p.grid.x)},${String(p.grid.y)}`;
+    const pools = [entries.filter((e) => e.depth === p.depth && e.grid === here), entries.filter((e) => e.depth === p.depth), entries];
+    for (const pool of pools) {
+      const counts = /* @__PURE__ */ new Map();
+      for (const e of pool) if (!STILL_GOALS.has(e.goal)) counts.set(e.goal, (counts.get(e.goal) ?? 0) + 1);
+      const top = [...counts].sort((a, b) => b[1] - a[1])[0];
+      if (top !== void 0) return top[0];
+    }
+    return null;
+  }
+  return {
+    /** Records a decision. */
+    chose(goal, view) {
+      const p = view.player();
+      if (p.depth !== 0) {
+        townVisit = false;
+        sold = /* @__PURE__ */ new Set();
+        bought = /* @__PURE__ */ new Set();
+      }
+      entries.push({ goal, turn: view.turn(), depth: p.depth, grid: `${String(p.grid.x)},${String(p.grid.y)}`, state: stateKey(view) });
+      if (entries.length > CYCLE_WINDOW * 2) entries = entries.slice(-CYCLE_WINDOW * 2);
+    },
+    /** Records a command a plan issued, for the store and gear swaps. */
+    command(cmd, view) {
+      const args = cmd.args ?? {};
+      if (cmd.code === "wield") {
+        const name = itemName(view, args["handle"]);
+        if (name === null) return;
+        const turn = view.turn();
+        worn = [...worn.filter((w) => turn - w.turn >= 0 && turn - w.turn <= EQUIP_FLIP_TURNS), { name, turn }].slice(-4);
+        const n = worn.length;
+        if (n >= 3 && worn[n - 1].name === worn[n - 3].name && worn[n - 2].name !== worn[n - 1].name) {
+          flip = { kind: "equip_flip", tactic: "wear", detail: `wore ${worn[n - 1].name}, then ${worn[n - 2].name}, then ${worn[n - 1].name} again` };
+        }
+        return;
+      }
+      if (cmd.code !== "shop-buy" && cmd.code !== "shop-sell") return;
+      if (!townVisit) {
+        townVisit = true;
+        sold = /* @__PURE__ */ new Set();
+        bought = /* @__PURE__ */ new Set();
+      }
+      if (cmd.code === "shop-buy") {
+        const name = stockName(view, args["index"]);
+        if (name === null) return;
+        if (sold.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `bought back ${name} after selling it on this town visit` };
+        bought.add(name);
+      } else {
+        const name = itemName(view, args["handle"]);
+        if (name === null) return;
+        if (bought.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `sold ${name} after buying it on this town visit` };
+        sold.add(name);
+      }
+    },
+    /** The loop the recent decisions show, if any. */
+    detect(view) {
+      if (flip !== null) return flip;
+      const last = entries.slice(-REPEAT_RUN);
+      if (last.length === REPEAT_RUN && !STILL_GOALS.has(last[0].goal) && last.every((e) => e.goal === last[0].goal && e.state === last[0].state)) {
+        return { kind: "repeat", tactic: last[0].goal, detail: `${last[0].goal} chosen ${String(REPEAT_RUN)} times in a row with nothing changing` };
+      }
+      const depth2 = view.player().depth;
+      const recent = entries.slice(-CYCLE_WINDOW);
+      if (recent.length === CYCLE_WINDOW && recent.every((e) => e.depth === depth2)) {
+        const grids = new Set(recent.map((e) => e.grid));
+        let moves = 0;
+        let revisits = 0;
+        for (let i = 1; i < recent.length; i++) {
+          if (recent[i].grid !== recent[i - 1].grid) moves += 1;
+          if (recent[i].grid !== recent[i - 1].grid && recent.slice(0, i - 1).some((e) => e.grid === recent[i].grid)) revisits += 1;
+        }
+        if (grids.size <= CYCLE_MAX_GRIDS && grids.size > 1 && moves >= CYCLE_MIN_MOVES && revisits > 0) {
+          return { kind: "cycle", tactic: tacticOf(view), detail: `walked back and forth between ${String(grids.size)} squares over the last ${String(CYCLE_WINDOW)} decisions` };
+        }
+      }
+      const window2 = entries.slice(-FLIP_WINDOW);
+      const depths = new Set(window2.map((e) => e.depth));
+      let changes = 0;
+      for (let i = 1; i < window2.length; i++) if (window2[i].depth !== window2[i - 1].depth) changes += 1;
+      if (window2.length === FLIP_WINDOW && depths.size === 2 && changes >= FLIP_MIN_CHANGES) {
+        const [a, b] = [...depths].sort((x, y) => x - y);
+        return { kind: "level_flip", tactic: tacticOf(view), detail: `went back and forth between levels ${String(a)} and ${String(b)} ${String(changes)} times` };
+      }
+      return null;
+    },
+    /** Starts over after a loop has been handled, so the same history is not reported twice. */
+    reset() {
+      entries = [];
+      worn = [];
+      flip = null;
+      sold = /* @__PURE__ */ new Set();
+      bought = /* @__PURE__ */ new Set();
+    }
+  };
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE3 = "None of the listed options suits this moment.";
 var RETREAT_STEPS = 4;
@@ -6233,6 +6542,15 @@ function recallPending(player, read, turn) {
   const depth2 = player.depth;
   return read !== null && read.depth === depth2 && turn - read.turn >= 0 && turn - read.turn <= RECALL_WAIT_TURNS;
 }
+function itemSpend(view, handle, scarce = 1) {
+  const item = handle === void 0 ? void 0 : view.inventory().find((entry) => entry.handle === handle);
+  if (item === void 0) return {};
+  return item.number <= 1 ? { cost: scarce + 1, costNote: "the last one carried" } : { cost: scarce, costNote: `1 of ${String(item.number)} carried` };
+}
+function manaSpend(mana, sp) {
+  return { cost: 0.5, costNote: `${String(mana)} of ${String(sp)} mana` };
+}
+var FREE = { cost: 0, costNote: "nothing" };
 function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = [], flourishes = emptyFlourishes(), storeMemory, homeStock) {
   const view = s.view;
   const player = view.player();
@@ -6243,6 +6561,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const recovery = safeRecovery(s, terrain);
   const tieBreakKind = persona?.toggles.favouredWeapons === true ? flourishes.favouredKind : null;
   const add2 = (goal, criteria, risk, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp012(risk), survival, ...routine ? { routine: true } : {}, ...uncertain ? { uncertain: true } : {} });
+  const tag = (goal, progress, spend) => {
+    const i = out.findIndex((o) => o.goal === goal);
+    if (i >= 0) out[i] = { ...out[i], ...progress === void 0 ? {} : { progress: clamp012(progress) }, ...spend };
+  };
   const exit = leaveStep(s, terrain);
   const addLeave = (criteria, _risk) => {
     if (exit !== null && !out.some((o) => o.goal === "leave_level")) add2("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage);
@@ -6260,6 +6582,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const addAttack = (goal, criteria, attack, weight = 1) => {
     const remaining = attack.kill && s.target !== null ? damageFor({ ...s, threats: s.threats.filter((monster) => monster.id !== s.target.id) }, at, 1, terrain).damage : incoming.damage;
     add2(goal, criteria + attackDescription(attack, view), attackRisk(s, attack) * weight, false, player.hp - remaining, attack.failure > 0 && attack.kill);
+    const progress = attack.kill ? 1 : attack.damage !== null && s.target !== null ? attack.damage / Math.max(1, s.target.hp) : void 0;
+    const source = attack.source;
+    const spend = goal === "fight" ? FREE : source !== null && "sidx" in source ? manaSpend(source.mana, player.sp) : goal === "aim_wand" ? { cost: 0.5, costNote: "a wand charge" } : itemSpend(view, source?.handle, goal === "shoot" ? 0.5 : 1);
+    tag(goal, progress, spend);
   };
   const needs = supplyNeeds(view, s.pack, persona, flourishes.darkLesson);
   const recall = canRead(view) ? recallItem(view) : null;
@@ -6324,6 +6650,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const after = Math.min(player.maxHp, player.hp + healed);
     if (healed >= incoming.damage || incoming.damage >= player.hp || cureStatus) {
       add2("heal", `Drink ${potion.name} to restore hit points.${cutBad ? " It also closes the bleeding wound." : ""} The cure reaches at least ${String(after)} HP before up to ${String(incoming.damage)} incoming damage.`, damageRisk(incoming.damage, after), false, after - incoming.damage);
+      tag("heal", (after - player.hp) / Math.max(1, player.maxHp - player.hp), itemSpend(view, potion.handle));
     }
   }
   const healSpell = healingSpell(view, incoming.damage);
@@ -6331,6 +6658,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const after = Math.min(player.maxHp, player.hp + healingAmount(view, healSpell));
     const bound = healSpell.fail === 0 ? after : player.hp;
     if (incoming.damage === 0 || after > incoming.damage && (after - player.hp >= incoming.damage || incoming.damage >= player.hp && after - player.hp > incoming.damage / 3)) add2("cast_heal", `Cast ${healSpell.name} to restore hit points (${String(healSpell.fail)}% chance to fail).`, Math.max(healSpell.fail / 100, damageRisk(incoming.damage, bound)), false, bound - incoming.damage, healSpell.fail > 0);
+    tag("cast_heal", (after - player.hp) / Math.max(1, player.maxHp - player.hp), manaSpend(healSpell.mana, player.sp));
   }
   const cureless = s.pack.heal.length === 0 && healSpell === void 0 && deviceHealUse(view) === null;
   const ailing = (player.status.poisoned > 0 || player.status.cut > 0) && hurt2;
@@ -6338,8 +6666,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (cureless && (ailing || trapped)) {
     const draught = unknownFlavours(view, "potion")[0];
     if (draught !== void 0) add2("quaff_unknown", `Drink ${draught.name}, a potion not yet identified. It may cure ${ailing ? "the poison or bleeding" : "wounds"}, do nothing, or do harm.`, Math.max(0.05, exposure(s)) + 0.05, false, player.hp - incoming.damage, true);
+    if (draught !== void 0) tag("quaff_unknown", void 0, itemSpend(view, draught.handle));
     const scroll = canRead(view) ? unknownFlavours(view, "scroll")[0] : void 0;
     if (scroll !== void 0) add2("read_unknown", `Read ${scroll.name}, a scroll not yet identified. It may teleport the character, map the level, do nothing, or summon trouble.`, Math.max(0.05, exposure(s)) + 0.1, false, player.hp - incoming.damage, true);
+    if (scroll !== void 0) tag("read_unknown", void 0, itemSpend(view, scroll.handle));
   }
   const leaveBy = exit?.down === true ? "Walk to a known down staircase and take it" : "Walk to the nearest staircase, up or down, and take it";
   if (s.unseenDamage > 0) {
@@ -6397,18 +6727,23 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       const how2 = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
       const short2 = s.pack.phase[0] !== void 0 || /^(Phase Door|Blink|Shadow Shift)$/i.test(how2);
       add2("phase", `Use ${how2}: a ${short2 ? "short" : "long"} random teleport that breaks contact${short2 ? " for a moment" : ""}.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
+      const spell = s.pack.escapeSpell[0];
+      tag("phase", short2 ? 0.6 : 0.9, s.pack.phase[0] !== void 0 ? itemSpend(view, s.pack.phase[0].handle) : spell === void 0 ? {} : manaSpend(spell.mana, player.sp));
     }
     if (s.pack.teleport[0] !== void 0) {
       const teleport = s.pack.teleport[0];
       const leaves = /Teleport Level/i.test(teleport.name);
       add2("teleport", leaves ? `Use ${teleport.name} to leave this level entirely, going one level up or down.` : `Use ${teleport.name} to escape far from every creature in sight.`, Math.max(0.05, exposure(s) * (leaves ? 0.3 : 0.2)), false, player.hp, !leaves || /Staff/i.test(teleport.name));
+      tag("teleport", leaves ? 1 : 0.9, /Staff/i.test(teleport.name) ? { cost: 0.5, costNote: "a staff charge" } : itemSpend(view, teleport.handle, 1.5));
     }
     if (!immediateDanger(s) && s.pack.descent[0] !== void 0) {
       add2("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns. It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
+      tag("deep_descent", 0.5, itemSpend(view, s.pack.descent[0].handle, 1.5));
     }
     const flight = retreatStairs(s, terrain, widen);
     const retreat = retreatStep(s, terrain, flight);
     if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add2("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to four steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to four steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
+    tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
   if (!bleeding && s.awake.length === 0 && recovery && (hurt2 || player.sp < player.maxSp)) {
     add2("rest", "Rest until hit points and mana recover.", 0.01, recallActive);
@@ -6446,6 +6781,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (device !== null && !recovery) {
       const after = Math.min(player.maxHp, player.hp + healingAmount(view, device));
       if (after > incoming.damage || incoming.damage >= player.hp) add2("device", `Use ${device.name} to restore hit points.`, damageRisk(incoming.damage, after), false, player.hp - incoming.damage, true);
+      tag("device", (after - player.hp) / Math.max(1, player.maxHp - player.hp), { cost: 0.5, costNote: "a device charge" });
     }
   }
   const breather = breatherInSight(view, s.awake);
@@ -6477,6 +6813,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory, homeStock).length === 0))) {
     add2("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
+  tag("leave_level", 1, FREE);
+  if (recall !== null) tag("recall_town", 0.5, itemSpend(view, recall.handle, 1.5));
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
   if (!bleeding && hardContactGroup(s)) {
     const take = offerTakePosition(s, terrain);
@@ -6569,6 +6907,12 @@ function offerTakePosition(s, terrain) {
     survival: Math.max(0, player.hp - best.routeDamage - best.damage)
   };
 }
+function restrictTo(dist, allowed, offers) {
+  const kept = Object.fromEntries(Object.entries(dist).filter(([goal]) => allowed.has(goal)));
+  const mass = Object.entries(kept).filter(([goal]) => goal !== "none_of_these").reduce((sum, [, p]) => sum + p, 0);
+  if (mass > 1e-9) return kept;
+  return { ...kept, ...Object.fromEntries(offers.filter((o) => allowed.has(o.goal)).map((o) => [o.goal, 1 / (1 + o.risk * 8)])) };
+}
 function createGoalPlanner(options) {
   const manual = createManual(options.birthOptions);
   const { cfg, terrain, log } = options;
@@ -6646,6 +6990,14 @@ function createGoalPlanner(options) {
   const sameTurn = /* @__PURE__ */ new Map();
   let sameTurnAt = null;
   let offeredWiden = false;
+  const loops = createLoopGuard();
+  let loopFound = null;
+  function settleLoop(digest) {
+    if (digest.loop === void 0) return null;
+    loops.reset();
+    loopFound = null;
+    return digest.loop.tactic;
+  }
   const refused = /* @__PURE__ */ new Map();
   let lastAnswer = null;
   let pendingFallback = null;
@@ -6679,8 +7031,10 @@ function createGoalPlanner(options) {
     lastOutcome = text;
     outcomeVersion += 1;
   }
-  function noteStalls(goal, plan, turn) {
+  function noteStalls(goal, plan, view) {
+    const turn = view.turn();
     plan = journey.guarded(goal, plan);
+    if (goal !== null) loops.chose(goal, view);
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -6709,8 +7063,10 @@ function createGoalPlanner(options) {
         noteOutcome(`${plan.label} stopped: ${unsafe}`);
         return null;
       }
-      if (command !== null) issued += 1;
-      else if (issued === 0 || v.turn() === startTurn) {
+      if (command !== null) {
+        issued += 1;
+        loops.command(command, v);
+      } else if (issued === 0 || v.turn() === startTurn) {
         if (goal !== null) stalled.set(goal, v.turn());
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
@@ -7284,9 +7640,10 @@ function createGoalPlanner(options) {
     if (persona !== null) lines2 = forget(lines2, persona, rng);
     return lines2.length === 0 ? {} : { lessons: lines2.join(" ") };
   }
-  function decide(raw, inCharacter, digest, answers, view) {
+  function decide(raw, inCharacter, digest, answers, view, allowed = null) {
     const persona = personaOf();
-    const probs = options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities);
+    const within2 = (dist) => allowed === null ? { ...dist } : restrictTo(dist, allowed, digest.offers);
+    const probs = within2(options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities));
     const top = Object.entries(probs).sort((a, b) => b[1] - a[1])[0]?.[0] ?? raw.choice;
     const held2 = descentHeld(digest, answers);
     const kept = held2 ? withoutDescent(probs) : probs;
@@ -7299,12 +7656,12 @@ function createGoalPlanner(options) {
       return pick3;
     };
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
-    if (mustPickUp(persona) && offered.has("pick_up")) return record6("pick_up", { ...blank, quirk: "compulsive collector" });
+    if (mustPickUp(persona) && offered.has("pick_up") && (allowed === null || allowed.has("pick_up"))) return record6("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
       const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
       if (away !== void 0) return record6(away, { ...blank, quirk: "craven" });
     }
-    const inChar = inCharacter?.type === "choice" ? held2 ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities : null;
+    const inChar = inCharacter?.type === "choice" ? within2(held2 ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities) : null;
     const strength = jitteredStrength(persona, rng);
     const blended = inChar === null ? { ...best.probabilities } : blend(best.probabilities, inChar, strength);
     const risk = { none_of_these: 0 };
@@ -7321,8 +7678,9 @@ function createGoalPlanner(options) {
     const positioned = nudgePosition(unseen, digest.offers, persona);
     const nudged = withoutHeld(holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent), held2);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
-    const pick2 = pick(floor.dist) ?? advice;
-    return record6(pick2, { best: best.probabilities, inCharacter: inChar, blended: floor.dist, strength, removed: floor.removed });
+    const banded = allowed === null ? floor.dist : Object.fromEntries(Object.entries(floor.dist).filter(([goal]) => allowed.has(goal)));
+    const pick2 = pick(banded) ?? advice;
+    return record6(pick2, { best: best.probabilities, inCharacter: inChar, blended: banded, strength, removed: floor.removed });
   }
   function descentHeld(digest, answers) {
     if (!digest.offers.some((offer) => offer.goal === "descend" && offer.gaps !== void 0)) return false;
@@ -7347,7 +7705,7 @@ function createGoalPlanner(options) {
     }
     const only = offers.length === 1 ? offers[0] : void 0;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
-    if (only !== void 0 && only.risk <= ceiling && only.gaps === void 0) return { goal: only.goal, why: "the only option" };
+    if (only !== void 0 && only.gaps === void 0) return { goal: only.goal, why: "the only option" };
     const last = lastAnswer;
     const again = last === null ? void 0 : offers.find((o) => o.goal === last.pick);
     const allowed = again !== void 0 && again.gaps === void 0 && (persona === null || again.risk <= ceiling || passes.has(again.goal));
@@ -7356,9 +7714,12 @@ function createGoalPlanner(options) {
     }
     return null;
   }
-  function ownChoice(digest, view) {
+  function ownChoice(full2, view, without = settleLoop(full2)) {
     const s = situationNow(view);
     const persona = personaOf();
+    const rest = without === null ? full2.offers : full2.offers.filter((offer2) => offer2.goal !== without);
+    const digest = rest.length === 0 || rest.length === full2.offers.length ? full2 : { ...full2, offers: rest };
+    if (digest !== full2 && full2.loop !== void 0) full2.loop = { ...full2.loop, fellBack: true };
     const preferred = proceduralPick(digest.offers, s.hpShare);
     const probabilities = Object.fromEntries(digest.offers.map((offer2) => [offer2.goal, (offer2.goal === preferred ? 2 : 1) / (1 + offer2.risk * 8)]));
     if (s.unseenDamage > 0 && persona !== null) {
@@ -7371,11 +7732,15 @@ function createGoalPlanner(options) {
     }
     const answer = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
     const picked2 = decide(answer, void 0, digest, { goal: answer }, view);
+    if (digest !== full2) {
+      if (digest.trace !== void 0) full2.trace = digest.trace;
+      if (digest.readiness !== void 0) full2.readiness = digest.readiness;
+    }
     const offer = digest.offers.find((offer2) => offer2.goal === picked2) ?? [...digest.offers].filter((offer2) => offer2.gaps === void 0).sort((a, b) => a.risk - b.risk)[0];
     if (offer === void 0) return { plan: build("step_aside", view) };
-    digest.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
+    full2.trace ??= { best: probabilities, inCharacter: null, blended: probabilities, strength: 0, removed: [], advice: answer.choice, pick: offer.goal };
     options.orders?.decided(offer.goal, view);
-    return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
+    return { plan: noteStalls(offer.goal, build(offer.goal, view), view) };
   }
   let byRules = false;
   const planner = {
@@ -7455,13 +7820,31 @@ function createGoalPlanner(options) {
         }
         log(`goal: Squire widens its choices. ${reason}`);
       }
+      const found = loops.detect(view);
+      if (found !== null && loopFound === null) {
+        loopFound = found;
+        lastAnswer = null;
+        log(`goal: loop detected (${found.kind}: ${found.detail})${found.tactic === null ? "" : `; re-planning without trusting ${found.tactic}`}`);
+      }
+      const loop = loopFound;
+      const passes = options.orders?.passes(view) ?? /* @__PURE__ */ new Set();
+      const adjacent2 = s.target !== null && steps(player.grid, s.target.grid) <= 1;
+      const { kept, pruned } = pruneDominated(offers, adjacent2, passes);
+      if (pruned.length > 0) {
+        log(`goal: pruned ${pruned.map((p) => `${p.goal} (${p.by} does as well or better)`).join(", ")}`);
+        offers = kept;
+      }
+      const ailingNow = player.hp < player.maxHp && (player.status.poisoned > 0 || player.status.cut > 0);
+      const engaged = (s.awake.length > 0 || s.unseenDamage > 0 || ailingNow) && offers.some((o) => ["escape", "heal", "gamble"].includes(classOf(o.goal)));
+      const pack = engaged ? { pruned, gate: escapeThresholds(persona) } : pruned.length > 0 ? { pruned } : void 0;
       const steeringNow = options.strategy?.();
       const aimList = steeringNow?.aims ?? [];
       const aimNote = aimList.length === 0 ? null : `Aims, best first: ${aimList.map((a) => a.label).join(", ")}.`;
       const ended = steeringNow?.outcomes ?? [];
       const textOf = (value) => value === void 0 || value === "" ? void 0 : value;
       const criteria = {};
-      for (const offer of offers) criteria[offer.goal] = offer.criteria;
+      const purposes = purposeClauses(offers, steeringNow?.nearKind ?? null);
+      for (const offer of offers) criteria[offer.goal] = purposes.has(offer.goal) ? `${offer.criteria} ${purposes.get(offer.goal)}` : offer.criteria;
       criteria["none_of_these"] = NONE_OF_THESE3;
       const goal = {
         type: "choice",
@@ -7494,7 +7877,6 @@ function createGoalPlanner(options) {
         return { race: m.race, band: THREAT_BANDS[real] ?? "deadly", ...rating.description === null ? {} : { capability: rating.description }, away: steps(player.grid, m.grid), tags };
       });
       const creatures = seen.length === 0 ? "No creatures in sight." : groupLines(creatureLines);
-      const passes = options.orders?.passes(view) ?? /* @__PURE__ */ new Set();
       const situation = JSON.stringify([
         player.depth,
         healthBand(player.hp, player.maxHp),
@@ -7515,14 +7897,17 @@ function createGoalPlanner(options) {
         persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on],
         flourishLines(flourishesNow(), persona)
       ]);
-      const reflex = reflexFor(offers, persona, situation, turn, passes, s);
+      const quick = reflexFor(offers, persona, situation, turn, passes, s);
+      const reflex = quick !== null && loop !== null && quick.goal === loop.tactic ? null : quick;
       if (reflex !== null) {
         log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
         options.orders?.decided(reflex.goal, view);
+        const context2 = { depth: player.depth, offers, newCreatures, situation, reflex: reflex.why, ...pack === void 0 ? {} : { pack }, ...loop === null ? {} : { loop } };
+        settleLoop(context2);
         const decided = {
           reflex: reflex.why,
-          plan: noteStalls(reflex.goal, build(reflex.goal, view), turn),
-          context: { depth: player.depth, offers, newCreatures, situation, reflex: reflex.why },
+          plan: noteStalls(reflex.goal, build(reflex.goal, view), view),
+          context: context2,
           answers: { goal: { type: "choice", choice: reflex.goal, confidence: 1, probabilities: { [reflex.goal]: 1 } } }
         };
         return decided;
@@ -7542,6 +7927,7 @@ function createGoalPlanner(options) {
         ["memory", "hunger", hungry(view) ? "The character is hungry." : void 0],
         ...entriesOf("memory", swarmNote(seen)),
         ["outcomes", "last", lastOutcome ?? void 0],
+        ["outcomes", "loop", loop === null ? void 0 : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here; pick something else unless nothing else can help.`}`],
         ["outcomes", "recent", textOf(ended[0])],
         ["outcomes", "prior", textOf(ended[1])],
         ["outcomes", "older", textOf(ended[2])],
@@ -7563,12 +7949,13 @@ function createGoalPlanner(options) {
       const layers = fitted2.context;
       const state = stateOf(layers);
       const ready = offers.some((offer) => offer.goal === "descend" && offer.gaps !== void 0) ? { ready_to_descend: READY_TO_DESCEND } : {};
+      const gate = pack?.gate === void 0 ? {} : { escape: ESCAPE_QUESTION };
       const question = {
         request: {
           state,
-          questions: persona === null ? { goal, ...ready } : { goal, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...ready, ...options.orders?.ask(offers, view) ?? {} }
+          questions: persona === null ? { goal, ...gate, ...ready } : { goal, ...gate, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...ready, ...options.orders?.ask(offers, view) ?? {} }
         },
-        context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state) }
+        context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state), ...pack === void 0 ? {} : { pack }, ...loop === null ? {} : { loop } }
       };
       return question;
     },
@@ -7576,7 +7963,32 @@ function createGoalPlanner(options) {
       view = flourishView(view);
       const answer = answers["goal"];
       if (answer?.type !== "choice") return ownChoice(digest, view);
-      const pick2 = decide(answer, answers["in_character"], digest, answers, view);
+      const failed = settleLoop(digest);
+      const gate = digest.pack?.gate;
+      let allowed = null;
+      if (gate !== void 0) {
+        const escape = answers["escape"];
+        gate.p = escape?.type === "noul" ? escape.p : null;
+        if (gate.p !== null) {
+          gate.band = bandOf(gate.p, gate);
+          allowed = allowedGoals(gate.band, digest.offers);
+          if (allowed !== null) gate.allowed = [...allowed].filter((goal) => goal !== "none_of_these");
+          log(`goal: escape gate ${gate.p.toFixed(2)} against ${gate.low.toFixed(2)} and ${gate.high.toFixed(2)} (${gate.band})${gate.allowed === void 0 ? "" : `, choosing among ${gate.allowed.join(", ")}`}`);
+        }
+      }
+      const unsure = gate !== void 0 && answer.confidence < CONFIDENCE_FLOOR ? lowConfidencePick(allowed === null ? digest.offers : digest.offers.filter((o) => allowed.has(o.goal)), gate.p ?? null, gate.low) : null;
+      if (unsure !== null && unsure !== failed) {
+        digest.pack.lowConfidence = unsure;
+        log(`goal: ${unsure}, the answer was unsure (${answer.confidence.toFixed(2)}), so the safest ${classOf(unsure)} option`);
+        const offer2 = digest.offers.find((o) => o.goal === unsure);
+        options.orders?.decided(offer2.goal, view);
+        return { plan: noteStalls(offer2.goal, build(offer2.goal, view), view) };
+      }
+      const pick2 = decide(answer, answers["in_character"], digest, answers, view, allowed);
+      if (failed !== null && pick2 === failed) {
+        log(`goal: ${pick2} again after the loop, so Squire picks without it`);
+        return ownChoice(digest, view, failed);
+      }
       if (pick2 === "none_of_these") {
         const p = view.player();
         const s = situationNow(view);
@@ -7613,7 +8025,7 @@ function createGoalPlanner(options) {
           digest.fallback = fallback;
           settleFallback(view);
           pendingFallback = { goal: fallback, hp: p.hp, depth: p.depth };
-          return { plan: noteStalls(fallback, build(fallback, view), view.turn()) };
+          return { plan: noteStalls(fallback, build(fallback, view), view) };
         }
         return ownChoice(digest, view);
       }
@@ -7629,7 +8041,7 @@ function createGoalPlanner(options) {
       } else {
         log(`goal: ${pick2} (${String(Math.round((answer.probabilities[pick2] ?? 0) * 100))}%)`);
       }
-      return { plan: noteStalls(offer.goal, build(offer.goal, view), view.turn()) };
+      return { plan: noteStalls(offer.goal, build(offer.goal, view), view) };
     },
     trigger(view, plan) {
       situationNow(view, false, true);
@@ -8139,7 +8551,7 @@ function usedBy(view, command, before = NOTHING_USED) {
     escape: before.escape || (command.code === "read" || command.code === "use-staff") && escapeItem(item)
   };
 }
-function bandOf(depth2) {
+function bandOf2(depth2) {
   return Math.floor(Math.max(0, depth2) / DEPTH_BAND);
 }
 function startWatch(view) {
@@ -8155,7 +8567,7 @@ function startWatch(view) {
     escapes: escapeItems(view),
     low: player.maxHp > 0 && player.hp * 5 < player.maxHp,
     depth: player.depth,
-    band: bandOf(player.maxDepth),
+    band: bandOf2(player.maxDepth),
     uniques: dangerousUniquesInView(view)
   };
 }
@@ -8206,7 +8618,7 @@ function watchStep(prev, view, used = NOTHING_USED) {
   if (spells > prev.spells) add2("spell", "the character learned a new spell");
   if (prev.depth > 0 && player.depth === 0) add2("town-in", "the character reached the town");
   if (prev.depth === 0 && player.depth > 0) add2("town-out", "the character left the town");
-  const band = Math.max(prev.band, bandOf(player.maxDepth));
+  const band = Math.max(prev.band, bandOf2(player.maxDepth));
   if (band > prev.band) add2("band", `the character reached dungeon level ${String(band * DEPTH_BAND)} for the first time`);
   fired.sort((a, b) => REVISE_ORDER.indexOf(a.trigger) - REVISE_ORDER.indexOf(b.trigger));
   return {
@@ -8303,7 +8715,7 @@ function reviseGoalRequest(view, mid, reason, others, pursuits = []) {
 function nextCheck(actions, maxDepth, revisions) {
   return {
     actions: Math.max(0, CHECKPOINT_ACTIONS - actions),
-    depth: (bandOf(maxDepth) + 1) * DEPTH_BAND,
+    depth: (bandOf2(maxDepth) + 1) * DEPTH_BAND,
     capped: revisions >= REVISE_LEVEL_CAP
   };
 }
@@ -8835,6 +9247,10 @@ function createStrategy(deps) {
       if (nearHold === null || lastView === null) return null;
       const kind = NEAR_ORDER.includes(nearHold.id) ? nearHold.id : null;
       return goalSentence(nearHold.label, kind === null ? null : nearProgress(kind, lastView, terrain), nearHold.trigger);
+    },
+    nearKind() {
+      if (nearHold === null) return null;
+      return NEAR_ORDER.includes(nearHold.id) ? nearHold.id : null;
     },
     outcomeLines: () => outcomeHistory.slice(-3).reverse(),
     showLongGoal: () => deps.revealLongGoal?.() === true,
@@ -11963,6 +12379,7 @@ var PILOTS = [
   { id: "goal", pilot: "squire_goal" },
   { id: "in_character", pilot: "squire_in_character" },
   { id: "ready_to_descend", pilot: "squire_gate" },
+  { id: "escape", pilot: "squire_gate", suffix: "escape" },
   { id: "long_goal", pilot: "squire_goal", suffix: "long" },
   { id: "mid_goal", pilot: "squire_goal", suffix: "mid" },
   { id: "near_goal", pilot: "squire_goal", suffix: "near" },
@@ -12674,6 +13091,7 @@ function createRuntime(host, options = {}) {
           const longGoal = strategy.longLine();
           const midGoal = strategy.midLine();
           const nearGoal = strategy.nearLine();
+          const nearKind = strategy.nearKind();
           const outcomes = strategy.outcomeLines();
           return {
             aims: orders.promote(strategy.ranked()),
@@ -12685,6 +13103,7 @@ function createRuntime(host, options = {}) {
             ...longGoal === null ? {} : { longGoal },
             ...midGoal === null ? {} : { midGoal },
             ...nearGoal === null ? {} : { nearGoal },
+            ...nearKind === null ? {} : { nearKind },
             ...outcomes.length === 0 ? {} : { outcomes }
           };
         },
@@ -12733,6 +13152,7 @@ function createRuntime(host, options = {}) {
       probs: goal?.type === "choice" && record6.reflex === void 0 ? goal.probabilities : null,
       ...record6.reflex === void 0 ? {} : { reflex: record6.reflex },
       ...record6.context.fallback === void 0 ? {} : { fallback: record6.context.fallback },
+      ...tacticalLog(record6.context.pack, record6.context.loop),
       state: record6.request.state,
       ...record6.context.stateHash === void 0 ? {} : { stateHash: record6.context.stateHash },
       options: record6.context.offers.map((o) => o.goal),

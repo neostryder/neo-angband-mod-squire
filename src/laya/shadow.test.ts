@@ -177,6 +177,49 @@ describe("Laya shadow rows", () => {
     ]);
   });
 
+  it("logs the tactical pack's escape gate and option choice as one row per pilot over the same budgeted state, with unique stable ids", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const net: NetLike = {
+      transport: "relay",
+      async request(request) {
+        sent.push(JSON.parse(request.body ?? "{}") as Record<string, unknown>);
+        return { ok: true, status: 200, headers: {}, body: reply(request) };
+      },
+    };
+    const escape = { type: "noul" as const, instructions: "Should the character stop what it is doing and get to safety now?", criteria: { true: "Get out.", false: "Stay." } };
+    const ready = { type: "noul" as const, instructions: "Ready to go down?", criteria: { true: "Yes.", false: "No." } };
+    const layers = contextOf([
+      ["memory", "health", "Wounded: 12 of 40 HP."],
+      ["memory", "creatures", "A cave spider is next to the character."],
+      ["knowledge", "lessons", "Spiders come in swarms. ".repeat(600)],
+    ]);
+    const record = {
+      ...decision(),
+      request: { state: stateOf(fitToBudget(layers, STATE_TOKEN_CAP).context), questions: { goal, escape, ready_to_descend: ready } },
+      answers: { goal: goalAnswer, escape: { type: "noul" as const, p: 0.8 }, ready_to_descend: { type: "noul" as const, p: 0.4 } },
+    };
+    const ids: string[][] = [];
+    for (const run of [0, 1]) {
+      const store = memoryStore();
+      const shadow = createShadow({ net, rows: createRows(store, "run-2"), install: Promise.resolve(INSTALL), runId: "run-2", now: () => 0, log: () => {} });
+      await shadow.record(record, 5, run === 0, URL, [], layers);
+      ids.push((await exportRows(store)).trim().split("\n").map((line) => (JSON.parse(line) as { id: string }).id));
+    }
+    expect(ids[0]).toEqual([
+      rowId(INSTALL, "run-2", 5, "squire_goal"),
+      rowId(INSTALL, "run-2", 5, "squire_gate"),
+      rowId(INSTALL, "run-2", 5, "squire_gate", "escape"),
+    ]);
+    expect(new Set(ids[0]).size).toBe(3);
+    expect(ids[1]).toEqual(ids[0]);
+    expect(sent.map((body) => body["model"])).toEqual(["laya:squire_goal", "laya:squire_gate", "laya:squire_gate"]);
+    expect(sent.find((body) => "escape" in (body["questions"] as object))?.["questions"]).toEqual({ escape });
+    for (const body of sent) {
+      expect(body["state"]).toEqual(sent[0]!["state"]);
+      expect(stateTokens(body["state"] as Record<string, unknown>)).toBeLessThanOrEqual(LAYA_STATE_TOKENS);
+    }
+  });
+
   it("logs the revise-goal question as a gate row with its own suffix, numbered with the goal rows", async () => {
     const store = memoryStore();
     const rows = createRows(store, "run-7");

@@ -30,6 +30,13 @@ export interface LoggedDecision {
   readonly reflex?: string;
   /** The survival goal Squire took after the model chose none of the offers. */
   readonly fallback?: string;
+  /** The tactical pack in a fight: the escape gate's answer and band, options pruned before asking, an unsure answer's fallback, and a loop found before deciding. Kept on this machine only. */
+  readonly tactical?: {
+    readonly escape?: { readonly p: number | null; readonly low: number; readonly high: number; readonly band?: string };
+    readonly pruned?: readonly string[];
+    readonly lowConfidence?: string;
+    readonly loop?: { readonly kind: string; readonly tactic: string | null; readonly fellBack: boolean };
+  };
   /** The same ending in full, kept on this machine for measuring later decisions. */
   readonly result?: PlanEnd;
   readonly persona?: { readonly best: string; readonly inCharacter: string; readonly blended: string; readonly strength: number; readonly removed: boolean };
