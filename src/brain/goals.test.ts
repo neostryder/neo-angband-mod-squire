@@ -1644,6 +1644,26 @@ describe("soak findings", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
+  it("explores past the leash when the only offer is a descent the character is not ready for", () => {
+    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 20, maxHp: 20 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    expect(offered(q)).toContain("explore");
+    const choice = p.choose(pick("none_of_these"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected wider exploration");
+    expect(choice.plan.label).toBe("explore");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 18, y: 1 });
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps a badly hurt character inside the leash when the descent is held back", () => {
+    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 6, maxHp: 20 } });
+    const { p } = planner(w);
+    expect(offered(asked(p.ask(w.view)))).not.toContain("explore");
+  });
+
   it("lets the town Warrior walk to the stairs after refusing every offer", () => {
     const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { cls: "Warrior", level: 1, maxLevel: 1, depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 } });
     const { p } = planner(w);

@@ -24,7 +24,7 @@ import { stepsBand, turnsBand } from "../brain/bands.js";
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
 
 /** Below this share of maximum hit points, a stair search falls back to the leash and a hurt character is not sent farther out. */
-const SEARCH_HP_FRACTION = 0.35;
+export const SEARCH_HP_FRACTION = 0.35;
 
 export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView) => boolean) {
   const pacing = createLevelPacing();

@@ -52,7 +52,7 @@ import { nudgeAims, steerOffers, type AimTag, type Steering } from "../strategy/
 import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
-import { createJourney } from "../strategy/journey.js";
+import { createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
 import { gapFacts, missingPreparation, readinessThreshold } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
@@ -60,7 +60,7 @@ import type { StoreMemory } from "../town/memory.js";
 import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
 import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull, stillWorthIt } from "./items.js";
-import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
+import { arrivalFeeling, badLevelFeeling, lootOnlyFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
 import { allowedGoals, bandOf, classOf, CONFIDENCE_FLOOR, escapeQuestion, escapeThresholds, lowConfidencePick, pruneDominated, purposeClauses, type PackRecord } from "./tactics.js";
 import { createLoopGuard, type LoopFinding } from "./loops.js";
@@ -1288,7 +1288,11 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* The game's own level feeling says when a floor is dangerous or picked
    * clean; either way there is nothing worth staying for. */
   const feeling = rememberedFeeling ?? badLevelFeeling(view.messages());
-  if (feeling !== null && player.depth > 0 && reachableAnyStairs(view, terrain)) {
+  /* Cobwebs are no reason to go up. From level 1 the up stairs lead to town,
+   * and a character too weak for the level below just walks back down again;
+   * it needs this level's creatures for experience first. */
+  const stayDespiteFeeling = feeling !== null && lootOnlyFeeling(feeling) && missingPreparation(view, player.depth + 1).length > 0;
+  if (feeling !== null && !stayDespiteFeeling && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     addLeave(`Leave the level: the game says "${feeling}"`, exposure(s) * 0.3);
   }
   /* A floor walked out with no way down found has nothing left to stay for, and a new level by any staircase has its own way down. */
@@ -1750,6 +1754,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let sameTurnAt: number | null = null;
   /* Whether the last question offered the escapes held back at first, which the retreat build needs to pick its stairs as the offer did. */
   let offeredWiden = false;
+  /* Whether the explore on offer may walk past the journey's stair leash. */
+  let exploreUnleashed = false;
   const loops = createLoopGuard();
   /* A loop found and not yet answered. The next decision is a re-plan told which tactic failed. */
   let loopFound: LoopFinding | null = null;
@@ -2558,7 +2564,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         /* The model saw every awake creature before choosing to explore. */
         return travelling(view.player().depth === 0
           ? missionPlan("explore", autoexplore({ allowAwake: true, findTownStairs: true, walked: townWalked }), view)
-          : (() => { const wide = offeredWiden; return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide)); })(), { mode: "explore" });
+          : (() => { const wide = offeredWiden || exploreUnleashed; return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide)); })(), { mode: "explore" });
       case "leave_level": {
         /* The journey reroutes the walk to its own exit, often the up stairs, so the label names the stairs it will take. */
         const way = journey.exitWay(view) ?? (leaveStep(situationNow(view), terrain)?.down === true ? "down" : null);
@@ -2920,6 +2926,17 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
         log(`goal: Squire widens its choices. ${reason}`);
+      }
+      /* Here the only offer is a trip down the character isn't ready for, and
+       * everything inside the leash is explored. Walking past the leash is how
+       * it finds the creatures it needs to level up. */
+      exploreUnleashed = false;
+      if (player.depth > 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && offers.some((o) => o.goal === "descend" && o.gaps !== undefined) && !offers.some((o) => o.goal === "explore") && reachableFrontier(view, terrain) && !walksIntoDeath(s, terrain, "explore")) {
+        const explore: Offer = { goal: "explore", criteria: "Explore unknown ground farther from the stairs to earn the experience the next depth asks for.", risk: exposure(s) + 0.02 };
+        if (usable(explore)) {
+          offers.push(explore);
+          exploreUnleashed = true;
+        }
       }
 
       const found = loops.detect(view);

@@ -77,6 +77,8 @@ Fixed.
 - [Visible] **Squire stops exploring a town it has already walked.** It remembers each square of town it has stood on during a visit, so a town with no new ground left and no known stairs no longer sends it round the same streets again.
 - [Visible] **Squire lights a torch before it tries to study.** Studying needs light, so a Mage with an unlit torch and a new spell to learn used to try the spell first, get refused, and only then light the torch.
 - [Visible] **Squire sees the game's messages in the middle of a level again.** The first part of Squire to read each batch of messages used it up, so level feelings, newly learned runes and the arrival notes for a new level never reached the rest.
+- [Visible] **A new character no longer shuttles between town and dungeon level 1.** On a level whose feeling mentioned only loot, like "there is naught but cobwebs here", Squire took the up staircase, which from level 1 leads to town, and then came straight back down. It now stays and keeps fighting until it has the level and hit points the next level down asks for. A feeling that warns of danger still makes it leave.
+- [Visible] **A Rogue could pace on the spot for hundreds of turns on dungeon level 1.** It had explored everything within a short walk of the stairs, and the only thing on offer was a trip down it wasn't ready for, so it shuffled from square to square. Squire now offers to explore the far side of the level too, where the creatures it needs for experience are.
 
 ## 0.2.0 - 2026-10-01
 

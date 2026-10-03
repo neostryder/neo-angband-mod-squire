@@ -11,7 +11,7 @@ import type { Answer } from "./systemone.js";
 import { createGoalPlanner, type GoalDigest } from "./goals.js";
 import type { Question } from "./brain.js";
 import { floorTarget } from "./items.js";
-import { badLevelFeeling } from "./level-feel.js";
+import { badLevelFeeling, dangerousLevelFeeling, lootOnlyFeeling } from "./level-feel.js";
 
 function planner(w: ReturnType<typeof world>, reflex = false) {
   const logged: string[] = [];
@@ -170,6 +170,20 @@ describe("level feeling and the worm-mass case", () => {
     /* The feeling is announced once, so the offer has to survive the message. */
     w.setMessages([]);
     expect(offered(p.ask(w.view))).toContain("leave_level");
+  });
+
+  it("stays on a level picked clean while the character is not ready for the next depth, since the only way off is up", () => {
+    const w = world({ map: ["#########", "#<@.....,", "#########"], player: { depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 20, maxHp: 20 }, messages: ["This seems a tame, sheltered place, and there is naught but cobwebs here."] });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("leave_level");
+    const danger = world({ map: ["#########", "#<@.....,", "#########"], player: { depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 20, maxHp: 20 }, messages: ["You feel anxious about this place, and there is naught but cobwebs here."] });
+    expect(offered(planner(danger).p.ask(danger.view))).toContain("leave_level");
+  });
+
+  it("tells a dangerous feeling from one that speaks only of loot", () => {
+    expect(lootOnlyFeeling("This seems a quiet, peaceful place, and there are only scraps of junk here.")).toBe(true);
+    expect(lootOnlyFeeling("This place seems murderous, and there is naught but cobwebs here.")).toBe(false);
+    expect(dangerousLevelFeeling(["This seems a quiet, peaceful place, and there is naught but cobwebs here."])).toBeNull();
+    expect(dangerousLevelFeeling(["Omens of death haunt this place."])).toContain("Omens");
   });
 
   it("reads a bad level feeling out of the messages", () => {
