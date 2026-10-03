@@ -375,8 +375,8 @@ export interface GoalPlannerOptions {
   readonly backstoryTokens?: number;
   /** The most tokens the request state may carry before whole layers are left out. */
   readonly stateTokens?: number;
-  /** Under this confidence the option answer is not followed on its own when the escape question was asked. CONFIDENCE_FLOOR unless set. */
-  readonly confidenceFloor?: number;
+  /** An answer under this confidence is not taken at face value when the escape question went out with it. CONFIDENCE_FLOOR if unset. Pass a function to have it checked at every answer, which matters when the player switches servers mid-run. */
+  readonly confidenceFloor?: number | (() => number);
   /** Whether to skip the model for forced, routine and unchanged moments. On unless set to false. */
   readonly reflex?: boolean;
   /** Whether Law to Chaos may draw the final pick. On unless set to false, which always takes the top option. */
@@ -1671,7 +1671,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   const stateBudget = options.stateTokens ?? STATE_TOKEN_CAP;
-  const confidenceFloor = options.confidenceFloor ?? CONFIDENCE_FLOOR;
+  const floorOption = options.confidenceFloor ?? CONFIDENCE_FLOOR;
+  const floorNow = (): number => (typeof floorOption === "function" ? floorOption() : floorOption);
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
   /* Creatures whose grudge has been told in the log, so each is told once. */
@@ -3100,6 +3101,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         }
       }
       /* An unsure answer is not followed on its own: the gate's lean picks the class, and the safest option of that class is taken. */
+      const confidenceFloor = floorNow();
       const unsure = gate !== undefined && answer.confidence < confidenceFloor ? lowConfidencePick(allowed === null ? digest.offers : digest.offers.filter((o) => allowed.has(o.goal)), gate.p ?? null, gate.low) : null;
       if (unsure !== null && unsure !== failed) {
         digest.pack!.lowConfidence = unsure;

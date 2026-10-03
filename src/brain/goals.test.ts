@@ -2867,6 +2867,22 @@ describe("tactical pack rules", () => {
     expect(logged.some((line) => line.includes("the answer was unsure"))).toBe(false);
   });
 
+  it("reads the floor at each answer, so a change of server takes effect at once", () => {
+    let floor = 0.7;
+    const w = fightWorld();
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: () => floor });
+    const unsureAfter = (confidence: number) => {
+      logged.length = 0;
+      const q = asked(p.ask(w.view));
+      p.choose({ goal: { type: "choice", choice: "fight", confidence, probabilities: { fight: 0.3, phase: 0.25 } }, escape: { type: "noul", p: 0.6 } }, q.context, w.view);
+      return logged.some((line) => line.includes("the answer was unsure"));
+    };
+    expect(unsureAfter(0.5)).toBe(true);
+    floor = 0;
+    expect(unsureAfter(0.5)).toBe(false);
+  });
+
   it("takes a sole option without asking, whatever its risk", () => {
     const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
     const q = planner(w, true).p.ask(w.view);

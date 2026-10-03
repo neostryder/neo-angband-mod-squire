@@ -807,7 +807,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
         stateTokens: stateBudget(config),
-        confidenceFloor: confidenceFloor(backend),
+        confidenceFloor: () => confidenceFloor(backendFor(config) ?? backend),
         chaosMethod: config.chaosMethod,
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
