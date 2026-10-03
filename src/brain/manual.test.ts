@@ -40,7 +40,7 @@ describe("the manual", () => {
     const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, rng: () => 0.5, birthOptions: () => [{ name: "birth_force_descend", value: true }] });
     const q = planner.ask(w.view);
     if ("handBack" in q || "reflex" in q) throw new Error("expected a question");
-    expect(q.context.layers?.entries.filter((entry) => entry.layer === "manual").map((entry) => entry.key)).toEqual(["rules", "mechanics", "birth"]);
+    expect(q.context.layers?.entries.filter((entry) => entry.layer === "manual").map((entry) => entry.key)).toEqual(["mechanics", "birth", "rules"]);
     expect(q.request.state["birth"]).toBe("Up staircases are never made, so stairs lead only down.");
   });
 });

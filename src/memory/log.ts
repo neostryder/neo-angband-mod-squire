@@ -28,6 +28,8 @@ export interface LoggedDecision {
   readonly outcome: string | null;
   /** Why no model was asked, when Squire decided alone. */
   readonly reflex?: string;
+  /** The survival goal Squire took after the model chose none of the offers. */
+  readonly fallback?: string;
   /** The same ending in full, kept on this machine for measuring later decisions. */
   readonly result?: PlanEnd;
   readonly persona?: { readonly best: string; readonly inCharacter: string; readonly blended: string; readonly strength: number; readonly removed: boolean };

@@ -363,3 +363,20 @@ export function readPack(view: AgentView): Pack {
 export function hungry(view: AgentView): boolean {
   return view.player().status.food < HUNGRY_BELOW;
 }
+
+/**
+ * Potions or scrolls whose kind the character has not learned, by their shown
+ * names: an unknown potion shows only its colour ("a Light Blue Potion") and an
+ * unknown scroll only its title, so neither name says what it does.
+ */
+export function unknownFlavours(view: AgentView, kind: "potion" | "scroll"): PackItem[] {
+  const tval = kind === "potion" ? 26 : 25;
+  const out: PackItem[] = [];
+  for (const item of view.inventory()) {
+    const name = shownName(item);
+    /* The same rule as the floor's unknownFlavour: a scroll shows a title, a potion shows no "of". */
+    if (name === null || item.tval !== tval || (kind === "scroll" ? !/\btitled\b/i.test(name) : /\bof\b/i.test(name))) continue;
+    out.push({ handle: item.handle, name, power: 0 });
+  }
+  return out;
+}

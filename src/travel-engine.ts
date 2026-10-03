@@ -17,6 +17,11 @@
  * step-by-step walk. The caller also falls back when the game refuses the
  * command without spending a turn, because the command changed nothing.
  *
+ * The engine's travel command walks the whole route without stopping to check
+ * anything. A route that crosses lava, or passes next to any creature in view,
+ * asleep or awake, is walked one step at a time instead: a floating eye asleep
+ * beside the path is how a run ends with the character paralysed.
+ *
  * WHY THE VIEW GATE IS travelPath. The travel commands and the read that
  * describes their route ship together: an engine new enough to expose
  * `travelPath` is one where an agent can ask for a route, and an older view
@@ -28,14 +33,14 @@
 import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
 import type { SquireContext } from "./context.js";
 import type { Loc } from "./grid.js";
-import { DIRECTIONS, directionToward } from "./grid.js";
+import { DIRECTIONS, directionToward, steps } from "./grid.js";
 import { flowFrom } from "./flow.js";
-import { isRoutable, isWalkable } from "./map.js";
+import { isRoutable, isWalkable, standingOnHarm } from "./map.js";
 import { awakeInSight } from "./threat.js";
 
 /** How the walk should be handed to the engine. */
 export interface EngineTravelOptions {
-  /** A stair kind, so the engine's own navigate command picks the target. */
+  /** A stair kind, so the engine's own navigate command picks the target. The goals are then every known stair of that kind. */
   readonly stairs?: "up" | "down";
   /** Whether a corridor may be covered with the engine's run command. */
   readonly run?: boolean;
@@ -64,6 +69,15 @@ export function engineTravel(ctx: SquireContext, goals: readonly Loc[], options:
   if (goals.some((goal) => goal.x === at.x && goal.y === at.y)) return null;
 
   if (options.stairs !== undefined) {
+    /* The navigate command picks its own stair by the game's path costs, which
+     * avoid known traps and can rank two stairs differently from the flow field
+     * here. So `goals` must be every known stair of the kind, and the command is
+     * used only when the route to each one is clear. A stair with no route is
+     * one the game cannot path to either, so it cannot be the one it picks. */
+    for (const goal of goals) {
+      const route = ctx.view.travelPath?.({ x: goal.x, y: goal.y }) ?? null;
+      if (route !== null && !routeClear(ctx, route.grids)) return null;
+    }
     return ctx.act.raw(options.stairs === "down" ? "navigate-down" : "navigate-up");
   }
 
@@ -73,6 +87,7 @@ export function engineTravel(ctx: SquireContext, goals: readonly Loc[], options:
    * answer, the caller's flow field is the fallback. */
   const route = ctx.view.travelPath?.({ x: near.x, y: near.y }) ?? null;
   if (route === null || route.grids.length === 0) return null;
+  if (!routeClear(ctx, route.grids)) return null;
 
   const first = route.grids[0];
   if (first === undefined) return null;
@@ -81,6 +96,12 @@ export function engineTravel(ctx: SquireContext, goals: readonly Loc[], options:
     if (dir !== null) return { ...ctx.act.raw("run"), dir };
   }
   return ctx.act.raw("pathfind", { dest: { x: near.x, y: near.y } });
+}
+
+/** True when no square of the route is lava and none is next to a creature in view. */
+function routeClear(ctx: SquireContext, grids: readonly Loc[]): boolean {
+  const seen = ctx.view.monsters().filter((monster) => monster.visible);
+  return grids.every((grid) => !standingOnHarm(ctx.view, ctx.terrain, grid) && !seen.some((monster) => steps(monster.grid, grid) <= 1));
 }
 
 /** The reachable goal the character can walk to soonest. */

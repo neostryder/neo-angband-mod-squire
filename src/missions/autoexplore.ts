@@ -53,6 +53,8 @@ export interface AutoexploreOptions {
   readonly allowAwake?: boolean;
   /** Sweep remembered town ground when the dark map has no frontier to show. */
   readonly findTownStairs?: boolean;
+  /** Town squares stood on earlier in this visit. The town sweep skips them. */
+  readonly walked?: ReadonlySet<string>;
 }
 
 /** Build the exploring errand. */
@@ -144,7 +146,7 @@ export function autoexplore(options: AutoexploreOptions = {}): Mission {
         for (let y = 0; y < bounds.height; y += 1) {
           for (let x = 0; x < bounds.width; x += 1) {
             const grid = { x, y };
-            if (isRoutable(ctx.view, ctx.terrain, grid) && !ctx.progress.visited.has(key(grid))) goals.push(grid);
+            if (isRoutable(ctx.view, ctx.terrain, grid) && !ctx.progress.visited.has(key(grid)) && options.walked?.has(key(grid)) !== true) goals.push(grid);
           }
         }
       }

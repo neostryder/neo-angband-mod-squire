@@ -45,7 +45,8 @@ function liveTarget(ctx: SquireContext, id: number): MonsterView | undefined {
 }
 
 /** Build the fighting errand. One per handover: it holds its own target. */
-export function autofight(): Mission {
+/** Melee the given creature when one is named, or the nearest fit target. */
+export function autofight(fixedTarget?: number): Mission {
   let watcher: Watcher | null = null;
   let targetId: number | null = null;
   /**
@@ -78,9 +79,9 @@ export function autofight(): Mission {
       const at = ctx.view.player().grid;
       const options = { wakeSleepers: cfg.wakeSleepers, reach: REACH };
 
-      const named = ctx.view.target();
-      if (named !== null && named.midx > 0) {
-        const monster = liveTarget(ctx, named.midx);
+      const named = fixedTarget ?? ctx.view.target()?.midx ?? 0;
+      if (named > 0) {
+        const monster = liveTarget(ctx, named);
         /* A named target is honoured even if it is asleep: naming it IS the
          * decision to wake it, which is the thing the sleepers rule exists to
          * keep an errand from making on its own. */

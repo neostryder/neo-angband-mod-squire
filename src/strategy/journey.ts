@@ -107,7 +107,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function checkedRoute(view: AgentView, goals: readonly Loc[]): Loc[] | null {
     const player = view.player();
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
-    if (player.status.poisoned > 0 || player.status.cut > 0 || player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return null;
+    if (player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return null;
     const threats = [...remembered.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
     const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap;
     const field = flowFrom({ goals, canEnter: enter });
@@ -124,6 +124,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (view.monsters().some((monster) => monster.visible && monster.asleep && route.some((grid) => steps(grid, monster.grid) <= (monster.raceFlags.includes("MULTIPLY") ? 10 : 2)))) return null;
     /* An unknown ranged attack cannot be priced as zero during a walking return. */
     if (threats.length > 0) return null;
+    /* Poison and bleeding cost about a hit point a step, so the walk has to end before the hit points do. */
+    if ((player.status.poisoned > 0 || player.status.cut > 0) && route.length * (player.status.cut > 100 ? 3 : 1) >= player.hp) return null;
     return route;
   }
 

@@ -161,6 +161,8 @@ const LABEL: Readonly<Record<Goal, string>> = {
   cast_attack: "cast an attack spell",
   heal: "drink a healing potion",
   cast_heal: "cast a healing spell",
+  quaff_unknown: "drink an unknown potion",
+  read_unknown: "read an unknown scroll",
   phase: "phase away",
   teleport: "teleport away",
   deep_descent: "read Deep Descent",

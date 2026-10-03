@@ -134,6 +134,8 @@ export interface ThreatFacts {
   readonly openedDoor?: Loc;
   readonly lastSeen?: ReadonlyMap<number, number>;
   readonly energy?: SpeedEnergy;
+  /** Leave out poison and cut damage, for checks that ask whether a creature can kill the character. */
+  readonly creaturesOnly?: boolean;
 }
 
 export interface UnseenHit {
@@ -162,6 +164,11 @@ function energyBounds(speed: number, energy?: SpeedEnergy): { low: number; high:
     low: speed >= 110 ? 10 + Math.min(20, speed - 110) : speed >= 100 ? 5 : 1,
     high: speed >= 110 ? Math.min(49, 10 + speed - 110) : speed > 100 ? 10 : 5,
   };
+}
+
+/** The most game turns one action of the character can take at its speed. */
+export function turnsPerAction(speed: number, energy?: SpeedEnergy): number {
+  return Math.ceil(100 / energyBounds(speed, energy).low);
 }
 
 /** Initiative is absent from the view, so fractional monster actions round up. */
@@ -281,7 +288,7 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
   const monsters = facts.monsters ?? view.monsters().filter((m) => m.visible);
   const occupied = new Map<string, number>();
   const ticks = Math.ceil(actions * 10 / energyBounds(player.speed, facts.energy).low);
-  const statusDamage = ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0));
+  const statusDamage = facts.creaturesOnly === true ? 0 : ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0));
   const unseen = facts.unseenHit === undefined ? facts.unseenDamage ?? 0 : unseenDamageAt(facts.unseenHit, at, view.turn());
   let damage = unseen * actions + statusDamage;
   let status = 0;
@@ -367,14 +374,26 @@ export function effectiveAttack(view: AgentView, target: MonsterView, spell?: Ca
   return { damage, failure: 0.25 };
 }
 
-export function assessThreat(monster: MonsterView, player: PlayerView, awake: readonly MonsterView[], view: AgentView, dreaded: ReadonlySet<string> = new Set(), terrain?: Terrain, energy?: SpeedEnergy): ThreatAssessment {
+/**
+ * The danger band of one creature, rated on that creature alone. Counting the
+ * crowd here made a floating eye look deadly from across the room when wild
+ * dogs stood beside it; the crowd belongs in the incoming damage line. A
+ * creature whose blows the character has never seen is rated on half its
+ * level's damage ceiling, close to an average round, while the incoming damage
+ * line keeps the whole ceiling.
+ */
+export function assessThreat(monster: MonsterView, player: PlayerView, _awake: readonly MonsterView[], view: AgentView, dreaded: ReadonlySet<string> = new Set(), terrain?: Terrain, energy?: SpeedEnergy): ThreatAssessment {
   const town = townsperson(monster, player.depth);
   const uniqueFloor = fastUniqueAtLowLevel(monster, player) ? 3 : 0;
   const recall = view.monsterRecall?.(monster.raceIndex);
-  const window = threatWindow(view, player.grid, terrain, { monsters: awake.some((m) => m.id === monster.id) ? awake : [...awake, monster], ...(energy === undefined ? {} : { energy }) });
-  let lethality = player.hp <= window.one.damage / 2 && window.one.damage > 0 ? 3
-    : player.hp <= window.one.damage && window.one.damage > 0 ? 2
-      : player.hp <= window.two.damage && window.two.damage > 0 ? 1 : 0;
+  const window = threatWindow(view, player.grid, terrain, { monsters: [monster], ...(energy === undefined ? {} : { energy }) });
+  const unknownBlows = !/\(\d+d\d+|\(\d+\)/.test(recall?.text ?? "");
+  const scale = unknownBlows ? 0.5 : 1;
+  const one = window.one.damage * scale;
+  const two = window.two.damage * scale;
+  let lethality = player.hp <= one / 2 && one > 0 ? 3
+    : player.hp <= one && one > 0 ? 2
+      : player.hp <= two && two > 0 ? 1 : 0;
   if (recall === undefined || recall === null) {
     const capability = Math.max(uniqueFloor, threatIndex(monster, player.level, Infinity, dreaded));
     return { capability, lethality, band: Math.max(capability, lethality), round: town ? TOWN_ROUND : roundEstimate(monster.level), description: null, enhanced: false };

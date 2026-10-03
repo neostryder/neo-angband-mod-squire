@@ -104,6 +104,8 @@ export interface PlanEnd {
   readonly commands: number;
   /** Commands after which no game time passed, so the game did not carry them out. */
   readonly refused: number;
+  /** The refused commands counted by command code, such as walk or cast, when any were refused. */
+  readonly refusedBy?: Readonly<Record<string, number>>;
   /** Hit points when the plan started and when it ended, if the brain has a gauge. */
   readonly hpBefore: number | null;
   readonly hpAfter: number | null;
@@ -176,8 +178,11 @@ interface PlanRun {
   lastProgressAt: number;
   commands: number;
   refused: number;
+  refusedBy: Record<string, number>;
   /* The game turn at the last command, kept until the next call checks whether time passed. */
   issuedAt: number | null;
+  /* The code of the last command, to count a refusal by its kind. */
+  issuedCode: string | null;
   /* The depth at the last command, since a staircase changes it without passing a turn. */
   issuedDepth: number | null;
 }
@@ -231,6 +236,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       lastProgressAt: deps.now(),
       commands: 0,
       refused: 0,
+      refusedBy: {},
+      issuedCode: null,
       issuedAt: null,
       issuedDepth: null,
     };
@@ -389,7 +396,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       if (progressGauge === null || current.turn !== progressGauge.turn || current.depth !== progressGauge.depth) progressAt = deps.now();
       progressGauge = current;
       if ((state.kind === "running" || state.kind === "idle") && deps.now() - progressAt >= MAX_PLAN_IDLE_MS) {
-        if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, hpBefore: state.run.hpBefore, hpAfter: current.hp });
+        if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: current.hp });
         progressAt = deps.now();
         breakLoop = true;
         state = { kind: "waiting", until: deps.now() + 1000 };
@@ -416,8 +423,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         run.lastProgressAt = deps.now();
       }
       const moved = gauge?.depth !== undefined && run.issuedDepth !== null && gauge.depth !== run.issuedDepth;
-      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt && !moved) run.refused += 1;
+      if (run.issuedAt !== null && gauge !== null && gauge.turn === run.issuedAt && !moved) {
+        run.refused += 1;
+        const code = run.issuedCode ?? "unknown";
+        run.refusedBy[code] = (run.refusedBy[code] ?? 0) + 1;
+      }
       run.issuedAt = null;
+      run.issuedCode = null;
       run.issuedDepth = null;
       const reason = deps.now() - run.startedAt >= MAX_PLAN_MS
         ? "The plan ran for 60 seconds."
@@ -431,6 +443,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
           emptyLabels.clear();
           run.commands += 1;
           run.issuedAt = gauge?.turn ?? null;
+          run.issuedCode = command.code;
           run.issuedDepth = gauge?.depth ?? null;
           return command;
         }
@@ -443,6 +456,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         reason,
         commands: run.commands,
         refused: run.refused,
+        ...(run.refused > 0 ? { refusedBy: { ...run.refusedBy } } : {}),
         hpBefore: run.hpBefore,
         hpAfter: gauge?.hp ?? null,
       });

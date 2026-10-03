@@ -21,6 +21,7 @@ import { readFlourishes } from "./learning/flourishes.js";
 import { readFamilyFlourishes, readWays } from "./learning/family-ways.js";
 import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
+import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -261,6 +262,11 @@ export function backstoryBudget(config: SquireConfig): number {
   if (config.backend === "jev") return 2000;
   /* A small context has to hold the rules, the situation and every option too. */
   return Math.max(0, Math.floor(config.contextTokens * 0.15));
+}
+
+/** How many tokens one decision's state may carry on this backend. */
+export function stateBudget(config: SquireConfig): number {
+  return config.backend === "laya" ? LAYA_STATE_TOKENS : STATE_TOKEN_CAP;
 }
 
 /** The persona for a new character, or null. */

@@ -5,6 +5,7 @@ import { createTally } from "../brain/tally.js";
 import { memoryStore } from "../memory/kv.js";
 import { attachHuman, createRows, exportRows, GOAL_SEQ_BASE, goalSeqCounter, rowId } from "./rows.js";
 import { createShadow } from "./shadow.js";
+import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP, contextOf, fitToBudget, stateOf, stateTokens } from "../brain/context.js";
 
 const INSTALL = "12345678-1234-4234-8234-123456789abc";
 const URL = "http://localhost:8010/v1/systemone";
@@ -207,5 +208,39 @@ describe("Laya shadow rows", () => {
     const ids = (await exportRows(store)).trim().split("\n").map((line) => (JSON.parse(line) as { id: string }).id);
     expect(ids).toContain(rowId(INSTALL, "run-5", GOAL_SEQ_BASE, "squire_goal", "mid"));
     expect(ids).toContain(rowId(INSTALL, "run-5", GOAL_SEQ_BASE + 1, "squire_goal", "mid"));
+  });
+
+  it("holds a long Jev state to the Laya budget, keeps the situation and persona, and saves the state Laya saw", async () => {
+    const store = memoryStore();
+    const rows = createRows(store, "run-6");
+    const sent: Record<string, unknown>[] = [];
+    const net: NetLike = {
+      transport: "relay",
+      async request(request) {
+        sent.push(JSON.parse(request.body ?? "{}") as Record<string, unknown>);
+        return { ok: true, status: 200, headers: {}, body: reply(request) };
+      },
+    };
+    const layers = contextOf([
+      ["memory", "health", "Wounded: 12 of 40 HP."],
+      ["memory", "creatures", "A cave spider is next to the character."],
+      ["persona", "persona", { name: "Squire", temper: "Careful." }],
+      ["knowledge", "lessons", "Spiders come in swarms. ".repeat(600)],
+      ["manual", "rules", "Stairs lead to a new level. ".repeat(300)],
+    ]);
+    const jevState = stateOf(fitToBudget(layers, STATE_TOKEN_CAP).context);
+    expect(stateTokens(jevState)).toBeGreaterThan(LAYA_STATE_TOKENS);
+    const record = { ...decision(), request: { ...decision().request, state: jevState } };
+    const shadow = createShadow({ net, rows, install: Promise.resolve(INSTALL), runId: "run-6", now: () => 0, log: () => {} });
+    await shadow.record(record, 1, true, URL, [], layers);
+    expect(sent).toHaveLength(2);
+    for (const body of sent) {
+      const state = body["state"] as Record<string, unknown>;
+      expect(stateTokens(state)).toBeLessThanOrEqual(LAYA_STATE_TOKENS);
+      expect(Object.keys(state)).toEqual(expect.arrayContaining(["health", "creatures", "persona"]));
+    }
+    const saved = (await exportRows(store)).trim().split("\n").map((line) => (JSON.parse(line) as { state: unknown }).state);
+    expect(saved).toEqual(sent.map((body) => body["state"]));
+    expect(record.request.state).toBe(jevState);
   });
 });

@@ -12,6 +12,7 @@ import type { AgentCommand, AgentController, AgentView, InputSnapshot, ModNet, M
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
+import type { DecisionContext } from "./brain/context.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
@@ -24,7 +25,7 @@ import { queueInstruction } from "./orders/input.js";
 import { readInstructions } from "./orders/read.js";
 import type { Instruction } from "./orders/types.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
-import { activePersona, backendFor, backstoryBudget, readConfig, writeConfig, type SquireConfig } from "./config.js";
+import { activePersona, backendFor, backstoryBudget, readConfig, stateBudget, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
@@ -184,7 +185,7 @@ export interface Runtime {
    * Save a Knight's Lessons decision as a Laya training row, with the knight's
    * own goal as its human label. `n` is a count that only grows for this run.
    */
-  recordLesson(request: SystemOneRequest, answers: Readonly<Record<string, Answer>>, model: string | null, n: number, knightGoal: string): Promise<void>;
+  recordLesson(request: SystemOneRequest, answers: Readonly<Record<string, Answer>>, model: string | null, n: number, knightGoal: string, layers?: DecisionContext): Promise<void>;
   layaRowCount(): Promise<number>;
   /** This run's logged decisions, once the saved log has been read back. */
   decisions(): Promise<readonly LoggedDecision[]>;
@@ -583,11 +584,11 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     store: () => store,
     exportDecisions: () => log.exportJsonl(),
-    async recordLesson(request, answers, model, n, knightGoal) {
+    async recordLesson(request, answers, model, n, knightGoal, layers) {
       if (config.backend !== "jev") return;
       /* Lesson rows sit above every decision sequence number, so the two kinds never share an id. */
       const seq = LESSON_SEQ_BASE + n;
-      await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+      await shadow.record({ token: null, backend: "Jev", request, context: null, answers, usage: { inputTokens: 0, outputTokens: 0, estimated: true }, model, latencyMs: 0, outcome: "lesson" }, seq, config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks, layers);
       await layaRows.attachHuman(rowId(await installId(store), character.runId, seq, "squire_goal"), { goal: knightGoal });
     },
     async exportLayaRows() { await logLoaded; await goalRecorded; await shadow.rowsReady(); await layaRows.idle(); return exportRows(store); },
@@ -779,6 +780,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         log: host.log,
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
+        stateTokens: stateBudget(config),
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
@@ -846,6 +848,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       confidence: goal?.type === "choice" && record.reflex === undefined ? goal.confidence : null,
       probs: goal?.type === "choice" && record.reflex === undefined ? goal.probabilities : null,
       ...(record.reflex === undefined ? {} : { reflex: record.reflex }),
+      ...(record.context.fallback === undefined ? {} : { fallback: record.context.fallback }),
       state: record.request.state,
       ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
       options: record.context.offers.map((o) => o.goal),
@@ -868,7 +871,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
           }),
     });
     openDecision = id;
-    if (record.reflex === undefined) void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks);
+    if (record.reflex === undefined) void shadow.record(record, Number(id.slice(id.lastIndexOf("/") + 1)), config.backend === "jev" && config.layaShadow.enabled, config.layaShadow.url, config.layaShadow.fallbacks, record.context.layers);
     const logged = log.records().find((r) => r.id === id);
     if (logged !== undefined && lastView !== null) journal.decided(logged, lastView);
     if (record.reflex === undefined) unsavedSpend += 1;
