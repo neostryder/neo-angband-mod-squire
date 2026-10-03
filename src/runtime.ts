@@ -57,6 +57,7 @@ export type SquireHost = Pick<ModPluginContext, "log"> & {
   readonly net?: ModNet;
   readonly snapshot?: () => InputSnapshot | null;
   readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
+  readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
   readonly controllerArmed?: boolean;
 };
 
@@ -748,6 +749,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
+        birthOptions: () => host.options?.get().entries.filter((entry) => entry.page === "birth") ?? [],
       }),
       tally,
       send: (request) => self.send(request),

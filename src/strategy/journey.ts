@@ -18,7 +18,7 @@ import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createLevelPacing, stairLeash } from "./pacing.js";
-import { missingPreparation, supplies, supplyMargin } from "./readiness.js";
+import { missingPreparation, supplies, supplyMargin, tripLight } from "./readiness.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
 
@@ -227,8 +227,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
-      if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
+      if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth).length === 0;
+      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (offer.goal === "explore" && search()) return true;
@@ -282,17 +282,17 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
       if (goal === "wait" && !safeDelay(view)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
-      if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
+      if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
+        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
       }
       if (goal === null) {
         /* A rejected judgment cannot let the errand ladder bypass the guards. */
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
+        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && tripLight(view) && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === undefined ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };

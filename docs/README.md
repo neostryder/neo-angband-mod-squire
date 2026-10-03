@@ -35,7 +35,7 @@ Squire learns a shop's stock when the character enters it. It saves the names, p
 - **Engine:** `>=1.21.1`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
-- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:floor.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `ui:title`, `registry:command`, `keymap:write`, `saves:manage`, `profiles:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
+- **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:floor.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:options.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `ui:title`, `registry:command`, `keymap:write`, `saves:manage`, `profiles:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
 
 The model, panel and Setup choices (brain, key, personas, telemetry, roll-on, Knight's Lessons) live in the Squire panel rather than on the Mods screen. The errand settings above apply only when no model is choosing.
 

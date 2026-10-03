@@ -54,6 +54,7 @@ import { nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney } from "../strategy/journey.js";
 import { missingPreparation } from "../strategy/readiness.js";
+import { createManual, type BirthOption } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
 import { activationUse, attackDescription, attackOptions, breatherInSight, buffUse, deviceHealUse, healingAmount, healingPotion, healingSpell, resistUse, type AttackContext, type AttackOutcome, type CombatUse } from "./combat-kit.js";
@@ -252,6 +253,8 @@ export interface GoalPlannerOptions {
   readonly purchaseOrder?: () => readonly PurchaseKind[] | null;
   /** The player's orders and standing instructions. Without it none weigh on a decision. */
   readonly orders?: Orders;
+  /** The game's birth options, for the manual. */
+  readonly birthOptions?: () => readonly BirthOption[];
   readonly terrain: Terrain;
   readonly speedEnergy?: SpeedEnergy;
   readonly log: (message: string) => void;
@@ -1167,6 +1170,7 @@ export function offerTakePosition(s: Situation, terrain: Terrain): Offer | null 
 }
 
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
+  const manual = createManual(options.birthOptions);
   const { cfg, terrain, log } = options;
   const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0);
   const personaOption = options.persona;
@@ -2190,6 +2194,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       /* Keep this order: it is the key order the trained adapters learned. */
       const compiled = contextOf([
         ["manual", "rules", HANDBOOK.join(" ")],
+        ...entriesOf("manual", manual(view)),
         ["memory", "character", `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`],
         ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
         ["memory", "mana", player.maxSp > 0 ? `${String(player.sp)} of ${String(player.maxSp)}` : undefined],

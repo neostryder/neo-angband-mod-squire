@@ -2899,6 +2899,10 @@ function supplies(view) {
     workingLight
   };
 }
+function tripLight(view) {
+  const stock = supplies(view);
+  return stock.lastingLight || stock.workingLight && stock.fuel >= 1;
+}
 function classFloor(cls, depth2) {
   if (depth2 < 5) {
     if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
@@ -5284,8 +5288,8 @@ function createJourney(terrain, unseenDanger) {
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
-      if (offer.goal === "recall_dungeon") return !recalling && town.ready && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
+      if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth).length === 0;
+      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && missingPreparation(view, player.depth + 1).length === 0);
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
       if (offer.goal === "explore" && search()) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
@@ -5336,16 +5340,16 @@ function createJourney(terrain, unseenDanger) {
       }
       if (goal === "wait" && !safeDelay(view)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
-      if (goal === "recall_dungeon" && (!town.ready || missingPreparation(view, player.maxDepth).length > 0)) return null;
+      if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
+        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && missingPreparation(view, player.depth + 1).length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
       }
       if (goal === null) {
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
+        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && tripLight(view) && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === void 0 ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };
@@ -5416,6 +5420,95 @@ function createJourney(terrain, unseenDanger) {
   return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow };
 }
 
+// src/brain/manual.ts
+var CASTING = {
+  Mage: ["arcane spells", "Intelligence"],
+  Rogue: ["arcane spells", "Intelligence"],
+  Necromancer: ["shadow rituals", "Intelligence"],
+  Blackguard: ["shadow rituals", "Intelligence"],
+  Priest: ["divine prayers", "Wisdom"],
+  Paladin: ["divine prayers", "Wisdom"],
+  Druid: ["nature verses", "Wisdom"],
+  Ranger: ["nature verses", "Wisdom"]
+};
+var CLASS_FLAGS = [
+  ["NO_MANA", "casts no spells"],
+  ["BRAVERY_30", "cannot be frightened from character level 30"],
+  ["SHIELD_BASH", "may bash a visible creature with a worn shield before its blows"],
+  ["BEAM", "often casts bolt spells as beams that hit every creature in the line"],
+  ["BLESS_WEAPON", "deals 2 more damage with a hafted or blessed weapon"],
+  ["FAST_SHOT", "shoots faster with a launcher as it gains levels"],
+  ["UNLIGHT", "sees nearby grids with little or no light, resists darkness, and fails spells more often while standing on a lit grid"],
+  ["EVIL", "resists nether but takes more harm from holy attacks"],
+  ["COMBAT_REGEN", "regains mana by landing melee blows, while resting drains mana into hit points instead of restoring it"],
+  ["STEAL", "can try to steal from a creature"]
+];
+var RACE_FACTS = {
+  Elf: "resists light",
+  Hobbit: "holds on to experience against draining and knows every mushroom",
+  Gnome: "cannot be paralysed and learns what a wand, staff or rod does on picking it up",
+  Dwarf: "cannot be blinded and senses nearby treasure veins",
+  "Half-Orc": "resists darkness",
+  "Half-Troll": "regenerates hit points quickly",
+  "High-Elf": "sees invisible creatures and resists light",
+  Kobold: "resists poison"
+};
+var BIRTH_FACTS = {
+  birth_force_descend: [true, "Up staircases are never made, so stairs lead only down."],
+  birth_no_recall: [true, "Word of Recall does nothing."],
+  birth_connect_stairs: [false, "Taking a staircase does not leave one under the character."],
+  birth_levels_persist: [true, "A level left and entered again is the same level."],
+  birth_lose_arts: [true, "An artifact left behind on a level is lost."],
+  birth_know_runes: [true, "Every rune is known from the start."],
+  birth_know_flavors: [true, "Every potion, scroll and device is recognised on sight."],
+  birth_feelings: [false, "There are no level feelings."]
+};
+function article(word) {
+  return /^[AEIOU]/i.test(word) ? "An" : "A";
+}
+function mechanicsOf(race, cls, classFlags) {
+  const casting = CASTING[cls];
+  const classFacts = [
+    ...casting === void 0 ? [] : [`casts ${casting[0]} with ${casting[1]}`],
+    ...CLASS_FLAGS.filter(([flag]) => classFlags.includes(flag)).map(([, fact]) => fact)
+  ];
+  const raceFact = RACE_FACTS[race];
+  const lines2 = [
+    ...classFacts.length === 0 ? [] : [`${article(cls)} ${cls} ${joinFacts(classFacts)}.`],
+    ...raceFact === void 0 ? [] : [`${article(race)} ${race} ${raceFact}.`]
+  ];
+  return lines2.length === 0 ? void 0 : lines2.join(" ");
+}
+function birthOf(options) {
+  const set = new Map(options.map((option) => [option.name, option.value]));
+  const lines2 = Object.entries(BIRTH_FACTS).flatMap(([name, [when, fact]]) => set.get(name) === when ? [fact] : []);
+  const selling = set.get("birth_no_selling");
+  if (selling !== void 0) lines2.push(selling ? "Stores pay nothing for goods, and the dungeon drops more gold instead." : "Stores buy goods for gold.");
+  return lines2.length === 0 ? void 0 : lines2.join(" ");
+}
+function joinFacts(facts) {
+  if (facts.length <= 1) return facts.join("");
+  return `${facts.slice(0, -1).join(", ")} and ${facts.at(-1) ?? ""}`;
+}
+function createManual(birthOptions = () => []) {
+  let key2 = "";
+  let entries = {};
+  return (view) => {
+    const player = view.player();
+    let options = [];
+    try {
+      options = birthOptions();
+    } catch {
+    }
+    const next = JSON.stringify([player.race, player.cls, player.classFlags, options.map((option) => [option.name, option.value])]);
+    if (next !== key2) {
+      key2 = next;
+      entries = { mechanics: mechanicsOf(player.race, player.cls, player.classFlags), birth: birthOf(options) };
+    }
+    return entries;
+  };
+}
+
 // src/brain/hazards.ts
 function trapDirection(view) {
   const at = view.player().grid;
@@ -5456,12 +5549,12 @@ function same2(a, b) {
 }
 function killerOf(cause, seen = []) {
   const bare = cause.replace(/^killed by\s+/i, "").trim();
-  const article2 = /^(?:an?|the)\s+/i.test(bare);
+  const article3 = /^(?:an?|the)\s+/i.test(bare);
   const name = bare.replace(/^(?:an?|the)\s+/i, "").trim();
   if (name === "" || NOT_A_CREATURE.test(name)) return null;
   const match = seen.find((m) => same2(m.race, name));
   if (match !== void 0) return { name: match.race, unique: match.raceFlags.includes("UNIQUE") };
-  return { name, unique: !article2 && /^[A-Z]/.test(name) };
+  return { name, unique: !article3 && /^[A-Z]/.test(name) };
 }
 function recordDeath(killers, killer, death) {
   if (killer === null) return [...killers];
@@ -6230,6 +6323,7 @@ function offerTakePosition(s, terrain) {
   };
 }
 function createGoalPlanner(options) {
+  const manual = createManual(options.birthOptions);
   const { cfg, terrain, log } = options;
   const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0);
   const personaOption = options.persona;
@@ -7115,6 +7209,7 @@ function createGoalPlanner(options) {
       const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
       const compiled = contextOf([
         ["manual", "rules", HANDBOOK.join(" ")],
+        ...entriesOf("manual", manual(view)),
         ["memory", "character", `Level ${String(player.level)} ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (deepest reached ${String(player.maxDepth)}).`],
         ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
         ["memory", "mana", player.maxSp > 0 ? `${String(player.sp)} of ${String(player.maxSp)}` : void 0],
@@ -9690,7 +9785,7 @@ var ESCAPE_WORDS = {
   teleport: "A long teleport",
   retreat: "Stepping back"
 };
-function article(race) {
+function article2(race) {
   if (/^[A-Z]/.test(race)) return race;
   return `${/^[aeiou]/i.test(race) ? "an" : "a"} ${race}`;
 }
@@ -9698,7 +9793,7 @@ function capitalized(text) {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 function sentence(event, decision2, vars) {
-  const foe = vars.race === void 0 ? "a creature" : vars.swarm === void 0 ? article(vars.race) : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
+  const foe = vars.race === void 0 ? "a creature" : vars.swarm === void 0 ? article2(vars.race) : `a swarm of ${vars.race} (${String(vars.swarm)} in sight)`;
   const Foe = capitalized(foe);
   const action = vars.action ?? decision2.replace(/_/g, " ");
   const place = vars.depth === void 0 ? "in the dungeon" : vars.depth === 0 ? "in town" : `at ${String(vars.depth * 50)} ft`;
@@ -9741,7 +9836,7 @@ function sentence(event, decision2, vars) {
     case "resisted":
       return `${Foe} resisted ${ATTACK_WORDS[decision2] ?? action}; use a different attack on it.`;
     case "breeding":
-      return `${capitalized(article(vars.race ?? "creature"))} breeds${vars.swarm === void 0 ? "" : ` (${String(vars.swarm)} in sight)`}; kill each one at once or take the stairs before it fills the level.`;
+      return `${capitalized(article2(vars.race ?? "creature"))} breeds${vars.swarm === void 0 ? "" : ` (${String(vars.swarm)} in sight)`}; kill each one at once or take the stairs before it fills the level.`;
     case "failed-escape":
       return `${ESCAPE_WORDS[decision2] ?? capitalized(action)} did not get ${who} clear of ${foe}, which hit for ${String(damage)}${hp}; escape earlier, or use a longer escape.`;
     case "escaped":
@@ -11371,7 +11466,8 @@ function createRuntime(host, options = {}) {
         strategy: () => ({ aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits() }),
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
-        orders
+        orders,
+        birthOptions: () => host.options?.get().entries.filter((entry) => entry.page === "birth") ?? []
       }),
       tally,
       send: (request2) => self.send(request2),

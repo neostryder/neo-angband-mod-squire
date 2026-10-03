@@ -19,7 +19,11 @@ Fixed.
 
 ## [Unreleased]
 
+### Added
+- [Visible] **Squire's model is told how its character works.** A Mage hears that it casts with Intelligence, a Necromancer that lit ground spoils its spells, a Blackguard that its mana comes from hitting things. Birth options that change the game, like no up staircases or no selling, go in too. Reading them takes one new permission: the game's options.
+
 ### Fixed
+- [Visible] **No more trips down on a dying torch.** Whenever its other choices had run out, Squire could leave town, or Recall back down, with a single torch and nothing to replace it. Going down now takes a light that never runs out, or a lit one plus a spare torch or flask of oil. Stairs taken to escape are exempt.
 - [Visible] **Laya plays with Squire's trained model.** With the Model name setting empty, Squire asked Laya's base model, so a trained Squire model on the server was never used. It now asks for `laya:squire_goal`, and a server without that model answers with its base model as before.
 - [Visible] **Squire sells at every shop that buys.** The Bookseller, Magic Shop and Black Market were taken for the home, so a spare wand, ring or book never made it to the store that buys it. Each shop now goes by its own name, and the Black Market is a stop only for goods no other store buys.
 

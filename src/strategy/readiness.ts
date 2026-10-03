@@ -59,6 +59,16 @@ export function supplies(view: AgentView): Supplies {
   };
 }
 
+/**
+ * A planned trip down (a descent or a dungeon Recall) never starts without a lasting light, or a
+ * working light and one spare unit of fuel, whatever the persona or a widened choice allows.
+ * Escapes are not trips: a staircase taken to survive is never held back by it.
+ */
+export function tripLight(view: AgentView): boolean {
+  const stock = supplies(view);
+  return stock.lastingLight || stock.workingLight && stock.fuel >= 1;
+}
+
 export interface Requirement {
   readonly kind: "level" | "hp" | "light" | "food" | "healing" | "phase" | "recall" | "protection";
   readonly reason: string;

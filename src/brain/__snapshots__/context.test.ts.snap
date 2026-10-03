@@ -134,6 +134,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "long_goal": [],
   "manual": [
     "rules",
+    "mechanics",
   ],
   "memory": [
     "character",
@@ -163,6 +164,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "incoming": "Up to 0 HP damage in one action and 0 in two. Status danger 0; uncertainty 0. These are conservative bounds, not death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "mana": "6 of 8",
+  "mechanics": "A Mage casts arcane spells with Intelligence.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
 }

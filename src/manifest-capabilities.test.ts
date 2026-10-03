@@ -133,7 +133,7 @@ function hostsUsed(): Set<string> {
  * The grants that are not state reads or hosts, each tied to the source that
  * needs it: the panel, each event subscribed to, the roster call that starts
  * an heir, the order command and its key, the player-typed server address on the local network,
- * and the title-screen row with the profile it starts.
+ * the title-screen row with the profile it starts, and the birth options the manual reads.
  */
 function otherGrantsUsed(): Set<string> {
   const grants = new Set<string>();
@@ -148,6 +148,7 @@ function otherGrantsUsed(): Set<string> {
     if (/\.isBindableTriggerKey\(/u.test(text)) grants.add("keymap:write");
     if (/\btitle[?!]?\.registerRow\b/u.test(text)) grants.add("ui:title");
     if (/\bprofiles[?!]?\.switchTo\b/u.test(text)) grants.add("profiles:manage");
+    if (/\boptions\?\.get\(/u.test(text)) grants.add("state:options.read");
   }
   return grants;
 }

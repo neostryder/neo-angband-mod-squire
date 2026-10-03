@@ -426,6 +426,16 @@ describe("bounded exploration and earning", () => {
     expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
   });
 
+  it("never leaves town on a widened choice without spare fuel for the light", () => {
+    const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).not.toContain("descend");
+    expect(journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+    expect(journey.guarded(null, { label: "errand", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+    w.setPack(["5 Rations of Food", "a Wooden Torch (5000 turns)"]);
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).toContain("descend");
+  });
+
   it("blocks an earning departure when food or working light is missing", () => {
     const w = world({ map: ROOM, player: { depth: 0, gold: 0 }, pack: [] });
     expect(goals(w, undefined, false, offers("descend"))).toEqual([]);
