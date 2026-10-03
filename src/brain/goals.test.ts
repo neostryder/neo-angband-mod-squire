@@ -2857,6 +2857,16 @@ describe("tactical pack rules", () => {
     expect(q2.context.pack?.lowConfidence).toBe("fight");
   });
 
+  it("follows an unsure answer when the backend sets no floor", () => {
+    const w = fightWorld();
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: 0 });
+    const q = asked(p.ask(w.view));
+    p.choose({ goal: { type: "choice", choice: "fight", confidence: 0.05, probabilities: { fight: 0.3, phase: 0.25 } }, escape: { type: "noul", p: 0.6 } }, q.context, w.view);
+    expect(q.context.pack?.lowConfidence).toBeUndefined();
+    expect(logged.some((line) => line.includes("the answer was unsure"))).toBe(false);
+  });
+
   it("takes a sole option without asking, whatever its risk", () => {
     const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
     const q = planner(w, true).p.ask(w.view);

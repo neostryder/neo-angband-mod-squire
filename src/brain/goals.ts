@@ -375,6 +375,8 @@ export interface GoalPlannerOptions {
   readonly backstoryTokens?: number;
   /** The most tokens the request state may carry before whole layers are left out. */
   readonly stateTokens?: number;
+  /** Under this confidence the option answer is not followed on its own when the escape question was asked. CONFIDENCE_FLOOR unless set. */
+  readonly confidenceFloor?: number;
   /** Whether to skip the model for forced, routine and unchanged moments. On unless set to false. */
   readonly reflex?: boolean;
   /** Whether Law to Chaos may draw the final pick. On unless set to false, which always takes the top option. */
@@ -1669,6 +1671,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const rng = options.rng ?? Math.random;
   const backstoryTokens = options.backstoryTokens ?? 600;
   const stateBudget = options.stateTokens ?? STATE_TOKEN_CAP;
+  const confidenceFloor = options.confidenceFloor ?? CONFIDENCE_FLOOR;
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
   /* Creatures whose grudge has been told in the log, so each is told once. */
@@ -3097,7 +3100,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         }
       }
       /* An unsure answer is not followed on its own: the gate's lean picks the class, and the safest option of that class is taken. */
-      const unsure = gate !== undefined && answer.confidence < CONFIDENCE_FLOOR ? lowConfidencePick(allowed === null ? digest.offers : digest.offers.filter((o) => allowed.has(o.goal)), gate.p ?? null, gate.low) : null;
+      const unsure = gate !== undefined && answer.confidence < confidenceFloor ? lowConfidencePick(allowed === null ? digest.offers : digest.offers.filter((o) => allowed.has(o.goal)), gate.p ?? null, gate.low) : null;
       if (unsure !== null && unsure !== failed) {
         digest.pack!.lowConfidence = unsure;
         log(`goal: ${unsure}, the answer was unsure (${answer.confidence.toFixed(2)}), so the safest ${classOf(unsure)} option`);
@@ -3106,7 +3109,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return { plan: noteStalls(offer.goal, build(offer.goal, view), view) };
       }
       /* Chaos yields to danger and to doubt: once the gate narrows the choice, or the answer was unsure, the top option is taken. */
-      const calm = (gate?.band === undefined || gate.band === "stay") && !(gate !== undefined && answer.confidence < CONFIDENCE_FLOOR);
+      const calm = (gate?.band === undefined || gate.band === "stay") && !(gate !== undefined && answer.confidence < confidenceFloor);
       const pick = decide(answer, answers["in_character"], digest, answers, view, allowed, calm && unsure === null, failed);
       if (failed !== null && pick === failed) {
         log(`goal: ${pick} again after the loop, so Squire picks without it`);

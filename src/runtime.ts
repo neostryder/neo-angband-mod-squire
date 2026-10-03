@@ -27,7 +27,7 @@ import { queueInstruction } from "./orders/input.js";
 import { readInstructions } from "./orders/read.js";
 import type { Instruction } from "./orders/types.js";
 import type { Answer, SystemOneRequest } from "./brain/systemone.js";
-import { activePersona, backendFor, backstoryBudget, readConfig, stateBudget, writeConfig, type SquireConfig } from "./config.js";
+import { activePersona, backendFor, backstoryBudget, confidenceFloor, readConfig, stateBudget, writeConfig, type SquireConfig } from "./config.js";
 import { indexedDbStore, type KvStore } from "./memory/kv.js";
 import { createDecisionLog, type LoggedDecision } from "./memory/log.js";
 import { markRollOn, sessionMarks, takeRollOn } from "./birth.js";
@@ -807,6 +807,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
         stateTokens: stateBudget(config),
+        confidenceFloor: confidenceFloor(backend),
         chaosMethod: config.chaosMethod,
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),

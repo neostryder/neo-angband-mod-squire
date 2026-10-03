@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { CONFIG_FORMAT, LAYA_DEFAULT_URL, defaultConfig, readConfig, writeConfig } from "./config.js";
+import { CONFIG_FORMAT, LAYA_DEFAULT_URL, backendFor, confidenceFloor, defaultConfig, readConfig, writeConfig, type SquireConfig } from "./config.js";
+import { CONFIDENCE_FLOOR } from "./brain/tactics.js";
+
+describe("confidence floor", () => {
+  it("is off for Jev, high for Laya and the default for any other server", () => {
+    const floor = (backend: SquireConfig["backend"]) => confidenceFloor(backendFor({ ...defaultConfig(), backend })!);
+    expect(floor("jev")).toBe(0);
+    expect(floor("laya")).toBe(0.7);
+    expect(floor("custom")).toBe(CONFIDENCE_FLOOR);
+  });
+});
 
 describe("Laya shadow config", () => {
   it("defaults off and survives the prefs envelope", () => {

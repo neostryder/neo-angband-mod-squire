@@ -23,6 +23,7 @@ import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
 import { CHAOS_METHODS, type ChaosMethod } from "./brain/chaos.js";
+import { CONFIDENCE_FLOOR } from "./brain/tactics.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -273,6 +274,24 @@ export function backstoryBudget(config: SquireConfig): number {
 /** How many tokens one decision's state may carry on this backend. */
 export function stateBudget(config: SquireConfig): number {
   return config.backend === "laya" ? LAYA_STATE_TOKENS : STATE_TOKEN_CAP;
+}
+
+/**
+ * The confidence under which an option answer is not followed on its own.
+ * Jev's confidence does not predict a right pick on the reviewed goal
+ * decisions, so it has no floor; a trained Laya adapter's does, and its
+ * answers under 0.7 are right far less often than those above. It follows the
+ * backend the brain was started with, so it always matches the server answering.
+ */
+export function confidenceFloor(backend: Backend): number {
+  switch (backend.kind) {
+    case "jev":
+      return 0;
+    case "laya":
+      return 0.7;
+    default:
+      return CONFIDENCE_FLOOR;
+  }
 }
 
 /** The persona for a new character, or null. */
