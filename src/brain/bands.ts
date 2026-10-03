@@ -60,6 +60,11 @@ export function turnsBand(turns: number): string {
   return "a long wait";
 }
 
+/** "2 turns (soon)", for the player turns a walk or a wait takes. */
+export function turnsText(turns: number): string {
+  return `${String(turns)} turn${turns === 1 ? "" : "s"} (${turnsBand(turns)})`;
+}
+
 /** How many of something. */
 export function countBand(count: number): string {
   if (count <= 0) return "none";

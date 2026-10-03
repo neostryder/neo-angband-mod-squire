@@ -441,6 +441,15 @@ function same(a: Loc, b: Loc): boolean {
   return a.x === b.x && a.y === b.y;
 }
 
+/**
+ * Whether a creature at `from` could see or fire at `to`, by the same line the
+ * damage bound uses. Unknown grids count as open, so a square only reads as out
+ * of sight when remembered walls block every line to it.
+ */
+export function inLineOfFire(view: AgentView, from: Loc, to: Loc): boolean {
+  return steps(from, to) <= 1 || rangedPath(view, from, to, false, []).clear;
+}
+
 export function clearShot(view: AgentView, target: MonsterView): boolean {
   const { projectionPath } = view;
   if (projectionPath === undefined) return true;

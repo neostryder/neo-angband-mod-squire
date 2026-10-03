@@ -79,7 +79,7 @@ const BIG_HIT_SHARE = 0.25;
 /** Game turns after an escape during which a large hit counts as the escape failing. */
 const ESCAPE_WINDOW = 50;
 const DISABLING: readonly DisablingStatus[] = ["paralyzed", "confused", "blind", "afraid"];
-const ESCAPES: ReadonlySet<string> = new Set(["phase", "teleport", "retreat"]);
+const ESCAPES: ReadonlySet<string> = new Set(["phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat"]);
 const ATTACKS: ReadonlySet<string> = new Set(["shoot", "throw_oil", "aim_wand", "cast_attack", "fight"]);
 /** Message verbs that show what a creature can do, first match wins. */
 const ABILITY_WORDS: readonly [RegExp, AbilityKind][] = [
@@ -332,7 +332,7 @@ export function createJournal(initial: JournalState, deps: JournalDeps): Journal
       if (record_.persona !== undefined && record_.persona.best !== record_.persona.blended) {
         runLog.record({ kind: "divergence", turn: record_.turn, depth: view.player().depth, text: `${record_.persona.blended} instead of ${record_.persona.best}` });
       }
-      if (["phase", "teleport", "retreat"].includes(record_.choice)) drift("fled");
+      if (ESCAPES.has(record_.choice)) drift("fled");
     },
 
     lessonLines(view) {

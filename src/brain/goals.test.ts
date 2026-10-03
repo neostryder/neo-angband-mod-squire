@@ -7,6 +7,7 @@ import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
 import { harmlessKind } from "./threat-model.js";
+import { pruneDominated } from "./tactics.js";
 import { createTally } from "./tally.js";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { gearCandidates } from "../gear/compare.js";
@@ -346,6 +347,12 @@ describe("third soak survival regressions", () => {
     expect(fallback(w).step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
   });
 
+  it("never retreats onto a trap the character can see", () => {
+    const w = world({ map: CORRIDOR, player: { level: 2, hp: 2, maxHp: 25, speed: 110 }, traps: [{ x: 1, y: 1 }, { x: 1, y: 2 }],
+      monsters: [{ grid: { x: 3, y: 1 }, race: "cutpurse", level: 2, speed: 100 }] });
+    expect(offered(planner(w).p.ask(w.view))).not.toContain("retreat");
+  });
+
   it("ends a retreat before a fast pursuer catches the character", () => {
     const w = world({ map: CORRIDOR, player: { level: 1, cls: "Rogue", hp: 2, maxHp: 14 }, monsters: [{ ...grip, grid: { x: 4, y: 1 } }] });
     const { p } = planner(w);
@@ -367,7 +374,7 @@ describe("third soak survival regressions", () => {
   it.each([
     ["a Scroll of Phase Door", "phase", "read"],
     ["a Scroll of Teleportation", "teleport", "read"],
-    ["a Scroll of Teleport Level", "teleport", "read"],
+    ["a Scroll of Teleport Level", "teleport_level", "read"],
     ["a Staff of Teleportation (3 charges)", "teleport", "use"],
     ["a Potion of Cure Light Wounds", "heal", "quaff"],
   ])("offers and uses %s when Grip has the dying rogue in melee", (item, goal, code) => {
@@ -1739,7 +1746,7 @@ describe("soak findings", () => {
     });
     w.moveTo({ x: 4, y: 2 });
     const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
-    expect(offer?.criteria).toContain("four steps");
+    expect(offer?.criteria).toContain("three steps");
     const step = planOf(planner(w).p, w, "retreat").step(w.view, w.act);
     expect(step?.code).toBe("walk");
   });
@@ -2166,7 +2173,7 @@ describe("defensible positions", () => {
   });
 
   it("walks the checked route when the short route is the dangerous one", () => {
-    /* Two four-step routes reach the choke point at (3,4): the one through
+    /* Two three-step routes reach the choke point at (3,4): the one through
      * (3,6) runs beside a dangerous creature, the one through (4,6) is clear.
      * The check prices the clear route, so the plan must walk that one. */
     const TWO_ROUTES = [
@@ -2209,7 +2216,9 @@ describe("defensible positions", () => {
       command = choice.plan.step(w.view, w.act);
     }
     expect(w.at()).toEqual({ x: 3, y: 4 });
-    expect(holds).toBe(1);
+    /* Three steps fill the plan's three actions, so the wait at the spot is left to the next decision. */
+    expect(guard).toBe(3);
+    expect(holds).toBe(0);
     for (const cell of visited) expect(Math.max(Math.abs(cell.x - 2), Math.abs(cell.y - 6))).toBeGreaterThan(1);
   });
 });
@@ -2483,7 +2492,7 @@ describe("tactical pack scenarios", () => {
     const q = asked(p.ask(w.view));
     const made = p.choose({ goal, escape: escapeAt(escape) }, q.context, w.view);
     if (!("plan" in made)) throw new Error("expected a plan");
-    return { goal: (made.plan as { goal?: string }).goal, pack: q.context.pack, logged };
+    return { goal: (made.plan as { goal?: string }).goal, pack: q.context.pack, logged, plan: made.plan, offers: q.context.offers };
   }
 
   const duel = () => suppliedWorld({ map: CORRIDOR, player: { depth: 3, level: 8, hp: 40, maxHp: 60, blows: 200, toDam: 3 }, worn: ["a Dagger (1d4) (+0,+0)"], pack: SUPPLIES,
@@ -2501,14 +2510,14 @@ describe("tactical pack scenarios", () => {
     expect(low.pack?.gate).toMatchObject({ p: 0.2, band: "stay" });
   });
 
-  it("corridor duel: a middle answer shrinks the choice to safe moves without picking one, and a high answer leaves only escapes", () => {
+  it("corridor duel: a middle answer shrinks the choice to safe moves without picking one, and a high answer leaves only the escapes and heals", () => {
     const middle = answer(duel(), choice({ fight: 0.5, heal: 0.3, phase: 0.2 }), 0.65);
     expect(middle.pack?.gate).toMatchObject({ band: "consider", allowed: ["heal", "phase"] });
     expect(middle.goal).toBe("heal");
     expect(answer(duel(), choice({ fight: 0.5, heal: 0.2, phase: 0.3 }), 0.65).goal).toBe("phase");
     const high = answer(duel(), choice({ fight: 0.5, heal: 0.4, phase: 0.1 }), 0.9);
-    expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["phase"] });
-    expect(high.goal).toBe("phase");
+    expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "phase"] });
+    expect(high.goal).toBe("heal");
     expect(high.logged.some((line) => /escape gate 0\.90 against 0\.55 and 0\.78 \(get_out\)/.test(line))).toBe(true);
   });
 
@@ -2578,6 +2587,235 @@ describe("tactical pack scenarios", () => {
     expect(offered(q)).toContain("leave_level");
     expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
     expect(answer(w, choice({ fight: 0.8, leave_level: 0.2 }), 0.85).goal).toBe("leave_level");
+  });
+
+  const HALL = ["##########", "#.@......#", "#.######.#", "##########"];
+  const hit = () => "It can hit to hurt (1d8).";
+  const ORC_NEXT = { grid: { x: 3, y: 1 }, race: "cave orc", raceIndex: 4, level: 7, hp: 11, maxHp: 11 };
+  const mage = (fail: number, status: Record<string, number> = {}, pack: readonly string[] = [], orc = ORC_NEXT) => suppliedWorld({ map: HALL, player: { cls: "Mage", depth: 3, level: 8, hp: 25, maxHp: 60, sp: 10, maxSp: 10, status }, spells: [{ name: "Phase Door", sidx: 2, mana: 2, fail }], pack, monsters: [orc], monsterRecall: hit });
+  const byGoal = (offers: readonly { readonly goal: string }[], goal: string) => offers.find((o) => o.goal === goal) as { readonly risk: number; readonly survival?: number; readonly cost?: number; readonly criteria: string } | undefined;
+
+  it("escape spell with a real fail chance against a sure scroll: both stay on offer, the spell's fail chance in its risk; a spell that never fails prunes the dearer scroll", () => {
+    const q = asked(planner(mage(35)).p.ask(mage(35).view));
+    expect(offered(q)).toEqual(["fight", "heal", "phase", "cast_escape"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    const spell = byGoal(q.context.offers, "cast_escape")!;
+    const scroll = byGoal(q.context.offers, "phase")!;
+    expect(spell.criteria).toContain("35% chance to fail");
+    expect(spell.risk).toBeGreaterThan(scroll.risk);
+    expect(spell.survival!).toBeLessThan(scroll.survival!);
+    expect(spell.cost!).toBeLessThan(scroll.cost!);
+    const sure = asked(planner(mage(0)).p.ask(mage(0).view));
+    expect(offered(sure)).toEqual(["fight", "heal", "cast_escape"]);
+    expect(sure.context.pack?.pruned).toEqual([{ goal: "phase", by: "cast_escape" }]);
+    const low = answer(mage(35), choice({ fight: 0.6, cast_escape: 0.3, phase: 0.1 }), 0.2);
+    expect(low.pack?.gate).toMatchObject({ band: "stay" });
+    expect(low.goal).toBe("fight");
+    const high = answer(mage(35), choice({ fight: 0.6, phase: 0.25, cast_escape: 0.15 }), 0.9);
+    expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "phase", "cast_escape"] });
+    expect(high.goal).toBe("phase");
+    const w = mage(35);
+    expect(answer(w, choice({ fight: 0.6, cast_escape: 0.25, phase: 0.15 }), 0.9).plan.step(w.view, w.act)).toEqual({ code: "cast", args: { spell: 2 } });
+  });
+
+  it.each([
+    ["confused", { confused: 10 }, ["fight", "heal", "teleport"], []],
+    ["blind", { blind: 10 }, ["fight", "heal", "teleport", "retreat"], []],
+    ["stunned", { stun: 20 }, ["fight", "heal", "teleport", "teleport_other", "retreat"], [{ goal: "phase", by: "teleport" }, { goal: "cast_escape", by: "teleport" }]],
+  ] as const)("%s: what the state forbids is never offered, and the rest is pruned and gated as usual", (_name, status, offers, pruned) => {
+    const dazed = () => mage(5, status, ["a Staff of Teleportation (3 charges)", "a Wand of Teleport Other (4 charges)"], { ...ORC_NEXT, grid: { x: 5, y: 1 } });
+    const q = asked(planner(dazed()).p.ask(dazed().view));
+    expect(offered(q)).toEqual(offers);
+    expect(q.context.pack?.pruned).toEqual(pruned);
+    /* Confusion stops reading, casting, aiming and walking where the character means to; blindness stops reading, casting and aiming. */
+    if ("confused" in status) for (const goal of ["phase", "cast_escape", "teleport_other", "break_sight", "retreat"]) expect(offered(q)).not.toContain(goal);
+    if ("blind" in status) for (const goal of ["phase", "cast_escape", "teleport_other"]) expect(offered(q)).not.toContain(goal);
+    expect(answer(dazed(), choice({ fight: 0.7, teleport: 0.2, heal: 0.1 }), 0.2).goal).toBe("fight");
+    const w = dazed();
+    const high = answer(w, choice({ fight: 0.7, teleport: 0.2, heal: 0.1 }), 0.9);
+    expect(high.pack?.gate?.band).toBe("get_out");
+    expect(high.goal).toBe("teleport");
+    expect(high.plan.step(w.view, w.act)).toEqual({ code: "use", args: { handle: 1 } });
+  });
+
+  const dying = () => suppliedWorld({ map: HALL, player: { depth: 3, level: 8, hp: 8, maxHp: 60 }, pack: ["a Scroll of Teleportation"], monsters: [ORC_NEXT], monsterRecall: hit });
+
+  it("low hit points with both a cure and a teleport: both are offered side by side, neither ranked first, and the answer picks", () => {
+    const q = asked(planner(dying()).p.ask(dying().view));
+    expect(offered(q)).toEqual(["fight", "heal", "phase", "teleport"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(answer(dying(), choice({ fight: 0.6, heal: 0.25, teleport: 0.15 }), 0.2).goal).toBe("fight");
+    const teleport = answer(dying(), choice({ fight: 0.6, teleport: 0.25, heal: 0.15 }), 0.9);
+    expect(teleport.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "phase", "teleport"] });
+    expect(teleport.goal).toBe("teleport");
+    expect(answer(dying(), choice({ fight: 0.6, heal: 0.25, teleport: 0.15 }), 0.9).goal).toBe("heal");
+  });
+
+  const LAVA = ["#########", "#.......#", "#.@~~~>.#", "#.......#", "#########"];
+  const burning = () => suppliedWorld({ map: LAVA, player: { depth: 3, level: 8, hp: 20, maxHp: 60 }, monsters: [{ ...ORC_NEXT, grid: { x: 1, y: 2 }, race: "black orc", level: 13, hp: 30, maxHp: 30, speed: 100 }], monsterRecall: () => "It can hit to hurt (2d8)." });
+  const WALK: Readonly<Record<number, readonly [number, number]>> = { 1: [-1, 1], 2: [0, 1], 3: [1, 1], 4: [-1, 0], 6: [1, 0], 7: [-1, -1], 8: [0, -1], 9: [1, -1] };
+
+  it("burning ground on the shortest way to the stairs: the state names it, and the walk out goes round it and never onto it", () => {
+    const q = asked(planner(burning()).p.ask(burning().view));
+    expect(offered(q)).toEqual(["fight", "leave_level", "retreat", "descend"]);
+    expect(q.context.pack?.pruned).toEqual([{ goal: "phase", by: "leave_level" }]);
+    expect(String(q.request.state["geometry"])).toContain("Hazards on the way: burning ground 1 step (adjacent) east");
+    expect(answer(burning(), choice({ fight: 0.6, leave_level: 0.4 }), 0.2).goal).toBe("fight");
+    const w = burning();
+    const out = answer(w, choice({ fight: 0.6, leave_level: 0.4 }), 0.9);
+    expect(out.pack?.gate).toMatchObject({ band: "get_out", allowed: ["leave_level", "retreat"] });
+    expect(out.goal).toBe("leave_level");
+    const walked: string[] = [];
+    let command = out.plan.step(w.view, w.act);
+    for (let guard = 0; command !== null && command.code === "walk" && guard < 12; guard += 1) {
+      const [dx, dy] = WALK[command.dir ?? 0]!;
+      const to = { x: w.at().x + dx, y: w.at().y + dy };
+      walked.push(LAVA[to.y]![to.x]!);
+      w.moveTo(to);
+      w.advance(10);
+      command = out.plan.step(w.view, w.act);
+    }
+    expect(command).toEqual({ code: "descend" });
+    expect(w.at()).toEqual({ x: 6, y: 2 });
+    expect(walked).not.toContain("~");
+  });
+
+  const bullroarer = { grid: { x: 4, y: 2 }, race: "Bullroarer the Hobbit", raceIndex: 20, level: 10, hp: 200, maxHp: 200, speed: 120, raceFlags: ["UNIQUE", "MALE"] };
+  const cornered = () => suppliedWorld({ map: ["##########", "#........#", "#..@.....#", "#........#", "##########"], player: { depth: 5, level: 10, hp: 40, maxHp: 80, status: { afraid: 10, poisoned: 5 } },
+    pack: ["a Wand of Teleport Other (2 charges)", "5 Flasks of Oil"], inspect: (ref) => ref === 1 ? "When aimed, it teleports a monster away. Your chance of success is 82.0%." : null,
+    monsters: [bullroarer], monsterRecall: () => "He can hit to hurt (1d10) and hit to hurt (1d10)." });
+
+  it("next to a strong unique while afraid and poisoned: no melee, no walking off from a faster creature, and Teleport Other stands beside the other ways out", () => {
+    const q = asked(planner(cornered()).p.ask(cornered().view));
+    expect(offered(q)).toEqual(["throw_oil", "heal", "phase", "teleport_other"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(byGoal(q.context.offers, "teleport_other")).toMatchObject({ criteria: "Aim a Wand of Teleport Other (2 charges) at Bullroarer the Hobbit to send it far away across the level; it is the only awake creature in sight. It has a 18% chance to fail (usually works); a failed use leaves Bullroarer the Hobbit where it is.", costNote: "a wand charge" });
+    expect(answer(cornered(), choice({ throw_oil: 0.5, teleport_other: 0.3, phase: 0.2 }), 0.2).goal).toBe("throw_oil");
+    const w = cornered();
+    const high = answer(w, choice({ throw_oil: 0.5, teleport_other: 0.3, phase: 0.2 }), 0.9);
+    expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "phase", "teleport_other"] });
+    expect(high.goal).toBe("teleport_other");
+    const target = vi.spyOn(w.act, "setTargetMonster");
+    expect(high.plan.step(w.view, w.act)).toEqual({ code: "aim", args: { handle: 1 } });
+    expect(target).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("escape tools", () => {
+  const ORC = { grid: { x: 4, y: 1 }, race: "cave orc", raceIndex: 4, level: 7, hp: 11, maxHp: 11 };
+  const fighting = (pack: readonly string[], extra: Partial<WorldSpec> = {}) => suppliedWorld({ map: ["##########", "#.@......#", "#.######.#", "##########"], player: { depth: 3, level: 8, hp: 25, maxHp: 60 }, pack, monsters: [ORC], monsterRecall: () => "It can hit to hurt (1d8).", ...extra });
+
+  it("offers Teleportation and Teleport Level as two options, each built from its own scroll", () => {
+    const w = fighting(["a Scroll of Teleportation", "a Scroll of Teleport Level"]);
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toEqual(expect.arrayContaining(["teleport", "teleport_level"]));
+    expect(q.context.offers.find((o) => o.goal === "teleport_level")?.criteria).toBe("Read a Scroll of Teleport Level to leave this level at once, going one level up or down; every creature here is left behind.");
+    const level = p.choose(pick("teleport_level"), q.context, w.view);
+    if (!("plan" in level)) throw new Error("expected a plan");
+    expect(level.plan.step(w.view, w.act)).toEqual({ code: "read", args: { handle: 2 } });
+    const far = planner(w).p;
+    const farPlan = far.choose(pick("teleport"), asked(far.ask(w.view)).context, w.view);
+    if (!("plan" in farPlan)) throw new Error("expected a plan");
+    expect(farPlan.plan.step(w.view, w.act)).toEqual({ code: "read", args: { handle: 1 } });
+  });
+
+  it.each([
+    ["a Scroll of Teleport Other", "read", "the last one carried"],
+    ["a Wand of Teleport Other (3 charges)", "aim", "a wand charge"],
+    ["a Rod of Teleport Other", "zap-rod", "a rod charge, which recharges"],
+  ])("sends the creature away with %s, aimed at it, at its own cost", (item, code, costNote) => {
+    const w = fighting([item]);
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.find((o) => o.goal === "teleport_other")).toMatchObject({ costNote });
+    const made = p.choose(pick("teleport_other"), q.context, w.view);
+    if (!("plan" in made)) throw new Error("expected a plan");
+    const target = vi.spyOn(w.act, "setTargetMonster");
+    expect(made.plan.step(w.view, w.act)).toEqual({ code, args: { handle: 1 } });
+    expect(target).toHaveBeenCalledWith(1);
+  });
+
+  it("does not offer Teleport Other at a sleeping creature", () => {
+    const awake = fighting(["a Wand of Teleport Other (3 charges)"]);
+    expect(offered(planner(awake).p.ask(awake.view))).toContain("teleport_other");
+    const asleep = fighting(["a Wand of Teleport Other (3 charges)"], { monsters: [{ ...ORC, asleep: true }] });
+    expect(offered(planner(asleep).p.ask(asleep.view))).not.toContain("teleport_other");
+  });
+
+  const GRIP = { grid: { x: 8, y: 1 }, race: "Grip, Farmer Maggot's Dog", raceIndex: 20, level: 10, hp: 200, maxHp: 200, speed: 110, raceFlags: ["UNIQUE"] };
+  const corner = () => suppliedWorld({ map: ["##########", "#........#", "#..@.....#", "###.######", "###.######", "##########"], player: { depth: 5, level: 10, hp: 60, maxHp: 80 }, worn: ["a Dagger (1d4) (+0,+0)"],
+    monsters: [GRIP], monsterRecall: () => "He may cast spells which produce magic missiles (3d4). He can bite to hurt (1d10)." });
+
+  it("breaks line of sight in two steps, and against a unique it cannot kill quickly waits round the corner to strike, in three actions at most", () => {
+    const w = corner();
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("break_sight");
+    expect(q.context.offers.find((o) => o.goal === "break_sight")?.criteria).toBe("Hit and run against Grip, Farmer Maggot's Dog: walk 2 steps (close) south to a square it cannot see, wait one turn there, and strike as it comes round the corner. Out of its sight it cannot cast at the character or shoot it.");
+    expect(String(q.request.state["geometry"])).toContain("Line of sight breaks from every awake creature in view: 2 steps (close) south, 2 turns (soon).");
+    const made = p.choose(pick("break_sight"), q.context, w.view);
+    if (!("plan" in made)) throw new Error("expected a plan");
+    const commands: unknown[] = [];
+    let command = made.plan.step(w.view, w.act);
+    while (command !== null && commands.length < 6) {
+      commands.push(command);
+      if (command.code === "walk") w.moveTo({ x: w.at().x, y: w.at().y + 1 });
+      w.advance(10);
+      command = made.plan.step(w.view, w.act);
+    }
+    expect(commands).toEqual([{ code: "walk", dir: 2 }, { code: "walk", dir: 2 }, { code: "hold" }]);
+  });
+
+  it("keeps Teleport Other beside a hiding place, since hiding lasts only until the creature comes round the corner", () => {
+    const w = suppliedWorld({ map: ["##########", "#........#", "#..@.....#", "###.######", "###.######", "##########"], player: { depth: 5, level: 10, hp: 60, maxHp: 80 }, worn: ["a Dagger (1d4) (+0,+0)"],
+      pack: ["a Wand of Teleport Other (4 charges)"], inspect: (ref) => ref === 1 ? "When aimed, it teleports a monster away. Your chance of success is 90.0%." : null,
+      monsters: [GRIP], monsterRecall: () => "He may cast spells which produce magic missiles (3d4). He can bite to hurt (1d10)." });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(expect.arrayContaining(["break_sight", "teleport_other"]));
+    expect(q.context.offers.find((o) => o.goal === "break_sight")).toMatchObject({ uncertain: true });
+    /* With other creatures awake, sending this one away settles less, and hiding still does not stand in for it. */
+    const crowded = q.context.offers.map((o) => o.goal === "teleport_other" ? { ...o, progress: 0.5 } : o);
+    expect(pruneDominated(crowded, false).kept.map((o) => o.goal)).toContain("teleport_other");
+  });
+
+  it("takes stairs one step away as an escape like the others", () => {
+    const w = fighting([], { map: ["##########", "#.@>.....#", "#.######.#", "##########"], monsters: [{ ...ORC, grid: { x: 1, y: 1 }, race: "black orc", level: 13, hp: 30, maxHp: 30, speed: 100 }] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((o) => o.goal === "leave_level")?.criteria).toBe("Step onto the staircase next to the character and take it, leaving the creatures on this level behind.");
+  });
+
+  it("re-plans once a command sequence keeps failing, with the tactic and why it failed in the next question", () => {
+    const w = fighting([]);
+    const { p, logged } = planner(w);
+    /* The game refuses the read each time and no game time passes; each try is from a different square. */
+    for (const x of [2, 3, 2]) {
+      w.moveTo({ x, y: 1 });
+      const q = asked(p.ask(w.view));
+      const made = p.choose(pick("phase"), q.context, w.view);
+      if (!("plan" in made)) throw new Error("expected a plan");
+      expect(made.plan.step(w.view, w.act)?.code).toBe("read");
+      expect(made.plan.step(w.view, w.act)).toBeNull();
+      w.advance(10);
+    }
+    const replan = asked(p.ask(w.view));
+    expect(replan.context.loop).toMatchObject({ kind: "failed_sequence", tactic: "phase" });
+    expect(String(replan.request.state["loop"])).toMatch(/^Squire is going in circles: it tried read for phase 3 times and it failed each time\. Choosing phase again has not worked here: the game refused it.*; pick something else unless nothing else can help\.$/);
+    expect(logged.some((line) => line.startsWith("goal: loop detected (failed_sequence:"))).toBe(true);
+  });
+});
+
+describe("tactical geometry", () => {
+  it("sends the ground within a few steps instead of the level as a whole when the question is tactical, and the level otherwise", () => {
+    const fight = suppliedWorld({ map: ["##########", "#.@......#", "#.######>#", "##########"], player: { depth: 3, level: 8, hp: 25, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, race: "cave orc", raceIndex: 4, level: 7, hp: 11, maxHp: 11 }], monsterRecall: () => "It can hit to hurt (1d8)." });
+    const tactical = asked(planner(fight).p.ask(fight.view));
+    expect(Object.keys(tactical.request.questions)).toContain("escape");
+    expect(tactical.request.state["level"]).toBeUndefined();
+    expect(String(tactical.request.state["geometry"])).toBe("Next to the character: north wall, north-east wall, east creature (cave orc), south-east wall, south wall, south-west floor, west floor, north-west wall. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 6 steps (near) away, 7 turns (a short wait) to reach and take. The character stands in a choke point now. Choke points: none within a few steps along a checked route. Hazards: none known within 5 steps.");
+    const calm = suppliedWorld({ map: ["##########", "#.@......#", "#.######>#", "##########"], player: { depth: 3, level: 8, hp: 60, maxHp: 60 } });
+    const quiet = asked(planner(calm).p.ask(calm.view));
+    expect(quiet.request.state["geometry"]).toBeUndefined();
+    expect(quiet.request.state["level"]).toBeDefined();
   });
 });
 
@@ -2872,8 +3110,8 @@ describe("bound prompt targets", () => {
     const w = world({ map: CORRIDOR, player: { hp: 8, maxHp: 30, sp: 5, maxSp: 5 }, spells: [{ name: "Phase Door", sidx: 2, mana: 2 }], monsters: [orc] });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
-    expect(offered(q)).toContain("phase");
-    const choice = p.choose(pick("phase"), q.context, w.view);
+    expect(offered(q)).toContain("cast_escape");
+    const choice = p.choose(pick("cast_escape"), q.context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
     w.setPlayer({ sp: 1 });
     expect(choice.plan.step(w.view, w.act)).toBeNull();

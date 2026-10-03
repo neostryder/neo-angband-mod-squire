@@ -44,7 +44,7 @@ export function inferPersona(examples: readonly CoachingExample[], commands: rea
 
   const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
   const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true
-    && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
+    && ["fight", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"].includes(example.playerPick));
   const dangerValues = [
     ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
     ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0),

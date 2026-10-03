@@ -34,7 +34,7 @@ import { autoexplore } from "../missions/autoexplore.js";
 import type { Answer, ChoiceQuestion, NoulQuestion } from "./systemone.js";
 import type { Choice, Plan, Planner, Question, Reflex } from "./brain.js";
 import { proceduralPick } from "../knight.js";
-import { attackSpellsOutOfMana, canRead, unseenAttacks, detectionSource, hungry, readPack, studyable, unknownFlavours, unseenSources, type Pack } from "./pack.js";
+import { attackSpellsOutOfMana, canRead, deviceFail, unseenAttacks, detectionSource, hungry, readPack, studyable, unknownFlavours, unseenSources, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
@@ -64,6 +64,7 @@ import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
 import { allowedGoals, bandOf, classOf, CONFIDENCE_FLOOR, escapeQuestion, escapeThresholds, lowConfidencePick, pruneDominated, purposeClauses, type PackRecord } from "./tactics.js";
 import { createLoopGuard, type LoopFinding } from "./loops.js";
+import { chokeLine, compass, hazardLine, hazardsNear, neighbourLine, seenBy, sightBreakLine, sightBreaks, stairLine, type SightBreak } from "./geometry.js";
 import { countBand, depthBand, failText, healthBand, levelBand, shareBand, statusDangerBand, stepsBand, stepsText, targetShare, turnsBand } from "./bands.js";
 import { chaosNote, chaosPick, chaosTold, type ChaosMethod, type ChaosRecord } from "./chaos.js";
 import { distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, flourishLines, nudgeCursedGround, nudgeGrounds, type Flourishes, type FamilyFlourishes } from "../learning/family-ways.js";
@@ -87,7 +88,11 @@ export type Goal =
   | "quaff_unknown"
   | "read_unknown"
   | "phase"
+  | "cast_escape"
   | "teleport"
+  | "teleport_level"
+  | "teleport_other"
+  | "break_sight"
   | "deep_descent"
   | "retreat"
   | "rest"
@@ -119,7 +124,10 @@ export type Goal =
 const NONE_OF_THESE = "None of the listed options suits this moment.";
 
 /** How many steps a retreat plan takes before the model is asked again. */
-const RETREAT_STEPS = 4;
+const RETREAT_STEPS = 3;
+
+/** The most commands a plan that moves the character tactically issues before the model is asked again. */
+const TACTIC_ACTIONS = 3;
 
 /** Farthest a creature may be for Squire to throw, fire or aim at it. */
 const MISSILE_RANGE = 10;
@@ -169,10 +177,10 @@ export const SWARM_LEAVE = 4;
 /** The same, for a kind of breeder that has already killed or nearly killed one of the line. */
 export const SWARM_LEAVE_DREADED = 3;
 /** The version of the questions and their wording. Raise it when a question, an option's text or the state's shape changes, so no stored answer to the old questions is reused. */
-export const QUESTION_PACK_VERSION = 1;
+export const QUESTION_PACK_VERSION = 2;
 
 /** The version of the rules that turn an answer into a plan. Raise it when the offers, the gates or the builds change what an answer means. */
-export const GOAL_POLICY_VERSION = 1;
+export const GOAL_POLICY_VERSION = 2;
 
 /** The key a model's answer is stored and reused under: the model, the question pack, the state as sent and the goal policy. */
 export function answerKeyOf(model: string | null, hash: string): string {
@@ -192,15 +200,17 @@ const ROUTINE: readonly Goal[] = ["wear", "detect", "study", "rest", "wait"];
 function waitCompetes(offers: readonly Offer[]): boolean {
   return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
 }
-const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level", "take_position", "quaff_unknown", "read_unknown"]);
+const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat", "leave_level", "take_position", "quaff_unknown", "read_unknown"]);
 /** How far Squire will walk to take a defensible square. Beyond it, the route check and the persona's patience would not pay back. */
-const TAKE_POSITION_REACH = 4;
+const TAKE_POSITION_REACH = 3;
+/** The most actions a walk out of a creature's sight may take. */
+const SIGHT_BREAK_REACH = 2;
 /** The minimum number of impassable cardinal neighbours a square must have to count as a choke point. */
 const TAKE_POSITION_MIN_WALLS = 2;
 /** Awake creatures in sight that count as a group. */
 const TAKE_POSITION_GROUP_SIZE = 2;
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
-const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "read_unknown"]);
+const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
 const REFUSAL_HOLD_TURNS = 200;
 /** Plans for one goal that may start on the same game turn before the goal is left out until time passes. */
@@ -215,7 +225,7 @@ const HANDBOOK: readonly string[] = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on.",
   "Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage.",
-  "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level.",
+  "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
   "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
@@ -781,7 +791,7 @@ function retreatStep(s: Situation, terrain: Terrain, flight: "any" | "down" | "n
   const field = flowFrom({ goals: threats, canEnter: (grid) => isRoutable(s.view, terrain, grid) || threats.some((t) => key(t) === key(grid)) });
   const current = damageFor(s).damage;
   const safe = (grid: Loc) => {
-    if (!isWalkable(s.view, terrain, grid)) return false;
+    if (!isWalkable(s.view, terrain, grid) || s.view.cell(grid.x, grid.y)?.trap === true) return false;
     const damage = isClosedDoor(s.view, terrain, grid)
       ? Math.max(damageFor(s, at, 1, terrain, grid).damage, damageFor(s, grid, 2, terrain, grid).damage)
       : damageFor(s, grid, 1, terrain).damage;
@@ -920,6 +930,59 @@ function pinned(s: Situation): boolean {
 function immediateDanger(s: Situation): boolean {
   const incoming = damageFor(s);
   return incoming.damage > 0 || incoming.status > 0;
+}
+
+/**
+ * The ground a tactical question needs, and nothing wider: the eight
+ * neighbours, where sight can be broken within two steps, the nearest stairs
+ * each way, the choke points within reach, and the hazards on the way.
+ */
+function geometryText(s: Situation, terrain: Terrain): string {
+  const view = s.view;
+  const player = view.player();
+  const watching = seenBy(view, s.awake);
+  const breaks = player.status.confused > 0 ? [] : sightBreaks(view, terrain, s.awake, (grid, actions) => damageFor(s, grid, actions, terrain), player.hp, SIGHT_BREAK_REACH);
+  return [
+    neighbourLine(view, terrain),
+    sightBreakLine(view, breaks, watching),
+    stairLine(view, terrain),
+    chokeLine(view, chokeSpots(s, terrain), isChokeSquare(s, terrain, player.grid)),
+    hazardLine(view, hazardsNear(view, terrain)),
+  ].join(" ");
+}
+
+function isStairGrid(view: AgentView, terrain: Terrain, at: Loc): boolean {
+  const cell = view.cell(at.x, at.y);
+  return cell !== null && cell.known && (terrain.isUpStair(cell.feat) || terrain.isDownStair(cell.feat));
+}
+
+/** A square out of sight of the awake creatures, the walk to it, and whether it serves a hit-and-run. */
+interface SightBreakOffer {
+  readonly route: SightBreak;
+  readonly hitAndRun: boolean;
+  readonly criteria: string;
+}
+
+/**
+ * The nearest square within SIGHT_BREAK_REACH steps that no awake creature in
+ * view can see or fire at, when one of them can see the character now. A
+ * character that cannot walk where it means to, or that a creature as fast
+ * would follow step for step, gains nothing from it. Against a unique the
+ * melee cannot kill quickly the same move is a hit-and-run: out of sight, wait
+ * for it to come round the corner, and strike first.
+ */
+function sightBreakOffer(s: Situation, terrain: Terrain, melee: AttackOutcome | undefined): SightBreakOffer | null {
+  const player = s.view.player();
+  if (s.awake.length === 0 || player.status.confused > 0 || player.status.blind > 0 || pinned(s)) return null;
+  const breaks = sightBreaks(s.view, terrain, s.awake, (grid, actions) => damageFor(s, grid, actions, terrain), player.hp, SIGHT_BREAK_REACH);
+  const best = breaks[0];
+  if (best === undefined) return null;
+  const unique = s.target !== null && !s.target.asleep && s.target.raceFlags.includes("UNIQUE") && (melee === undefined || !killsQuickly(s.target, melee)) ? s.target : null;
+  const walk = `${stepsText(best.route.length)} ${compass(player.grid, best.at)}`;
+  const criteria = unique !== null
+    ? `Hit and run against ${unique.race}: walk ${walk} to a square it cannot see, wait one turn there, and strike as it comes round the corner. Out of its sight it cannot cast at the character or shoot it.`
+    : `Walk ${walk} to a square none of the awake creatures in view can see. Out of sight they cannot cast at the character or shoot it; one that walks may still follow.`;
+  return { route: best, hitAndRun: unique !== null, criteria };
 }
 
 function stairsUnderfoot(s: Situation, terrain: Terrain): boolean {
@@ -1239,22 +1302,68 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* Low health makes escapes worth offering even against easy creatures. */
   /* A caster with no mana for its spells cannot kill at range and should not trade blows with a creature that hurts on touch. */
   if (nearDeath || s.unseenDamage > 0 || meleeDanger || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
-    if (s.pack.phase[0] !== undefined || s.pack.escapeSpell[0] !== undefined) {
-      const how = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
-      const short = s.pack.phase[0] !== undefined || /^(Phase Door|Blink|Shadow Shift)$/i.test(how);
-      add("phase", `Use ${how}: a ${short ? "short" : "long"} random teleport that breaks contact${short ? " for a moment" : ""}.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
-      const spell = s.pack.escapeSpell[0];
-      tag("phase", short ? 0.6 : 0.9, s.pack.phase[0] !== undefined ? itemSpend(view, s.pack.phase[0].handle) : spell === undefined ? {} : manaSpend(spell.mana, player.sp));
+    /* Every way out is its own option with its own cost and risk, and none is
+     * ranked ahead of another here: the model weighs them, and pruning drops
+     * only one that another escape beats on every count. */
+    const scroll = s.pack.phase[0];
+    if (scroll !== undefined) {
+      add("phase", `Read ${scroll.name}: a short random teleport that breaks contact for a moment.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
+      tag("phase", 0.6, itemSpend(view, scroll.handle));
     }
-    if (s.pack.teleport[0] !== undefined) {
-      const teleport = s.pack.teleport[0];
-      /* Teleport Level leaves the floor, up or down, which is a bigger step than moving across it. */
-      const leaves = /Teleport Level/i.test(teleport.name);
-      add("teleport", leaves
-        ? `Use ${teleport.name} to leave this level entirely, going one level up or down.`
-        : `Use ${teleport.name} to escape far from every creature in sight.`, Math.max(0.05, exposure(s) * (leaves ? 0.3 : 0.2)), false, player.hp, !leaves || /Staff/i.test(teleport.name));
+    const spell = s.pack.escapeSpell[0];
+    if (spell !== undefined) {
+      /* A spell that fails spends the turn where the character stands, so its fail chance is part of the risk and the hit points it may leave. */
+      const info = view.spellInfo?.(spell.sidx);
+      const fail = Math.round(info?.failChance ?? spell.fail);
+      const mana = info?.mana ?? spell.mana;
+      const short = /^(Phase Door|Blink|Shadow Shift)$/i.test(spell.name);
+      add("cast_escape", `Cast ${spell.name}: a ${short ? "short" : "long"} random teleport that breaks contact${short ? " for a moment" : ""}. It costs ${String(mana)} of the ${String(player.sp)} mana left (${shareBand(mana, player.sp)} of it)${fail > 0 ? `, with a ${failText(fail)}; a failed cast leaves the character where it stands for another turn` : ", and it never fails"}.`, Math.max(0.1, exposure(s) * 0.4) + fail / 100 * exposure(s), false, fail === 0 ? player.hp : player.hp - incoming.damage, true);
+      tag("cast_escape", short ? 0.6 : 0.9, manaSpend(mana, player.sp));
+    }
+    const teleport = s.pack.teleport.find((item) => !/Teleport Level/i.test(item.name));
+    if (teleport !== undefined) {
+      const staff = /Staff/i.test(teleport.name);
+      const fail = staff ? deviceFail(view, teleport) : 0;
+      const chance = fail === null ? "" : fail > 0 ? ` The staff has a ${failText(fail)}; a failed use leaves the character where it stands.` : "";
+      add("teleport", `Use ${teleport.name} to escape far from every creature in sight.${staff && fail === null ? " The staff's chance to work is not known yet." : chance}`, Math.max(0.05, exposure(s) * 0.2) + (fail ?? 0) / 100 * exposure(s), false, fail === 0 ? player.hp : player.hp - incoming.damage, true);
       /* A teleport is scarcer and dearer than a Phase Door, so spending one costs more. */
-      tag("teleport", leaves ? 1 : 0.9, /Staff/i.test(teleport.name) ? { cost: 0.5, costNote: "a staff charge" } : itemSpend(view, teleport.handle, 1.5));
+      tag("teleport", 0.9, staff ? { cost: 0.5, costNote: "a staff charge" } : itemSpend(view, teleport.handle, 1.5));
+    }
+    const level = s.pack.teleport.find((item) => /Teleport Level/i.test(item.name));
+    if (level !== undefined && player.depth > 0) {
+      /* Teleport Level leaves the floor, up or down at random, so where the
+       * character lands is unknown; that keeps it from standing in for a
+       * teleport across the level, and the model weighs the two. */
+      add("teleport_level", `Read ${level.name} to leave this level at once, going one level up or down; every creature here is left behind.`, Math.max(0.05, exposure(s) * 0.3), false, player.hp, true);
+      tag("teleport_level", 0.9, itemSpend(view, level.handle, 1.5));
+    }
+    const other = s.pack.teleportOther[0];
+    const sent = s.target;
+    if (other !== undefined && sent !== null && !sent.asleep && sent.visible && player.status.confused === 0 && player.status.blind === 0 && within(s, MISSILE_RANGE) && clearShot(view, sent)) {
+      /* Teleport Other moves the creature, not the character: with it gone, only the others in sight still threaten. */
+      const fail = deviceFail(view, other);
+      const scrollOf = /\bScrolls?\b/i.test(other.name);
+      const rest = damageFor({ ...s, threats: s.threats.filter((m) => m.id !== sent.id) }, at, 1, terrain).damage;
+      /* A unique goes by its own name, without "the". */
+      const named = sent.raceFlags.includes("UNIQUE") ? sent.race : `the ${sent.race}`;
+      const chance = fail === null ? " The device's chance to work is not known yet." : fail > 0 ? ` It has a ${failText(fail)}; a failed use leaves ${named} where it is.` : "";
+      const only = s.awake.every((m) => m.id === sent.id);
+      add("teleport_other", `${scrollOf ? "Read" : /\bRods?\b/i.test(other.name) ? "Zap" : "Aim"} ${other.name} at ${named} to send it far away across the level${only ? "; it is the only awake creature in sight" : `; ${String(s.awake.length - 1)} other awake creature${s.awake.length === 2 ? "" : "s"} stay`}.${chance}`, Math.max(0.05, exposure(s) * (0.2 + (fail ?? 25) / 100)), false, fail === 0 ? player.hp - rest : player.hp - incoming.damage, fail !== 0);
+      tag("teleport_other", only ? 0.9 : 0.5, scrollOf ? itemSpend(view, other.handle, 1.5) : /\bRods?\b/i.test(other.name) ? { cost: 0.3, costNote: "a rod charge, which recharges" } : { cost: 0.5, costNote: "a wand charge" });
+    }
+    const hide = sightBreakOffer(s, terrain, melee);
+    if (hide !== null) {
+      /* Out of sight lasts only until the creature comes round the corner, so it never prunes an escape that settles the matter. */
+      add("break_sight", hide.criteria, damageRisk(hide.route.damage, player.hp), false, player.hp - hide.route.damage, true);
+      tag("break_sight", hide.hitAndRun ? 0.7 : 0.5, FREE);
+    }
+    /* Stairs underfoot or one step away are a way out like any other. When a
+     * reason above already offers leaving, the nearer stairs name the walk. */
+    if (exit !== null && player.depth > 0 && (key(exit.at) === key(at) || isStairGrid(view, terrain, exit.at))) {
+      const criteria = key(exit.at) === key(at) ? "Take the staircase underfoot now to leave the creatures behind." : "Step onto the staircase next to the character and take it, leaving the creatures on this level behind.";
+      const i = out.findIndex((o) => o.goal === "leave_level");
+      if (i >= 0) out[i] = { ...out[i]!, criteria };
+      else addLeave(criteria, 0.01);
     }
     if (!immediateDanger(s) && s.pack.descent[0] !== undefined) {
       add("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns (${turnsBand(7)} at most). It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
@@ -1269,10 +1378,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
       : flight === "down"
         ? "Head for a known down staircase and take it, leaving the awake creatures behind."
         : stayingPut(s) === "never"
-          ? "Step up to four steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them."
+          ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them."
           : stayingPut(s) === "still"
-            ? "Step up to four steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them."
-            : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
+            ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them."
+            : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
   if (!bleeding && s.awake.length === 0 && recovery && (hurt || player.sp < player.maxSp)) {
@@ -1707,6 +1816,22 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     outcomeVersion += 1;
   }
 
+  /**
+   * Steps over remembered ground to where the near-term goal leads, or null
+   * when it leads nowhere a walk can measure. The strategy's near goal comes
+   * first; without one, the chosen goal's own destination stands in.
+   */
+  function nearDistance(goal: Goal, view: AgentView): number | null {
+    const near = options.strategy?.().nearKind ?? null;
+    const goals = near === "explore" || near === null && goal === "explore" ? frontiers(view, terrain)
+      : near === "down" || near === null && goal === "descend" ? knownDownStairs(view, terrain)
+      : near === "leave" || near === null && (goal === "leave_level" || goal === "retreat") ? knownStairs(view, terrain)
+      : null;
+    if (goals === null || goals.length === 0) return null;
+    const distance = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) }).distance(view.player().grid);
+    return Number.isFinite(distance) ? distance : null;
+  }
+
   function noteStalls(goal: Goal | null, plan: Plan, view: AgentView): Plan {
     const turn = view.turn();
     const route = (plan as Plan & { travel?: TravelRoute }).travel;
@@ -1714,7 +1839,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const travel = route === undefined ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
     plan = journey.guarded(goal, plan);
     const chosenOn = gearOf(view);
-    if (goal !== null) loops.chose(goal, view);
+    if (goal !== null) loops.chose(goal, view, nearDistance(goal, view));
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -1723,6 +1848,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       sameTurn.set(goal, (sameTurn.get(goal) ?? 0) + 1);
     }
     let issued = 0;
+    /* The command codes this plan sent, for the loop guard's record of a sequence the game refused. */
+    const codes: string[] = [];
     let startTurn: number | null = null;
     let credited = false;
     let lastSingle: { turn: number; depth: number } | null = null;
@@ -1755,6 +1882,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       if (command !== null) {
         issued += 1;
+        codes.push(command.code);
         loops.command(command, v);
         expected = expectationOf(command, v);
         danger = DANGER_CODES.has(command.code) || v.monsters().some((m) => m.visible && !harmlessNow(v, m)) ? dangerMark(command, v) : null;
@@ -1767,6 +1895,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
           const why = refusalOf(goal, v);
+          loops.failed(goal, codes, `the game refused it${why === null ? "" : ` ${why}`}`, v);
           noteOutcome(`${plan.label}: the game refused it${why === null ? "" : ` ${why}`}, and no game time passed.`);
         } else {
           noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
@@ -1786,6 +1915,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
      * left the object on the floor. Any of these ends the plan. A refusal is
      * recorded as the plan's own end would record it. */
     const mismatch = (v: AgentView): string | null => {
+      const found = mismatchOf(v);
+      if (found !== null && goal !== null) loops.failed(goal, codes, found.replace(/(?:, and no game time passed)?\.$/, ""), v);
+      return found;
+    };
+    const mismatchOf = (v: AgentView): string | null => {
       const was = expected;
       expected = null;
       if (was === null) return null;
@@ -2229,18 +2363,50 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       case "phase": {
         const scroll = pack.phase[0];
+        return once("phase away", view, (ctx) => scroll === undefined ? null : ctx.act.read(scroll.handle));
+      }
+      case "cast_escape": {
         const spell = pack.escapeSpell[0];
-        return once("phase away", view, (ctx) => {
-          if (scroll !== undefined) return ctx.act.read(scroll.handle);
-          if (spell !== undefined) return ctx.act.cast(spell.sidx);
-          return null;
-        });
+        return once(`cast ${spell?.name ?? "an escape"}`, view, (ctx) => spell === undefined ? null : ctx.act.cast(spell.sidx));
       }
       case "teleport": {
-        const item = pack.teleport[0];
+        const item = pack.teleport.find((entry) => !/Teleport Level/i.test(entry.name));
         return once("teleport away", view, (ctx) => {
           if (item === undefined) return null;
           return /Staff/i.test(item.name) ? ctx.act.useStaff(item.handle) : ctx.act.read(item.handle);
+        });
+      }
+      case "teleport_level": {
+        const item = pack.teleport.find((entry) => /Teleport Level/i.test(entry.name));
+        return once("read Teleport Level", view, (ctx) => item === undefined ? null : ctx.act.read(item.handle));
+      }
+      case "teleport_other": {
+        const item = pack.teleportOther[0];
+        return atTarget(`send the creature away with ${item?.name ?? "Teleport Other"}`, view, (ctx) => {
+          if (item === undefined) return null;
+          if (/\bScrolls?\b/i.test(item.name)) return ctx.act.read(item.handle);
+          return /\bRods?\b/i.test(item.name) ? ctx.act.zapRod(item.handle) : ctx.act.aimWand(item.handle);
+        });
+      }
+      case "break_sight": {
+        /* Walk the route the offer priced, then, for a hit-and-run, wait once
+         * for the creature to come round the corner. A step that now costs
+         * more than the offer allowed ends the plan. */
+        const offer = sightBreakOffer(situationNow(view), terrain, combatOptions(situationNow(view), "fight")[0]);
+        if (offer === null) return once("no square out of sight", view, () => null);
+        const route = offer.route.route;
+        return stepsPlan(offer.hitAndRun ? "break sight, then strike" : "break line of sight", view, (ctx, i) => {
+          if (i >= TACTIC_ACTIONS) return null;
+          const here = ctx.view.player().grid;
+          if (i >= route.length) {
+            const s = situationNow(ctx.view);
+            const adjacent = s.awake.some((m) => steps(m.grid, here) <= 1);
+            return offer.hitAndRun && i === route.length && !adjacent ? ctx.act.hold() : null;
+          }
+          const next = route[i]!;
+          if (steps(here, next) !== 1 || !isWalkable(ctx.view, terrain, next) || isClosedDoor(ctx.view, terrain, next)) return null;
+          const dir = directionToward(here, next);
+          return dir === null ? null : ctx.act.move(dir);
         });
       }
       case "deep_descent": {
@@ -2435,7 +2601,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         let route: readonly Loc[] | null = null;
         let waited = false;
         let started = false;
-        return stepsPlan("step to a defensible square", view, (ctx) => {
+        return stepsPlan("step to a defensible square", view, (ctx, i) => {
+          if (i >= TACTIC_ACTIONS) return null;
           const s = situationNow(ctx.view);
           const at = ctx.view.player().grid;
           if (isChokeSquare(s, terrain, at)) {
@@ -2536,7 +2703,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
     if (mustPickUp(persona) && offered.has("pick_up") && (allowed === null || allowed.has("pick_up"))) return record("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
-      const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
+      const away = ["teleport", "teleport_level", "teleport_other", "cast_escape", "phase", "break_sight", "retreat"].find((g) => offered.has(g));
       if (away !== undefined) return record(away, { ...blank, quirk: "craven" });
     }
     const inChar = inCharacter?.type === "choice" ? within(held ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities) : null;
@@ -2651,7 +2818,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const offer of digest.offers) {
         if (["swing_unseen", "cast_area", "unseen_wand"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * (1 + bold * 4);
         if (["detect", "see_invisible", "light_room", "unseen_staff", "unseen_rod"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * (1 + (1 - bold) * 4);
-        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "teleport"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * 16;
+        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"].includes(offer.goal)) probabilities[offer.goal] = (probabilities[offer.goal] ?? 0) * 16;
       }
     }
     const answer: Answer & { type: "choice" } = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
@@ -2867,12 +3034,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         ["memory", "creatures", creatures],
         ["memory", "incoming", `Up to ${String(one.damage)} HP damage in one action (${hpShare(one.damage, player.hp)}) and ${String(two.damage)} in two (${hpShare(two.damage, player.hp)}). Status danger ${String(one.status)} (${statusDangerBand(one.status)}); uncertainty ${String(one.uncertainty)} HP (${hpShare(one.uncertainty, player.hp)}). These are conservative bounds, not death probabilities.`],
         ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
-        ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
+        /* A tactical question gets the ground within a few steps instead of the level as a whole; code turns the pick into the steps. */
+        ["memory", engaged ? "geometry" : "level", engaged ? geometryText(s, terrain) : `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
         ["memory", "status", statusOf(view, canRead(view))],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : undefined],
         ...entriesOf("memory", swarmNote(seen)),
         ["outcomes", "last", lastOutcome ?? undefined],
-        ["outcomes", "loop", loop === null ? undefined : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here; pick something else unless nothing else can help.`}`],
+        ["outcomes", "loop", loop === null ? undefined : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here: ${loop.why}; pick something else unless nothing else can help.`}`],
         ["outcomes", "recent", textOf(ended[0])],
         ["outcomes", "prior", textOf(ended[1])],
         ["outcomes", "older", textOf(ended[2])],
@@ -2952,7 +3120,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         if (danger) {
           const priority: Goal[] = [
             ...(stairsUnderfoot(s, terrain) ? ["leave_level", "retreat"] as const : []),
-            "teleport", "phase", "heal", "device", "cast_heal", "quaff_unknown", "read_unknown",
+            "teleport", "teleport_level", "teleport_other", "cast_escape", "phase", "heal", "device", "cast_heal", "break_sight", "quaff_unknown", "read_unknown",
             ...(!immediateDanger(s) ? ["recall_town", "deep_descent", "leave_level"] as const : []),
             ...(!pinned(s) ? ["retreat"] as const : []),
             "fight", "shoot", "cast_attack", "aim_wand", "throw_oil",

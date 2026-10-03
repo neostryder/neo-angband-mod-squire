@@ -180,6 +180,9 @@ function turnsBand(turns) {
   if (turns <= 20) return "a short wait";
   return "a long wait";
 }
+function turnsText(turns) {
+  return `${String(turns)} turn${turns === 1 ? "" : "s"} (${turnsBand(turns)})`;
+}
 function countBand(count2) {
   if (count2 <= 0) return "none";
   if (count2 === 1) return "one";
@@ -1721,6 +1724,7 @@ function readPack(view) {
   const heal = [];
   const phase = [];
   const teleport = [];
+  const teleportOther = [];
   const descent = [];
   const oil = [];
   const attackWand = [];
@@ -1739,6 +1743,9 @@ function readPack(view) {
       if (reading) descent.push(entry(1));
     } else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
       if (reading || !/\bScrolls?\b/i.test(name)) teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    } else if (/\b(?:Scrolls?|Wands?|Rods?) of Teleport Other\b/i.test(name)) {
+      const scroll = /\bScrolls?\b/i.test(name);
+      if (scroll ? reading : !empty(name) && item.timeout === 0 && !/\bcharging\b/i.test(name)) teleportOther.push(entry(scroll ? 2 : 1));
     } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
     else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
       ammo.push(entry(1));
@@ -1775,6 +1782,7 @@ function readPack(view) {
     heal: byPower(heal),
     phase,
     teleport: byPower(teleport),
+    teleportOther: byPower(teleportOther),
     descent,
     oil,
     attackWand: byPower(attackWand),
@@ -1785,6 +1793,12 @@ function readPack(view) {
     healSpell: byPower(healSpell),
     escapeSpell
   };
+}
+function deviceFail(view, item) {
+  if (/\bScrolls?\b/i.test(item.name)) return 0;
+  const text = view.inspectItem?.(item.handle)?.text ?? "";
+  const success = /\bchance of success is (\d+(?:\.\d+)?)%/i.exec(text);
+  return success === null ? null : Math.max(0, Math.round(100 - Number(success[1])));
 }
 function hungry(view) {
   return view.player().status.food < HUNGRY_BELOW;
@@ -2142,6 +2156,9 @@ function assessThreat(monster, player, _awake, view, dreaded = /* @__PURE__ */ n
 }
 function same(a, b) {
   return a.x === b.x && a.y === b.y;
+}
+function inLineOfFire(view, from, to) {
+  return steps(from, to) <= 1 || rangedPath(view, from, to, false, []).clear;
 }
 function clearShot(view, target) {
   const { projectionPath } = view;
@@ -2700,7 +2717,7 @@ function inferPersona(examples, commands) {
     confidence[key2] = clamp01(count2 / 20);
   }
   const danger = commands.filter((command) => command.dangerousNear && (command.kind === "fight" || command.kind === "melee" || command.kind === "retreat"));
-  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "teleport"].includes(example.playerPick));
+  const choiceDanger = examples.filter((example) => example.situation["dangerousNear"] === true && ["fight", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"].includes(example.playerPick));
   const dangerValues = [
     ...danger.map((command) => command.kind === "fight" || command.kind === "melee" ? 1 : 0),
     ...choiceDanger.map((example) => example.playerPick === "fight" ? 1 : 0)
@@ -2775,20 +2792,22 @@ function goalOfCommand(command, view) {
       return "wear";
     case "zap-rod":
     case "zap":
+      if (has(pack.teleportOther)) return "teleport_other";
       return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
     case "fire":
       return "shoot";
     case "throw":
       return has(pack.oil) ? "throw_oil" : null;
     case "aim-wand":
-      return "aim_wand";
+      return has(pack.teleportOther) ? "teleport_other" : "aim_wand";
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
       if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
-      if (has(pack.teleport)) return "teleport";
+      if (has(pack.teleport)) return pack.teleport.some((i) => i.handle === handle && /Teleport Level/i.test(i.name)) ? "teleport_level" : "teleport";
+      if (has(pack.teleportOther)) return "teleport_other";
       if (has(pack.descent)) return "deep_descent";
       return null;
     case "use-staff":
@@ -2801,7 +2820,7 @@ function goalOfCommand(command, view) {
       if (spell === null) return null;
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
-      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "cast_escape";
       if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
       return null;
     }
@@ -2814,7 +2833,7 @@ function proceduralPick(offers, hpShare2) {
   const first = (...goals) => goals.find((g) => has(g) !== void 0) ?? null;
   const fight = has("fight");
   if (fight !== void 0 && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "take_position", "retreat", "shoot", "cast_attack", "fight");
+    return first("teleport", "teleport_other", "teleport_level", "cast_escape", "phase", "heal", "break_sight", "take_position", "retreat", "shoot", "cast_attack", "fight");
   }
   if (hpShare2 < 0.35) {
     const safe = first("heal", "cast_heal");
@@ -2841,7 +2860,11 @@ var LABEL = {
   quaff_unknown: "drink an unknown potion",
   read_unknown: "read an unknown scroll",
   phase: "phase away",
+  cast_escape: "cast an escape spell",
   teleport: "teleport away",
+  teleport_level: "teleport off the level",
+  teleport_other: "send a creature away",
+  break_sight: "break line of sight",
   deep_descent: "read Deep Descent",
   retreat: "back away",
   rest: "rest",
@@ -3138,7 +3161,7 @@ function sameRace(race, target) {
   return race.trim().toLowerCase() === target.trim().toLowerCase();
 }
 var ATTACKS = /* @__PURE__ */ new Set(["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"]);
-var ESCAPES = /* @__PURE__ */ new Set(["phase", "teleport", "retreat", "leave_level", "heal", "cast_heal"]);
+var ESCAPES = /* @__PURE__ */ new Set(["phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat", "leave_level", "heal", "cast_heal"]);
 var PURSUIT_NUDGE = 0.6;
 function nudgePursuits(dist, offers, pursuits, view, ceiling, escaping) {
   const out = { ...dist };
@@ -3699,7 +3722,7 @@ function nudgeUnseen(dist, offers, persona, damage, hp, ceiling) {
   const pressure = Math.min(1, damage / Math.max(1, hp)) * strength / 100;
   for (const offer of offers) {
     if (offer.risk > ceiling) continue;
-    const response = ["unseen_staff", "unseen_rod", "detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "teleport"].includes(offer.goal);
+    const response = ["unseen_staff", "unseen_rod", "detect", "see_invisible", "light_room", "retreat", "leave_level", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"].includes(offer.goal);
     const advance2 = ["swing_unseen", "cast_area", "unseen_wand", "explore", "descend", "fight", "shoot", "cast_attack"].includes(offer.goal);
     if (response || advance2) result[offer.goal] = (result[offer.goal] ?? 0) * Math.exp(pressure * (response ? fear * 2 : 1 - fear * 2));
   }
@@ -5917,7 +5940,7 @@ var MAX_KILLERS = 30;
 var GRUDGE_NUDGE = { mild: 0.15, strong: 0.3, lasting: 0.45 };
 var FEAR_SHIFT = { mild: 1, strong: 1, lasting: 2 };
 var ATTACK_GOALS = ["fight", "shoot", "throw_oil", "aim_wand", "cast_attack"];
-var AVOID_GOALS = ["leave_level", "retreat", "phase", "teleport"];
+var AVOID_GOALS = ["leave_level", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"];
 var NOT_A_CREATURE = /^(?:trap|bug|monster|starvation|hunger|poison|a fall|fall|drowning|lava|cuts?|bleeding|retiring|ripe old age|winning|quitting|suicide)$/i;
 function same2(a, b) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -6064,7 +6087,11 @@ function num2(value) {
 // src/brain/tactics.ts
 var CLASSES = {
   phase: "escape",
+  cast_escape: "escape",
   teleport: "escape",
+  teleport_level: "escape",
+  teleport_other: "escape",
+  break_sight: "escape",
   retreat: "escape",
   leave_level: "escape",
   recall_town: "escape",
@@ -6111,9 +6138,10 @@ function bandOf(p, bands) {
   return p >= bands.high ? "get_out" : p >= bands.low ? "consider" : "stay";
 }
 var SAFE_CLASSES = /* @__PURE__ */ new Set(["escape", "heal", "gamble", "position"]);
+var OUT_CLASSES = /* @__PURE__ */ new Set(["escape", "heal"]);
 function allowedGoals(band, offers) {
   if (band === "stay") return null;
-  const escapes = offers.filter((o) => classOf(o.goal) === "escape").map((o) => o.goal);
+  const escapes = offers.filter((o) => OUT_CLASSES.has(classOf(o.goal))).map((o) => o.goal);
   const safe = offers.filter((o) => SAFE_CLASSES.has(classOf(o.goal))).map((o) => o.goal);
   const chosen = band === "get_out" && escapes.length > 0 ? escapes : safe;
   return chosen.length === 0 ? null : /* @__PURE__ */ new Set([...chosen, "none_of_these"]);
@@ -6135,7 +6163,7 @@ function safestOf(offers, classes) {
 }
 function lowConfidencePick(offers, escapeP, lowEdge) {
   if (escapeP !== null && escapeP >= lowEdge) {
-    const out = safestOf(offers, /* @__PURE__ */ new Set(["escape"])) ?? safestOf(offers, /* @__PURE__ */ new Set(["heal"]));
+    const out = safestOf(offers, OUT_CLASSES);
     if (out !== void 0) return out.goal;
   }
   return safestOf(offers, /* @__PURE__ */ new Set(["attack", "wait"]))?.goal ?? null;
@@ -6169,7 +6197,7 @@ var NEAR_SERVED = {
   explore: ["explore", "detect", "fetch", "pick_up", "tunnel", "disarm"],
   rest: ["rest", "heal", "cast_heal", "device", "retreat"],
   down: ["descend", "deep_descent"],
-  leave: ["leave_level", "retreat", "teleport", "deep_descent", "descend"],
+  leave: ["leave_level", "retreat", "teleport_level", "deep_descent", "descend"],
   recall: ["recall_town", "recall_dungeon"],
   shop: ["shop", "recall_town"],
   try: ["quaff_unknown", "read_unknown", "wear"],
@@ -6253,6 +6281,14 @@ var FLIP_WINDOW = 6;
 var FLIP_MIN_CHANGES = 4;
 var EQUIP_FLIP_TURNS = 1e3;
 var STILL_GOALS = /* @__PURE__ */ new Set(["wait", "rest", "endure"]);
+var REGION_SIZE = 10;
+var REGION_VISITS = 3;
+var REGION_WINDOW = 24;
+var FAILED_RUN = 3;
+var FAILED_TURNS = 1e3;
+var TWITCH_WINDOW = 6;
+var TWITCH_MAX_GRIDS = 4;
+var TWITCH_MIN_MOVES = 3;
 function normalName(name) {
   return name.toLowerCase().replace(/\{[^}]*\}/g, "").replace(/^(?:a|an|the|\d+)\s+/, "").replace(/\b(\w+?)(?:es|s)\b(?=\s+of\b)/, "$1").replace(/\s+/g, " ").trim();
 }
@@ -6279,6 +6315,15 @@ function stateKey(view) {
   const awake2 = view.monsters().filter((m) => m.visible && !m.asleep).map((m) => [m.id, m.grid.x, m.grid.y, healthBar(m.hp, m.maxHp)]).sort((a, b) => a[0] - b[0]);
   return JSON.stringify([p.depth, p.grid.x, p.grid.y, p.hp, p.sp, awake2]);
 }
+function knownGrids(view) {
+  const bounds = view.mapBounds();
+  let known = 0;
+  for (let y = 0; y < bounds.height; y++) for (let x = 0; x < bounds.width; x++) if (view.cell(x, y)?.known === true) known += 1;
+  return known;
+}
+function packKey(view) {
+  return view.inventory().map((item) => `${shownName2(item) ?? "?"}x${String(item.number)}`).join("|");
+}
 function createLoopGuard() {
   let entries = [];
   let worn = [];
@@ -6286,6 +6331,9 @@ function createLoopGuard() {
   let bought = /* @__PURE__ */ new Set();
   let townVisit = false;
   let flip = null;
+  let failures = [];
+  let seenDepth = null;
+  const seen = /* @__PURE__ */ new Set();
   function tacticOf(view) {
     const p = view.player();
     const here = `${String(p.grid.x)},${String(p.grid.y)}`;
@@ -6298,17 +6346,80 @@ function createLoopGuard() {
     }
     return null;
   }
+  function failedSequence(turn) {
+    const recent = failures.filter((f) => turn - f.turn >= 0 && turn - f.turn <= FAILED_TURNS);
+    const counts = /* @__PURE__ */ new Map();
+    for (const f of recent) counts.set(`${f.goal}|${f.sequence}`, [...counts.get(`${f.goal}|${f.sequence}`) ?? [], f]);
+    for (const runs of counts.values()) {
+      if (runs.length < FAILED_RUN) continue;
+      const last = runs[runs.length - 1];
+      return { kind: "failed_sequence", tactic: last.goal, detail: `tried ${last.sequence} for ${last.goal} ${String(runs.length)} times and it failed each time`, why: last.why };
+    }
+    return null;
+  }
+  function twitching(view) {
+    const depth2 = view.player().depth;
+    const recent = entries.slice(-TWITCH_WINDOW);
+    if (recent.length < TWITCH_WINDOW || !recent.every((e) => e.depth === depth2)) return null;
+    const grids = new Set(recent.map((e) => e.grid));
+    let moves = 0;
+    let revisits = 0;
+    for (let i = 1; i < recent.length; i++) {
+      if (recent[i].grid === recent[i - 1].grid) continue;
+      moves += 1;
+      if (recent.slice(0, i - 1).some((e) => e.grid === recent[i].grid)) revisits += 1;
+    }
+    if (grids.size < 2 || grids.size > TWITCH_MAX_GRIDS || moves < TWITCH_MIN_MOVES || revisits === 0) return null;
+    const first = recent[0];
+    const last = recent[recent.length - 1];
+    const closer = first.distance !== null && last.distance !== null && last.distance < first.distance;
+    if (last.novelty !== first.novelty || last.foes < first.foes || closer) return null;
+    const goal = first.distance === null ? "anything new" : "where the near-term goal leads";
+    return { kind: "twitch", tactic: tacticOf(view), detail: `stepped around ${String(grids.size)} squares over the last ${String(TWITCH_WINDOW)} decisions without getting closer to ${goal}`, why: "its moves made no progress toward the near-term goal" };
+  }
+  function revisiting(view) {
+    const last = entries[entries.length - 1];
+    if (last === void 0 || last.depth !== view.player().depth) return null;
+    let start = entries.length - 1;
+    while (start > 0 && entries[start - 1].depth === last.depth && entries[start - 1].novelty === last.novelty) start -= 1;
+    const stretch = entries.slice(start);
+    let visits = 0;
+    for (let i = 0; i < stretch.length; i++) if (stretch[i].region === last.region && (i === 0 || stretch[i - 1].region !== last.region)) visits += 1;
+    if (visits < REGION_VISITS || new Set(stretch.map((e) => e.region)).size < 2) return null;
+    return { kind: "region_revisit", tactic: tacticOf(view), detail: `came back to the same part of the level ${String(visits)} times without seeing or picking up anything new`, why: "nothing new was seen or picked up there" };
+  }
   return {
-    /** Records a decision. */
-    chose(goal, view) {
+    /** Records a decision, with the steps to where the near-term goal leads when it leads somewhere. */
+    chose(goal, view, distance = null) {
       const p = view.player();
       if (p.depth !== 0) {
         townVisit = false;
         sold = /* @__PURE__ */ new Set();
         bought = /* @__PURE__ */ new Set();
       }
-      entries.push({ goal, turn: view.turn(), depth: p.depth, grid: `${String(p.grid.x)},${String(p.grid.y)}`, state: stateKey(view) });
-      if (entries.length > CYCLE_WINDOW * 2) entries = entries.slice(-CYCLE_WINDOW * 2);
+      if (seenDepth !== p.depth) {
+        seenDepth = p.depth;
+        seen.clear();
+      }
+      for (const m of view.monsters()) if (m.visible) seen.add(m.id);
+      const awake2 = view.monsters().filter((m) => m.visible && !m.asleep);
+      entries.push({
+        goal,
+        turn: view.turn(),
+        depth: p.depth,
+        grid: `${String(p.grid.x)},${String(p.grid.y)}`,
+        state: stateKey(view),
+        region: `${String(Math.floor(p.grid.x / REGION_SIZE))},${String(Math.floor(p.grid.y / REGION_SIZE))}`,
+        novelty: JSON.stringify([knownGrids(view), packKey(view), p.gold, seen.size]),
+        distance: distance !== null && Number.isFinite(distance) ? distance : null,
+        foes: awake2.reduce((sum, m) => sum + healthBar(m.hp, m.maxHp), 0)
+      });
+      if (entries.length > REGION_WINDOW) entries = entries.slice(-REGION_WINDOW);
+    },
+    /** Records a plan the game refused, or whose command changed nothing, with the commands it had issued. */
+    failed(goal, sequence, why, view) {
+      const turn = view.turn();
+      failures = [...failures.filter((f) => turn - f.turn >= 0 && turn - f.turn <= FAILED_TURNS), { goal, sequence: sequence.length === 0 ? "nothing" : sequence.join(" then "), turn, why }].slice(-12);
     },
     /** Records a command a plan issued, for the store and gear swaps. */
     command(cmd, view) {
@@ -6320,7 +6431,7 @@ function createLoopGuard() {
         worn = [...worn.filter((w) => turn - w.turn >= 0 && turn - w.turn <= EQUIP_FLIP_TURNS), { name, turn }].slice(-4);
         const n = worn.length;
         if (n >= 3 && worn[n - 1].name === worn[n - 3].name && worn[n - 2].name !== worn[n - 1].name) {
-          flip = { kind: "equip_flip", tactic: "wear", detail: `wore ${worn[n - 1].name}, then ${worn[n - 2].name}, then ${worn[n - 1].name} again` };
+          flip = { kind: "equip_flip", tactic: "wear", detail: `wore ${worn[n - 1].name}, then ${worn[n - 2].name}, then ${worn[n - 1].name} again`, why: "it keeps swapping the same gear back" };
         }
         return;
       }
@@ -6333,21 +6444,23 @@ function createLoopGuard() {
       if (cmd.code === "shop-buy") {
         const name = stockName(view, args["index"]);
         if (name === null) return;
-        if (sold.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `bought back ${name} after selling it on this town visit` };
+        if (sold.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `bought back ${name} after selling it on this town visit`, why: "it undid its own trade" };
         bought.add(name);
       } else {
         const name = itemName(view, args["handle"]);
         if (name === null) return;
-        if (bought.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `sold ${name} after buying it on this town visit` };
+        if (bought.has(name)) flip = { kind: "store_flip", tactic: "shop", detail: `sold ${name} after buying it on this town visit`, why: "it undid its own trade" };
         sold.add(name);
       }
     },
     /** The loop the recent decisions show, if any. */
     detect(view) {
       if (flip !== null) return flip;
+      const refused = failedSequence(view.turn());
+      if (refused !== null) return refused;
       const last = entries.slice(-REPEAT_RUN);
       if (last.length === REPEAT_RUN && !STILL_GOALS.has(last[0].goal) && last.every((e) => e.goal === last[0].goal && e.state === last[0].state)) {
-        return { kind: "repeat", tactic: last[0].goal, detail: `${last[0].goal} chosen ${String(REPEAT_RUN)} times in a row with nothing changing` };
+        return { kind: "repeat", tactic: last[0].goal, detail: `${last[0].goal} chosen ${String(REPEAT_RUN)} times in a row with nothing changing`, why: "nothing changed after it" };
       }
       const depth2 = view.player().depth;
       const recent = entries.slice(-CYCLE_WINDOW);
@@ -6360,28 +6473,164 @@ function createLoopGuard() {
           if (recent[i].grid !== recent[i - 1].grid && recent.slice(0, i - 1).some((e) => e.grid === recent[i].grid)) revisits += 1;
         }
         if (grids.size <= CYCLE_MAX_GRIDS && grids.size > 1 && moves >= CYCLE_MIN_MOVES && revisits > 0) {
-          return { kind: "cycle", tactic: tacticOf(view), detail: `walked back and forth between ${String(grids.size)} squares over the last ${String(CYCLE_WINDOW)} decisions` };
+          return { kind: "cycle", tactic: tacticOf(view), detail: `walked back and forth between ${String(grids.size)} squares over the last ${String(CYCLE_WINDOW)} decisions`, why: "it only walked back and forth" };
         }
       }
+      const twitch = twitching(view);
+      if (twitch !== null) return twitch;
       const window2 = entries.slice(-FLIP_WINDOW);
       const depths = new Set(window2.map((e) => e.depth));
       let changes = 0;
       for (let i = 1; i < window2.length; i++) if (window2[i].depth !== window2[i - 1].depth) changes += 1;
       if (window2.length === FLIP_WINDOW && depths.size === 2 && changes >= FLIP_MIN_CHANGES) {
         const [a, b] = [...depths].sort((x, y) => x - y);
-        return { kind: "level_flip", tactic: tacticOf(view), detail: `went back and forth between levels ${String(a)} and ${String(b)} ${String(changes)} times` };
+        return { kind: "level_flip", tactic: tacticOf(view), detail: `went back and forth between levels ${String(a)} and ${String(b)} ${String(changes)} times`, why: "it only went back and forth between the two levels" };
       }
-      return null;
+      return revisiting(view);
     },
     /** Starts over after a loop has been handled, so the same history is not reported twice. */
     reset() {
       entries = [];
       worn = [];
       flip = null;
+      failures = [];
       sold = /* @__PURE__ */ new Set();
       bought = /* @__PURE__ */ new Set();
     }
   };
+}
+
+// src/brain/geometry.ts
+var HAZARD_REACH = 5;
+var COMPASS = [
+  { dx: 0, dy: -1, name: "north" },
+  { dx: 1, dy: -1, name: "north-east" },
+  { dx: 1, dy: 0, name: "east" },
+  { dx: 1, dy: 1, name: "south-east" },
+  { dx: 0, dy: 1, name: "south" },
+  { dx: -1, dy: 1, name: "south-west" },
+  { dx: -1, dy: 0, name: "west" },
+  { dx: -1, dy: -1, name: "north-west" }
+];
+function compass(from, to) {
+  const dx = Math.sign(to.x - from.x);
+  const dy = Math.sign(to.y - from.y);
+  return COMPASS.find((c) => c.dx === dx && c.dy === dy)?.name ?? "here";
+}
+function isHazard(view, terrain, at) {
+  const cell2 = view.cell(at.x, at.y);
+  return cell2 !== null && cell2.known && (terrain.isHarmful(cell2.feat) || cell2.trap);
+}
+function neighbourKind(view, terrain, at) {
+  const cell2 = view.cell(at.x, at.y);
+  if (cell2 === null) return "wall";
+  if (!cell2.known) return "unknown";
+  if (view.monsters().some((m) => m.visible && key(m.grid) === key(at))) return "creature";
+  if (isHazard(view, terrain, at)) return "hazard";
+  if (isClosedDoor(view, terrain, at)) return "door";
+  return cell2.passable ? "floor" : "wall";
+}
+function neighbourLine(view, terrain) {
+  const at = view.player().grid;
+  const parts = COMPASS.map((c) => {
+    const grid = { x: at.x + c.dx, y: at.y + c.dy };
+    const kind = neighbourKind(view, terrain, grid);
+    const who = kind === "creature" ? view.monsters().find((m) => m.visible && key(m.grid) === key(grid))?.race : void 0;
+    const cell2 = view.cell(grid.x, grid.y);
+    const what = kind === "hazard" ? cell2 !== null && terrain.isHarmful(cell2.feat) ? "hazard (burning ground)" : "hazard (a trap)" : kind;
+    return `${c.name} ${what}${who === void 0 ? "" : ` (${who})`}`;
+  });
+  return `Next to the character: ${parts.join(", ")}.`;
+}
+function seenBy(view, watchers) {
+  const from = view.player().grid;
+  return watchers.some((m) => inLineOfFire(view, m.grid, from));
+}
+function sightBreaks(view, terrain, watchers, cost, hp, reach) {
+  const from = view.player().grid;
+  if (!seenBy(view, watchers)) return [];
+  const hidden = (at) => watchers.every((m) => !inLineOfFire(view, m.grid, at));
+  const best = /* @__PURE__ */ new Map();
+  const queue = [{ at: from, route: [], damage: 0, status: 0 }];
+  for (let head = 0; head < queue.length; head += 1) {
+    const here = queue[head];
+    if (here.route.length >= reach) continue;
+    for (const next of neighbours(here.at)) {
+      if (key(next) === key(from) || !isWalkable(view, terrain, next) || isClosedDoor(view, terrain, next) || isHazard(view, terrain, next)) continue;
+      const step = cost(next, 1);
+      const damage = here.damage + step.damage;
+      if (damage >= hp) continue;
+      const prev = best.get(key(next));
+      if (prev !== void 0 && (prev.route.length < here.route.length + 1 || prev.damage <= damage)) continue;
+      const entry = { at: next, route: [...here.route, next], damage, status: here.status + step.status };
+      best.set(key(next), entry);
+      queue.push(entry);
+    }
+  }
+  return [...best.values()].filter((b) => hidden(b.at)).sort((a, b) => a.route.length - b.route.length || a.damage - b.damage);
+}
+function sightBreakLine(view, breaks, watching) {
+  if (!watching) return "Line of sight: no awake creature in view can see the character.";
+  if (breaks.length === 0) return "Line of sight: no square within two steps is hidden from the awake creatures in view.";
+  const from = view.player().grid;
+  const listed = breaks.slice(0, 3).map((b) => `${stepsText(b.route.length)} ${compass(from, b.at)}, ${turnsText(b.route.length)}`);
+  return `Line of sight breaks from every awake creature in view: ${listed.join("; ")}.`;
+}
+function walkSteps(view, terrain, goals) {
+  if (goals.length === 0) return null;
+  const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) });
+  const distance = field.distance(view.player().grid);
+  return Number.isFinite(distance) ? distance : null;
+}
+function stairLine(view, terrain) {
+  if (view.player().depth === 0) return "Stairs: this is the town; its only staircase leads down into the dungeon.";
+  const stairs = knownStairs(view, terrain);
+  const part = (name, kind) => {
+    const a = name === "up" ? "an" : "a";
+    const goals = stairs.filter((at) => kind(view.cell(at.x, at.y).feat));
+    if (goals.length === 0) return `no ${name} staircase is known`;
+    const walk = walkSteps(view, terrain, goals);
+    if (walk === null) return `${a} ${name} staircase is known but no remembered ground leads to it`;
+    return walk === 0 ? `${a} ${name} staircase is underfoot, ${turnsText(1)} to take` : `the nearest ${name} staircase is ${stepsText(walk)} away, ${turnsText(walk + 1)} to reach and take`;
+  };
+  return `Stairs: ${part("up", (feat) => terrain.isUpStair(feat))}; ${part("down", (feat) => terrain.isDownStair(feat))}.`;
+}
+function chokeLine(view, spots, standingIn) {
+  const from = view.player().grid;
+  const here = standingIn ? "The character stands in a choke point now. " : "";
+  if (spots.length === 0) return `${here}Choke points: none within a few steps along a checked route.`;
+  const listed = [...spots].sort((a, b) => a.steps - b.steps).slice(0, 3).map((s) => `${stepsText(s.steps)} ${compass(from, s.at)} (${s.door ? "a doorway" : s.walls >= 3 ? "a dead end" : "a corridor"}), ${turnsText(s.steps)}`);
+  return `${here}Choke points: ${listed.join("; ")}.`;
+}
+function hazardsNear(view, terrain, reach = HAZARD_REACH) {
+  const from = view.player().grid;
+  const seen = /* @__PURE__ */ new Map([[key(from), 0]]);
+  const queue = [from];
+  const out = [];
+  for (let head = 0; head < queue.length; head += 1) {
+    const here = queue[head];
+    const d = seen.get(key(here));
+    if (d >= reach) continue;
+    for (const next of neighbours(here)) {
+      if (seen.has(key(next))) continue;
+      if (isHazard(view, terrain, next)) {
+        seen.set(key(next), d + 1);
+        const cell2 = view.cell(next.x, next.y);
+        out.push({ at: next, kind: terrain.isHarmful(cell2.feat) ? "burning ground" : "trap", steps: d + 1 });
+        continue;
+      }
+      if (!isRoutable(view, terrain, next)) continue;
+      seen.set(key(next), d + 1);
+      queue.push(next);
+    }
+  }
+  return out;
+}
+function hazardLine(view, hazards, reach = HAZARD_REACH) {
+  if (hazards.length === 0) return `Hazards: none known within ${String(reach)} steps.`;
+  const from = view.player().grid;
+  const listed = [...hazards].sort((a, b) => a.steps - b.steps).slice(0, 4).map((h2) => `${h2.kind} ${stepsText(h2.steps)} ${compass(from, h2.at)}, ${turnsText(h2.steps)}`);
+  return `Hazards on the way: ${listed.join("; ")}. Squire's routes never cross burning ground, and a walk out of sight steps around traps too.`;
 }
 
 // src/brain/chaos.ts
@@ -6460,7 +6709,8 @@ function chaosEntry(chaos) {
 
 // src/brain/goals.ts
 var NONE_OF_THESE3 = "None of the listed options suits this moment.";
-var RETREAT_STEPS = 4;
+var RETREAT_STEPS = 3;
+var TACTIC_ACTIONS = 3;
 var MISSILE_RANGE = 10;
 function manaBand(sp, maxSp) {
   if (maxSp <= 0) return "none";
@@ -6486,8 +6736,8 @@ var NASTY_CUT = 50;
 var STATIONARY_DECISIONS = 3;
 var SWARM_LEAVE = 4;
 var SWARM_LEAVE_DREADED = 3;
-var QUESTION_PACK_VERSION = 1;
-var GOAL_POLICY_VERSION = 1;
+var QUESTION_PACK_VERSION = 2;
+var GOAL_POLICY_VERSION = 2;
 function answerKeyOf(model, hash) {
   return `${model ?? "unknown model"}|questions ${String(QUESTION_PACK_VERSION)}|${hash}|policy ${String(GOAL_POLICY_VERSION)}`;
 }
@@ -6498,18 +6748,19 @@ var ROUTINE = ["wear", "detect", "study", "rest", "wait"];
 function waitCompetes(offers) {
   return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
 }
-var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "teleport", "retreat", "leave_level", "take_position", "quaff_unknown", "read_unknown"]);
-var TAKE_POSITION_REACH = 4;
+var SURVIVAL_GOALS = /* @__PURE__ */ new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat", "leave_level", "take_position", "quaff_unknown", "read_unknown"]);
+var TAKE_POSITION_REACH = 3;
+var SIGHT_BREAK_REACH = 2;
 var TAKE_POSITION_MIN_WALLS = 2;
 var TAKE_POSITION_GROUP_SIZE = 2;
-var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "read_unknown"]);
+var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown"]);
 var REFUSAL_HOLD_TURNS = 200;
 var SAME_TURN_PLANS = 3;
 var HANDBOOK = Object.freeze([
   "Killing creatures earns experience, and experience makes the character stronger.",
   "Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on.",
   "Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage.",
-  "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, and Teleport Level leaves the level.",
+  "Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time.",
   "Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character.",
   "A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive.",
   "Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind.",
@@ -6774,7 +7025,7 @@ function retreatStep(s, terrain, flight) {
   const field = flowFrom({ goals: threats, canEnter: (grid) => isRoutable(s.view, terrain, grid) || threats.some((t) => key(t) === key(grid)) });
   const current2 = damageFor(s).damage;
   const safe = (grid) => {
-    if (!isWalkable(s.view, terrain, grid)) return false;
+    if (!isWalkable(s.view, terrain, grid) || s.view.cell(grid.x, grid.y)?.trap === true) return false;
     const damage = isClosedDoor(s.view, terrain, grid) ? Math.max(damageFor(s, at, 1, terrain, grid).damage, damageFor(s, grid, 2, terrain, grid).damage) : damageFor(s, grid, 1, terrain).damage;
     return damage < s.view.player().hp && (current2 === 0 || damage <= current2 * (s.view.player().level < 35 ? 0.8 : 0.6));
   };
@@ -6853,6 +7104,34 @@ function pinned(s) {
 function immediateDanger(s) {
   const incoming = damageFor(s);
   return incoming.damage > 0 || incoming.status > 0;
+}
+function geometryText(s, terrain) {
+  const view = s.view;
+  const player = view.player();
+  const watching = seenBy(view, s.awake);
+  const breaks = player.status.confused > 0 ? [] : sightBreaks(view, terrain, s.awake, (grid, actions) => damageFor(s, grid, actions, terrain), player.hp, SIGHT_BREAK_REACH);
+  return [
+    neighbourLine(view, terrain),
+    sightBreakLine(view, breaks, watching),
+    stairLine(view, terrain),
+    chokeLine(view, chokeSpots(s, terrain), isChokeSquare(s, terrain, player.grid)),
+    hazardLine(view, hazardsNear(view, terrain))
+  ].join(" ");
+}
+function isStairGrid(view, terrain, at) {
+  const cell2 = view.cell(at.x, at.y);
+  return cell2 !== null && cell2.known && (terrain.isUpStair(cell2.feat) || terrain.isDownStair(cell2.feat));
+}
+function sightBreakOffer(s, terrain, melee) {
+  const player = s.view.player();
+  if (s.awake.length === 0 || player.status.confused > 0 || player.status.blind > 0 || pinned(s)) return null;
+  const breaks = sightBreaks(s.view, terrain, s.awake, (grid, actions) => damageFor(s, grid, actions, terrain), player.hp, SIGHT_BREAK_REACH);
+  const best = breaks[0];
+  if (best === void 0) return null;
+  const unique = s.target !== null && !s.target.asleep && s.target.raceFlags.includes("UNIQUE") && (melee === void 0 || !killsQuickly(s.target, melee)) ? s.target : null;
+  const walk = `${stepsText(best.route.length)} ${compass(player.grid, best.at)}`;
+  const criteria = unique !== null ? `Hit and run against ${unique.race}: walk ${walk} to a square it cannot see, wait one turn there, and strike as it comes round the corner. Out of its sight it cannot cast at the character or shoot it.` : `Walk ${walk} to a square none of the awake creatures in view can see. Out of sight they cannot cast at the character or shoot it; one that walks may still follow.`;
+  return { route: best, hitAndRun: unique !== null, criteria };
 }
 function stairsUnderfoot(s, terrain) {
   const player = s.view.player();
@@ -7084,18 +7363,55 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
   if (nearDeath || s.unseenDamage > 0 || meleeDanger || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
-    if (s.pack.phase[0] !== void 0 || s.pack.escapeSpell[0] !== void 0) {
-      const how2 = s.pack.phase[0]?.name ?? s.pack.escapeSpell[0]?.name ?? "";
-      const short2 = s.pack.phase[0] !== void 0 || /^(Phase Door|Blink|Shadow Shift)$/i.test(how2);
-      add2("phase", `Use ${how2}: a ${short2 ? "short" : "long"} random teleport that breaks contact${short2 ? " for a moment" : ""}.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
-      const spell = s.pack.escapeSpell[0];
-      tag("phase", short2 ? 0.6 : 0.9, s.pack.phase[0] !== void 0 ? itemSpend(view, s.pack.phase[0].handle) : spell === void 0 ? {} : manaSpend(spell.mana, player.sp));
+    const scroll = s.pack.phase[0];
+    if (scroll !== void 0) {
+      add2("phase", `Read ${scroll.name}: a short random teleport that breaks contact for a moment.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
+      tag("phase", 0.6, itemSpend(view, scroll.handle));
     }
-    if (s.pack.teleport[0] !== void 0) {
-      const teleport = s.pack.teleport[0];
-      const leaves = /Teleport Level/i.test(teleport.name);
-      add2("teleport", leaves ? `Use ${teleport.name} to leave this level entirely, going one level up or down.` : `Use ${teleport.name} to escape far from every creature in sight.`, Math.max(0.05, exposure(s) * (leaves ? 0.3 : 0.2)), false, player.hp, !leaves || /Staff/i.test(teleport.name));
-      tag("teleport", leaves ? 1 : 0.9, /Staff/i.test(teleport.name) ? { cost: 0.5, costNote: "a staff charge" } : itemSpend(view, teleport.handle, 1.5));
+    const spell = s.pack.escapeSpell[0];
+    if (spell !== void 0) {
+      const info = view.spellInfo?.(spell.sidx);
+      const fail = Math.round(info?.failChance ?? spell.fail);
+      const mana = info?.mana ?? spell.mana;
+      const short2 = /^(Phase Door|Blink|Shadow Shift)$/i.test(spell.name);
+      add2("cast_escape", `Cast ${spell.name}: a ${short2 ? "short" : "long"} random teleport that breaks contact${short2 ? " for a moment" : ""}. It costs ${String(mana)} of the ${String(player.sp)} mana left (${shareBand(mana, player.sp)} of it)${fail > 0 ? `, with a ${failText(fail)}; a failed cast leaves the character where it stands for another turn` : ", and it never fails"}.`, Math.max(0.1, exposure(s) * 0.4) + fail / 100 * exposure(s), false, fail === 0 ? player.hp : player.hp - incoming.damage, true);
+      tag("cast_escape", short2 ? 0.6 : 0.9, manaSpend(mana, player.sp));
+    }
+    const teleport = s.pack.teleport.find((item) => !/Teleport Level/i.test(item.name));
+    if (teleport !== void 0) {
+      const staff = /Staff/i.test(teleport.name);
+      const fail = staff ? deviceFail(view, teleport) : 0;
+      const chance = fail === null ? "" : fail > 0 ? ` The staff has a ${failText(fail)}; a failed use leaves the character where it stands.` : "";
+      add2("teleport", `Use ${teleport.name} to escape far from every creature in sight.${staff && fail === null ? " The staff's chance to work is not known yet." : chance}`, Math.max(0.05, exposure(s) * 0.2) + (fail ?? 0) / 100 * exposure(s), false, fail === 0 ? player.hp : player.hp - incoming.damage, true);
+      tag("teleport", 0.9, staff ? { cost: 0.5, costNote: "a staff charge" } : itemSpend(view, teleport.handle, 1.5));
+    }
+    const level = s.pack.teleport.find((item) => /Teleport Level/i.test(item.name));
+    if (level !== void 0 && player.depth > 0) {
+      add2("teleport_level", `Read ${level.name} to leave this level at once, going one level up or down; every creature here is left behind.`, Math.max(0.05, exposure(s) * 0.3), false, player.hp, true);
+      tag("teleport_level", 0.9, itemSpend(view, level.handle, 1.5));
+    }
+    const other = s.pack.teleportOther[0];
+    const sent = s.target;
+    if (other !== void 0 && sent !== null && !sent.asleep && sent.visible && player.status.confused === 0 && player.status.blind === 0 && within(s, MISSILE_RANGE) && clearShot(view, sent)) {
+      const fail = deviceFail(view, other);
+      const scrollOf = /\bScrolls?\b/i.test(other.name);
+      const rest = damageFor({ ...s, threats: s.threats.filter((m) => m.id !== sent.id) }, at, 1, terrain).damage;
+      const named3 = sent.raceFlags.includes("UNIQUE") ? sent.race : `the ${sent.race}`;
+      const chance = fail === null ? " The device's chance to work is not known yet." : fail > 0 ? ` It has a ${failText(fail)}; a failed use leaves ${named3} where it is.` : "";
+      const only = s.awake.every((m) => m.id === sent.id);
+      add2("teleport_other", `${scrollOf ? "Read" : /\bRods?\b/i.test(other.name) ? "Zap" : "Aim"} ${other.name} at ${named3} to send it far away across the level${only ? "; it is the only awake creature in sight" : `; ${String(s.awake.length - 1)} other awake creature${s.awake.length === 2 ? "" : "s"} stay`}.${chance}`, Math.max(0.05, exposure(s) * (0.2 + (fail ?? 25) / 100)), false, fail === 0 ? player.hp - rest : player.hp - incoming.damage, fail !== 0);
+      tag("teleport_other", only ? 0.9 : 0.5, scrollOf ? itemSpend(view, other.handle, 1.5) : /\bRods?\b/i.test(other.name) ? { cost: 0.3, costNote: "a rod charge, which recharges" } : { cost: 0.5, costNote: "a wand charge" });
+    }
+    const hide = sightBreakOffer(s, terrain, melee);
+    if (hide !== null) {
+      add2("break_sight", hide.criteria, damageRisk(hide.route.damage, player.hp), false, player.hp - hide.route.damage, true);
+      tag("break_sight", hide.hitAndRun ? 0.7 : 0.5, FREE);
+    }
+    if (exit !== null && player.depth > 0 && (key(exit.at) === key(at) || isStairGrid(view, terrain, exit.at))) {
+      const criteria = key(exit.at) === key(at) ? "Take the staircase underfoot now to leave the creatures behind." : "Step onto the staircase next to the character and take it, leaving the creatures on this level behind.";
+      const i = out.findIndex((o) => o.goal === "leave_level");
+      if (i >= 0) out[i] = { ...out[i], criteria };
+      else addLeave(criteria, 0.01);
     }
     if (!immediateDanger(s) && s.pack.descent[0] !== void 0) {
       add2("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns (${turnsBand(7)} at most). It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
@@ -7103,7 +7419,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     }
     const flight = retreatStairs(s, terrain, widen);
     const retreat = retreatStep(s, terrain, flight);
-    if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add2("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to four steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to four steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to four steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
+    if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add2("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
   if (!bleeding && s.awake.length === 0 && recovery && (hurt2 || player.sp < player.maxSp)) {
@@ -7393,13 +7709,20 @@ function createGoalPlanner(options) {
     lastOutcome = text;
     outcomeVersion += 1;
   }
+  function nearDistance(goal, view) {
+    const near = options.strategy?.().nearKind ?? null;
+    const goals = near === "explore" || near === null && goal === "explore" ? frontiers(view, terrain) : near === "down" || near === null && goal === "descend" ? knownDownStairs(view, terrain) : near === "leave" || near === null && (goal === "leave_level" || goal === "retreat") ? knownStairs(view, terrain) : null;
+    if (goals === null || goals.length === 0) return null;
+    const distance = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) }).distance(view.player().grid);
+    return Number.isFinite(distance) ? distance : null;
+  }
   function noteStalls(goal, plan, view) {
     const turn = view.turn();
     const route = plan.travel;
     const travel = route === void 0 ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
     plan = journey.guarded(goal, plan);
     const chosenOn = gearOf(view);
-    if (goal !== null) loops.chose(goal, view);
+    if (goal !== null) loops.chose(goal, view, nearDistance(goal, view));
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -7408,6 +7731,7 @@ function createGoalPlanner(options) {
       sameTurn.set(goal, (sameTurn.get(goal) ?? 0) + 1);
     }
     let issued = 0;
+    const codes = [];
     let startTurn = null;
     let credited = false;
     let lastSingle = null;
@@ -7438,6 +7762,7 @@ function createGoalPlanner(options) {
       }
       if (command !== null) {
         issued += 1;
+        codes.push(command.code);
         loops.command(command, v);
         expected = expectationOf(command, v);
         danger = DANGER_CODES.has(command.code) || v.monsters().some((m) => m.visible && !harmlessNow(v, m)) ? dangerMark(command, v) : null;
@@ -7446,6 +7771,7 @@ function createGoalPlanner(options) {
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
           const why = refusalOf(goal, v);
+          loops.failed(goal, codes, `the game refused it${why === null ? "" : ` ${why}`}`, v);
           noteOutcome(`${plan.label}: the game refused it${why === null ? "" : ` ${why}`}, and no game time passed.`);
         } else {
           noteOutcome(`${plan.label}: nothing happened and no game time passed.`);
@@ -7460,6 +7786,11 @@ function createGoalPlanner(options) {
       return Math.floor((v.turn() - lastSingle.turn) / turnsPerAction(v.player().speed, options.speedEnergy)) - 1;
     };
     const mismatch = (v) => {
+      const found = mismatchOf(v);
+      if (found !== null && goal !== null) loops.failed(goal, codes, found.replace(/(?:, and no game time passed)?\.$/, ""), v);
+      return found;
+    };
+    const mismatchOf = (v) => {
       const was = expected;
       expected = null;
       if (was === null) return null;
@@ -7833,18 +8164,47 @@ function createGoalPlanner(options) {
       }
       case "phase": {
         const scroll = pack.phase[0];
+        return once("phase away", view, (ctx) => scroll === void 0 ? null : ctx.act.read(scroll.handle));
+      }
+      case "cast_escape": {
         const spell = pack.escapeSpell[0];
-        return once("phase away", view, (ctx) => {
-          if (scroll !== void 0) return ctx.act.read(scroll.handle);
-          if (spell !== void 0) return ctx.act.cast(spell.sidx);
-          return null;
-        });
+        return once(`cast ${spell?.name ?? "an escape"}`, view, (ctx) => spell === void 0 ? null : ctx.act.cast(spell.sidx));
       }
       case "teleport": {
-        const item = pack.teleport[0];
+        const item = pack.teleport.find((entry) => !/Teleport Level/i.test(entry.name));
         return once("teleport away", view, (ctx) => {
           if (item === void 0) return null;
           return /Staff/i.test(item.name) ? ctx.act.useStaff(item.handle) : ctx.act.read(item.handle);
+        });
+      }
+      case "teleport_level": {
+        const item = pack.teleport.find((entry) => /Teleport Level/i.test(entry.name));
+        return once("read Teleport Level", view, (ctx) => item === void 0 ? null : ctx.act.read(item.handle));
+      }
+      case "teleport_other": {
+        const item = pack.teleportOther[0];
+        return atTarget(`send the creature away with ${item?.name ?? "Teleport Other"}`, view, (ctx) => {
+          if (item === void 0) return null;
+          if (/\bScrolls?\b/i.test(item.name)) return ctx.act.read(item.handle);
+          return /\bRods?\b/i.test(item.name) ? ctx.act.zapRod(item.handle) : ctx.act.aimWand(item.handle);
+        });
+      }
+      case "break_sight": {
+        const offer = sightBreakOffer(situationNow(view), terrain, combatOptions(situationNow(view), "fight")[0]);
+        if (offer === null) return once("no square out of sight", view, () => null);
+        const route = offer.route.route;
+        return stepsPlan(offer.hitAndRun ? "break sight, then strike" : "break line of sight", view, (ctx, i) => {
+          if (i >= TACTIC_ACTIONS) return null;
+          const here = ctx.view.player().grid;
+          if (i >= route.length) {
+            const s = situationNow(ctx.view);
+            const adjacent2 = s.awake.some((m) => steps(m.grid, here) <= 1);
+            return offer.hitAndRun && i === route.length && !adjacent2 ? ctx.act.hold() : null;
+          }
+          const next = route[i];
+          if (steps(here, next) !== 1 || !isWalkable(ctx.view, terrain, next) || isClosedDoor(ctx.view, terrain, next)) return null;
+          const dir = directionToward(here, next);
+          return dir === null ? null : ctx.act.move(dir);
         });
       }
       case "deep_descent": {
@@ -8023,7 +8383,8 @@ function createGoalPlanner(options) {
         let route = null;
         let waited = false;
         let started = false;
-        return stepsPlan("step to a defensible square", view, (ctx) => {
+        return stepsPlan("step to a defensible square", view, (ctx, i) => {
+          if (i >= TACTIC_ACTIONS) return null;
           const s = situationNow(ctx.view);
           const at = ctx.view.player().grid;
           if (isChokeSquare(s, terrain, at)) {
@@ -8105,7 +8466,7 @@ function createGoalPlanner(options) {
     const blank = { best: best.probabilities, inCharacter: null, blended: best.probabilities, strength: 0, removed: [] };
     if (mustPickUp(persona) && offered.has("pick_up") && (allowed === null || allowed.has("pick_up"))) return record6("pick_up", { ...blank, quirk: "compulsive collector" });
     if (fleesFromNew(persona) && digest.newCreatures > 0) {
-      const away = ["teleport", "phase", "retreat"].find((g) => offered.has(g));
+      const away = ["teleport", "teleport_level", "teleport_other", "cast_escape", "phase", "break_sight", "retreat"].find((g) => offered.has(g));
       if (away !== void 0) return record6(away, { ...blank, quirk: "craven" });
     }
     const inChar = inCharacter?.type === "choice" ? within2(held2 ? withoutDescent(inCharacter.probabilities) : inCharacter.probabilities) : null;
@@ -8190,7 +8551,7 @@ function createGoalPlanner(options) {
       for (const offer2 of digest.offers) {
         if (["swing_unseen", "cast_area", "unseen_wand"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * (1 + bold * 4);
         if (["detect", "see_invisible", "light_room", "unseen_staff", "unseen_rod"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * (1 + (1 - bold) * 4);
-        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "teleport"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * 16;
+        if (persona.quirks.cowardice.on && ["leave_level", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"].includes(offer2.goal)) probabilities[offer2.goal] = (probabilities[offer2.goal] ?? 0) * 16;
       }
     }
     const answer = { type: "choice", choice: preferred ?? digest.offers[0]?.goal ?? "wait", confidence: 1, probabilities };
@@ -8392,12 +8753,13 @@ function createGoalPlanner(options) {
         ["memory", "creatures", creatures],
         ["memory", "incoming", `Up to ${String(one.damage)} HP damage in one action (${hpShare(one.damage, player.hp)}) and ${String(two.damage)} in two (${hpShare(two.damage, player.hp)}). Status danger ${String(one.status)} (${statusDangerBand(one.status)}); uncertainty ${String(one.uncertainty)} HP (${hpShare(one.uncertainty, player.hp)}). These are conservative bounds, not death probabilities.`],
         ["memory", "ground", standingOnHarm(view, terrain, player.grid) ? "The ground here is hurting the character." : "Safe ground."],
-        ["memory", "level", `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
+        /* A tactical question gets the ground within a few steps instead of the level as a whole; code turns the pick into the steps. */
+        ["memory", engaged ? "geometry" : "level", engaged ? geometryText(s, terrain) : `${unexplored ? "Unexplored ground remains." : "The level is explored."} ${stairs ? "A down staircase is known." : "No down staircase is known."}`],
         ["memory", "status", statusOf(view, canRead(view))],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : void 0],
         ...entriesOf("memory", swarmNote(seen)),
         ["outcomes", "last", lastOutcome ?? void 0],
-        ["outcomes", "loop", loop === null ? void 0 : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here; pick something else unless nothing else can help.`}`],
+        ["outcomes", "loop", loop === null ? void 0 : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here: ${loop.why}; pick something else unless nothing else can help.`}`],
         ["outcomes", "recent", textOf(ended[0])],
         ["outcomes", "prior", textOf(ended[1])],
         ["outcomes", "older", textOf(ended[2])],
@@ -8472,10 +8834,14 @@ function createGoalPlanner(options) {
           const priority2 = [
             ...stairsUnderfoot(s, terrain) ? ["leave_level", "retreat"] : [],
             "teleport",
+            "teleport_level",
+            "teleport_other",
+            "cast_escape",
             "phase",
             "heal",
             "device",
             "cast_heal",
+            "break_sight",
             "quaff_unknown",
             "read_unknown",
             ...!immediateDanger(s) ? ["recall_town", "deep_descent", "leave_level"] : [],
@@ -9865,7 +10231,7 @@ function goalsOf(sorted) {
   const serves = /* @__PURE__ */ new Set();
   const breaks = new Set(sorted.avoids);
   const attacks = ["fight", "shoot", "cast_attack", "throw_oil", "aim_wand"];
-  const escapes = ["retreat", "phase", "teleport"];
+  const escapes = ["retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"];
   switch (sorted.response) {
     case "flee":
       escapes.forEach((g) => serves.add(g));
@@ -10124,7 +10490,10 @@ var AVOID_WORDS = [
   [/\b(shoot|fire)\b/i, "shoot"],
   [/\b(descend|dive|stairs down|go deeper)\b/i, "descend"],
   [/\brest/i, "rest"],
-  [/\b(phase|teleport)\b/i, "phase"],
+  [/\bphase\b/i, "phase"],
+  [/\b(phase|teleport\w*)\b/i, "cast_escape"],
+  [/\bteleport\w*\b/i, "teleport"],
+  [/\bteleport\w*\b/i, "teleport_level"],
   [/\b(shop|buy)/i, "shop"]
 ];
 function wordsOf(text) {
@@ -12441,7 +12810,7 @@ function emptyJournal() {
 var BIG_HIT_SHARE = 0.25;
 var ESCAPE_WINDOW = 50;
 var DISABLING = ["paralyzed", "confused", "blind", "afraid"];
-var ESCAPES2 = /* @__PURE__ */ new Set(["phase", "teleport", "retreat"]);
+var ESCAPES2 = /* @__PURE__ */ new Set(["phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat"]);
 var ATTACKS2 = /* @__PURE__ */ new Set(["shoot", "throw_oil", "aim_wand", "cast_attack", "fight"]);
 var ABILITY_WORDS = [
   [/\bbreathes\b/i, "breath"],
@@ -12639,7 +13008,7 @@ function createJournal(initial, deps) {
       if (record_.persona !== void 0 && record_.persona.best !== record_.persona.blended) {
         runLog.record({ kind: "divergence", turn: record_.turn, depth: view.player().depth, text: `${record_.persona.blended} instead of ${record_.persona.best}` });
       }
-      if (["phase", "teleport", "retreat"].includes(record_.choice)) drift("fled");
+      if (ESCAPES2.has(record_.choice)) drift("fled");
     },
     lessonLines(view) {
       const persona = deps.persona();
@@ -15165,7 +15534,11 @@ function commandEvidence(command, goal, view) {
       break;
     case "retreat":
     case "phase":
+    case "cast_escape":
     case "teleport":
+    case "teleport_level":
+    case "teleport_other":
+    case "break_sight":
       kind = "retreat";
       break;
     case "rest":

@@ -270,7 +270,7 @@ export function sameRace(race: string, target: string): boolean {
 }
 
 const ATTACKS: ReadonlySet<string> = new Set(["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"]);
-const ESCAPES: ReadonlySet<string> = new Set(["phase", "teleport", "retreat", "leave_level", "heal", "cast_heal"]);
+const ESCAPES: ReadonlySet<string> = new Set(["phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat", "leave_level", "heal", "cast_heal"]);
 
 /** The most one goal can raise an option's weight, as a fraction, at goal weight 1. */
 export const PURSUIT_NUDGE = 0.6;
