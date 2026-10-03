@@ -94,6 +94,30 @@ describe("mightBeSpecial", () => {
 });
 
 describe("wider selling", () => {
+  it("sells one of four curing rods and keeps three", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 85;
+    const w = world({ map: ["@"], pack: ["a Rod of Curing", "a Rod of Curing", "a Rod of Curing", "a Rod of Curing"] });
+    const list = sellList(readPack(w.view), w.view, persona);
+    expect(list).toMatchObject([{ handle: 4, quantity: 1, tval: 24 }]);
+  });
+
+  it("sells one of four healing rods and keeps three", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 85;
+    const w = world({ map: ["@"], pack: ["a Rod of Healing", "a Rod of Healing", "a Rod of Healing", "a Rod of Healing"] });
+    const list = sellList(readPack(w.view), w.view, persona);
+    expect(list).toMatchObject([{ handle: 4, quantity: 1, tval: 24 }]);
+  });
+
+  it("sells one of two rods of treasure location and keeps one", () => {
+    const persona = defaultPersona();
+    persona.sliders.selling = 85;
+    const w = world({ map: ["@"], pack: ["a Rod of Treasure Location", "a Rod of Treasure Location"] });
+    const list = sellList(readPack(w.view), w.view, persona);
+    expect(list).toMatchObject([{ handle: 2, quantity: 1, tval: 24 }]);
+  });
+
   it("sells a duplicate device but keeps the only one of its kind and the best attack wand", () => {
     const persona = defaultPersona();
     persona.sliders.selling = 85;

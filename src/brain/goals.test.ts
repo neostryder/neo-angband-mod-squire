@@ -2190,3 +2190,46 @@ describe("defensible positions", () => {
     for (const cell of visited) expect(Math.max(Math.abs(cell.x - 2), Math.abs(cell.y - 6))).toBeGreaterThan(1);
   });
 });
+
+describe("take_position offer and the rules-only choice", () => {
+  /* A room with a one-square dead end two steps from the character: walls above,
+   * below and right, open to the room on the left. */
+  const GROUP_ROOM = [
+    "##########",
+    "#..#.#...#",
+    "#..@.....#",
+    "#........#",
+    "##########",
+  ];
+  const group = [
+    { grid: { x: 7, y: 2 }, race: "cave orc", level: 10 },
+    { grid: { x: 8, y: 2 }, race: "cave orc", level: 10 },
+  ];
+
+  it("offers the take_position move against a group in the open with a choke one step away", () => {
+    const w = world({ map: GROUP_ROOM, player: { level: 1 }, monsters: group });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).toContain("take_position");
+  });
+
+  it.each(["confused", "afraid", "blind"] as const)("offers no position while %s", (status) => {
+    const w = world({ map: GROUP_ROOM, player: { level: 1, status: { [status]: 5 } } as never, monsters: group });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("offers no position to a character already standing in the choke point", () => {
+    const w = world({ map: GROUP_ROOM, player: { level: 1 }, monsters: group });
+    w.moveTo({ x: 4, y: 1 });
+    const { p } = planner(w);
+    expect(offered(p.ask(w.view))).not.toContain("take_position");
+  });
+
+  it("walks a rules-only character to the choke point rather than fighting in the open", () => {
+    const w = world({ map: GROUP_ROOM, player: { level: 1, hp: 30, maxHp: 30 }, monsters: group });
+    const { p } = planner(w);
+    const q = reflexed(p.rules!(w.view, "own rules"));
+    expect(q.answers["goal"]).toMatchObject({ choice: "take_position" });
+    expect(q.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+});
