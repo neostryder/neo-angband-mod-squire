@@ -217,7 +217,7 @@ function createWatcher(view, options) {
           known.add(monster.id);
           return {
             reason: "creature-appeared",
-            detail: `${monster.race} came into view.`
+            detail: `${monster.race.charAt(0).toUpperCase()}${monster.race.slice(1)} came into view.`
           };
         }
       } else {
@@ -763,7 +763,7 @@ function createSquire(options) {
     log(`errand ended (${stop2.reason}): ${stop2.detail}`);
     status?.(stopText(stop2));
     if (mission?.id !== "campaign") {
-      log("the keyboard is yours again; press any key to take it back from Squire");
+      log("the errand is over; press any key to take the keyboard back from Squire");
     }
     return null;
   }

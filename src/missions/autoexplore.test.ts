@@ -93,7 +93,7 @@ describe("autoexplore", () => {
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "cave spider" }]);
     const stop = stopOf(errand.step());
     expect(stop.reason).toBe("creature-appeared");
-    expect(stop.detail).toContain("cave spider");
+    expect(stop.detail).toContain("Cave spider");
   });
 
   it("stops on the first point of damage, not on the retreat line", () => {

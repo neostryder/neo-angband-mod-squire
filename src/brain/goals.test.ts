@@ -925,7 +925,7 @@ describe("goal planner", () => {
     if (!("plan" in choice)) throw new Error("expected a plan");
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "jackal" }]);
     p.trigger(w.view, choice.plan);
-    expect(String(asked(p.ask(w.view)).request.state["last"])).toContain("jackal came into view");
+    expect(String(asked(p.ask(w.view)).request.state["last"])).toContain("Jackal came into view");
   });
 
   it("folds creatures of one kind into a single line", () => {
@@ -1869,7 +1869,7 @@ describe("harmless creatures", () => {
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
     w.setMonsters([{ grid: { x: 6, y: 1 }, race: "cave spider", level: 2 }]);
-    expect(p.trigger(w.view, choice.plan)).toBe("cave spider came into view.");
+    expect(p.trigger(w.view, choice.plan)).toBe("Cave spider came into view.");
   });
 
   it("does not end a plan for a creature that never strikes", () => {

@@ -128,7 +128,7 @@ describe("volleys", () => {
       { grid: { x: 5, y: 1 }, race: "cave orc" },
       { grid: { x: 6, y: 1 }, race: "cave spider" },
     ]);
-    expect(p.trigger(w.view, choice.plan)).toContain("cave spider");
+    expect(p.trigger(w.view, choice.plan)).toContain("Cave spider");
   });
 
   it("fires one shot when the view cannot report the line of fire", () => {

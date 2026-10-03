@@ -73,7 +73,7 @@
     {
       "flag": "squire.stopOnLowHealth",
       "title": "Stop when I am hurt",
-      "description": "End the errand when hit points fall below half. With this off, an errand runs until its own end condition, and only the long errand's survival step reacts to damage.",
+      "description": "End the errand when hit points reach the retreat line. With this off, Explore this floor still stops on any hit, and the long errand's survival step still reacts to damage.",
       "default": true,
       "requiresReload": true
     },

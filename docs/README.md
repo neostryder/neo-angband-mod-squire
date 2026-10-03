@@ -18,7 +18,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Errand: explore this floor | `squire.errandAutoexplore` | on | Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. |
 | Errand: play on until I take the keyboard back | `squire.errandCampaign` | off | Take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. |
 | Let a model choose what to do | `squire.useModel` | on | When a model is set up in the Squire panel, Squire asks it what to do at each decision and plays on until you take the keyboard back. With no model, Squire chooses from its current fight and travel offers. Switch this off to choose a short errand. |
-| Stop when I am hurt | `squire.stopOnLowHealth` | on | End a short errand when hit points reach the retreat line. |
+| Stop when I am hurt | `squire.stopOnLowHealth` | on | End a short errand when hit points reach the retreat line. With this off, Explore this floor still stops on any hit. |
 | Stop when something new appears | `squire.stopOnNewCreature` | on | End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter. |
 | Retreat line | `squire.retreatPercent` | 50% | The share of maximum hit points at which a short errand ends, from 10% to 90%. |
 | Short errand length | `squire.errandSteps` | 200 | How many decisions a short errand makes before it ends, from 50 to 500. |

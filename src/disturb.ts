@@ -172,7 +172,7 @@ export function createWatcher(view: AgentView, options: WatchOptions): Watcher {
           known.add(monster.id);
           return {
             reason: "creature-appeared",
-            detail: `${monster.race} came into view.`,
+            detail: `${monster.race.charAt(0).toUpperCase()}${monster.race.slice(1)} came into view.`,
           };
         }
       } else {

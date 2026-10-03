@@ -92,7 +92,7 @@ describe("autofight", () => {
     ]);
     const stop = stopOf(errand.step());
     expect(stop.reason).toBe("creature-appeared");
-    expect(stop.detail).toContain("cave orc");
+    expect(stop.detail).toContain("Cave orc");
   });
 
   it("keeps fighting through damage, and stops at the retreat line", () => {

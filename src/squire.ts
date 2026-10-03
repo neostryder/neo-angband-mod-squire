@@ -72,7 +72,7 @@ export function createSquire(options: SquireOptions): Squire {
     log(`errand ended (${stop.reason}): ${stop.detail}`);
     status?.(stopText(stop));
     if (mission?.id !== "campaign") {
-      log("the keyboard is yours again; press any key to take it back from Squire");
+      log("the errand is over; press any key to take the keyboard back from Squire");
     }
     return null;
   }

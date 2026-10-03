@@ -48,7 +48,7 @@ describe("createWatcher", () => {
     w.setMonsters([{ grid: { x: 1, y: 1 }, race: "cave spider" }]);
     const stop = watcher.check(w.view);
     expect(stop?.reason).toBe("creature-appeared");
-    expect(stop?.detail).toContain("cave spider");
+    expect(stop?.detail).toContain("Cave spider");
   });
 
   it("stops only once for the same creature", () => {
