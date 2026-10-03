@@ -32,6 +32,8 @@ export interface Steering {
   readonly midGoal?: string;
   /** One sentence for the near-term goal. */
   readonly nearGoal?: string;
+  /** The kind of the near-term goal, so an option can say whether it serves it. */
+  readonly nearKind?: string;
   /** The last goals that ended, newest first. */
   readonly outcomes?: readonly string[];
 }

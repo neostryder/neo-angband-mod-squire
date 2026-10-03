@@ -4,7 +4,7 @@ import { defaultCfg } from "../settings.js";
 import { createGoalPlanner, type GoalDigest } from "./goals.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
 import type { Question } from "./brain.js";
-import { attackOptions, attackOutcome, escapeMana } from "./combat-kit.js";
+import { attackDescription, attackOptions, attackOutcome, escapeMana } from "./combat-kit.js";
 import { readPack } from "./pack.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
@@ -243,9 +243,13 @@ describe("combat outcomes and escape reserves", () => {
       spells: [{ name: "Magic Missile", sidx: 0, mana: 2 }], monsters: [{ grid: { x: 3, y: 1 }, hp: 12 }],
       inspect: (ref) => ref === 3 ? "Inflicts an average of 20 damage. Your chance of success is 80.0%." : null });
     Object.assign(w.view, { spellInfo: () => ({ description: "Inflicts an average of 15 damage.", mana: 2, failChance: 0, canCastNow: true }) });
-    const offers = asked(planner(w).ask(w.view)).context.offers;
-    for (const kind of ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"]) expect(offers.find((offer) => offer.goal === kind)?.criteria).toContain("damage per action");
-    expect(offers.find((offer) => offer.goal === "aim_wand")?.criteria).toContain("Estimated damage per action is 16");
+    const q = asked(planner(w).ask(w.view));
+    const offers = q.context.offers;
+    /* Beside the creature, a free blow beats the oil and the spell beats the arrows and the wand, so those three are pruned before asking. */
+    expect(q.context.pack?.pruned).toEqual([{ goal: "shoot", by: "cast_attack" }, { goal: "throw_oil", by: "fight" }, { goal: "aim_wand", by: "cast_attack" }]);
+    for (const kind of ["fight", "cast_attack"]) expect(offers.find((offer) => offer.goal === kind)?.criteria).toContain("damage per action");
+    for (const kind of ["shoot", "throw_oil", "aim_wand"] as const) expect(attackDescription(attackOptions(w.view, w.view.monsters()[0]!, kind)[0]!, w.view)).toContain("damage per action");
+    expect(attackDescription(attackOptions(w.view, w.view.monsters()[0]!, "aim_wand")[0]!, w.view)).toContain("Estimated damage per action is 16");
     w.setPlayer({ shots: 20 });
     expect(attackOptions(w.view, w.view.monsters()[0]!, "shoot")[0]).toMatchObject({ damage: 21, kill: false });
   });

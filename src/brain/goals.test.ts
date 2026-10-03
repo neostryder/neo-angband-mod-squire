@@ -1223,7 +1223,7 @@ describe("persona", () => {
     const w = world({ map: CORRIDOR, monsters: ORC });
     const persona = archetype("berserker");
     const q = asked(withPersona(w, persona).ask(w.view));
-    expect(Object.keys(q.request.questions)).toEqual(["goal", "in_character"]);
+    expect(Object.keys(q.request.questions)).toEqual(["goal", "escape", "in_character"]);
     expect(q.request.state["persona"]).toMatchObject({ name: persona.name });
   });
 
@@ -1814,6 +1814,7 @@ describe("soak findings", () => {
     const q = asked(p.ask(w.view));
     expect(offered(q)).not.toContain("leave_level");
     expect(q.context.offers.find((offer) => offer.goal === "descend")?.gaps).toEqual(["maximum character level 2"]);
+    /* The descent is the only option and the character is not ready for it, so Squire keeps playing with another move instead of stopping. */
     const choice = p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p: 0.1 } }, q.context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
     expect(choice.plan.label).not.toContain("down");
@@ -2462,5 +2463,226 @@ describe("tactical safety", () => {
     p.choose(none, third.context, w.view);
     expect(third.context.fallback).toBeDefined();
     expect(third.context.fallback).not.toBe(goal);
+  });
+});
+
+
+describe("tactical pack scenarios", () => {
+  const SUPPLIES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Flasks of Oil", "5 Rations of Food"];
+  const choice = (probabilities: Record<string, number>, confidence = 0.8): Answer => {
+    const top = Object.entries(probabilities).sort((a, b) => b[1] - a[1])[0]![0];
+    return { type: "choice", choice: top, confidence, probabilities };
+  };
+  const escapeAt = (p: number): Answer => ({ type: "noul", p });
+  /** Answers one question and returns the plan Squire took and the pack as it was logged. */
+  function answer(w: ReturnType<typeof world>, goal: Answer, escape: number) {
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false });
+    const q = asked(p.ask(w.view));
+    const made = p.choose({ goal, escape: escapeAt(escape) }, q.context, w.view);
+    if (!("plan" in made)) throw new Error("expected a plan");
+    return { goal: (made.plan as { goal?: string }).goal, pack: q.context.pack, logged };
+  }
+
+  const duel = () => suppliedWorld({ map: CORRIDOR, player: { depth: 3, level: 8, hp: 40, maxHp: 60, blows: 200, toDam: 3 }, worn: ["a Dagger (1d4) (+0,+0)"], pack: SUPPLIES,
+    monsters: [{ grid: { x: 3, y: 1 }, race: "cave orc", raceIndex: 4, level: 7, hp: 11, maxHp: 11 }], monsterRecall: () => "It can hit to hurt (1d8)." });
+
+  it("corridor duel: prunes the oil the free blow beats, asks the gate beside the choice, and lets a low answer fight on", () => {
+    const w = duel();
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["fight", "heal", "phase", "explore"]);
+    expect(q.context.pack).toEqual({ pruned: [{ goal: "throw_oil", by: "fight" }], gate: { low: 0.55, high: 0.78 } });
+    expect(Object.keys(q.request.questions)).toEqual(["goal", "escape"]);
+    expect(q.request.questions["escape"]).toMatchObject({ type: "noul", instructions: expect.stringContaining("get to safety now") });
+    const low = answer(duel(), choice({ fight: 0.7, phase: 0.2, heal: 0.1 }), 0.2);
+    expect(low.goal).toBe("fight");
+    expect(low.pack?.gate).toMatchObject({ p: 0.2, band: "stay" });
+  });
+
+  it("corridor duel: a middle answer shrinks the choice to safe moves without picking one, and a high answer leaves only escapes", () => {
+    const middle = answer(duel(), choice({ fight: 0.5, heal: 0.3, phase: 0.2 }), 0.65);
+    expect(middle.pack?.gate).toMatchObject({ band: "consider", allowed: ["heal", "phase"] });
+    expect(middle.goal).toBe("heal");
+    expect(answer(duel(), choice({ fight: 0.5, heal: 0.2, phase: 0.3 }), 0.65).goal).toBe("phase");
+    const high = answer(duel(), choice({ fight: 0.5, heal: 0.4, phase: 0.1 }), 0.9);
+    expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["phase"] });
+    expect(high.goal).toBe("phase");
+    expect(high.logged.some((line) => /escape gate 0\.90 against 0\.55 and 0\.78 \(get_out\)/.test(line))).toBe(true);
+  });
+
+  const caster = () => suppliedWorld({ map: ["##########", "#........#", "#.@..#...#", "#........#", "##########"], player: { depth: 5, level: 8, hp: 20, maxHp: 50 },
+    pack: ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "a Scroll of Teleportation"],
+    monsters: [{ grid: { x: 7, y: 1 }, race: "dark elven mage", raceIndex: 8, level: 10, hp: 20, maxHp: 20, speed: 120 }],
+    monsterRecall: () => "It may cast spells which produce blindness, confusion or magic missiles (2d4)." });
+
+  it("fast caster with one pillar between: keeps both teleports, since the long one costs the last scroll, and gates them", () => {
+    const w = caster();
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["fight", "phase", "teleport"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(q.context.offers.find((o) => o.goal === "teleport")).toMatchObject({ costNote: "the last one carried" });
+    const out = answer(caster(), choice({ fight: 0.9, phase: 0.05, teleport: 0.05 }), 0.85);
+    expect(out.pack?.gate).toMatchObject({ band: "get_out", allowed: ["phase", "teleport"] });
+    expect(["phase", "teleport"]).toContain(out.goal);
+  });
+
+  it("summoner: offers the defensible square and the escape, and the middle band keeps both", () => {
+    const w = suppliedWorld({ map: ["##########", "#..#.#...#", "#..@.....#", "#........#", "##########"], player: { depth: 3, level: 6, hp: 30, maxHp: 40 },
+      monsters: [{ grid: { x: 7, y: 2 }, race: "novice summoner", level: 2, spellFlags: ["S_MONSTER"] }], monsterRecall: () => "It may cast spells which summon a monster." });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["fight", "phase", "take_position"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    const middle = answer(w, choice({ fight: 0.6, take_position: 0.3, phase: 0.1 }), 0.6);
+    expect(middle.pack?.gate?.allowed).toEqual(["phase", "take_position"]);
+    expect(["phase", "take_position"]).toContain(middle.goal);
+  });
+
+  it("hound pack: with melee hopeless, the gate is still asked and a high answer takes the escape", () => {
+    const hounds = [{ x: 4, y: 1 }, { x: 4, y: 2 }, { x: 4, y: 3 }, { x: 5, y: 2 }].map((grid) => ({ grid, race: "Zephyr hound", raceIndex: 9, level: 8, hp: 15, maxHp: 15, speed: 110 }));
+    const w = suppliedWorld({ map: ["##########", "#........#", "#..@.....#", "#........#", "##########"], player: { depth: 8, level: 10, hp: 50, maxHp: 70 }, monsters: hounds, monsterRecall: () => "It can bite to hurt (1d8). It may breathe frost." });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["fight", "phase"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(answer(w, choice({ fight: 0.8, phase: 0.2 }), 0.8).goal).toBe("phase");
+  });
+
+  it("poisoned with no cure: the gate is asked with nothing in sight, the gambles are never pruned, and a high answer heads for the stairs", () => {
+    const w = world({ map: ["#########", "#.@....<#", "#########"], player: { depth: 2, hp: 8, maxHp: 30, status: { poisoned: 10 } }, pack: ["a Light Blue Potion", "a Scroll titled \"abra ka\""] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["quaff_unknown", "read_unknown", "leave_level"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    const middle = answer(w, choice({ quaff_unknown: 0.6, leave_level: 0.4 }), 0.6);
+    expect(middle.pack?.gate?.allowed).toEqual(["quaff_unknown", "read_unknown", "leave_level"]);
+    expect(middle.goal).toBe("quaff_unknown");
+    expect(answer(w, choice({ quaff_unknown: 0.6, leave_level: 0.4 }), 0.9).goal).toBe("leave_level");
+  });
+
+  it("unknown monster: says nothing the character has not learned about it, and gates the escapes like any other fight", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 4, level: 6, hp: 35, maxHp: 40 }, monsters: [{ grid: { x: 4, y: 1 }, race: "strange creature", raceIndex: 11, level: 9, hp: 30, maxHp: 30 }] });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toEqual(["fight", "heal", "phase", "retreat", "explore"]);
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(String(q.request.state["creatures"])).not.toMatch(/\bcan\b|\bmay\b/);
+    const middle = answer(w, choice({ fight: 0.9, explore: 0.1 }), 0.7);
+    expect(middle.pack?.gate?.allowed).toEqual(["heal", "phase", "retreat"]);
+    expect(["heal", "phase", "retreat"]).toContain(middle.goal);
+  });
+
+  it("breeder level: offers the way out beside the fight, and the gate turns a fight answer into leaving", () => {
+    const ROOM = ["##########", "#<@......#", "#........#", "#........#", "##########"];
+    const worms = Array.from({ length: 5 }, (_, i) => ({ grid: { x: 3 + i, y: 3 }, race: "green worm mass", level: 1, raceFlags: ["MULTIPLY"] }));
+    const w = suppliedWorld({ map: ROOM, player: { depth: 2, level: 4, hp: 25, maxHp: 30 }, monsters: worms });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
+    expect(answer(w, choice({ fight: 0.8, leave_level: 0.2 }), 0.85).goal).toBe("leave_level");
+  });
+});
+
+describe("tactical pack rules", () => {
+  const ORC = [{ grid: { x: 3, y: 1 }, race: "cave orc", raceIndex: 4, level: 7, hp: 11, maxHp: 11 }];
+  const fightWorld = () => suppliedWorld({ map: CORRIDOR, player: { depth: 3, level: 8, hp: 40, maxHp: 60 }, monsters: ORC, monsterRecall: () => "It can hit to hurt (1d8)." });
+  const withPersona = (id: "berserker" | "coward") => {
+    const w = fightWorld();
+    return asked(createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, persona: archetype(id), rng: () => 0.5 }).ask(w.view));
+  };
+
+  it("asks a bold persona the gate as often as a careful one, and only moves its edges", () => {
+    const bold = withPersona("berserker");
+    const careful = withPersona("coward");
+    expect(Object.keys(bold.request.questions)).toContain("escape");
+    expect(Object.keys(careful.request.questions)).toContain("escape");
+    expect(bold.context.pack!.gate!.low).toBeGreaterThan(careful.context.pack!.gate!.low);
+    expect(bold.context.pack!.gate!.high).toBeGreaterThan(careful.context.pack!.gate!.high);
+  });
+
+  it("does not ask the gate with nothing in sight and nothing ailing", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 3, hp: 40, maxHp: 60 } });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(Object.keys(q.request.questions)).not.toContain("escape");
+    expect(q.context.pack).toBeUndefined();
+  });
+
+  it("falls back to the safest escape when the answer is unsure and the gate leans out, and to the safest attack otherwise", () => {
+    const w = fightWorld();
+    const { p, logged } = planner(w);
+    const q = asked(p.ask(w.view));
+    p.choose({ goal: { type: "choice", choice: "explore", confidence: 0.2, probabilities: { explore: 0.3, fight: 0.25 } }, escape: { type: "noul", p: 0.6 } }, q.context, w.view);
+    expect(q.context.pack?.lowConfidence).toBe("phase");
+    expect(logged.some((line) => line.includes("the answer was unsure (0.20), so the safest escape option"))).toBe(true);
+    const again = fightWorld();
+    const second = planner(again);
+    const q2 = asked(second.p.ask(again.view));
+    second.p.choose({ goal: { type: "choice", choice: "explore", confidence: 0.2, probabilities: { explore: 0.3 } }, escape: { type: "noul", p: 0.1 } }, q2.context, again.view);
+    expect(q2.context.pack?.lowConfidence).toBe("fight");
+  });
+
+  it("takes a sole option without asking, whatever its risk", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
+    const q = planner(w, true).p.ask(w.view);
+    expect(offered(q)).toEqual(["step_aside"]);
+    /* Risky as it is, asking could only return it. */
+    expect(reflexed(q).context.offers[0]!.risk).toBeGreaterThan(0.3);
+    expect(reflexed(q).reflex).toBe("the only option");
+  });
+
+  it("ties each option's purpose to the near-term goal, naming only what differs", () => {
+    const w = fightWorld();
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, strategy: () => ({ aims: [], tripAllowed: () => false, nearGoal: "Explore this level.", nearKind: "explore" }) });
+    const q = asked(p.ask(w.view));
+    const criteria = (q.request.questions["goal"] as ChoiceQuestion).criteria;
+    expect(criteria["explore"]).toMatch(/Purpose: serves the near goal[;.]/);
+    expect(criteria["phase"]).toMatch(/Purpose: serves survival; .*costs 1 of 3 carried/);
+    expect(criteria["fight"]).toMatch(/Purpose: serves the fight; .*costs nothing/);
+    expect(criteria["none_of_these"]).not.toContain("Purpose");
+  });
+
+  const fightAnswer = (): Readonly<Record<string, Answer>> => ({ goal: { type: "choice", choice: "fight", confidence: 0.9, probabilities: { fight: 0.9 } }, escape: { type: "noul", p: 0.1 } });
+
+  it("finds a choice repeated in an unchanging state, re-plans once with the failed tactic named, then falls back without it", () => {
+    const w = fightWorld();
+    const { p, logged } = planner(w);
+    for (let i = 0; i < 3; i++) {
+      const q = asked(p.ask(w.view));
+      expect(q.context.loop).toBeUndefined();
+      p.choose(fightAnswer(), q.context, w.view);
+      w.advance(10);
+    }
+    const replan = asked(p.ask(w.view));
+    expect(replan.context.loop).toMatchObject({ kind: "repeat", tactic: "fight" });
+    expect(String(replan.request.state["loop"])).toContain("Choosing fight again has not worked here");
+    expect(logged.some((line) => line.startsWith("goal: loop detected (repeat:"))).toBe(true);
+    const made = p.choose(fightAnswer(), replan.context, w.view);
+    if (!("plan" in made)) throw new Error("expected a plan");
+    expect((made.plan as { goal?: string }).goal).not.toBe("fight");
+    expect(replan.context.loop?.fellBack).toBe(true);
+    expect(logged).toContain("goal: fight again after the loop, so Squire picks without it");
+    expect(asked(p.ask(w.view)).context.loop).toBeUndefined();
+  });
+
+  it("keeps a re-plan that picks something else", () => {
+    const w = fightWorld();
+    const { p } = planner(w);
+    for (let i = 0; i < 3; i++) {
+      p.choose(fightAnswer(), asked(p.ask(w.view)).context, w.view);
+      w.advance(10);
+    }
+    const replan = asked(p.ask(w.view));
+    expect(replan.context.loop?.tactic).toBe("fight");
+    const made = p.choose({ goal: { type: "choice", choice: "phase", confidence: 0.9, probabilities: { phase: 0.9 } }, escape: { type: "noul", p: 0.3 } }, replan.context, w.view);
+    if (!("plan" in made)) throw new Error("expected a plan");
+    expect((made.plan as { goal?: string }).goal).toBe("phase");
+    expect(replan.context.loop?.fellBack).toBeUndefined();
+  });
+
+  it("never lets a reflex repeat the tactic a loop showed failing", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
+    const { p } = planner(w, true);
+    for (let i = 0; i < 3; i++) {
+      expect(reflexed(p.ask(w.view)).reflex).toBe("the only option");
+      w.advance(10);
+    }
+    const replan = asked(p.ask(w.view));
+    expect(replan.context.loop).toMatchObject({ kind: "repeat", tactic: "step_aside" });
   });
 });

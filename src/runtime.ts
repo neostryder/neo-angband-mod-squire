@@ -14,6 +14,7 @@ import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import type { DecisionContext } from "./brain/context.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
+import { tacticalLog } from "./brain/tactics.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
 import { readStoreMemory, type StoreMemory } from "./town/memory.js";
@@ -791,12 +792,14 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
           const longGoal = strategy.longLine();
           const midGoal = strategy.midLine();
           const nearGoal = strategy.nearLine();
+          const nearKind = strategy.nearKind();
           const outcomes = strategy.outcomeLines();
           return {
             aims: orders.promote(strategy.ranked()), tripAllowed: (gold) => strategy.tripAllowed(gold), storeMemory: strategy.shops(), homeStock: strategy.homeStock(), saveHomeStock: (stock) => strategy.saveHomeStock(stock), pursuits: strategy.pursuits(),
             ...(longGoal === null ? {} : { longGoal }),
             ...(midGoal === null ? {} : { midGoal }),
             ...(nearGoal === null ? {} : { nearGoal }),
+            ...(nearKind === null ? {} : { nearKind }),
             ...(outcomes.length === 0 ? {} : { outcomes }),
           };
         },
@@ -849,6 +852,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       probs: goal?.type === "choice" && record.reflex === undefined ? goal.probabilities : null,
       ...(record.reflex === undefined ? {} : { reflex: record.reflex }),
       ...(record.context.fallback === undefined ? {} : { fallback: record.context.fallback }),
+      ...tacticalLog(record.context.pack, record.context.loop),
       state: record.request.state,
       ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
       options: record.context.offers.map((o) => o.goal),
