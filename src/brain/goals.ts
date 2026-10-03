@@ -1662,7 +1662,14 @@ function restrictTo(dist: Readonly<Record<string, number>>, allowed: ReadonlySet
 export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDigest> {
   const manual = createManual(options.birthOptions);
   const { cfg, terrain, log } = options;
-  const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0);
+  const levelsPersist = (): boolean => {
+    try {
+      return (options.birthOptions?.() ?? []).some((option) => option.name === "birth_levels_persist" && option.value === true);
+    } catch {
+      return false;
+    }
+  };
+  const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0, levelsPersist);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
   const flourishesNow = () => options.flourishes?.() ?? emptyFlourishes();
