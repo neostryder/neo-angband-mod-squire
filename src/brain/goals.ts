@@ -202,6 +202,14 @@ function waitCompetes(offers: readonly Offer[]): boolean {
   return offers.some((o) => o.goal === "wait" && o.routine === true) && offers.some((o) => o.goal !== "wait" && o.routine !== true);
 }
 const SURVIVAL_GOALS: ReadonlySet<Goal> = new Set(["swing_unseen", "cast_area", "unseen_staff", "unseen_wand", "unseen_rod", "step_aside", "descend", "fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "heal", "cast_heal", "device", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight", "retreat", "leave_level", "take_position", "quaff_unknown", "read_unknown"]);
+
+/**
+ * What Squire may do to look after itself while it runs an errand from the
+ * errand menu: every survival option, plus eating, resting, waiting out a
+ * condition and the defensive upkeep. Nothing here goes off on business of its
+ * own, so the errand is still the errand when the danger has passed.
+ */
+export const SAFETY_GOALS: ReadonlySet<Goal> = new Set<Goal>([...SURVIVAL_GOALS, "endure", "eat", "rest", "wait", "buff", "resist", "see_invisible", "close_door"]);
 /** How far Squire will walk to take a defensible square. Beyond it, the route check and the persona's patience would not pay back. */
 const TAKE_POSITION_REACH = 3;
 /** The most actions a walk out of a creature's sight may take. */
@@ -388,6 +396,8 @@ export interface GoalPlannerOptions {
   readonly chaos?: boolean;
   /** How Law to Chaos draws: smooth sampling unless set to the bounded roll. */
   readonly chaosMethod?: ChaosMethod;
+  /** The only goals that may be offered, or null for all of them. An errand narrows the choice to looking after the character. */
+  readonly focus?: () => ReadonlySet<Goal> | null;
 }
 
 /** A plan that owns a watcher, so `trigger` can ask it. */
@@ -2916,7 +2926,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const saving = savingFor(view);
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
-      const usable = (offer: Offer) => !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
+      const focus = options.focus?.() ?? null;
+      const usable = (offer: Offer) => (focus === null || focus.has(offer.goal)) && !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock);
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const chosenHome = options.townCall?.() ?? null;

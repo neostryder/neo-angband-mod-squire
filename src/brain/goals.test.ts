@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { answerKeyOf, createGoalPlanner, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, threatIndex, type GoalDigest } from "./goals.js";
+import { answerKeyOf, createGoalPlanner, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
@@ -3277,5 +3277,26 @@ describe("bound prompt targets", () => {
     expect(choice.plan.step(w.view, w.act)).toBeNull();
     expect(target).not.toHaveBeenCalledWith(9);
     expect(w.issued.some((command) => command.code === "cast")).toBe(false);
+  });
+});
+
+describe("the safety focus an errand plans with", () => {
+  function focused(w: ReturnType<typeof world>) {
+    return createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, focus: () => SAFETY_GOALS });
+  }
+
+  it("offers only what keeps the character alive, leaving the errand's own work out", () => {
+    const spec = { map: CORRIDOR, floor: [{ x: 5, y: 1, name: "a Potion of Cure Light Wounds" }], monsters: [{ grid: { x: 6, y: 1 }, race: "cave orc" }] };
+    const open = suppliedWorld(spec);
+    expect(offered(planner(open).p.ask(open.view))).toEqual(expect.arrayContaining(["fight", "retreat", "fetch", "explore"]));
+    const w = suppliedWorld(spec);
+    const goals = offered(focused(w).ask(w.view));
+    expect(goals).toEqual(expect.arrayContaining(["fight", "retreat"]));
+    for (const goal of goals) expect(SAFETY_GOALS.has(goal as never)).toBe(true);
+  });
+
+  it("waits rather than exploring when nothing threatens", () => {
+    const w = suppliedWorld({ map: CORRIDOR });
+    expect(offered(focused(w).ask(w.view))).toEqual(["wait"]);
   });
 });

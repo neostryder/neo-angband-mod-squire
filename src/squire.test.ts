@@ -153,8 +153,16 @@ describe("createSquire", () => {
     squire.controller(w.view, w.act);
     const said = logged.join("\n");
     expect(said).toContain("errand ended (done)");
-    expect(said).toContain("press any key");
+    expect(said).toContain("press Escape");
     expect(status).toEqual(["The errand is complete."]);
+  });
+
+  it("gives the keyboard back when the errand ends, where the game lets it", () => {
+    const w = world({ map: ["#####", "#...#", "#.@.#", "#####"] });
+    const released: string[] = [];
+    const squire = createSquire({ cfg: { ...defaultCfg(), useModel: false }, terrain: w.terrain, log: () => {}, release: (reason) => released.push(reason) });
+    expect(squire.controller(w.view, w.act)).toBeNull();
+    expect(released).toEqual(["The errand is complete."]);
   });
 
   it("holds one errand for the whole handover rather than re-choosing each turn", () => {
