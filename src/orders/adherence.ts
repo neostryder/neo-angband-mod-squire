@@ -83,7 +83,7 @@ export function goalsOf(sorted: Sorted): { readonly serves: readonly string[]; r
   const serves = new Set<string>();
   const breaks = new Set<string>(sorted.avoids);
   const attacks = ["fight", "shoot", "cast_attack", "throw_oil", "aim_wand"];
-  const escapes = ["retreat", "phase", "teleport"];
+  const escapes = ["retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"];
   switch (sorted.response) {
     case "flee":
       escapes.forEach((g) => serves.add(g));

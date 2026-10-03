@@ -140,10 +140,10 @@ describe("fleeing", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
   });
 
-  it("backs up four steps when no staircase is known", () => {
+  it("backs up three steps when no staircase is known", () => {
     const w = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10, speed: 100 }] });
     const plan = planFor(w, "retreat");
-    for (let i = 0; i < 4; i++) expect(plan.step(w.view, w.act)?.code).toBe("walk");
+    for (let i = 0; i < 3; i++) expect(plan.step(w.view, w.act)?.code).toBe("walk");
     expect(plan.step(w.view, w.act)).toBeNull();
   });
 
@@ -154,6 +154,6 @@ describe("fleeing", () => {
 
     const noStairs = world({ map: ["########", "#......#", "#..@...#", "#......#", "########"], monsters: [{ grid: { x: 2, y: 2 }, race: "cave orc", level: 10, speed: 100 }] });
     const away = asked(planner(noStairs).ask(noStairs.view)).context.offers;
-    expect(away.find((o) => o.goal === "retreat")?.criteria).toContain("four steps");
+    expect(away.find((o) => o.goal === "retreat")?.criteria).toContain("three steps");
   });
 });

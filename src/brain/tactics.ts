@@ -18,7 +18,8 @@ import type { NoulQuestion } from "./systemone.js";
 export type ActionClass = "escape" | "heal" | "gamble" | "attack" | "wait" | "position" | "errand";
 
 const CLASSES: Readonly<Record<string, ActionClass>> = {
-  phase: "escape", teleport: "escape", retreat: "escape", leave_level: "escape", recall_town: "escape", deep_descent: "escape",
+  phase: "escape", cast_escape: "escape", teleport: "escape", teleport_level: "escape", teleport_other: "escape", break_sight: "escape",
+  retreat: "escape", leave_level: "escape", recall_town: "escape", deep_descent: "escape",
   heal: "heal", cast_heal: "heal", device: "heal", rest: "heal",
   quaff_unknown: "gamble", read_unknown: "gamble",
   fight: "attack", shoot: "attack", throw_oil: "attack", aim_wand: "attack", cast_attack: "attack",
@@ -31,7 +32,7 @@ export function classOf(goal: string): ActionClass {
   return CLASSES[goal] ?? "errand";
 }
 
-/** The gate's two edges: under `low` nothing changes, from `high` up only escapes are left. */
+/** The gate's two edges: under `low` nothing changes, from `high` up only escapes and heals are left. */
 export interface EscapeBands {
   readonly low: number;
   readonly high: number;
@@ -68,15 +69,18 @@ export function bandOf(p: number, bands: EscapeBands): EscapeBand {
 
 const SAFE_CLASSES: ReadonlySet<ActionClass> = new Set(["escape", "heal", "gamble", "position"]);
 
+/* The ways out that compete at the top band, with no order among them. */
+const OUT_CLASSES: ReadonlySet<ActionClass> = new Set(["escape", "heal"]);
+
 /**
  * The goals left to pick from in a band, or null when the band leaves the
  * choice alone. The middle band shrinks the choice toward safe moves without
- * naming one; the top band leaves only escapes. A band with nothing it allows
- * on offer falls back to the band below it.
+ * naming one; the top band leaves only escapes and heals, side by side. A band
+ * with nothing it allows on offer falls back to the band below it.
  */
 export function allowedGoals(band: EscapeBand, offers: readonly Offer[]): ReadonlySet<string> | null {
   if (band === "stay") return null;
-  const escapes = offers.filter((o) => classOf(o.goal) === "escape").map((o) => o.goal as string);
+  const escapes = offers.filter((o) => OUT_CLASSES.has(classOf(o.goal))).map((o) => o.goal as string);
   const safe = offers.filter((o) => SAFE_CLASSES.has(classOf(o.goal))).map((o) => o.goal as string);
   const chosen = band === "get_out" && escapes.length > 0 ? escapes : safe;
   return chosen.length === 0 ? null : new Set([...chosen, "none_of_these"]);
@@ -107,12 +111,12 @@ function safestOf(offers: readonly Offer[], classes: ReadonlySet<ActionClass>): 
 
 /**
  * What to do when the option answer is too unsure to follow: the safest escape
- * when the gate answer reaches the persona's low edge, otherwise the safest
- * attack or wait. Null leaves the choice to the usual path.
+ * or heal when the gate answer reaches the persona's low edge, otherwise the
+ * safest attack or wait. Null leaves the choice to the usual path.
  */
 export function lowConfidencePick(offers: readonly Offer[], escapeP: number | null, lowEdge: number): Goal | null {
   if (escapeP !== null && escapeP >= lowEdge) {
-    const out = safestOf(offers, new Set(["escape"])) ?? safestOf(offers, new Set(["heal"]));
+    const out = safestOf(offers, OUT_CLASSES);
     if (out !== undefined) return out.goal;
   }
   return safestOf(offers, new Set(["attack", "wait"]))?.goal ?? null;
@@ -171,7 +175,7 @@ const NEAR_SERVED: Readonly<Record<string, readonly string[]>> = {
   explore: ["explore", "detect", "fetch", "pick_up", "tunnel", "disarm"],
   rest: ["rest", "heal", "cast_heal", "device", "retreat"],
   down: ["descend", "deep_descent"],
-  leave: ["leave_level", "retreat", "teleport", "deep_descent", "descend"],
+  leave: ["leave_level", "retreat", "teleport_level", "deep_descent", "descend"],
   recall: ["recall_town", "recall_dungeon"],
   shop: ["shop", "recall_town"],
   try: ["quaff_unknown", "read_unknown", "wear"],

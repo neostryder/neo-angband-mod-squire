@@ -52,7 +52,7 @@ export const GRUDGE_NUDGE: Readonly<Record<Intensity, number>> = { mild: 0.15, s
 export const FEAR_SHIFT: Readonly<Record<Intensity, number>> = { mild: 1, strong: 1, lasting: 2 };
 
 export const ATTACK_GOALS: readonly string[] = ["fight", "shoot", "throw_oil", "aim_wand", "cast_attack"];
-export const AVOID_GOALS: readonly string[] = ["leave_level", "retreat", "phase", "teleport"];
+export const AVOID_GOALS: readonly string[] = ["leave_level", "retreat", "phase", "cast_escape", "teleport", "teleport_level", "teleport_other", "break_sight"];
 
 /** Death causes that name no creature. */
 const NOT_A_CREATURE = /^(?:trap|bug|monster|starvation|hunger|poison|a fall|fall|drowning|lava|cuts?|bleeding|retiring|ripe old age|winning|quitting|suicide)$/i;

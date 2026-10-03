@@ -35,6 +35,8 @@ export interface Pack {
   readonly heal: readonly PackItem[];
   readonly phase: readonly PackItem[];
   readonly teleport: readonly PackItem[];
+  /** Scrolls, wands and rods of Teleport Other, which send the creature away rather than the character. */
+  readonly teleportOther: readonly PackItem[];
   readonly descent: readonly PackItem[];
   readonly oil: readonly PackItem[];
   readonly attackWand: readonly PackItem[];
@@ -285,6 +287,7 @@ export function readPack(view: AgentView): Pack {
   const heal: PackItem[] = [];
   const phase: PackItem[] = [];
   const teleport: PackItem[] = [];
+  const teleportOther: PackItem[] = [];
   const descent: PackItem[] = [];
   const oil: PackItem[] = [];
   const attackWand: PackItem[] = [];
@@ -306,6 +309,10 @@ export function readPack(view: AgentView): Pack {
       if (reading) descent.push(entry(1));
     } else if (/\bScrolls? of (Teleportation|Teleport Level)\b|\bStaffs? of Teleportation\b/i.test(name) && !empty(name)) {
       if (reading || !/\bScrolls?\b/i.test(name)) teleport.push(entry(/Level/i.test(name) ? 1 : 2));
+    } else if (/\b(?:Scrolls?|Wands?|Rods?) of Teleport Other\b/i.test(name)) {
+      /* A scroll needs reading; a wand needs a charge and a rod needs to have recharged. */
+      const scroll = /\bScrolls?\b/i.test(name);
+      if (scroll ? reading : !empty(name) && item.timeout === 0 && !/\bcharging\b/i.test(name)) teleportOther.push(entry(scroll ? 2 : 1));
     } else if (/\bFlasks? of Oil\b/i.test(name)) oil.push(entry(1));
     else if (/\b(Iron Shots?|Pebbles?|Arrows?|Seeker Arrows?|Bolts?|Seeker Bolts?|Mithril Shots?)\b/i.test(name)) {
       ammo.push(entry(1));
@@ -347,6 +354,7 @@ export function readPack(view: AgentView): Pack {
     heal: byPower(heal),
     phase,
     teleport: byPower(teleport),
+    teleportOther: byPower(teleportOther),
     descent,
     oil,
     attackWand: byPower(attackWand),
@@ -357,6 +365,18 @@ export function readPack(view: AgentView): Pack {
     healSpell: byPower(healSpell),
     escapeSpell,
   };
+}
+
+/**
+ * The chance in percent that using a device fails, from the game's own
+ * description of it ("Your chance of success is 87.5%"), or null when the
+ * description does not say. A scroll never fails, so it reads 0.
+ */
+export function deviceFail(view: AgentView, item: PackItem): number | null {
+  if (/\bScrolls?\b/i.test(item.name)) return 0;
+  const text = view.inspectItem?.(item.handle)?.text ?? "";
+  const success = /\bchance of success is (\d+(?:\.\d+)?)%/i.exec(text);
+  return success === null ? null : Math.max(0, Math.round(100 - Number(success[1])));
 }
 
 /** Whether the character is hungry enough to eat. */

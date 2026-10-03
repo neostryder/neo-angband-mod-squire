@@ -69,7 +69,10 @@ const AVOID_WORDS: readonly (readonly [RegExp, string])[] = [
   [/\b(shoot|fire)\b/i, "shoot"],
   [/\b(descend|dive|stairs down|go deeper)\b/i, "descend"],
   [/\brest/i, "rest"],
-  [/\b(phase|teleport)\b/i, "phase"],
+  [/\bphase\b/i, "phase"],
+  [/\b(phase|teleport\w*)\b/i, "cast_escape"],
+  [/\bteleport\w*\b/i, "teleport"],
+  [/\bteleport\w*\b/i, "teleport_level"],
   [/\b(shop|buy)/i, "shop"],
 ];
 

@@ -76,20 +76,22 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       return "wear";
     case "zap-rod":
     case "zap":
+      if (has(pack.teleportOther)) return "teleport_other";
       return detection.some((source) => source.kind === "zap" && source.handle === handle) ? "detect" : null;
     case "fire":
       return "shoot";
     case "throw":
       return has(pack.oil) ? "throw_oil" : null;
     case "aim-wand":
-      return "aim_wand";
+      return has(pack.teleportOther) ? "teleport_other" : "aim_wand";
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
       if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
-      if (has(pack.teleport)) return "teleport";
+      if (has(pack.teleport)) return pack.teleport.some((i) => i.handle === handle && /Teleport Level/i.test(i.name)) ? "teleport_level" : "teleport";
+      if (has(pack.teleportOther)) return "teleport_other";
       if (has(pack.descent)) return "deep_descent";
       return null;
     case "use-staff":
@@ -102,7 +104,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
       if (spell === null) return null;
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
-      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "phase";
+      if (pack.escapeSpell.some((s) => s.sidx === spell)) return "cast_escape";
       if (detection.some((source) => source.kind === "cast" && source.sidx === spell)) return "detect";
       return null;
     }
@@ -120,7 +122,7 @@ export function proceduralPick(offers: readonly Offer[], hpShare: number): Goal 
   const first = (...goals: Goal[]) => goals.find((g) => has(g) !== undefined) ?? null;
   const fight = has("fight");
   if (fight !== undefined && fight.risk > 0.45) {
-    return first("teleport", "phase", "heal", "take_position", "retreat", "shoot", "cast_attack", "fight");
+    return first("teleport", "teleport_other", "teleport_level", "cast_escape", "phase", "heal", "break_sight", "take_position", "retreat", "shoot", "cast_attack", "fight");
   }
   if (hpShare < 0.35) {
     const safe = first("heal", "cast_heal");
@@ -164,7 +166,11 @@ const LABEL: Readonly<Record<Goal, string>> = {
   quaff_unknown: "drink an unknown potion",
   read_unknown: "read an unknown scroll",
   phase: "phase away",
+  cast_escape: "cast an escape spell",
   teleport: "teleport away",
+  teleport_level: "teleport off the level",
+  teleport_other: "send a creature away",
+  break_sight: "break line of sight",
   deep_descent: "read Deep Descent",
   retreat: "back away",
   rest: "rest",

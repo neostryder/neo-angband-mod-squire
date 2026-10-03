@@ -42,8 +42,9 @@ describe("escape bands", () => {
     expect([...allowedGoals("consider", offers)!].sort()).toEqual(["heal", "none_of_these", "phase", "quaff_unknown"]);
   });
 
-  it("leaves only escapes at the top, falling back to the middle set when none is offered", () => {
-    expect([...allowedGoals("get_out", offers)!].sort()).toEqual(["none_of_these", "phase"]);
+  it("leaves only the ways out at the top, escapes and heals side by side, falling back to the middle set when none is offered", () => {
+    expect([...allowedGoals("get_out", offers)!].sort()).toEqual(["heal", "none_of_these", "phase"]);
+    expect([...allowedGoals("get_out", [offer("fight"), offer("teleport_other"), offer("break_sight"), offer("cast_escape"), offer("teleport_level"), offer("cast_heal")])!].sort()).toEqual(["break_sight", "cast_escape", "cast_heal", "none_of_these", "teleport_level", "teleport_other"]);
     expect([...allowedGoals("get_out", [offer("fight"), offer("heal")])!].sort()).toEqual(["heal", "none_of_these"]);
     expect(allowedGoals("get_out", [offer("fight"), offer("explore")])).toBeNull();
   });
@@ -140,7 +141,7 @@ describe("decision log entry", () => {
   it("keeps the gate, pruning, unsure fallback and loop, and nothing when none happened", () => {
     expect(tacticalLog(undefined, undefined)).toEqual({});
     expect(tacticalLog({ pruned: [{ goal: "throw_oil", by: "fight" }], gate: { low: 0.55, high: 0.78, p: 0.9, band: "get_out", allowed: ["phase"] }, lowConfidence: "phase" },
-      { kind: "repeat", tactic: "fight", detail: "fight chosen 3 times", fellBack: true })).toEqual({
+      { kind: "repeat", tactic: "fight", detail: "fight chosen 3 times", why: "nothing changed after it", fellBack: true })).toEqual({
       tactical: { escape: { p: 0.9, low: 0.55, high: 0.78, band: "get_out" }, pruned: ["throw_oil"], lowConfidence: "phase", loop: { kind: "repeat", tactic: "fight", fellBack: true } },
     });
     expect(tacticalLog({ pruned: [], gate: { low: 0.5, high: 0.7 } }, undefined)).toEqual({ tactical: { escape: { p: null, low: 0.5, high: 0.7 } } });

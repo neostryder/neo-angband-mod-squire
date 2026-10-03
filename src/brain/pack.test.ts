@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
-import { canRead, readPack, studyable, unknownFlavours, unseenSources } from "./pack.js";
+import { canRead, deviceFail, readPack, studyable, unknownFlavours, unseenSources } from "./pack.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
@@ -74,5 +74,29 @@ describe("unknownFlavours", () => {
     const w = world({ map: ["###", "#@#", "###"], pack: ["a Light Blue Potion", "a Potion of Cure Light Wounds", "a Scroll titled \"abra ka\"", "a Scroll of Phase Door"] });
     expect(unknownFlavours(w.view, "potion").map((item) => item.name)).toEqual(["a Light Blue Potion"]);
     expect(unknownFlavours(w.view, "scroll").map((item) => item.name)).toEqual(["a Scroll titled \"abra ka\""]);
+  });
+});
+
+describe("Teleport Other", () => {
+  it("reads scrolls, wands and rods of Teleport Other as their own escape, scrolls first, leaving out spent devices", () => {
+    const w = world({ map: ROOM, pack: ["a Wand of Teleport Other (3 charges)", "a Scroll of Teleport Other", "a Rod of Teleport Other (12 turns)", "a Wand of Teleport Other (0 charges)", "a Rod of Teleport Other"] });
+    expect(readPack(w.view).teleportOther.map((item) => item.name)).toEqual(["a Scroll of Teleport Other", "a Wand of Teleport Other (3 charges)", "a Rod of Teleport Other"]);
+    expect(readPack(w.view).teleport).toEqual([]);
+  });
+
+  it("leaves the scroll out when the character cannot read, and keeps the wand", () => {
+    const w = world({ map: ROOM, player: { status: { blind: 1 } }, pack: ["a Scroll of Teleport Other", "a Wand of Teleport Other (3 charges)"] });
+    expect(readPack(w.view).teleportOther.map((item) => item.name)).toEqual(["a Wand of Teleport Other (3 charges)"]);
+  });
+});
+
+describe("deviceFail", () => {
+  it("reads a device's fail chance from the game's own description, and a scroll never fails", () => {
+    const w = world({ map: ROOM, pack: ["a Wand of Teleport Other (3 charges)", "a Scroll of Teleport Other", "a Staff of Teleportation (2 charges)"],
+      inspect: (ref) => ref === 1 ? "When aimed, it teleports a monster away. Your chance of success is 76.4%." : null });
+    const pack = readPack(w.view);
+    expect(deviceFail(w.view, pack.teleportOther.find((item) => /Wand/.test(item.name))!)).toBe(24);
+    expect(deviceFail(w.view, pack.teleportOther.find((item) => /Scroll/.test(item.name))!)).toBe(0);
+    expect(deviceFail(w.view, pack.teleport[0]!)).toBeNull();
   });
 });

@@ -53,6 +53,12 @@ describe("sorting by code", () => {
     expect(sortByCode("Never fight when you are wounded.").sorted).toMatchObject({ response: "avoid", avoids: ["fight"], trigger: "low-hp" });
   });
 
+  it("reads a ban on teleporting as every teleport the character can make, and a ban on Phase Door as the short ones", () => {
+    expect(sortByCode("Never teleport away from a unique.").sorted.avoids).toEqual(["cast_escape", "teleport", "teleport_level"]);
+    expect(sortByCode("Don't use teleportation in town.").sorted.avoids).toEqual(["cast_escape", "teleport", "teleport_level"]);
+    expect(sortByCode("Never phase out of a fight.").sorted.avoids).toEqual(["phase", "cast_escape"]);
+  });
+
   it("keeps text that fits nothing with an empty sorted form", () => {
     const odd = sortByCode("Sing to the moon");
     expect(odd.sorted).toMatchObject({ aim: null, response: null, trigger: "always", store: null });

@@ -13,7 +13,7 @@ export function commandEvidence(command: PlayerCommand, goal: Goal | null, view:
   let kind: CommandEvidence["kind"];
   switch (goal) {
     case "fight": kind = command.code === "walk" ? "melee" : "fight"; break;
-    case "retreat": case "phase": case "teleport": kind = "retreat"; break;
+    case "retreat": case "phase": case "cast_escape": case "teleport": case "teleport_level": case "teleport_other": case "break_sight": kind = "retreat"; break;
     case "rest": kind = "rest"; break;
     case "heal": case "cast_heal": kind = "heal"; break;
     case "descend": kind = "descend"; break;
