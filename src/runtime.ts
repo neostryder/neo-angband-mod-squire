@@ -142,6 +142,11 @@ export interface Runtime {
   saveConfig(next: SquireConfig): void;
   character(): CharacterData;
   saveCharacter(next: CharacterData): void;
+  /**
+   * Whether this character had no Squire data when the page loaded: one the
+   * player has just made, or one made before Squire was installed.
+   */
+  firstMeeting(): boolean;
   backend(): Backend | null;
   /** Store an API key for Jev through the host's secrets. */
   setJevKey(value: string): Promise<string>;
@@ -216,7 +221,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
   const now = options.now ?? (() => Date.now());
   const store = options.store ?? indexedDbStore("neo-angband-squire");
   let config = readConfig(host.prefs?.get());
-  let character = readCharacter(host.characterStore?.get()) ?? {
+  const stored = readCharacter(host.characterStore?.get());
+  const firstMeeting = stored === null;
+  let character = stored ?? {
     persona: null,
     runId: runIdFor(host.character?.key?.(), now()),
     kills: {},
@@ -375,6 +382,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       character = next;
       host.characterStore?.set({ format: CHARACTER_FORMAT, schemaVersion: 1, data: next });
     },
+    firstMeeting: () => firstMeeting,
     backend: () => backendFor(config),
 
     async setJevKey(value) {

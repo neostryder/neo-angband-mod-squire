@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { defaultPersona } from "./persona.js";
+import { ARCHETYPES, archetype, defaultPersona, type ArchetypeId } from "./persona.js";
 import { inCharacterInstructions, personaState } from "./state.js";
 
 describe("persona state", () => {
@@ -35,5 +35,29 @@ describe("personaState scope", () => {
     p.sliders.devotion = 100;
     const state = personaState(p, 500);
     expect(state["traits"] ?? "").not.toMatch(/drift|Learning|Devotion/i);
+  });
+});
+
+describe("persona state: law, good and style", () => {
+  it("states Law to Chaos and Good to Evil only when strong", () => {
+    const p = defaultPersona("Vex");
+    p.sliders.lawchaos = 90;
+    p.sliders.goodevil = 30;
+    const traits = personaState(p, 0)["traits"] ?? "";
+    expect(traits).toContain("Law to Chaos: very chaotic");
+    expect(traits).toContain("Good to Evil: somewhat good");
+    p.sliders.lawchaos = 60;
+    p.sliders.goodevil = 40;
+    expect(personaState(p, 0)["traits"] ?? "").not.toMatch(/Law to Chaos|Good to Evil/);
+  });
+
+  it.each(Object.keys(ARCHETYPES) as ArchetypeId[])("states the %s preset's play rule", (id) => {
+    const state = personaState(archetype(id), 0);
+    expect(state["play_rule"]).toBe(ARCHETYPES[id].rule);
+  });
+
+  it("states no play rule without a preset, and drops it when the preset is cleared", () => {
+    expect(personaState(defaultPersona(), 0)).not.toHaveProperty("play_rule");
+    expect(personaState({ ...archetype("paranoid"), preset: null }, 0)).not.toHaveProperty("play_rule");
   });
 });

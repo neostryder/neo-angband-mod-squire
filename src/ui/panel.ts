@@ -66,8 +66,12 @@ export function mountPanel(host: PanelHostLike, rt: Runtime, lessons: Lessons): 
   };
 
   let cleanup: (() => void) | null = null;
-  /* First run opens on setup; after that, on the dashboard. */
-  let current: Tab = rt.config().setupDone ? "dashboard" : "setup";
+  /* First run opens on setup. A character the player has just made opens on
+   * the persona sheet, so the styles are offered before Squire first plays it;
+   * an heir Squire is starting is not the player's, and any other character
+   * opens on the dashboard. */
+  const playerMade = rt.firstMeeting() && rt.config().pendingHeir === null;
+  let current: Tab = !rt.config().setupDone ? "setup" : playerMade ? "persona" : "dashboard";
 
   function show(tab: Tab, source: "panel" | "hotkey" = "panel"): void {
     current = tab;

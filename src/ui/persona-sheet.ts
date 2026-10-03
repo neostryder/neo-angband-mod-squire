@@ -9,7 +9,7 @@
 import type { Runtime } from "../runtime.js";
 import { GROUPS, PARAMETERS } from "../persona/catalog.js";
 import type { GroupId, ListId, QuirkId, SliderId, ToggleId } from "../persona/catalog.js";
-import { ARCHETYPES, archetype, defaultPersona, normalize, randomPersona, type ArchetypeId, type Persona } from "../persona/persona.js";
+import { ARCHETYPES, archetype, defaultPersona, neutralPersona, normalize, presetName, randomPersona, type ArchetypeId, type Persona } from "../persona/persona.js";
 import { exportPersona, importPersona } from "../persona/file.js";
 import { download, fill, h, pickFile } from "./dom.js";
 
@@ -63,12 +63,12 @@ export function mountPersona(body: HTMLElement, rt: Runtime): () => void {
   });
 
   const presets = h("select");
-  presets.append(h("option", { value: "" }, "Start a new persona from..."), h("option", { value: "default" }, "Default"), h("option", { value: "random" }, "Random"));
-  for (const id of Object.keys(ARCHETYPES)) presets.append(h("option", { value: id }, id[0]!.toUpperCase() + id.slice(1)));
+  presets.append(h("option", { value: "" }, "Start a new persona from..."), h("option", { value: "neutral" }, "Neutral"), h("option", { value: "random" }, "Random"));
+  for (const id of PRESET_IDS) presets.append(h("option", { value: id }, styleLabel(id)));
   presets.addEventListener("change", () => {
     const v = presets.value;
     presets.value = "";
-    if (v === "default") add(defaultPersona("New persona"));
+    if (v === "neutral") add(neutralPersona("New persona"));
     else if (v === "random") add(randomPersona(Math.random, "Wanderer"));
     else if (v !== "") add(archetype(v as ArchetypeId));
   });
@@ -85,6 +85,11 @@ export function mountPersona(body: HTMLElement, rt: Runtime): () => void {
       store({ ...current(), name: name.value.trim() || "Squire" });
       draw();
     });
+    /* Choosing a style here changes only the rule the character plays by; its traits stay as set. */
+    const style = h("select");
+    style.append(h("option", { value: "", selected: p.preset === null }, "No style"));
+    for (const id of PRESET_IDS) style.append(h("option", { value: id, selected: p.preset === id }, styleLabel(id)));
+    style.addEventListener("change", () => store({ ...current(), preset: style.value === "" ? null : style.value as ArchetypeId }));
     const backstory = h("textarea", { placeholder: "Who is this character? Where are they from, what do they want, what do they fear?" }, p.backstory);
     backstory.addEventListener("change", () => store({ ...current(), backstory: backstory.value }));
 
@@ -97,6 +102,7 @@ export function mountPersona(body: HTMLElement, rt: Runtime): () => void {
       sheet,
       playing === null ? null : h("p", { class: "muted" }, `This character plays as ${playing.name}. Changes here apply to new characters.`),
       h("label", {}, "Name", name),
+      h("label", {}, "Play style", style),
       h("label", {}, "Backstory", backstory),
       ...groups,
     );
@@ -106,6 +112,7 @@ export function mountPersona(body: HTMLElement, rt: Runtime): () => void {
     h("h3", {}, "Personas"),
     h("div", { class: "row" }, library, presets),
     h("label", {}, active, " New characters play as this persona"),
+    h("p", { class: "muted" }, HEIR_NOTE),
     h(
       "div",
       {},
@@ -141,6 +148,14 @@ export function mountPersona(body: HTMLElement, rt: Runtime): () => void {
   );
   draw();
   return () => {};
+}
+
+const PRESET_IDS = Object.keys(ARCHETYPES) as ArchetypeId[];
+
+const HEIR_NOTE = "A character you make starts from the persona marked here. An heir Squire starts after a death rolls its own traits and takes its family's values, loyalties and habits from its parent.";
+
+function styleLabel(id: ArchetypeId): string {
+  return `${presetName(id)}: ${ARCHETYPES[id].rule}`;
 }
 
 type Param = (typeof PARAMETERS)[number];
