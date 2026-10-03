@@ -64,6 +64,7 @@ import { arrivalFeeling, badLevelFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
 import { allowedGoals, bandOf, classOf, CONFIDENCE_FLOOR, ESCAPE_QUESTION, escapeThresholds, lowConfidencePick, pruneDominated, purposeClauses, type PackRecord } from "./tactics.js";
 import { createLoopGuard, type LoopFinding } from "./loops.js";
+import { chaosNote, chaosPick, chaosTold, type ChaosMethod, type ChaosRecord } from "./chaos.js";
 import { distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, flourishLines, nudgeCursedGround, nudgeGrounds, type Flourishes, type FamilyFlourishes } from "../learning/family-ways.js";
 
 /** Every option this planner can offer. */
@@ -283,6 +284,8 @@ export interface GoalDigest {
   pack?: PackRecord;
   /** A loop found before this decision, and the tactic the re-plan was told had failed. */
   loop?: LoopFinding & { fellBack?: boolean };
+  /** The Law to Chaos draw behind the pick, when one was made. Kept for the decision log, never sent. */
+  chaos?: ChaosRecord;
 }
 
 function withoutDescent<T extends Readonly<Record<string, number>>>(dist: T): Record<string, number> {
@@ -342,6 +345,10 @@ export interface GoalPlannerOptions {
   readonly stateTokens?: number;
   /** Whether to skip the model for forced, routine and unchanged moments. On unless set to false. */
   readonly reflex?: boolean;
+  /** Whether Law to Chaos may draw the final pick. On unless set to false, which always takes the top option. */
+  readonly chaos?: boolean;
+  /** How Law to Chaos draws: smooth sampling unless set to the bounded roll. */
+  readonly chaosMethod?: ChaosMethod;
 }
 
 /** A plan that owns a watcher, so `trigger` can ask it. */
@@ -2304,9 +2311,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * Pick from the answers. With no persona this is the best-move answer. With
    * one, the best and in-character answers are blended by persona strength, the
    * safety floor removes options riskier than the persona accepts, and a few
-   * quirks decide outright.
+   * quirks decide outright. With `sample` set, Law to Chaos then draws the pick
+   * from the options left; without it the top option is taken.
    */
-  function decide(raw: Answer & { type: "choice" }, inCharacter: Answer | undefined, digest: GoalDigest, answers: Readonly<Record<string, Answer>>, view: AgentView, allowed: ReadonlySet<string> | null = null): string {
+  function decide(raw: Answer & { type: "choice" }, inCharacter: Answer | undefined, digest: GoalDigest, answers: Readonly<Record<string, Answer>>, view: AgentView, allowed: ReadonlySet<string> | null = null, sample = false, failed: Goal | null = null): string {
+    delete digest.chaos;
     const persona = personaOf();
     const within = (dist: Readonly<Record<string, number>>): Record<string, number> => allowed === null ? { ...dist } : restrictTo(dist, allowed, digest.offers);
     const probs = within(options.calibrate === undefined ? raw.probabilities : options.calibrate(raw.probabilities));
@@ -2334,7 +2343,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
     const weighted = withoutHeld(options.orders === undefined ? blended : options.orders.weigh(blended, answers, view, digest.offers), held);
     /* An order at high adherence carries its options past the ceiling, as Death wish does for every option. */
-    for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
+    const lifted = new Set<string>();
+    for (const goal of options.orders?.passes(view) ?? []) {
+      if ((risk[goal] ?? 0) <= riskCeiling(persona)) continue;
+      risk[goal] = riskCeiling(persona);
+      if (!persona.quirks.deathwish.on) lifted.add(goal);
+    }
     /* A level with nothing left to explore has nothing safe and useful left, and the depth target no longer holds the character on it. */
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
@@ -2348,8 +2362,26 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     /* The nudges can lift an option the escape band left out, so the band applies once more at the end. */
     const banded = allowed === null ? floor.dist : Object.fromEntries(Object.entries(floor.dist).filter(([goal]) => allowed.has(goal)));
-    const pick = pickTop(banded) ?? advice;
+    const first = pickTop(banded) ?? advice;
+    const pick = sample ? chaosDraw(banded, first, digest, failed, options.orders?.passes(view) ?? new Set<string>(), lifted, persona) : first;
     return record(pick, { best: best.probabilities, inCharacter: inChar, blended: banded, strength, removed: floor.removed });
+  }
+
+  /**
+   * Law to Chaos over the options still allowed. A refusal is never drawn in
+   * place of an action, nor an action in place of a refusal. An option an order
+   * carries past the ceiling is taken as it stands, and is never drawn in place
+   * of another option. A tactic a loop showed failing is not drawn unless it is
+   * the top option already.
+   */
+  function chaosDraw(dist: Readonly<Record<string, number>>, top: string, digest: GoalDigest, failed: Goal | null, passes: ReadonlySet<string>, lifted: ReadonlySet<string>, persona: Persona): string {
+    if (options.chaos === false || top === "none_of_these" || passes.has(top)) return top;
+    const pool = Object.fromEntries(Object.entries(dist).filter(([goal]) => goal === top || (goal !== "none_of_these" && goal !== failed && !lifted.has(goal))));
+    const { pick, record } = chaosPick(pool, { lawchaos: persona.sliders.lawchaos, method: options.chaosMethod ?? "sampling", rng });
+    if (record === null || pick === undefined) return top;
+    digest.chaos = record;
+    if (chaosTold(record)) log(record.pick === record.top ? `goal: Law to Chaos keeps ${record.top} (${chaosNote(record)})` : `goal: Law to Chaos picks ${record.pick} over ${record.top} (${chaosNote(record)})`);
+    return pick;
   }
 
   /**
@@ -2690,7 +2722,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         options.orders?.decided(offer.goal, view);
         return { plan: noteStalls(offer.goal, build(offer.goal, view), view) };
       }
-      const pick = decide(answer, answers["in_character"], digest, answers, view, allowed);
+      /* Chaos yields to danger and to doubt: once the gate narrows the choice, or the answer was unsure, the top option is taken. */
+      const calm = (gate?.band === undefined || gate.band === "stay") && !(gate !== undefined && answer.confidence < CONFIDENCE_FLOOR);
+      const pick = decide(answer, answers["in_character"], digest, answers, view, allowed, calm && unsure === null, failed);
       if (failed !== null && pick === failed) {
         log(`goal: ${pick} again after the loop, so Squire picks without it`);
         return ownChoice(digest, view, failed);

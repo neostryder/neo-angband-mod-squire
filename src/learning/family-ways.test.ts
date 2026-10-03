@@ -291,6 +291,8 @@ describe("favoured grounds", () => {
     const p = parent();
     p.sliders.strength = 0;
     p.sliders.volatility = 0;
+    /* A lawful persona takes the top option, so the nudge alone decides the close call. */
+    p.sliders.lawchaos = 0;
     const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona: p, reflex: false, flourishes: () => memories });
     const q = asked(planner.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toEqual(expect.arrayContaining(["explore", "descend"]));

@@ -81,6 +81,8 @@ After a hit from an unseen attacker, Squire can detect or light the area, gain S
 
 A persona is a character sheet for how Squire plays: sliders for boldness, patience, greed, how early it heals and when it retreats, lists of favourite weapons and hated creatures, quirks, and a backstory. With a persona, Squire usually asks the model two questions at once, the best move and the move this character would make, and blends the answers by how strong the persona is. A safety floor then removes any choice riskier than the persona's Self-preservation allows. If every choice is that risky, the safest one stays. Death wish lifts the limit for every choice, and an order the character follows closely lifts it for that order.
 
+Law to Chaos sets how often the character goes against its own best guess. A lawful character always takes the option it rates highest. A neutral one sometimes takes the next best, and a chaotic one often does, though it rarely picks an option it rates far lower. It picks its long-term, mid-term and near-term goals the same way. The safety floor still comes first, and once the escape question says to back off, every character takes its top option. The log names each move made against the first choice.
+
 The Persona tab starts from Default or a random persona, or from an archetype: coward, berserker, miser, scholar, zealot or tourist. Personas can be exported to a file and imported again. Edits on the Persona tab apply to new characters. A character already in play keeps its own copy, which shifts with experience.
 
 When a character dies, Setup can have Squire start the next one for you, either like the last one or with a random race and class. The new character inherits a little of what its ancestors learned.

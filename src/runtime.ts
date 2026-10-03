@@ -15,6 +15,7 @@ import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd
 import type { DecisionContext } from "./brain/context.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import { tacticalLog } from "./brain/tactics.js";
+import { chaosEntry } from "./brain/chaos.js";
 import { createTally, type Tally } from "./brain/tally.js";
 import { createStrategy, type Strategy } from "./strategy/review.js";
 import { readStoreMemory, type StoreMemory } from "./town/memory.js";
@@ -339,6 +340,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       return { deepest: depths.length === 0 ? null : Math.max(...depths), heir: lineage.generation > 1 };
     },
     seed: () => character.runId,
+    chaosMethod: () => config.chaosMethod,
     storeMemory: character.storeMemory ?? [],
     saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
     homeStock: () => character.homeStock ?? UNKNOWN_HOME,
@@ -790,6 +792,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
         stateTokens: stateBudget(config),
+        chaosMethod: config.chaosMethod,
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
@@ -861,6 +864,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       ...(record.reflex === undefined ? {} : { reflex: record.reflex }),
       ...(record.context.fallback === undefined ? {} : { fallback: record.context.fallback }),
       ...tacticalLog(record.context.pack, record.context.loop),
+      ...chaosEntry(record.context.chaos),
       state: record.request.state,
       ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
       options: record.context.offers.map((o) => o.goal),

@@ -78,7 +78,7 @@ The Setup tab is the first tab of the Squire panel. Its sections appear in this 
 
 ## Persona tab
 
-The top of the Persona tab holds the persona library. Pick a persona from the list to edit it, or start a new one from "Start a new persona from...", which offers Default, Random and the archetypes coward, berserker, miser, scholar, zealot and tourist. **Export**, **Import** and **Delete** work on the persona shown. The library holds up to 50 personas.
+The top of the Persona tab holds the persona library. Pick a persona from the list to edit it, or start a new one from "Start a new persona from...", which offers Neutral (every slider at its default and no quirks), Random and nine presets: coward, berserker, miser, scholar, zealot, tourist, diver, completionist and paranoid. Each preset sets some sliders and adds a play rule, one short line such as "will not fight a unique without an escape path" that goes to the model with the persona. **Play style** sets or clears that rule without touching the sliders, and moving a slider by hand keeps it. The first time Squire meets a character, the panel opens on this tab so a persona can be picked before Squire plays it. **Export**, **Import** and **Delete** work on the persona shown. The library holds up to 50 personas.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
@@ -102,6 +102,7 @@ The rest of the sheet is grouped as on screen. Sliders run from 0 to 100, and th
 | Optimism | 50 | expects the worst to expects the best | At 70 or more, creatures seem one danger step safer than they are. At 30 or less, they seem one step deadlier. |
 | Volatility | 50 | steady to mood swings | How far persona strength wanders from one decision to the next. |
 | Pride | 50 | humble to glory-seeking | A proud character hunts uniques and chases depth records. |
+| Law to Chaos | 50 | lawful to chaotic | How often the character takes something other than the option the model rates highest, and how quickly it drops a goal for a new one. At 0 it always takes the top option. |
 
 ### Values
 
@@ -109,10 +110,11 @@ The rest of the sheet is grouped as on screen. Sliders run from 0 to 100, and th
 | --- | --- | --- | --- |
 | Self-preservation | 70 | reckless to survival first | Squire drops any choice riskier than this allows, unless Death wish is on. |
 | Greed | 50 | indifferent to gold-hungry | A greedy character goes out of its way for gold and loot it knows about. |
-| Ambition | 50 | content to driven to win | How fast the character heads deeper. |
+| Ambition | 50 | content to set on winning | How fast the character heads deeper. |
 | Honour | 50 | fights dirty to fights fair | Attacking sleeping creatures and using corridor tactics. |
 | Mercy | 50 | kills everything to spares the harmless | Whether to attack harmless or fleeing creatures. |
 | Renown | 50 | private to showboat | Favours moves worth a Chronicle line over equally good, safer ones. |
+| Good to Evil | 50 | good to evil | Whether the character attacks harmless or fleeing creatures, fights dirty, steals and harms townspeople, and how dark its chronicle reads. |
 
 ### Likes and dislikes
 
@@ -143,7 +145,7 @@ The rest of the sheet is grouped as on screen. Sliders run from 0 to 100, and th
 | Engagement range | 50 | melee to ranged and kiting | Whether the character closes in to fight or shoots from a distance. |
 | Escape readiness | 50 | keeps none to keeps many | How many escapes the character wants in the pack before it goes down. |
 | Heal threshold | 50 | heals late to heals early | The hit points at which healing becomes an option. |
-| Retreat threshold | 50 | holds to the end to leaves early | The hit points at which fleeing becomes an option. |
+| Retreat threshold | 50 | holds out to leaves early | The hit points at which fleeing becomes an option. |
 | Target priority | 50 | weakest first to most dangerous first | Which creature in a group is attacked first. |
 | Consumable use | 50 | saves for emergencies to uses freely | How readily potions, scrolls and charges are spent. |
 | Corridor discipline | 50 | fights in the open to always backs into a corridor | Whether the character draws a group into a corridor before it fights. |
@@ -188,7 +190,7 @@ Each quirk starts off, with its strength slider at 50.
 | Celebrations | on | A short line marks a level-up and a first unique kill in the character's voice. |
 | First-kill boasts | on | A proud character occasionally speaks when it kills a creature kind for the first time. |
 | Heirloom recognition | on | An heir recognises by name an artifact an ancestor carried, and wants it more. |
-| Family resemblance | 50 | How much personality an heir takes from its parent, from each heir is new (0) to heirs take after parents (100). |
+| Family resemblance | 50 | How much an heir takes after its parent, from each heir is new (0) to heirs take after parents (100). An heir rolls a fresh persona, then sixteen family traits move toward the parent's by this much: Mercy, Renown, Good to Evil, Law to Chaos, Greed, Ambition, Honour, Devotion, Gratitude, Resentment, Pack weight, Home use and the hated, feared, distrusted and superstitions lists. Everything else is rolled. |
 
 The [README](README.md#personas) explains what each lineage feature does in play.
 
