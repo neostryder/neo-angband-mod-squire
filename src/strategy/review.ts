@@ -13,7 +13,8 @@
 
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import type { AskResult, Backend } from "../brain/backend.js";
-import type { Answer, SystemOneRequest } from "../brain/systemone.js";
+import type { Answer, ChoiceAnswer, SystemOneRequest } from "../brain/systemone.js";
+import { chaosChoice, chaosNote, chaosTold, type ChaosMethod, type ChaosRecord, type ChaosSource } from "../brain/chaos.js";
 import type { Tally } from "../brain/tally.js";
 import type { RunEvent } from "../report/events.js";
 import { candidateAims, FIXED_ORDER, inFixedOrder, wieldsMagicWeapon, type Aim, type AimKind } from "./aims.js";
@@ -102,12 +103,16 @@ export function midGoalRequest(view: AgentView, aims: readonly Aim[], pursuits: 
   };
 }
 
+/** An aim's probability, discounted by how dim its shop memory is. */
+function aimScore(aim: Aim, probs: Readonly<Record<string, number>>): number {
+  return (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
+}
+
 /** Highest probability first. A dim shop memory discounts the probability, and equal scores keep the fixed order. */
 export function rankByScore(aims: readonly Aim[], answers: Readonly<Record<string, Answer>>): Aim[] {
   const answer = answers["mid_goal"];
   const probs = answer?.type === "choice" ? answer.probabilities : {};
-  const scoreOf = (aim: Aim): number => (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
-  return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
+  return [...aims].sort((a, b) => aimScore(b, probs) - aimScore(a, probs) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 
 export interface StrategyDeps {
@@ -136,6 +141,10 @@ export interface StrategyDeps {
   revealLongGoal?(): boolean;
   /** A Choice the model answered, for the training rows. */
   onAsked?(request: SystemOneRequest, answers: Readonly<Record<string, Answer>>): void;
+  /** Whether Law to Chaos may draw the goals the model ranked. On unless it answers false, which keeps the top one. */
+  chaos?(): boolean;
+  /** How Law to Chaos draws: smooth sampling unless this names the bounded roll. */
+  chaosMethod?(): ChaosMethod;
 }
 
 export interface ReviewSummary {
@@ -280,6 +289,33 @@ export function createStrategy(deps: StrategyDeps): Strategy {
   let blocks: ReviseBlock[] = [];
   /* Why the mid-term goal was just dropped, so the next look chooses again. */
   let dropped: string | null = null;
+
+  /** Where a goal draw comes from, or null when there is no persona or chaos is switched off. */
+  function chaosSource(): ChaosSource | null {
+    const persona = deps.persona?.() ?? null;
+    if (persona === null || deps.chaos?.() === false) return null;
+    return { lawchaos: persona.sliders.lawchaos, method: deps.chaosMethod?.() ?? "sampling", rng: deps.rng ?? Math.random };
+  }
+
+  function chaosLog(level: string, record: ChaosRecord | null | undefined, label: (kind: string) => string): void {
+    if (record === null || record === undefined || !chaosTold(record)) return;
+    deps.log(record.pick === record.top
+      ? `Law to Chaos kept ${label(record.top)} as the ${level} goal (${chaosNote(record)}).`
+      : `Law to Chaos picked ${label(record.pick)} over ${label(record.top)} as the ${level} goal (${chaosNote(record)}).`);
+  }
+
+  /**
+   * The aim to lead, drawn from the open aims by their scores, with the ranking's
+   * top open aim as the top option. Null when there is nothing to draw from.
+   */
+  function drawAim(ranking: readonly Aim[], open: readonly Aim[], answer: ChoiceAnswer): ReturnType<typeof chaosChoice> {
+    const kinds = new Set(open.map((aim) => aim.kind));
+    const order = ranking.filter((aim) => kinds.has(aim.kind));
+    const top = order[0];
+    if (top === undefined) return null;
+    const probabilities = Object.fromEntries(order.map((aim) => [aim.kind, aimScore(aim, answer.probabilities)]));
+    return chaosChoice({ type: "choice", choice: top.kind, confidence: answer.confidence, probabilities }, order.map((aim) => aim.kind), chaosSource());
+  }
 
   function guarded<T extends { readonly kind: string }>(list: readonly T[]): T[] {
     return guardAims(list, blocks, lastView?.turn() ?? 0);
@@ -457,13 +493,15 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       }
       if (args.mine === generation) {
         longStamp = args.longDue.stamp;
-        const picked = args.pursuits.find((pursuit) => pursuit.kind === choiceOf(longSent.answer)) ?? args.pursuits[0];
+        const drawn = longSent.why === "" ? chaosChoice(longSent.answer, args.pursuits.map((pursuit) => pursuit.kind), chaosSource()) : null;
+        const picked = args.pursuits.find((pursuit) => pursuit.kind === (drawn?.pick ?? choiceOf(longSent.answer))) ?? args.pursuits[0];
         if (picked !== undefined) {
           takeLong(picked, args.longDue.trigger, args.turn, args.depth);
           const by = longSent.why === "" && choiceOf(longSent.answer) !== null
             ? ` ${longSent.backend} ranked them.`
             : ` It kept the heaviest one, because ${longSent.why === "" ? "none of the options was chosen" : longSent.why}.`;
           deps.log(longLog(args.longDue.trigger, picked.label, by));
+          chaosLog("long-term", drawn?.record, (kind) => args.pursuits.find((pursuit) => pursuit.kind === kind)?.label ?? kind);
         }
       }
     }
@@ -474,8 +512,12 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, open, pursuitsNow())) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
-    const rankedPreview = args.midTrigger === null ? args.candidates
+    const scored = args.midTrigger === null ? args.candidates
       : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
+    /* Law to Chaos may lead with another aim the model ranked; the rest keep their order. */
+    const midDrawn = args.midTrigger !== null && midModel && midAnswer !== null ? drawAim(scored, open, midAnswer) : null;
+    const lead = midDrawn === null || midDrawn.record === null ? undefined : scored.find((aim) => aim.kind === midDrawn.pick);
+    const rankedPreview = lead === undefined ? scored : [lead, ...scored.filter((aim) => aim !== lead)];
     let nearReason = args.nearReason;
     const topKind = rankedPreview[0]?.kind ?? null;
     if (nearReason === null && args.midTrigger !== null && args.previousMid !== null && topKind !== null && topKind !== args.previousMid) {
@@ -495,6 +537,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       last = { trigger: args.midTrigger, turn: args.turn, source };
       const names = rankedPreview.map((aim) => aim.label).join(", ");
       deps.log(`Squire looked over its aims ${TRIGGER_TEXT[args.midTrigger]}: ${names === "" ? "none apply" : names}.${by}`);
+      chaosLog("mid-term", midDrawn?.record, (kind) => scored.find((aim) => aim.kind === kind)?.label ?? kind);
       const top = rankedPreview[0];
       if (top !== undefined) {
         if (midHold !== null && midHold.id === top.kind) midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], midHold.turn, midHold.depth);
@@ -505,9 +548,10 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       }
     }
     if (nearSent !== null && nearReason !== null) {
-      const picked = pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
+      const drawn = nearSent.why === "" ? chaosChoice(nearSent.answer, args.nearList.map((item) => item.kind), chaosSource()) : null;
+      const picked = args.nearList.find((item) => item.kind === drawn?.pick) ?? pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
       if (picked !== null) {
-        const model = nearSent.why === "" && choiceOf(nearSent.answer) === picked.kind;
+        const model = nearSent.why === "" && (drawn !== null || choiceOf(nearSent.answer) === picked.kind);
         const by = model
           ? ` ${nearSent.backend} ranked them.`
           : ` It kept the first one, because ${nearSent.why === "" ? "none of the options was chosen" : nearSent.why}.`;
@@ -516,6 +560,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
         if (nearHold === null || nearHold.id !== picked.kind) nearHold = { id: picked.kind, label: picked.label, detail: picked.detail, trigger: nearReason, turn: args.turn, depth: args.depth, ...danger };
         else nearHold = { id: nearHold.id, label: picked.label, detail: picked.detail, trigger: nearReason, turn: nearHold.turn, depth: nearHold.depth, ...danger };
         deps.log(nearLog(nearReason, picked.label, by));
+        chaosLog("near-term", drawn?.record, (kind) => args.nearList.find((item) => item.kind === kind)?.label ?? kind);
       }
     }
   }

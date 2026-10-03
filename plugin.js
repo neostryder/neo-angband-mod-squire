@@ -6155,6 +6155,80 @@ function createLoopGuard() {
   };
 }
 
+// src/brain/chaos.ts
+var CHAOS_METHODS = ["sampling", "roll"];
+var LAWFUL_TEMPERATURE = 0.02;
+var ROLL_FLOOR = 1 / 3;
+var ROLL_SPREAD = 4;
+function unitOf(lawchaos) {
+  return Number.isFinite(lawchaos) ? Math.max(0, Math.min(100, lawchaos)) / 100 : 0.5;
+}
+function draw01(rng) {
+  const value = rng();
+  return Number.isFinite(value) ? Math.max(0, Math.min(1 - Number.EPSILON, value)) : 0.5;
+}
+function die(sides, rng) {
+  return 1 + Math.floor(draw01(rng) * sides);
+}
+function chaosTemperature(lawchaos) {
+  const x = unitOf(lawchaos);
+  return 0.9 * x + 0.2 * x * x;
+}
+function rollThreshold(lawchaos) {
+  const keeps = Math.round(20 - 14 * unitOf(lawchaos));
+  return 21 - keeps;
+}
+function ranked(dist) {
+  return Object.entries(dist).filter(([, p]) => Number.isFinite(p) && p > 0).sort((a, b) => b[1] - a[1]);
+}
+function chaosPick(dist, source) {
+  const options = ranked(dist);
+  const top = options[0]?.[0] ?? Object.keys(dist)[0];
+  if (top === void 0 || options.length < 2) return { pick: top, record: null };
+  if (source.method === "roll") {
+    const threshold = rollThreshold(source.lawchaos);
+    if (threshold <= 1) return { pick: top, record: null };
+    const d20 = die(20, source.rng);
+    if (d20 >= threshold) return { pick: top, record: { method: "roll", d20, threshold, top, pick: top } };
+    const floor = options[0][1] * ROLL_FLOOR;
+    const near = options.filter(([, p]) => p >= floor).slice(0, ROLL_SPREAD);
+    const d4 = die(4, source.rng);
+    const pick3 = near[(d4 - 1) % near.length][0];
+    return { pick: pick3, record: { method: "roll", d20, threshold, d4, top, pick: pick3 } };
+  }
+  const temperature = chaosTemperature(source.lawchaos);
+  if (temperature < LAWFUL_TEMPERATURE) return { pick: top, record: null };
+  const lead = Math.log(options[0][1]);
+  const weights = options.map(([key2, p]) => [key2, Math.exp((Math.log(p) - lead) / temperature)]);
+  const total = weights.reduce((sum, [, w]) => sum + w, 0);
+  let left = draw01(source.rng) * total;
+  let pick2 = top;
+  for (const [key2, w] of weights) {
+    pick2 = key2;
+    left -= w;
+    if (left < 0) break;
+  }
+  return { pick: pick2, record: { method: "sampling", temperature: Math.round(temperature * 1e3) / 1e3, top, pick: pick2 } };
+}
+function chaosChoice(answer, allowed, source) {
+  if (answer?.type !== "choice" || answer.choice === "none_of_these" || !allowed.includes(answer.choice)) return null;
+  if (source === null) return { pick: answer.choice, record: null };
+  const dist = Object.fromEntries(allowed.filter((key2) => key2 !== "none_of_these").map((key2) => [key2, answer.probabilities[key2] ?? 0]));
+  if (ranked(dist)[0]?.[0] !== answer.choice) return { pick: answer.choice, record: null };
+  const drawn = chaosPick(dist, source);
+  return { pick: drawn.pick ?? answer.choice, record: drawn.record };
+}
+function chaosNote(record6) {
+  if (record6.method === "sampling") return `temperature ${(record6.temperature ?? 0).toFixed(2)}`;
+  return `d20 rolled ${String(record6.d20 ?? 0)}, needing ${String(record6.threshold ?? 0)}${record6.d4 === void 0 ? "" : `; d4 rolled ${String(record6.d4)}`}`;
+}
+function chaosTold(record6) {
+  return record6.method === "roll" || record6.pick !== record6.top;
+}
+function chaosEntry(chaos) {
+  return chaos === void 0 ? {} : { chaos: { ...chaos } };
+}
+
 // src/brain/goals.ts
 var NONE_OF_THESE3 = "None of the listed options suits this moment.";
 var RETREAT_STEPS = 4;
@@ -7661,7 +7735,8 @@ function createGoalPlanner(options) {
     if (persona !== null) lines2 = forget(lines2, persona, rng);
     return lines2.length === 0 ? {} : { lessons: lines2.join(" ") };
   }
-  function decide(raw, inCharacter, digest, answers, view, allowed = null) {
+  function decide(raw, inCharacter, digest, answers, view, allowed = null, sample = false, failed = null) {
+    delete digest.chaos;
     const persona = personaOf();
     const within2 = (dist) => allowed === null ? { ...dist } : restrictTo(dist, allowed, digest.offers);
     const probs = within2(options.calibrate === void 0 ? raw.probabilities : options.calibrate(raw.probabilities));
@@ -7688,7 +7763,12 @@ function createGoalPlanner(options) {
     const risk = { none_of_these: 0 };
     for (const offer of digest.offers) risk[offer.goal] = offer.risk;
     const weighted = withoutHeld(options.orders === void 0 ? blended : options.orders.weigh(blended, answers, view, digest.offers), held2);
-    for (const goal of options.orders?.passes(view) ?? []) if ((risk[goal] ?? 0) > riskCeiling(persona)) risk[goal] = riskCeiling(persona);
+    const lifted = /* @__PURE__ */ new Set();
+    for (const goal of options.orders?.passes(view) ?? []) {
+      if ((risk[goal] ?? 0) <= riskCeiling(persona)) continue;
+      risk[goal] = riskCeiling(persona);
+      if (!persona.quirks.deathwish.on) lifted.add(goal);
+    }
     const spent = !digest.offers.some((o) => o.goal === "explore");
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
@@ -7700,8 +7780,18 @@ function createGoalPlanner(options) {
     const nudged = withoutHeld(holdDescent(positioned, options.strategy?.().aims ?? [], view, badFeeling !== null, spent), held2);
     const floor = applySafetyFloor(nudged, risk, riskCeiling(persona), persona.quirks.deathwish.on);
     const banded = allowed === null ? floor.dist : Object.fromEntries(Object.entries(floor.dist).filter(([goal]) => allowed.has(goal)));
-    const pick2 = pick(banded) ?? advice;
+    const first = pick(banded) ?? advice;
+    const pick2 = sample ? chaosDraw(banded, first, digest, failed, options.orders?.passes(view) ?? /* @__PURE__ */ new Set(), lifted, persona) : first;
     return record6(pick2, { best: best.probabilities, inCharacter: inChar, blended: banded, strength, removed: floor.removed });
+  }
+  function chaosDraw(dist, top, digest, failed, passes, lifted, persona) {
+    if (options.chaos === false || top === "none_of_these" || passes.has(top)) return top;
+    const pool = Object.fromEntries(Object.entries(dist).filter(([goal]) => goal === top || goal !== "none_of_these" && goal !== failed && !lifted.has(goal)));
+    const { pick: pick2, record: record6 } = chaosPick(pool, { lawchaos: persona.sliders.lawchaos, method: options.chaosMethod ?? "sampling", rng });
+    if (record6 === null || pick2 === void 0) return top;
+    digest.chaos = record6;
+    if (chaosTold(record6)) log(record6.pick === record6.top ? `goal: Law to Chaos keeps ${record6.top} (${chaosNote(record6)})` : `goal: Law to Chaos picks ${record6.pick} over ${record6.top} (${chaosNote(record6)})`);
+    return pick2;
   }
   function descentHeld(digest, answers) {
     if (!digest.offers.some((offer) => offer.goal === "descend" && offer.gaps !== void 0)) return false;
@@ -8005,7 +8095,8 @@ function createGoalPlanner(options) {
         options.orders?.decided(offer2.goal, view);
         return { plan: noteStalls(offer2.goal, build(offer2.goal, view), view) };
       }
-      const pick2 = decide(answer, answers["in_character"], digest, answers, view, allowed);
+      const calm = (gate?.band === void 0 || gate.band === "stay") && !(gate !== void 0 && answer.confidence < CONFIDENCE_FLOOR);
+      const pick2 = decide(answer, answers["in_character"], digest, answers, view, allowed, calm && unsure === null, failed);
       if (failed !== null && pick2 === failed) {
         log(`goal: ${pick2} again after the loop, so Squire picks without it`);
         return ownChoice(digest, view, failed);
@@ -8786,11 +8877,13 @@ function midGoalRequest(view, aims, pursuits = []) {
     }
   };
 }
+function aimScore(aim, probs) {
+  return (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
+}
 function rankByScore(aims, answers) {
   const answer = answers["mid_goal"];
   const probs = answer?.type === "choice" ? answer.probabilities : {};
-  const scoreOf = (aim) => (probs[aim.kind] ?? 0) * (aim.stock?.confidence ?? 1);
-  return [...aims].sort((a, b) => scoreOf(b) - scoreOf(a) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
+  return [...aims].sort((a, b) => aimScore(b, probs) - aimScore(a, probs) || FIXED_ORDER.indexOf(a.kind) - FIXED_ORDER.indexOf(b.kind));
 }
 var TRIP_GOLD_GROWTH = 1.5;
 function choiceOf(answer) {
@@ -8851,6 +8944,23 @@ function createStrategy(deps) {
   const revisions = /* @__PURE__ */ new Map();
   let blocks = [];
   let dropped = null;
+  function chaosSource() {
+    const persona = deps.persona?.() ?? null;
+    if (persona === null || deps.chaos?.() === false) return null;
+    return { lawchaos: persona.sliders.lawchaos, method: deps.chaosMethod?.() ?? "sampling", rng: deps.rng ?? Math.random };
+  }
+  function chaosLog(level, record6, label) {
+    if (record6 === null || record6 === void 0 || !chaosTold(record6)) return;
+    deps.log(record6.pick === record6.top ? `Law to Chaos kept ${label(record6.top)} as the ${level} goal (${chaosNote(record6)}).` : `Law to Chaos picked ${label(record6.pick)} over ${label(record6.top)} as the ${level} goal (${chaosNote(record6)}).`);
+  }
+  function drawAim(ranking, open, answer) {
+    const kinds = new Set(open.map((aim) => aim.kind));
+    const order = ranking.filter((aim) => kinds.has(aim.kind));
+    const top = order[0];
+    if (top === void 0) return null;
+    const probabilities = Object.fromEntries(order.map((aim) => [aim.kind, aimScore(aim, answer.probabilities)]));
+    return chaosChoice({ type: "choice", choice: top.kind, confidence: answer.confidence, probabilities }, order.map((aim) => aim.kind), chaosSource());
+  }
   function guarded(list) {
     return guardAims(list, blocks, lastView?.turn() ?? 0);
   }
@@ -9008,11 +9118,13 @@ function createStrategy(deps) {
       }
       if (args.mine === generation) {
         longStamp = args.longDue.stamp;
-        const picked2 = args.pursuits.find((pursuit) => pursuit.kind === choiceOf(longSent.answer)) ?? args.pursuits[0];
+        const drawn = longSent.why === "" ? chaosChoice(longSent.answer, args.pursuits.map((pursuit) => pursuit.kind), chaosSource()) : null;
+        const picked2 = args.pursuits.find((pursuit) => pursuit.kind === (drawn?.pick ?? choiceOf(longSent.answer))) ?? args.pursuits[0];
         if (picked2 !== void 0) {
           takeLong(picked2, args.longDue.trigger, args.turn, args.depth);
           const by = longSent.why === "" && choiceOf(longSent.answer) !== null ? ` ${longSent.backend} ranked them.` : ` It kept the heaviest one, because ${longSent.why === "" ? "none of the options was chosen" : longSent.why}.`;
           deps.log(longLog(args.longDue.trigger, picked2.label, by));
+          chaosLog("long-term", drawn?.record, (kind) => args.pursuits.find((pursuit) => pursuit.kind === kind)?.label ?? kind);
         }
       }
     }
@@ -9022,7 +9134,10 @@ function createStrategy(deps) {
     const midSent = args.midTrigger !== null && askAims ? await ask2(midGoalRequest(args.view, open, pursuitsNow())) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
-    const rankedPreview = args.midTrigger === null ? args.candidates : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
+    const scored = args.midTrigger === null ? args.candidates : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
+    const midDrawn = args.midTrigger !== null && midModel && midAnswer !== null ? drawAim(scored, open, midAnswer) : null;
+    const lead = midDrawn === null || midDrawn.record === null ? void 0 : scored.find((aim) => aim.kind === midDrawn.pick);
+    const rankedPreview = lead === void 0 ? scored : [lead, ...scored.filter((aim) => aim !== lead)];
     let nearReason = args.nearReason;
     const topKind = rankedPreview[0]?.kind ?? null;
     if (nearReason === null && args.midTrigger !== null && args.previousMid !== null && topKind !== null && topKind !== args.previousMid) {
@@ -9040,6 +9155,7 @@ function createStrategy(deps) {
       last = { trigger: args.midTrigger, turn: args.turn, source };
       const names = rankedPreview.map((aim) => aim.label).join(", ");
       deps.log(`Squire looked over its aims ${TRIGGER_TEXT[args.midTrigger]}: ${names === "" ? "none apply" : names}.${by}`);
+      chaosLog("mid-term", midDrawn?.record, (kind) => scored.find((aim) => aim.kind === kind)?.label ?? kind);
       const top = rankedPreview[0];
       if (top !== void 0) {
         if (midHold !== null && midHold.id === top.kind) midHold = midHoldFor(top, TRIGGER_TEXT[args.midTrigger], midHold.turn, midHold.depth);
@@ -9050,15 +9166,17 @@ function createStrategy(deps) {
       }
     }
     if (nearSent !== null && nearReason !== null) {
-      const picked2 = pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
+      const drawn = nearSent.why === "" ? chaosChoice(nearSent.answer, args.nearList.map((item) => item.kind), chaosSource()) : null;
+      const picked2 = args.nearList.find((item) => item.kind === drawn?.pick) ?? pickNear(args.nearList, nearSent.answer !== null ? { near_goal: nearSent.answer } : {});
       if (picked2 !== null) {
-        const model = nearSent.why === "" && choiceOf(nearSent.answer) === picked2.kind;
+        const model = nearSent.why === "" && (drawn !== null || choiceOf(nearSent.answer) === picked2.kind);
         const by = model ? ` ${nearSent.backend} ranked them.` : ` It kept the first one, because ${nearSent.why === "" ? "none of the options was chosen" : nearSent.why}.`;
         if (nearHold !== null && nearHold.id !== picked2.kind) push("near", nearHold, "abandoned", nearReason, args.turn, args.depth, null);
         const danger = picked2.danger === void 0 ? {} : { danger: picked2.danger };
         if (nearHold === null || nearHold.id !== picked2.kind) nearHold = { id: picked2.kind, label: picked2.label, detail: picked2.detail, trigger: nearReason, turn: args.turn, depth: args.depth, ...danger };
         else nearHold = { id: nearHold.id, label: picked2.label, detail: picked2.detail, trigger: nearReason, turn: nearHold.turn, depth: nearHold.depth, ...danger };
         deps.log(nearLog(nearReason, picked2.label, by));
+        chaosLog("near-term", drawn?.record, (kind) => args.nearList.find((item) => item.kind === kind)?.label ?? kind);
       }
     }
   }
@@ -10842,7 +10960,8 @@ function defaultConfig() {
     instructionsKept: DEFAULT_INSTRUCTIONS_KEPT,
     channelUrl: "",
     lineages: {},
-    pendingHeir: null
+    pendingHeir: null,
+    chaosMethod: "sampling"
   };
 }
 function lineagesOf(value) {
@@ -10965,7 +11084,8 @@ function readConfig(stored) {
     pendingHeir: (() => {
       const heir = rec2(data["pendingHeir"]);
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {} } : null;
-    })()
+    })(),
+    chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod)
   };
 }
 function writeConfig(config) {
@@ -12707,6 +12827,7 @@ function createRuntime(host, options = {}) {
       return { deepest: depths.length === 0 ? null : Math.max(...depths), heir: lineage.generation > 1 };
     },
     seed: () => character.runId,
+    chaosMethod: () => config.chaosMethod,
     storeMemory: character.storeMemory ?? [],
     saveStoreMemory: (storeMemory) => self.saveCharacter({ ...character, storeMemory }),
     homeStock: () => character.homeStock ?? UNKNOWN_HOME,
@@ -13144,6 +13265,7 @@ function createRuntime(host, options = {}) {
         persona: () => persona === null ? null : character.persona,
         backstoryTokens: backstoryBudget(config),
         stateTokens: stateBudget(config),
+        chaosMethod: config.chaosMethod,
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
@@ -13216,6 +13338,7 @@ function createRuntime(host, options = {}) {
       ...record6.reflex === void 0 ? {} : { reflex: record6.reflex },
       ...record6.context.fallback === void 0 ? {} : { fallback: record6.context.fallback },
       ...tacticalLog(record6.context.pack, record6.context.loop),
+      ...chaosEntry(record6.context.chaos),
       state: record6.request.state,
       ...record6.context.stateHash === void 0 ? {} : { stateHash: record6.context.stateHash },
       options: record6.context.offers.map((o) => o.goal),
@@ -14729,8 +14852,8 @@ function styleGoal(entries, current2) {
     if (score < nearest - 0.1) continue;
     votes.set(entry.knight, (votes.get(entry.knight) ?? 0) + (entry.demonstration ? 2 : 1));
   }
-  const ranked = [...votes].sort((a, b) => b[1] - a[1]);
-  return ranked[0] !== void 0 && ranked[0][1] > (ranked[1]?.[1] ?? 0) ? ranked[0][0] : null;
+  const ranked2 = [...votes].sort((a, b) => b[1] - a[1]);
+  return ranked2[0] !== void 0 && ranked2[0][1] > (ranked2[1]?.[1] ?? 0) ? ranked2[0][0] : null;
 }
 function scoreExam(state, pick2, expected) {
   if (state.decisions >= 20) return state;

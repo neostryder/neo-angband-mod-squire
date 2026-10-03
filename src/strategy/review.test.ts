@@ -486,6 +486,8 @@ describe("the three goals", () => {
   it("sends one long-term question while it is out, and keeps the first look's ranking", async () => {
     const persona = defaultPersona("Mira");
     persona.sliders.ambition = 0;
+    /* A lawful persona keeps the model's top aim, so the ranking checked below is the model's own. */
+    persona.sliders.lawchaos = 0;
     const w = world({ map: ROOM, worn: ["Wooden Torch"], player: { depth: 1, hp: 40, maxHp: 40 } });
     const held: ((result: AskResult) => void)[] = [];
     const requests: SystemOneRequest[] = [];
@@ -832,5 +834,76 @@ describe("the revise-goal check", () => {
     releases[1]!(answer({ revise_goal: { type: "noul", p: 0.9 } }));
     await strategy.settled();
     expect(events).toHaveLength(0);
+  });
+});
+
+describe("Law to Chaos in the goal hierarchy", () => {
+  /** Answers every question with its first option at 0.6 and its second at 0.4, and notes the options asked. */
+  function rigChaos(lawchaos: number, extra: { chaos?: () => boolean; rng?: () => number } = {}) {
+    const persona = defaultPersona("Mira");
+    persona.sliders.lawchaos = lawchaos;
+    /* Hurt, with an untried ring in the pack: resting and trying it on are both near-term goals. */
+    const w = world({ map: ROOM, worn: ["Wooden Torch"], pack: ["a Ring of Protection {??}"], player: { depth: 1, hp: 10, maxHp: 40 } });
+    const offered: Record<string, string[]> = {};
+    const logs: string[] = [];
+    const played = createStrategy({
+      backend: () => JEV,
+      send: (request) => {
+        const key = Object.keys(request.questions)[0] ?? "";
+        const question = request.questions[key];
+        const keys = question?.type === "choice" ? Object.keys(question.criteria).filter((k) => k !== "none_of_these") : [];
+        offered[key] = keys;
+        const probabilities = Object.fromEntries(keys.map((k, i) => [k, i === 0 ? 0.6 : i === 1 ? 0.4 : 0]));
+        return Promise.resolve({
+          ok: true, answers: { [key]: { type: "choice", choice: keys[0] ?? "none_of_these", confidence: 0.9, probabilities } },
+          usage: { inputTokens: 10, outputTokens: 2, estimated: false }, model: null, latencyMs: 1, server: "test",
+        });
+      },
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      now: () => 0,
+      log: (line) => logs.push(line),
+      persona: () => persona,
+      seed: () => "run-1",
+      rng: extra.rng ?? (() => 0.99),
+      ...(extra.chaos === undefined ? {} : { chaos: extra.chaos }),
+    });
+    return { w, played, offered, logs };
+  }
+
+  async function look(r: ReturnType<typeof rigChaos>) {
+    r.played.observe(r.w.view);
+    await r.played.settled();
+    for (const key of ["long_goal", "mid_goal", "near_goal"]) expect(r.offered[key]?.length ?? 0, JSON.stringify(r.offered)).toBeGreaterThanOrEqual(2);
+    return { long: r.played.pursuits()[0]?.kind, mid: r.played.ranked()[0]?.kind, near: r.played.nearKind() };
+  }
+
+  it("keeps the model's top long, mid and near goals for a lawful persona", async () => {
+    const r = rigChaos(0);
+    expect(await look(r)).toEqual({ long: r.offered["long_goal"]![0], mid: r.offered["mid_goal"]![0], near: r.offered["near_goal"]![0] });
+    expect(r.logs.some((line) => line.startsWith("Law to Chaos"))).toBe(false);
+  });
+
+  it("draws each of them for a chaotic persona, and says so", async () => {
+    const r = rigChaos(100);
+    expect(await look(r)).toEqual({ long: r.offered["long_goal"]![1], mid: r.offered["mid_goal"]![1], near: r.offered["near_goal"]![1] });
+    const lines = r.logs.filter((line) => line.startsWith("Law to Chaos picked"));
+    expect(lines.map((line) => /as the ([a-z-]+) goal \(temperature 1\.10\)\.$/.exec(line)?.[1])).toEqual(["long-term", "mid-term", "near-term"]);
+    /* The model's ranking is still credited, since the draw was made from it. */
+    expect(r.logs.some((line) => line.includes("kept the first one") || line.includes("kept the usual order") || line.includes("kept the heaviest one"))).toBe(false);
+  });
+
+  it("keeps the top goals when chaos is switched off", async () => {
+    const r = rigChaos(100, { chaos: () => false });
+    expect(await look(r)).toEqual({ long: r.offered["long_goal"]![0], mid: r.offered["mid_goal"]![0], near: r.offered["near_goal"]![0] });
+  });
+
+  it("spreads a chaotic persona's goals over many looks", async () => {
+    const picks = new Set<string>();
+    let seed = 7;
+    for (let i = 0; i < 40; i += 1) {
+      const r = rigChaos(100, { rng: () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; } });
+      picks.add(`${String((await look(r)).mid === r.offered["mid_goal"]![0])}`);
+    }
+    expect(picks).toEqual(new Set(["true", "false"]));
   });
 });

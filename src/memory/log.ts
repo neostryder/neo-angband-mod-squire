@@ -1,4 +1,5 @@
 import type { PlanEnd } from "../brain/brain.js";
+import type { ChaosRecord } from "../brain/chaos.js";
 import type { KvStore } from "./kv.js";
 
 export interface LoggedDecision {
@@ -37,6 +38,8 @@ export interface LoggedDecision {
     readonly lowConfidence?: string;
     readonly loop?: { readonly kind: string; readonly tactic: string | null; readonly fellBack: boolean };
   };
+  /** The Law to Chaos draw behind the choice: the method, the temperature or the dice, the top option and the pick. Kept on this machine only. */
+  readonly chaos?: ChaosRecord;
   /** The same ending in full, kept on this machine for measuring later decisions. */
   readonly result?: PlanEnd;
   readonly persona?: { readonly best: string; readonly inCharacter: string; readonly blended: string; readonly strength: number; readonly removed: boolean };

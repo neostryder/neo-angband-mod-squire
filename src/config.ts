@@ -22,6 +22,7 @@ import { readFamilyFlourishes, readWays } from "./learning/family-ways.js";
 import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
+import { CHAOS_METHODS, type ChaosMethod } from "./brain/chaos.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -68,6 +69,8 @@ export interface SquireConfig {
   readonly lineages: Readonly<Record<string, Lineage>>;
   /** Set when a Squire character died and roll-on is starting its heir. */
   readonly pendingHeir: { readonly lineage: string; readonly parent: Persona; readonly name?: string } | null;
+  /** How Law to Chaos draws a pick: smooth sampling, or the bounded d20 and d4 roll. Stored only; no panel control sets it. */
+  readonly chaosMethod: ChaosMethod;
 }
 
 /** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
@@ -98,6 +101,7 @@ export function defaultConfig(): SquireConfig {
     channelUrl: "",
     lineages: {},
     pendingHeir: null,
+    chaosMethod: "sampling",
   };
 }
 
@@ -233,6 +237,7 @@ export function readConfig(stored: unknown): SquireConfig {
       const heir = rec(data["pendingHeir"]);
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...(typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {}) } : null;
     })(),
+    chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod),
   };
 }
 
