@@ -7,7 +7,7 @@
  * taken at face value and updated on each subsequent visit.
  */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "../host-adapter.js";
 import { shownName } from "./needs.js";
 
 export interface HomeWare {

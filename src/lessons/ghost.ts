@@ -1,4 +1,4 @@
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { Goal } from "../brain/goals.js";
 import { steps } from "../grid.js";
 import { goalLabel } from "../knight.js";

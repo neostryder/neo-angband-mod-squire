@@ -7,7 +7,7 @@
  * rather than only restocking.
  */
 
-import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, StoreView } from "../host-adapter.js";
 import { equipmentValue, fullyKnown, gearCandidates, keepsCapacity, TV } from "../gear/compare.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { shownName } from "./needs.js";

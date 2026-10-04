@@ -1,4 +1,4 @@
-import type { AgentView, MonsterView, PlayerView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView, PlayerView } from "../host-adapter.js";
 import { key, neighbours, steps, type Loc } from "../grid.js";
 import type { Terrain } from "../terrain.js";
 import { shownName } from "../town/needs.js";

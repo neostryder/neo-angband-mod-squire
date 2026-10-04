@@ -5,7 +5,8 @@
  */
 
 import type { Runtime } from "../runtime.js";
-import type { CommandFacade, ModKeymaps, ModPanel, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
+import type { ModKeymaps, ModPanel, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
+import type { CommandFacade } from "../host-adapter.js";
 import { h, STYLE } from "./dom.js";
 import { mountOrders } from "./orders.js";
 

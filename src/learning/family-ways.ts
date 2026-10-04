@@ -1,4 +1,4 @@
-import type { AgentCommand, AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView, ItemView } from "../host-adapter.js";
 import type { Persona } from "../persona/persona.js";
 import { gearCandidates, TV } from "../gear/compare.js";
 import { PACK_LIMIT } from "../brain/items.js";

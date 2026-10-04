@@ -12,7 +12,7 @@
  * shown under.
  */
 
-import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView } from "../host-adapter.js";
 import { shownName } from "../town/needs.js";
 import type { Goal } from "./goals.js";
 

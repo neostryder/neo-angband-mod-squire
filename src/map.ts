@@ -17,7 +17,7 @@
  * own knowledge are the same thing.
  */
 
-import type { AgentView, CellView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, CellView } from "./host-adapter.js";
 import type { Loc } from "./grid.js";
 import { neighbours } from "./grid.js";
 import type { Terrain } from "./terrain.js";

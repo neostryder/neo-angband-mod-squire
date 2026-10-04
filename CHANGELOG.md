@@ -59,6 +59,7 @@ Fixed.
 - [Visible] **Thrown oil and attack spells list their damage.** A flask of oil reads as about 7 damage when it hits, and Magic Missile shows its damage next to its chance to fail, so the model can weigh them against a sword.
 - [Visible] **Numbers sent to the model come with a word for their size.** A creature reads as 2 steps away (close), a depth as dungeon level 4 (shallow) and the character as Level 5 (novice), so the model doesn't have to guess what a bare number means.
 - [Visible] **Questions to the model spell out what they ask.** The escape question gives the character's hit points and the damage it could take, the readiness question names the level and what the character lacks, an option's purpose names the near-term goal it serves, and the in-character question points at the persona entry by name.
+- [Internal] [Modding-API] **Squire reads the game's state, engine and registries through a single adapter.** Each read there is named after the call that replaces it in mod API 2, so the move to API 2 changes one file, and a test fails when any other file reads the game's core, state or registries directly. Play is unchanged.
 
 ### Fixed
 - [Visible] **A retreat never steps onto a trap the character can see.** Squire used to back away onto a known trap when that square was the furthest from the creature.

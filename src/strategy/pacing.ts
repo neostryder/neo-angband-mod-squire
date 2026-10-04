@@ -1,6 +1,6 @@
 /** Legal commands still need a game-turn limit when the level stops paying. */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import { arrivalFeeling } from "../brain/level-feel.js";
 import { frontiers } from "../map.js";
 import { key, type Loc } from "../grid.js";

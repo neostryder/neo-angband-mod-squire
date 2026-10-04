@@ -5888,14 +5888,14 @@ function joinFacts(facts) {
   if (facts.length <= 1) return facts.join("");
   return `${facts.slice(0, -1).join(", ")} and ${facts.at(-1) ?? ""}`;
 }
-function createManual(birthOptions = () => []) {
+function createManual(birthOptions2 = () => []) {
   let key2 = "";
   let entries = {};
   return (view) => {
     const player = view.player();
     let options = [];
     try {
-      options = birthOptions();
+      options = birthOptions2();
     } catch {
     }
     const next = JSON.stringify([player.race, player.cls, player.classFlags, options.map((option) => [option.name, option.value])]);
@@ -13407,6 +13407,96 @@ function createShadow(options) {
   };
 }
 
+// src/terrain.ts
+var SHOP_NAMES = {
+  STORE_GENERAL: "General Store",
+  STORE_ALCHEMY: "Alchemy Shop",
+  STORE_WEAPON: "Weapon Smiths",
+  STORE_ARMOR: "Armoury",
+  STORE_BOOK: "Bookseller",
+  STORE_MAGIC: "Magic Shop",
+  STORE_BLACK: "Black Market",
+  HOME: "Home"
+};
+function readTerrain(features, tf) {
+  const down = /* @__PURE__ */ new Set();
+  const up = /* @__PURE__ */ new Set();
+  const closed = /* @__PURE__ */ new Set();
+  const open = /* @__PURE__ */ new Set();
+  const shops = /* @__PURE__ */ new Set();
+  const shopNames = /* @__PURE__ */ new Map();
+  const harmful = /* @__PURE__ */ new Set();
+  const diggable = /* @__PURE__ */ new Set();
+  for (const feature of features) {
+    const has = (flag) => flag > 0 && feature.flags.has(flag);
+    if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
+    if (has(tf.UPSTAIR)) up.add(feature.fidx);
+    if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
+    if (tf.CLOSABLE !== void 0 && has(tf.CLOSABLE)) open.add(feature.fidx);
+    if (has(tf.SHOP)) {
+      shops.add(feature.fidx);
+      const name = SHOP_NAMES[feature.code];
+      if (name !== void 0) shopNames.set(feature.fidx, name);
+    }
+    if (tf.ROCK !== void 0 && has(tf.ROCK) && !(tf.PERMANENT !== void 0 && has(tf.PERMANENT))) diggable.add(feature.fidx);
+    if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
+  }
+  return {
+    isDownStair: (feat) => down.has(feat),
+    isUpStair: (feat) => up.has(feat),
+    isClosedDoor: (feat) => closed.has(feat),
+    isOpenDoor: (feat) => open.has(feat),
+    isShopEntrance: (feat) => shops.has(feat),
+    shopName: (feat) => shopNames.get(feat) ?? null,
+    isHarmful: (feat) => harmful.has(feat),
+    isDiggable: (feat) => diggable.has(feat),
+    size: features.length
+  };
+}
+function noTerrain() {
+  return {
+    isDownStair: () => false,
+    isUpStair: () => false,
+    isClosedDoor: () => false,
+    isShopEntrance: () => false,
+    shopName: () => null,
+    isHarmful: () => false,
+    isDiggable: () => false,
+    size: 0
+  };
+}
+
+// src/host-adapter.ts
+function viewWorld(host) {
+  const make = host.core?.createAgentView;
+  if (make === void 0 || host.state === void 0) return null;
+  const base = make(host.state);
+  const snap = host.snapshot?.();
+  const inventory = [...snap?.core.inventory ?? []];
+  const equipment = [...snap?.core.equipment ?? []];
+  return { ...base, inventory: () => inventory, equipment: () => equipment };
+}
+function viewInput(host) {
+  return host.snapshot?.() ?? null;
+}
+function contentTerrain(host) {
+  const features = host.registries?.features;
+  const tf = host.core?.TF;
+  if (features === void 0 || tf === void 0) return noTerrain();
+  return readTerrain(features.allFeatures(), tf);
+}
+function engineTurnEnergy(host) {
+  return host.core?.turnEnergy;
+}
+var NOSCORE_BORG = 32;
+function autoplayedBefore(host) {
+  const noscore = host.state?.actor?.player?.noscore ?? 0;
+  return (noscore & NOSCORE_BORG) !== 0;
+}
+function birthOptions(host) {
+  return host.options?.get().entries.filter((entry) => entry.page === "birth") ?? [];
+}
+
 // src/runtime.ts
 var CHARACTER_FORMAT = "neo-angband/squire/character";
 var MOD_VERSION = "0.2.0";
@@ -14001,13 +14091,14 @@ function createRuntime(host, options = {}) {
     }
     if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
+    const speedEnergy = engineTurnEnergy(host);
     brain = createBrain({
       backend,
       rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...host.core?.turnEnergy === void 0 ? {} : { speedEnergy: host.core.turnEnergy },
+        ...speedEnergy === void 0 ? {} : { speedEnergy },
         log: host.log,
         persona: () => persona === null ? null : character.persona,
         backstoryTokens: backstoryBudget(config),
@@ -14042,11 +14133,11 @@ function createRuntime(host, options = {}) {
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
-        birthOptions: () => host.options?.get().entries.filter((entry) => entry.page === "birth") ?? []
+        birthOptions: () => birthOptions(host)
       }),
       tally,
       send: (request2) => self.send(request2),
-      token: () => host.snapshot?.()?.token ?? null,
+      token: () => viewInput(host)?.token ?? null,
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
@@ -14226,65 +14317,6 @@ function createRuntime(host, options = {}) {
     }
   }
   return self;
-}
-
-// src/terrain.ts
-var SHOP_NAMES = {
-  STORE_GENERAL: "General Store",
-  STORE_ALCHEMY: "Alchemy Shop",
-  STORE_WEAPON: "Weapon Smiths",
-  STORE_ARMOR: "Armoury",
-  STORE_BOOK: "Bookseller",
-  STORE_MAGIC: "Magic Shop",
-  STORE_BLACK: "Black Market",
-  HOME: "Home"
-};
-function readTerrain(features, tf) {
-  const down = /* @__PURE__ */ new Set();
-  const up = /* @__PURE__ */ new Set();
-  const closed = /* @__PURE__ */ new Set();
-  const open = /* @__PURE__ */ new Set();
-  const shops = /* @__PURE__ */ new Set();
-  const shopNames = /* @__PURE__ */ new Map();
-  const harmful = /* @__PURE__ */ new Set();
-  const diggable = /* @__PURE__ */ new Set();
-  for (const feature of features) {
-    const has = (flag) => flag > 0 && feature.flags.has(flag);
-    if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
-    if (has(tf.UPSTAIR)) up.add(feature.fidx);
-    if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
-    if (tf.CLOSABLE !== void 0 && has(tf.CLOSABLE)) open.add(feature.fidx);
-    if (has(tf.SHOP)) {
-      shops.add(feature.fidx);
-      const name = SHOP_NAMES[feature.code];
-      if (name !== void 0) shopNames.set(feature.fidx, name);
-    }
-    if (tf.ROCK !== void 0 && has(tf.ROCK) && !(tf.PERMANENT !== void 0 && has(tf.PERMANENT))) diggable.add(feature.fidx);
-    if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
-  }
-  return {
-    isDownStair: (feat) => down.has(feat),
-    isUpStair: (feat) => up.has(feat),
-    isClosedDoor: (feat) => closed.has(feat),
-    isOpenDoor: (feat) => open.has(feat),
-    isShopEntrance: (feat) => shops.has(feat),
-    shopName: (feat) => shopNames.get(feat) ?? null,
-    isHarmful: (feat) => harmful.has(feat),
-    isDiggable: (feat) => diggable.has(feat),
-    size: features.length
-  };
-}
-function noTerrain() {
-  return {
-    isDownStair: () => false,
-    isUpStair: () => false,
-    isClosedDoor: () => false,
-    isShopEntrance: () => false,
-    shopName: () => null,
-    isHarmful: () => false,
-    isDiggable: () => false,
-    size: 0
-  };
 }
 
 // src/orders/panel.ts
@@ -15670,14 +15702,8 @@ function ghostAfterCommand(hint, previousGoal, knight) {
 var APPRENTICE_KEY = "squire/apprentice";
 var DEMONSTRATION_DECISIONS = 5;
 function attachSquire(ctx, rt) {
-  const make = ctx.core?.createAgentView;
   function viewNow() {
-    if (make === void 0 || ctx.state === void 0) return null;
-    const base = make(ctx.state);
-    const snap = ctx.snapshot?.();
-    const inventory = [...snap?.core.inventory ?? []];
-    const equipment = [...snap?.core.equipment ?? []];
-    return { ...base, inventory: () => inventory, equipment: () => equipment };
+    return viewWorld(ctx);
   }
   ctx.events?.on("combat-outcome", (_name, p) => {
     if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
@@ -15728,9 +15754,10 @@ function attachSquire(ctx, rt) {
     void rt.store().set(APPRENTICE_KEY, next);
     for (const l of listeners) l(next);
   }
-  const terrain = ctx.registries?.features !== void 0 && ctx.core?.TF !== void 0 ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF) : noTerrain();
+  const terrain = contentTerrain(ctx);
+  const speedEnergy = engineTurnEnergy(ctx);
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {
-  }, ...ctx.core?.turnEnergy === void 0 ? {} : { speedEnergy: ctx.core.turnEnergy } });
+  }, ...speedEnergy === void 0 ? {} : { speedEnergy } });
   function record6(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
     const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
@@ -16009,16 +16036,11 @@ function registerSquireTitle(ctx, store) {
 }
 
 // plugin.ts
-var NOSCORE_BORG = 32;
 function characterAlreadyAutoplayed(ctx) {
-  const noscore = ctx.state?.actor?.player?.noscore ?? 0;
-  return (noscore & NOSCORE_BORG) !== 0;
+  return autoplayedBefore(ctx);
 }
 function terrainFrom(ctx) {
-  const features = ctx.registries?.features;
-  const tf = ctx.core?.TF;
-  if (features === void 0 || tf === void 0) return noTerrain();
-  return readTerrain(features.allFeatures(), tf);
+  return contentTerrain(ctx);
 }
 var plugin_default = {
   api: 1,

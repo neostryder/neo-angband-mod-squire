@@ -14,7 +14,7 @@
  * the model is asked again about the new situation.
  */
 
-import type { AgentActions, AgentCommand, AgentView, ItemView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { AgentActions, AgentCommand, AgentView, ItemView, MonsterView } from "../host-adapter.js";
 import type { SquireContext } from "../context.js";
 import type { Mission } from "../mission.js";
 import { isStop } from "../mission.js";

@@ -1,6 +1,6 @@
 /** Shop knowledge belongs to the character and starts at the shop door. */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import { jitteredStrength } from "../persona/blend.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";

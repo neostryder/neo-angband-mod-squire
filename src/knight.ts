@@ -9,7 +9,7 @@
  * with one it asks the same question the brain would.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "./host-adapter.js";
 import { steps } from "./grid.js";
 import type { Goal, Offer } from "./brain/goals.js";
 import { detectionSources, readPack } from "./brain/pack.js";

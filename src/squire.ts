@@ -3,7 +3,7 @@
  * switching off model play; the host still owns every keypress and death.
  */
 
-import type { AgentController } from "@rpgm-tools/neo-angband-core";
+import type { AgentController } from "./host-adapter.js";
 import type { SquireContext } from "./context.js";
 import type { Mission, Stop } from "./mission.js";
 import { isStop, stopText } from "./mission.js";

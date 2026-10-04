@@ -9,7 +9,7 @@
  * changes on the options that serve them, never past the safety ceiling.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { SystemOneRequest } from "../brain/systemone.js";
 import type { Feeling } from "../learning/grudges.js";
 import type { Persona } from "../persona/persona.js";

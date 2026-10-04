@@ -1,6 +1,6 @@
 /** Town errands walk remembered streets and inspect stock only while inside. */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "../host-adapter.js";
 import type { Plan } from "../brain/brain.js";
 import { readPack } from "../brain/pack.js";
 import { PACK_LIMIT } from "../brain/items.js";

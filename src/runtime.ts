@@ -48,6 +48,7 @@ import { createSender } from "./telemetry/sender.js";
 import { createRows, countRows, exportRows, goalSeqCounter, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import { unknownFlavour } from "./brain/items.js";
+import { birthOptions, engineTurnEnergy, viewInput } from "./host-adapter.js";
 import type { Apprentice } from "./knight.js";
 
 /** The plugin context fields used by Squire's runtime. */
@@ -794,13 +795,14 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
+    const speedEnergy = engineTurnEnergy(host);
     brain = createBrain<GoalDigest>({
       backend,
       rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...(host.core?.turnEnergy === undefined ? {} : { speedEnergy: host.core.turnEnergy }),
+        ...(speedEnergy === undefined ? {} : { speedEnergy }),
         log: host.log,
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
@@ -830,11 +832,11 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
-        birthOptions: () => host.options?.get().entries.filter((entry) => entry.page === "birth") ?? [],
+        birthOptions: () => birthOptions(host),
       }),
       tally,
       send: (request) => self.send(request),
-      token: () => host.snapshot?.()?.token ?? null,
+      token: () => viewInput(host)?.token ?? null,
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),

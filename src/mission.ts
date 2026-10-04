@@ -14,7 +14,7 @@
  * expensive way.
  */
 
-import type { AgentCommand } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand } from "./host-adapter.js";
 import type { SquireContext } from "./context.js";
 
 /**

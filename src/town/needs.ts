@@ -1,6 +1,6 @@
 /** Supplies for the next descent, counted only from names shown in the pack. */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "../host-adapter.js";
 import { hungry, type Pack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 

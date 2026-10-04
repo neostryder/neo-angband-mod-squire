@@ -8,7 +8,7 @@
  * Squire keeps its older habit of walking around the rock.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { Loc } from "../grid.js";
 import { DIRECTIONS } from "../grid.js";
 import { flowFrom } from "../flow.js";
