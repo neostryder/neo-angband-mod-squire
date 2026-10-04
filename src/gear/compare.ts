@@ -1,6 +1,6 @@
 /** Gear choices use item types and shown names; hidden item fields are not player knowledge. */
 
-import type { AgentView, ItemView, LoadoutSimulation, LoadoutView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, LoadoutSimulation, LoadoutView } from "../host-adapter.js";
 import { escapeMana, weaponDamage } from "../brain/combat-kit.js";
 import { readPack } from "../brain/pack.js";
 import { missingPreparation } from "../strategy/readiness.js";

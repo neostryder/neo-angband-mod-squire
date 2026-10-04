@@ -11,7 +11,7 @@
  * drop, a sale, a burnt scroll or a spell that grows unreliable is not a use.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import { shownName } from "../town/needs.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import type { Persona } from "../persona/persona.js";

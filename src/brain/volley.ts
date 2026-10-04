@@ -20,7 +20,7 @@
  * worse than asking again.
  */
 
-import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView } from "../host-adapter.js";
 import type { SquireContext } from "../context.js";
 import type { Loc } from "../grid.js";
 import { attackOptions, type AttackContext } from "./combat-kit.js";

@@ -8,7 +8,8 @@
  * procedural errands when none is.
  */
 
-import type { AgentController, ModNetSecrets } from "@rpgm-tools/neo-angband-core";
+import type { ModNetSecrets } from "@rpgm-tools/neo-angband-core";
+import type { AgentController } from "../host-adapter.js";
 import { JEV_KEY_VARIABLES, type Backend } from "./backend.js";
 
 /** Secret methods used while Squire starts. */

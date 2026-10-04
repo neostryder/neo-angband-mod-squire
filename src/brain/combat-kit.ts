@@ -7,7 +7,7 @@
  * view without it never offers a resist; the same is true of every other read.
  */
 
-import type { AgentView, ItemView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, MonsterView } from "../host-adapter.js";
 import { shownName } from "../town/needs.js";
 import { bestBallAim, incomingDamage, type ThreatFacts } from "./threat-model.js";
 import { readPack, type PackItem, type CastableSpell } from "./pack.js";

@@ -4,7 +4,7 @@
  * from the game's birth options. A race or class a mod adds has no entry here and adds nothing.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 
 export interface BirthOption {
   readonly name: string;

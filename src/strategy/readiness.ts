@@ -1,6 +1,6 @@
 /** Preparation uses reported abilities and named supplies, never unidentified item effects. */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "../host-adapter.js";
 import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";

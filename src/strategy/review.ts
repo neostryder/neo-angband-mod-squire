@@ -11,7 +11,7 @@
  * Squire: the tactical brain owns backing off and stopping.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ChoiceAnswer, SystemOneRequest } from "../brain/systemone.js";
 import { chaosChoice, chaosNote, chaosTold, type ChaosMethod, type ChaosRecord, type ChaosSource } from "../brain/chaos.js";

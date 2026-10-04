@@ -10,7 +10,7 @@
  * steps is code's work, so nothing here plans a route for the model to follow.
  */
 
-import type { AgentView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView } from "../host-adapter.js";
 import { key, neighbours, type Loc } from "../grid.js";
 import { flowFrom } from "../flow.js";
 import { isClosedDoor, isRoutable, isWalkable, knownStairs } from "../map.js";

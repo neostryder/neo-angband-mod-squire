@@ -8,7 +8,7 @@
  * host directly, so the whole of it runs in tests.
  */
 
-import type { AgentView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView } from "./host-adapter.js";
 import type { ChoiceAnswer, ScoreAnswer, SystemOneRequest } from "./brain/systemone.js";
 import type { AskResult } from "./brain/backend.js";
 import { readPack } from "./brain/pack.js";

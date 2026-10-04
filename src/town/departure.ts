@@ -1,6 +1,6 @@
 /** A missing basket can fund a short shallow trip only after local buying is exhausted. */
 
-import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, StoreView } from "../host-adapter.js";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";

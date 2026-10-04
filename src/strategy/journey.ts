@@ -1,6 +1,6 @@
 /** Preparation and return limits apply before judgment and again before each planned command. */
 
-import type { AgentCommand, AgentView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView, MonsterView } from "../host-adapter.js";
 import type { SquireContext } from "../context.js";
 import type { Goal, Offer } from "../brain/goals.js";
 import type { Plan } from "../brain/brain.js";

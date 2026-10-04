@@ -24,7 +24,7 @@
  * question asked again about the game as it is now.
  */
 
-import type { AgentActions, AgentCommand, AgentController, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentActions, AgentCommand, AgentController, AgentView } from "../host-adapter.js";
 import type { AskResult, Backend, Failure } from "./backend.js";
 import type { Answer, SystemOneRequest, Usage } from "./systemone.js";
 import type { Tally } from "./tally.js";

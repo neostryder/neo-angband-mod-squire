@@ -9,7 +9,7 @@
  * way, and stepping into a creature, which is how Angband spells a melee blow.
  */
 
-import type { AgentCommand } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand } from "./host-adapter.js";
 import type { SquireContext } from "./context.js";
 import type { Loc } from "./grid.js";
 import { DIRECTIONS, directionToward, key } from "./grid.js";

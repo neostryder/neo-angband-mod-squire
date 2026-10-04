@@ -34,7 +34,7 @@
  * staircase coming into view, a fork in the way, a command that did not take.
  */
 
-import type { AgentView, MonsterView, PlayerStatusView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, MonsterView, PlayerStatusView } from "./host-adapter.js";
 import type { Stop } from "./mission.js";
 import { countBand, depthBand, healthBand, lossBand } from "./brain/bands.js";
 import { key, type Loc } from "./grid.js";

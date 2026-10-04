@@ -8,7 +8,7 @@
  * model only ranks them (see review.ts).
  */
 
-import type { AgentView, ItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView } from "../host-adapter.js";
 import { TV } from "../gear/compare.js";
 import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";

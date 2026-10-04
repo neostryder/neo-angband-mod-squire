@@ -27,7 +27,7 @@
  * was asked for.
  */
 
-import type { MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { MonsterView } from "./host-adapter.js";
 import type { Loc } from "./grid.js";
 import { steps } from "./grid.js";
 

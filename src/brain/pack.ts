@@ -8,7 +8,7 @@
  * skipped.
  */
 
-import type { AgentView, ItemView, SpellView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, SpellView } from "../host-adapter.js";
 import type { CombatUse } from "./combat-kit.js";
 
 /** The food counter's upper edge for the Hungry grade: grade 15 times food_value 100 (player_timed.txt). */

@@ -9,7 +9,7 @@
  * is asked for either.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import { recallItem, RECALL_FROM_DEPTH, supplyNeeds, type SupplyKind } from "../town/needs.js";

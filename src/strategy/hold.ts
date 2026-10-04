@@ -5,7 +5,7 @@
  * is still an escape and is left alone.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { Aim } from "./aims.js";
 
 /** The share of its weight descend keeps past the depth target. */

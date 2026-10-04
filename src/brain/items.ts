@@ -11,7 +11,7 @@
  * older habit of picking up only what it already stands on.
  */
 
-import type { AgentView, ItemView, KnownFloorItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, ItemView, KnownFloorItemView } from "../host-adapter.js";
 import type { Loc } from "../grid.js";
 import { steps } from "../grid.js";
 import { flowFrom } from "../flow.js";

@@ -20,7 +20,7 @@
  * errand finishing what it was asked to do.
  */
 
-import type { MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { MonsterView } from "../host-adapter.js";
 import type { SquireContext } from "../context.js";
 import type { Decision, Mission, Stop } from "../mission.js";
 import { issue, stop } from "../mission.js";

@@ -8,7 +8,7 @@
  * pass the death-risk ceiling.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ChoiceQuestion, SystemOneRequest } from "../brain/systemone.js";
 import type { Tally } from "../brain/tally.js";

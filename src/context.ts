@@ -8,7 +8,7 @@
  * far this errand has already got.
  */
 
-import type { AgentActions, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentActions, AgentView } from "./host-adapter.js";
 import type { SquireCfg } from "./settings.js";
 import type { Terrain } from "./terrain.js";
 import type { Progress } from "./progress.js";

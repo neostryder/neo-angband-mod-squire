@@ -30,7 +30,7 @@
  * grid, which is the direction the run command needs.
  */
 
-import type { AgentCommand, AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentView } from "./host-adapter.js";
 import type { SquireContext } from "./context.js";
 import type { Loc } from "./grid.js";
 import { DIRECTIONS, directionToward, steps } from "./grid.js";

@@ -1,4 +1,4 @@
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { PlayerCommand } from "../knight.js";
 import type { Goal } from "../brain/goals.js";
 import type { PlayerCommand as CommandEvidence } from "../learning/ranks.js";

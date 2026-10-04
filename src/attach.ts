@@ -3,11 +3,11 @@
  * not: the Squire panel, Knight's Lessons, and the kill count.
  */
 
-import type { AgentView, ItemView, ModPluginContext, PanelKindSpec, PanelMount } from "@rpgm-tools/neo-angband-core";
+import type { ModPluginContext, PanelKindSpec, PanelMount } from "@rpgm-tools/neo-angband-core";
+import { contentTerrain, engineTurnEnergy, viewWorld, type AgentView, type HostReads } from "./host-adapter.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import type { Question } from "./brain/brain.js";
 import { cfgFromFlags } from "./settings.js";
-import { noTerrain, readTerrain, type FeatureLike, type TerrainFlagIndex } from "./terrain.js";
 import type { Runtime, SquireHost } from "./runtime.js";
 import {
   emptyApprentice,
@@ -34,12 +34,7 @@ import { activePersona } from "./config.js";
 import type { Persona } from "./persona/persona.js";
 
 /** The plugin context fields used while attaching Squire's panels and events. */
-export type AttachHost = Pick<ModPluginContext, "flags" | "settings" | "events" | "ui"> & SquireHost & {
-  readonly core?: Pick<ModPluginContext["core"], "createAgentView"> & Partial<Pick<ModPluginContext["core"], "TF" | "turnEnergy">>;
-  readonly registries?: Pick<NonNullable<ModPluginContext["registries"]>, "features">;
-  readonly state?: ModPluginContext["state"];
-  readonly snapshot?: () => import("@rpgm-tools/neo-angband-core").InputSnapshot | null;
-};
+export type AttachHost = Pick<ModPluginContext, "flags" | "settings" | "events" | "ui"> & SquireHost & HostReads;
 export type PanelHostLike = Pick<PanelMount, "root" | "onStateChange" | "requestFocus">;
 type PanelKindSpecLike = PanelKindSpec;
 
@@ -63,20 +58,9 @@ const APPRENTICE_KEY = "squire/apprentice";
 const DEMONSTRATION_DECISIONS = 5;
 
 export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
-  const make = ctx.core?.createAgentView;
-
-  /**
-   * A view of the game while the player plays. The pack comes from the input
-   * snapshot, whose items carry the names the inventory shows, so the
-   * apprentice knows exactly what the player knows.
-   */
+  /** A view of the game while the player plays, so the apprentice knows exactly what the player knows. */
   function viewNow(): AgentView | null {
-    if (make === undefined || ctx.state === undefined) return null;
-    const base = make(ctx.state);
-    const snap = ctx.snapshot?.();
-    const inventory = [...(snap?.core.inventory ?? [])];
-    const equipment = [...(snap?.core.equipment ?? [])];
-    return { ...base, inventory: () => inventory, equipment: () => equipment };
+    return viewWorld(ctx);
   }
 
   /* Kills, for the report and telemetry. A killing blow fires while the
@@ -119,11 +103,9 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     for (const l of listeners) l(next);
   }
 
-  const terrain =
-    ctx.registries?.features !== undefined && ctx.core?.TF !== undefined
-      ? readTerrain(ctx.registries.features.allFeatures(), ctx.core.TF)
-      : noTerrain();
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, ...(ctx.core?.turnEnergy === undefined ? {} : { speedEnergy: ctx.core.turnEnergy }) });
+  const terrain = contentTerrain(ctx);
+  const speedEnergy = engineTurnEnergy(ctx);
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, ...(speedEnergy === undefined ? {} : { speedEnergy }) });
 
   function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();

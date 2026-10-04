@@ -1,6 +1,6 @@
 /** The Squire panel's intent card as plain lines, so the DOM code stays thin. */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import { affordable, type Aim } from "./aims.js";
 import { descentGaps } from "./readiness.js";
 import type { NextCheck } from "./revise.js";

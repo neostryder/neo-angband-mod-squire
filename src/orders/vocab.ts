@@ -6,7 +6,7 @@
  * Numbers and names always come from code, never from the model.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { BanVerb, HpLine, ItemBan } from "./types.js";
 
 const BELOW = String.raw`(?:below|under|less than|beneath|lower than|at most|(?:drops?|falls?|gets?|goes?) (?:below|under|to))`;

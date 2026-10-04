@@ -1,6 +1,6 @@
 /** Shop decisions use only names and prices displayed in the entered shop. */
 
-import type { AgentView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, StoreView } from "../host-adapter.js";
 import { readPack, type Pack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import { basketWants } from "../strategy/readiness.js";

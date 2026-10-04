@@ -5,7 +5,7 @@
  * tactical weight.
  */
 
-import type { AgentView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView } from "../host-adapter.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import { canRead } from "../brain/pack.js";
 import { badLevelFeeling } from "../brain/level-feel.js";

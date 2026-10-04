@@ -51,7 +51,8 @@ import { registerOrderCommand, type OrderCommandCtx } from "./src/ui/order-comma
 import { registerSquireTitle, type TitleCtx } from "./src/title.js";
 import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
-import { noTerrain, readTerrain, type Terrain } from "./src/terrain.js";
+import type { Terrain } from "./src/terrain.js";
+import { autoplayedBefore, contentTerrain } from "./src/host-adapter.js";
 
 type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log" | "registries"> & SquireHost & {
   readonly log: (msg: string) => void;
@@ -72,16 +73,6 @@ type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log
 };
 
 /**
- * NOSCORE_BORG (player.h). Mirrors core's NOSCORE.BORG; kept local so the mod
- * does not need a core import for one bit.
- *
- * The bit is not about any particular autoplayer. It records that this character
- * was handed to one at some point, which is what the score gate reads at death,
- * and Squire earns it on exactly the same terms as any other.
- */
-const NOSCORE_BORG = 0x0020;
-
-/**
  * Whether this character has already handed the keyboard to an autoplayer.
  *
  * Enabling a mod and giving away the keyboard are different decisions. The host
@@ -92,8 +83,7 @@ const NOSCORE_BORG = 0x0020;
  * through the host's own confirmation rather than silently.
  */
 function characterAlreadyAutoplayed(ctx: ControllerCtx): boolean {
-  const noscore = ctx.state?.actor?.player?.noscore ?? 0;
-  return (noscore & NOSCORE_BORG) !== 0;
+  return autoplayedBefore(ctx);
 }
 
 /**
@@ -110,10 +100,7 @@ function characterAlreadyAutoplayed(ctx: ControllerCtx): boolean {
  * floor has no stairs the character has seen" look identical from a chair.
  */
 function terrainFrom(ctx: ControllerCtx): Terrain {
-  const features = ctx.registries?.features;
-  const tf = ctx.core?.TF;
-  if (features === undefined || tf === undefined) return noTerrain();
-  return readTerrain(features.allFeatures(), tf);
+  return contentTerrain(ctx);
 }
 
 /** The host's richer controller return. */
