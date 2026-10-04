@@ -33,6 +33,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Fail when the manifest asks for a wildcard state grant or the real map, so every
+      # state domain the mod reads stays listed by name.
+      - run: node tools/check-grants.mjs
+
       # typecheck, then test, then confirm the committed plugin.js is a current build of
       # the source. That last one is the check nothing else in the chain can make: the
       # catalogue's SHA-256 is taken FROM plugin.js, so a stale artefact verifies

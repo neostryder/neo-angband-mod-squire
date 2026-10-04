@@ -44,6 +44,7 @@ Fixed.
 - [Visible] **Rests, runs, walks and exploring stop for a fixed list of events, and never stop to ask the model.** Each one stops for a new hostile creature, a change in hit points or status, a new message, an object coming into view, a staircase, a failed command, a side passage on a run or an exploring walk, and a target that moves on a walk toward it.
 - [Visible] **A command checks its target just before it goes.** If the scroll it was meant to read is gone, the spell can't be cast anymore or the creature it was aimed at is out of sight, Squire cancels the command instead of letting it land on something else.
 - [Visible] **Options that run into a birth option say so.** With connected stairs off or forced descent on, the option to go down says what that means for the character, Word of Recall options mention no-recall, and a shopping trip mentions no-selling.
+- [Internal] [Security] **A CI step reads manifest.json and fails the build if it lists `state:*.read` or `state:map-actual.read`.** Squire names each state domain it reads one by one, and it has no use for the real map.
 
 ### Changed
 - [Visible] [Balance] **Backing away or moving to a better square stops after three steps.** Squire looks at the fight again from there. A walk to the stairs still goes all the way.
