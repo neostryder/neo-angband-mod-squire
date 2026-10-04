@@ -18,10 +18,7 @@
  * WHY THIS FILE IS SHORT
  * ------------------------------------------------------------------
  *
- * Its whole job is to satisfy the plugin ABI: decide whether to offer to play at
- * all, read the terrain classification out of the bound registries, fold the
- * player's rule toggles into settings, and return a controller. Everything that
- * decides anything lives under src/.
+ * Its whole job is to satisfy the plugin ABI: decide whether to offer to play at all, read the terrain classification out of the terrain records, fold the player's rule toggles into settings, and return a controller. Everything that decides anything lives under src/.
  *
  * ------------------------------------------------------------------
  * WHY THIS DECLARES NO HOOKS AND REGISTERS NOTHING
@@ -54,21 +51,8 @@ import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import type { Terrain } from "./src/terrain.js";
 import { autoplayedBefore, contentTerrain } from "./src/host-adapter.js";
 
-type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log" | "registries"> & SquireHost & {
+type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log" | "composedRecords"> & SquireHost & {
   readonly log: (msg: string) => void;
-  /**
-   * The bound content registries (host `ctx.registries`).
-   *
-   * Required rather than optional. The host's own type declares it optional
-   * because the same type also serves `hooks(ctx)`, which runs before a game
-   * exists; at the one call site that invokes `controller()` the bound
-   * registries are already latched.
-   *
-   * `Core.CoreRegistries` rather than a hand-written shape, so a change to the
-   * feature registry this mod reads fails this repository's build instead of
-   * surfacing as an errand that never finds a staircase.
-   */
-  readonly registries: Core.CoreRegistries;
   readonly state?: { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } };
 };
 
@@ -87,17 +71,11 @@ function characterAlreadyAutoplayed(ctx: ControllerCtx): boolean {
 }
 
 /**
- * Classify the bound terrain, or say why it could not be.
+ * Classify the game's terrain from its terrain records, or say why it could not be.
  *
- * The flag INDICES come from the engine namespace and the FEATURES come from the
- * bound registry, so core's terrain and a mod's are classified by one lookup on
- * the same terms - a mod's own staircase is a staircase here because it carries
- * the flag, not because this file has heard of it.
+ * The records name each feature's flags, so the game's terrain and a mod's are classified on the same terms: a mod's own staircase is a staircase here because it carries the flag, not because this file has heard of it.
  *
- * A missing registry degrades to a Squire that walks the floor without ever
- * taking a staircase or opening a door. That is visibly diminished rather than
- * wrong, and it is logged, because "Squire never finds the stairs" and "this
- * floor has no stairs the character has seen" look identical from a chair.
+ * With no terrain records, Squire still walks the floor but never takes a staircase or opens a door. The log line says so, since from the player's seat that looks the same as a level whose stairs the character has not found yet.
  */
 function terrainFrom(ctx: ControllerCtx): Terrain {
   return contentTerrain(ctx);
@@ -145,7 +123,7 @@ export default {
     ctx.log(
       terrain.size > 0
         ? `Squire is reading ${String(terrain.size)} terrain features`
-        : "Squire has no terrain registry: it will not take stairs or open doors",
+        : "Squire has no terrain records: it will not take stairs or open doors",
     );
     const changed = changedFrom(cfg);
     ctx.log(

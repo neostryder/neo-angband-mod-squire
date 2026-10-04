@@ -1,40 +1,22 @@
 /**
  * The plugin ABI, checked at the seam the host actually calls.
  *
- * The context built here is a hand-made stand-in for the host's, and the casts
- * say so: `typeof Core` is the whole engine namespace and `CoreRegistries` is
- * every bound registry, while this plugin reads one constant table out of the
- * first and one registry out of the second. Building the real thing would mean
- * booting a game to ask whether an uninstalled mod declines politely.
+ * These tests build the plugin context by hand. The game passes the whole engine namespace and every composed record file, but the plugin reads only the terrain records and the save's autoplayer mark, so casts fill in the rest. Checking that an uninstalled mod declines should not need a booted game.
  */
 
 import { describe, expect, it } from "vitest";
 import type * as Core from "@rpgm-tools/neo-angband-core";
 import plugin from "./plugin.js";
 
-const TF = {
-  PASSABLE: 4,
-  DOWNSTAIR: 28,
-  UPSTAIR: 27,
-  DOOR_CLOSED: 20,
-  SHOP: 21,
-  FIERY: 31,
-};
-
 const NOSCORE_BORG = 0x0020;
 
-function features(): unknown {
-  const make = (fidx: number, code: string, flags: readonly number[]): unknown => {
-    const set = new Set(flags);
-    return { fidx, code, flags: { has: (flag: number) => set.has(flag) } };
-  };
-  return {
-    allFeatures: () => [
-      make(1, "FLOOR", [TF.PASSABLE]),
-      make(2, "GRANITE", []),
-      make(4, "MORE", [TF.PASSABLE, TF.DOWNSTAIR]),
-    ],
-  };
+/** Three terrain records, in the shape the game composes them. */
+function terrain(): unknown[] {
+  return [
+    { code: "FLOOR", flags: ["LOS | PROJECT | PASSABLE"] },
+    { code: "GRANITE", flags: ["WALL | ROCK | GRANITE"] },
+    { code: "MORE", flags: ["LOS | PROJECT | PASSABLE | STAIR | DOWNSTAIR"] },
+  ];
 }
 
 interface Built {
@@ -42,16 +24,16 @@ interface Built {
   logged: string[];
 }
 
-function context(options: { noscore?: number; withRegistries?: boolean } = {}): Built {
+function context(options: { noscore?: number; withRecords?: boolean } = {}): Built {
   const logged: string[] = [];
-  const registries = options.withRegistries === false ? {} : { features: features() };
+  const records = options.withRecords === false ? {} : { terrain: terrain() };
   return {
     logged,
     ctx: {
       flags: {},
-      core: { TF } as unknown as typeof Core,
+      core: {} as unknown as typeof Core,
       log: (message: string) => logged.push(message),
-      registries: registries as unknown as Core.CoreRegistries,
+      composedRecords: records as unknown as NonNullable<Parameters<typeof plugin.controller>[0]["composedRecords"]>,
       state: { actor: { player: { noscore: options.noscore ?? 0 } } } as unknown as { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } },
     },
   };
@@ -89,8 +71,8 @@ describe("the Squire plugin", () => {
     expect(logged.join("\n")).toContain("3 terrain features");
   });
 
-  it("keeps playing without a terrain registry, and says what it lost", () => {
-    const { ctx, logged } = context({ noscore: NOSCORE_BORG, withRegistries: false });
+  it("keeps playing without terrain records, and says what it lost", () => {
+    const { ctx, logged } = context({ noscore: NOSCORE_BORG, withRecords: false });
     const installed = plugin.controller(ctx);
     expect(installed).toMatchObject({ controller: expect.any(Function), onDeath: "end" });
     expect(logged.join("\n")).toContain("will not take stairs or open doors");

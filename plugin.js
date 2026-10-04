@@ -13453,6 +13453,27 @@ function readTerrain(features, tf) {
     size: features.length
   };
 }
+function recordFlags(value) {
+  const lines2 = Array.isArray(value) ? value : value === void 0 ? [] : [value];
+  const names = /* @__PURE__ */ new Set();
+  for (const line of lines2) {
+    if (typeof line !== "string") continue;
+    for (const name of line.split("|")) {
+      const trimmed = name.trim();
+      if (trimmed !== "") names.add(trimmed);
+    }
+  }
+  return names;
+}
+function terrainRecords(records) {
+  return records.map((record6, fidx) => ({ fidx, code: typeof record6["code"] === "string" ? record6["code"] : "", flags: recordFlags(record6["flags"]) }));
+}
+var FLAG_NUMBERS = { PASSABLE: 1, DOWNSTAIR: 2, UPSTAIR: 3, DOOR_CLOSED: 4, CLOSABLE: 5, SHOP: 6, FIERY: 7, ROCK: 8, PERMANENT: 9 };
+var FLAG_NAMES = new Map(Object.entries(FLAG_NUMBERS).map(([name, n]) => [n, name]));
+function terrainFromRecords(records) {
+  if (records === null || records === void 0) return noTerrain();
+  return readTerrain(records.map((record6) => ({ fidx: record6.fidx, code: record6.code, flags: { has: (n) => record6.flags.has(FLAG_NAMES.get(n) ?? "") } })), FLAG_NUMBERS);
+}
 function noTerrain() {
   return {
     isDownStair: () => false,
@@ -13480,13 +13501,8 @@ function viewInput(host) {
   return host.snapshot?.() ?? null;
 }
 function contentTerrain(host) {
-  const features = host.registries?.features;
-  const tf = host.core?.TF;
-  if (features === void 0 || tf === void 0) return noTerrain();
-  return readTerrain(features.allFeatures(), tf);
-}
-function engineTurnEnergy(host) {
-  return host.core?.turnEnergy;
+  const records = host.composedRecords?.["terrain"];
+  return terrainFromRecords(records === void 0 ? null : terrainRecords(records));
 }
 var NOSCORE_BORG = 32;
 function autoplayedBefore(host) {
@@ -13495,6 +13511,234 @@ function autoplayedBefore(host) {
 }
 function birthOptions(host) {
   return host.options?.get().entries.filter((entry) => entry.page === "birth") ?? [];
+}
+
+// src/energy.ts
+var EXTRACT_ENERGY = [
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* Slow */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* S-50 */
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  /* S-40 */
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  /* S-30 */
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  2,
+  3,
+  3,
+  3,
+  /* S-20 */
+  3,
+  3,
+  3,
+  3,
+  3,
+  4,
+  4,
+  4,
+  4,
+  4,
+  /* S-10 */
+  5,
+  5,
+  5,
+  5,
+  6,
+  6,
+  7,
+  7,
+  8,
+  9,
+  /* Norm */
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  /* F+10 */
+  20,
+  21,
+  22,
+  23,
+  24,
+  25,
+  26,
+  27,
+  28,
+  29,
+  /* F+20 */
+  30,
+  31,
+  32,
+  33,
+  34,
+  35,
+  36,
+  36,
+  37,
+  37,
+  /* F+30 */
+  38,
+  38,
+  39,
+  39,
+  40,
+  40,
+  40,
+  41,
+  41,
+  41,
+  /* F+40 */
+  42,
+  42,
+  42,
+  43,
+  43,
+  43,
+  44,
+  44,
+  44,
+  44,
+  /* F+50 */
+  45,
+  45,
+  45,
+  45,
+  45,
+  46,
+  46,
+  46,
+  46,
+  46,
+  /* F+60 */
+  47,
+  47,
+  47,
+  47,
+  47,
+  48,
+  48,
+  48,
+  48,
+  48,
+  /* F+70 */
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  /* Fast */
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49,
+  49
+];
+function turnEnergy(speed) {
+  const index = Math.min(Math.max(speed, 0), EXTRACT_ENERGY.length - 1);
+  return EXTRACT_ENERGY[index] ?? 0;
 }
 
 // src/runtime.ts
@@ -14091,14 +14335,13 @@ function createRuntime(host, options = {}) {
     }
     if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
-    const speedEnergy = engineTurnEnergy(host);
     brain = createBrain({
       backend,
       rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...speedEnergy === void 0 ? {} : { speedEnergy },
+        speedEnergy: turnEnergy,
         log: host.log,
         persona: () => persona === null ? null : character.persona,
         backstoryTokens: backstoryBudget(config),
@@ -15755,9 +15998,8 @@ function attachSquire(ctx, rt) {
     for (const l of listeners) l(next);
   }
   const terrain = contentTerrain(ctx);
-  const speedEnergy = engineTurnEnergy(ctx);
   const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {
-  }, ...speedEnergy === void 0 ? {} : { speedEnergy } });
+  }, speedEnergy: turnEnergy });
   function record6(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
     const share3 = p.maxHp > 0 ? p.hp / p.maxHp : 1;
@@ -16062,7 +16304,7 @@ var plugin_default = {
     const cfg = cfgFromFlags(ctx.flags, ctx.settings);
     const terrain = terrainFrom(ctx);
     ctx.log(
-      terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain registry: it will not take stairs or open doors"
+      terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain records: it will not take stairs or open doors"
     );
     const changed = changedFrom(cfg);
     ctx.log(

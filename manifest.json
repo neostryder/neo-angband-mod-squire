@@ -1,140 +1,152 @@
 {
-  "id": "squire",
-  "name": "Squire",
-  "version": "0.2.0",
-  "shape": "plugin",
-  "facets": [
-    "plugin"
-  ],
-  "modApi": 1,
-  "engine": ">=1.21.1",
-  "dependencies": {
-    "core": "*"
-  },
-  "capabilities": [
-    "command:add",
-    "state:player.read",
-    "state:monsters.read",
-    "state:map.read",
-    "state:floor.read",
-    "state:target.read",
-    "state:inventory.read",
-    "state:spells.read",
-    "state:stores.read",
-    "state:constants.read",
-    "state:options.read",
-    "network:api.typesafe.ai",
-    "state:turn.read",
-    "state:messages.read",
-    "event:combat-outcome",
-    "event:player-command",
-    "ui:panel.mount",
-    "saves:manage",
-    "network:local",
-    "network:squire.rpgm.tools",
-    "ui:birth.replace",
-    "registry:command",
-    "keymap:write",
-    "ui:title",
-    "profiles:manage"
-  ],
-  "author": "neostryder",
-  "license": "GPL-3.0-only",
-  "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press any key to take the keyboard back.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire keeps playing by its own rules until you take the keyboard back or the character dies. You can also choose a short errand: clear what is in front of you, or explore the floor. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
-  "rules": [
-    {
-      "flag": "squire.errandAutofight",
-      "title": "Errand: clear what is in front of me",
-      "description": "Hand over with a creature in sight and Squire attacks the nearest one it can reach. It stops when the last hostile creature falls, when a new creature arrives, when hit points cross the retreat line, or on anything that would disturb a run.",
-      "default": true,
-      "requiresReload": true
+  "format": "neo-angband/mod/manifest",
+  "schemaVersion": 2,
+  "data": {
+    "id": "squire",
+    "name": "Squire",
+    "version": "0.2.0",
+    "api": ">=1.0.0 <2.0.0",
+    "runtime": "in-process",
+    "engine": {
+      "range": ">=1.21.1",
+      "because": "It is the first version with everything Squire reads from the game: the title-screen row, profiles, and floor items as the player knows them."
     },
-    {
-      "flag": "squire.errandAutoexplore",
-      "title": "Errand: explore this floor",
-      "description": "Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. It stops when the floor is walked out, when nothing unmapped can be reached, or on any disturbance.",
-      "default": true,
-      "requiresReload": true
+    "dependencies": {
+      "required": {
+        "core": {
+          "range": "*"
+        }
+      }
     },
-    {
-      "flag": "squire.errandCampaign",
-      "title": "Errand: play on until I take the keyboard back",
-      "description": "With no model, take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. Off by default.",
-      "default": false,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.useModel",
-      "title": "Let a model choose what to do",
-      "description": "When a model is set up in the Squire panel (Jev with an API key, Laya, or another server), Squire asks it what to do at each decision and plays on until you take the keyboard back. With no model set up, Squire plays by its own rules. Switch this off to choose an errand. On by default.",
-      "default": true,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.stopOnLowHealth",
-      "title": "Stop when I am hurt",
-      "description": "End the errand when hit points reach the retreat line. With this off, Explore this floor still stops on any hit, and the long errand's survival step still reacts to damage.",
-      "default": true,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.stopOnNewCreature",
-      "title": "Stop when something new appears",
-      "description": "End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter.",
-      "default": true,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.wakeSleepers",
-      "title": "Attack sleeping creatures",
-      "description": "Let the fighting errand pick a sleeping creature as its target. With this off, sleeping creatures are left alone and the errand ends instead of starting a fight you did not ask for.",
-      "default": false,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.collect",
-      "title": "Pick things up on the way",
-      "description": "During the long errand, pick up whatever is lying on a square the character has already walked onto. Squire never heads for an object it can see across the room, because that view is the live floor and not what the character remembers, and walking to it would give Squire an advantage a player does not have. Picking up is all this does: nothing is worn, quaffed, read or sold.",
-      "default": true,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.descend",
-      "title": "Take the stairs down",
-      "description": "During the long errand, walk to a known down staircase and use it once the floor has been walked out. With this off, the character stays on its current floor.",
-      "default": true,
-      "requiresReload": true
-    },
-    {
-      "flag": "squire.revealLongGoal",
-      "title": "Show the long-term goal",
-      "description": "Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal.",
-      "default": false,
-      "requiresReload": true
-    }
-  ],
-  "settings": [
-    {
-      "id": "squire.retreatPercent",
-      "title": "Retreat line",
-      "description": "Ends a short errand when hit points reach this share of maximum hit points. The default is 50%.",
-      "min": 10,
-      "max": 90,
-      "step": 5,
-      "default": 50,
-      "unit": "%",
-      "requiresReload": true
-    },
-    {
-      "id": "squire.errandSteps",
-      "title": "Short errand length",
-      "description": "Sets the decision limit for a short errand. The default is 200.",
-      "min": 50,
-      "max": 500,
-      "step": 10,
-      "default": 200,
-      "requiresReload": true
-    }
-  ],
-  "repository": "https://github.com/neostryder/neo-angband-mod-squire"
+    "capabilities": [
+      "command:add",
+      "state:player.read",
+      "state:monsters.read",
+      "state:map.read",
+      "state:floor.read",
+      "state:target.read",
+      "state:inventory.read",
+      "state:spells.read",
+      "state:stores.read",
+      "state:constants.read",
+      "state:options.read",
+      "network:api.typesafe.ai",
+      "state:turn.read",
+      "state:messages.read",
+      "event:combat-outcome",
+      "event:player-command",
+      "ui:panel.mount",
+      "saves:manage",
+      "network:local",
+      "network:squire.rpgm.tools",
+      "ui:birth.replace",
+      "registry:command",
+      "keymap:write",
+      "ui:title",
+      "profiles:manage"
+    ],
+    "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press any key to take the keyboard back.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire keeps playing by its own rules until you take the keyboard back or the character dies. You can also choose a short errand: clear what is in front of you, or explore the floor. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
+    "author": "neostryder",
+    "license": "GPL-3.0-only",
+    "repository": "https://github.com/neostryder/neo-angband-mod-squire",
+    "shape": "plugin",
+    "facets": [
+      "plugin"
+    ],
+    "rules": [
+      {
+        "flag": "squire.errandAutofight",
+        "title": "Errand: clear what is in front of me",
+        "description": "Hand over with a creature in sight and Squire attacks the nearest one it can reach. It stops when the last hostile creature falls, when a new creature arrives, when hit points cross the retreat line, or on anything that would disturb a run.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.errandAutoexplore",
+        "title": "Errand: explore this floor",
+        "description": "Hand over with nothing in sight and Squire walks toward the nearest unmapped ground. It stops when the floor is walked out, when nothing unmapped can be reached, or on any disturbance.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.errandCampaign",
+        "title": "Errand: play on until I take the keyboard back",
+        "description": "With no model, take precedence over both short errands and play the character, with these priorities in order: survive, fight, collect, explore, descend. Off by default.",
+        "default": false,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.useModel",
+        "title": "Let a model choose what to do",
+        "description": "When a model is set up in the Squire panel (Jev with an API key, Laya, or another server), Squire asks it what to do at each decision and plays on until you take the keyboard back. With no model set up, Squire plays by its own rules. Switch this off to choose an errand. On by default.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.stopOnLowHealth",
+        "title": "Stop when I am hurt",
+        "description": "End the errand when hit points reach the retreat line. With this off, Explore this floor still stops on any hit, and the long errand's survival step still reacts to damage.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.stopOnNewCreature",
+        "title": "Stop when something new appears",
+        "description": "End the errand the moment a creature that was not already in sight comes into view, so exploring does not walk your character into a room you did not choose to enter.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.wakeSleepers",
+        "title": "Attack sleeping creatures",
+        "description": "Let the fighting errand pick a sleeping creature as its target. With this off, sleeping creatures are left alone and the errand ends instead of starting a fight you did not ask for.",
+        "default": false,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.collect",
+        "title": "Pick things up on the way",
+        "description": "During the long errand, pick up whatever is lying on a square the character has already walked onto. Squire never heads for an object it can see across the room, because that view is the live floor and not what the character remembers, and walking to it would give Squire an advantage a player does not have. Picking up is all this does: nothing is worn, quaffed, read or sold.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.descend",
+        "title": "Take the stairs down",
+        "description": "During the long errand, walk to a known down staircase and use it once the floor has been walked out. With this off, the character stays on its current floor.",
+        "default": true,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.revealLongGoal",
+        "title": "Show the long-term goal",
+        "description": "Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal.",
+        "default": false,
+        "requiresReload": true
+      }
+    ],
+    "settings": [
+      {
+        "id": "squire.retreatPercent",
+        "title": "Retreat line",
+        "description": "Ends a short errand when hit points reach this share of maximum hit points. The default is 50%.",
+        "min": 10,
+        "max": 90,
+        "step": 5,
+        "default": 50,
+        "unit": "%",
+        "requiresReload": true
+      },
+      {
+        "id": "squire.errandSteps",
+        "title": "Short errand length",
+        "description": "Sets the decision limit for a short errand. The default is 200.",
+        "min": 50,
+        "max": 500,
+        "step": 10,
+        "default": 200,
+        "requiresReload": true
+      }
+    ]
+  }
 }

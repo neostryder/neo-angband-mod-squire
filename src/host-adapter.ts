@@ -1,20 +1,14 @@
 /**
- * Every read Squire makes of the game's live state, its core namespace and its
- * bound registries, in one file.
+ * Squire reads the game's live state, the engine's view builder, the composed records and the input snapshot here and nowhere else.
  *
- * Mod API 2 takes these away from Squire: it gets `view` (the known world) and
- * `content.records` instead, and never `core`, `state`, `registries` or a raw
- * input snapshot. Each function here is named after the API 2 call that
- * replaces it (`viewWorld` for `view.world()`), so moving to API 2 changes this
- * file and the entry point and nothing else. A test fails when any other source
- * file reads those context members.
+ * Mod API 2 takes most of these away from Squire: it gets `view` (the known world) and `content.records` instead, and never `core`, `state` or a raw input snapshot. Each function here is named after the API 2 call that replaces it (`viewWorld` for `view.world()`), and host-adapter-api2.ts implements the same functions over API 2, so moving to API 2 changes the entry point's imports and nothing else. A test fails when any other source file reads those context members.
  *
  * The decision code imports the agent view types from here too, so the view
  * vocabulary it is written against has one source.
  */
 
 import type { AgentView, InputSnapshot, ModPluginContext } from "@rpgm-tools/neo-angband-core";
-import { noTerrain, readTerrain, type Terrain } from "./terrain.js";
+import { terrainFromRecords, terrainRecords, type Terrain } from "./terrain.js";
 
 export type {
   AgentActions,
@@ -38,9 +32,9 @@ type CoreNamespace = ModPluginContext["core"];
 
 /** The plugin context members only this file reads. */
 export interface HostReads {
-  readonly core?: Partial<Pick<CoreNamespace, "createAgentView" | "TF" | "turnEnergy">>;
+  readonly core?: Partial<Pick<CoreNamespace, "createAgentView">>;
   readonly state?: ModPluginContext["state"];
-  readonly registries?: Pick<NonNullable<ModPluginContext["registries"]>, "features">;
+  readonly composedRecords?: ModPluginContext["composedRecords"];
   readonly snapshot?: () => InputSnapshot | null;
   readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
 }
@@ -68,21 +62,10 @@ export function viewInput(host: Pick<HostReads, "snapshot">): HostInput | null {
   return host.snapshot?.() ?? null;
 }
 
-/**
- * Terrain sorted by what an errand does with it, read from the bound feature
- * registry. Under API 2 the terrain records supply it instead. Without the
- * registry or the flag numbers, nothing is classified.
- */
-export function contentTerrain(host: Pick<HostReads, "core" | "registries">): Terrain {
-  const features = host.registries?.features;
-  const tf = host.core?.TF;
-  if (features === undefined || tf === undefined) return noTerrain();
-  return readTerrain(features.allFeatures(), tf);
-}
-
-/** How much energy a game turn gives at each speed, from the engine's own table. API 2 does not expose it. */
-export function engineTurnEnergy(host: Pick<HostReads, "core">): CoreNamespace["turnEnergy"] | undefined {
-  return host.core?.turnEnergy;
+/** Terrain sorted by what an errand does with it, for `content.records("terrain")`, read from the composed terrain records. Without them, nothing is classified. */
+export function contentTerrain(host: Pick<HostReads, "composedRecords">): Terrain {
+  const records = host.composedRecords?.["terrain"];
+  return terrainFromRecords(records === undefined ? null : terrainRecords(records));
 }
 
 /**

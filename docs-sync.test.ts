@@ -30,11 +30,9 @@ describe("the settings table and the manifest", () => {
   }
 
   const manifest = (): { rules?: Toggle[]; sections?: Toggle[]; settings?: Toggle[] } =>
-    JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8")) as {
-      rules?: Toggle[];
-      sections?: Toggle[];
-      settings?: Toggle[];
-    };
+    (JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8")) as {
+      data: { rules?: Toggle[]; sections?: Toggle[]; settings?: Toggle[] };
+    }).data;
 
   const toggles = (): Toggle[] => {
     const read = manifest();

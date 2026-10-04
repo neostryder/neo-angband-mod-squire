@@ -4,9 +4,9 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import type { InputSnapshot } from "@rpgm-tools/neo-angband-core";
 import { world } from "./harness.js";
-import { autoplayedBefore, birthOptions, contentTerrain, engineTurnEnergy, viewInput, viewWorld, type HostReads } from "./host-adapter.js";
-
-const TF = { PASSABLE: 4, DOWNSTAIR: 28, UPSTAIR: 27, DOOR_CLOSED: 20, SHOP: 21, FIERY: 31 };
+import { autoplayedBefore, birthOptions, contentTerrain, viewInput, viewWorld, type HostReads } from "./host-adapter.js";
+import { readTerrain } from "./terrain.js";
+import { GAME_TERRAIN } from "./terrain-records.fixture.js";
 
 function snapshotWith(inventory: readonly unknown[], equipment: readonly unknown[]): InputSnapshot {
   return { token: { epoch: 1, revision: 7 }, core: { inventory, equipment } } as unknown as InputSnapshot;
@@ -49,34 +49,43 @@ describe("viewInput", () => {
 });
 
 describe("contentTerrain", () => {
-  const features = {
-    allFeatures: () => [
-      { fidx: 1, code: "FLOOR", flags: { has: (f: number) => f === TF.PASSABLE } },
-      { fidx: 4, code: "MORE", flags: { has: (f: number) => f === TF.PASSABLE || f === TF.DOWNSTAIR } },
-    ],
-  } as unknown as NonNullable<HostReads["registries"]>["features"];
-  const core = { TF } as unknown as NonNullable<HostReads["core"]>;
+  const composedRecords = { terrain: GAME_TERRAIN } as unknown as NonNullable<HostReads["composedRecords"]>;
 
-  it("classifies the bound features by flag", () => {
-    const terrain = contentTerrain({ core, registries: { features } });
-    expect(terrain.size).toBe(2);
-    expect(terrain.isDownStair(4)).toBe(true);
-    expect(terrain.isDownStair(1)).toBe(false);
+  it("classifies the game's terrain records by flag", () => {
+    const terrain = contentTerrain({ composedRecords });
+    expect(terrain.size).toBe(GAME_TERRAIN.length);
+    expect(terrain.isDownStair(6)).toBe(true);
+    expect(terrain.isUpStair(5)).toBe(true);
+    expect(terrain.isClosedDoor(2)).toBe(true);
+    expect(terrain.shopName(14)).toBe("Home");
+    expect(terrain.isHarmful(23)).toBe(true);
+    expect(terrain.isDiggable?.(16)).toBe(true);
+    expect(terrain.isDiggable?.(22)).toBe(false);
   });
 
-  it("classifies nothing without the registry or the flag table", () => {
-    expect(contentTerrain({ registries: { features } }).size).toBe(0);
-    expect(contentTerrain({ core }).size).toBe(0);
+  /* Earlier versions read the bound feature registry and the engine's flag numbers. Reading the records instead must classify every feature the same way. */
+  it("classifies every feature the way the bound feature registry did", () => {
+    const TF = { PASSABLE: 4, DOWNSTAIR: 28, UPSTAIR: 27, DOOR_CLOSED: 20, CLOSABLE: 22, SHOP: 21, FIERY: 31, ROCK: 2, PERMANENT: 10 };
+    const nameOf = new Map(Object.entries(TF).map(([name, n]) => [n, name]));
+    const bound = readTerrain(
+      GAME_TERRAIN.map((record, fidx) => ({ fidx, code: record.code, flags: { has: (n: number) => (record.flags ?? []).some((line) => line.split("|").map((f) => f.trim()).includes(nameOf.get(n) ?? "")) } })),
+      TF,
+    );
+    const terrain = contentTerrain({ composedRecords });
+    expect(terrain.size).toBe(bound.size);
+    for (let feat = 0; feat < GAME_TERRAIN.length; feat++) {
+      const answers = (t: typeof bound): unknown[] => [t.isDownStair(feat), t.isUpStair(feat), t.isClosedDoor(feat), t.isOpenDoor?.(feat), t.isShopEntrance(feat), t.shopName(feat), t.isHarmful(feat), t.isDiggable?.(feat)];
+      expect(answers(terrain), GAME_TERRAIN[feat]?.code).toEqual(answers(bound));
+    }
+  });
+
+  it("classifies nothing without the terrain records", () => {
+    expect(contentTerrain({}).size).toBe(0);
+    expect(contentTerrain({ composedRecords: {} as NonNullable<HostReads["composedRecords"]> }).size).toBe(0);
   });
 });
 
 describe("the other reads", () => {
-  it("passes the energy table through", () => {
-    const turnEnergy = (speed: number): number => speed;
-    expect(engineTurnEnergy({ core: { turnEnergy } })).toBe(turnEnergy);
-    expect(engineTurnEnergy({})).toBeUndefined();
-  });
-
   it("reads the autoplayer mark from the save", () => {
     expect(autoplayedBefore({ state: { actor: { player: { noscore: 0x0020 } } } })).toBe(true);
     expect(autoplayedBefore({ state: { actor: { player: { noscore: 0x0001 } } } })).toBe(false);

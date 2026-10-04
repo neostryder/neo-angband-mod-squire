@@ -4,7 +4,8 @@
  */
 
 import type { ModPluginContext, PanelKindSpec, PanelMount } from "@rpgm-tools/neo-angband-core";
-import { contentTerrain, engineTurnEnergy, viewWorld, type AgentView, type HostReads } from "./host-adapter.js";
+import { contentTerrain, viewWorld, type AgentView, type HostReads } from "./host-adapter.js";
+import { turnEnergy } from "./energy.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import type { Question } from "./brain/brain.js";
 import { cfgFromFlags } from "./settings.js";
@@ -104,8 +105,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
   }
 
   const terrain = contentTerrain(ctx);
-  const speedEnergy = engineTurnEnergy(ctx);
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, ...(speedEnergy === undefined ? {} : { speedEnergy }) });
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, speedEnergy: turnEnergy });
 
   function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();

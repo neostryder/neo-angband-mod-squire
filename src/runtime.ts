@@ -48,7 +48,8 @@ import { createSender } from "./telemetry/sender.js";
 import { createRows, countRows, exportRows, goalSeqCounter, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import { unknownFlavour } from "./brain/items.js";
-import { birthOptions, engineTurnEnergy, viewInput } from "./host-adapter.js";
+import { birthOptions, viewInput } from "./host-adapter.js";
+import { turnEnergy } from "./energy.js";
 import type { Apprentice } from "./knight.js";
 
 /** The plugin context fields used by Squire's runtime. */
@@ -60,7 +61,6 @@ export type SquireHost = Pick<ModPluginContext, "log"> & {
   readonly character?: Pick<NonNullable<ModPluginContext["character"]>, "key" | "onRunEnd">;
   readonly net?: ModNet;
   readonly snapshot?: () => InputSnapshot | null;
-  readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
   readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
   readonly controllerArmed?: boolean;
   /** Resolved manifest rules. Absent in tests that build a host by hand. */
@@ -795,14 +795,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
-    const speedEnergy = engineTurnEnergy(host);
     brain = createBrain<GoalDigest>({
       backend,
       rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...(speedEnergy === undefined ? {} : { speedEnergy }),
+        speedEnergy: turnEnergy,
         log: host.log,
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),

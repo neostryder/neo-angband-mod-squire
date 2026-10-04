@@ -74,7 +74,7 @@ interface Manifest {
 }
 
 function manifest(): Manifest {
-  return JSON.parse(readFileSync(join(repoRoot, "manifest.json"), "utf8")) as Manifest;
+  return (JSON.parse(readFileSync(join(repoRoot, "manifest.json"), "utf8")) as { data: Manifest }).data;
 }
 
 /** Every shipped .ts file in the mod, plus the plugin entry point. */
