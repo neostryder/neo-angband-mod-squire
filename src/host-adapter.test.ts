@@ -98,10 +98,10 @@ describe("the other reads", () => {
 describe("host reads stay in the adapter", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const READS: readonly RegExp[] = [
-    /\b(?:ctx|host)\s*\??\.\s*(?:core|state|registries|snapshot)\b/,
+    /\b(?:ctx|host)\s*\??\.\s*(?:core|state|registries|snapshot|options)\b/,
     /\??\.\s*(?:core|registries)\b/,
-    /\b(?:ctx|host)\s*(?:\?\.)?\s*\[\s*["'`](?:core|state|registries)["'`]\s*\]/,
-    /\{[^}]*\b(?:core|state|registries)\b[^}]*\}\s*=\s*(?:ctx|host)\b/,
+    /\b(?:ctx|host)\s*(?:\?\.)?\s*\[\s*["'`](?:core|state|registries|snapshot|options)["'`]\s*\]/,
+    /\{[^}]*\b(?:core|state|registries|snapshot|options)\b[^}]*\}\s*=\s*(?:ctx|host)\b/,
   ];
 
   function sources(dir: string): string[] {
@@ -116,7 +116,7 @@ describe("host reads stay in the adapter", () => {
     return text.replace(/\/\*[\s\S]*?\*\//g, (block) => block.replace(/[^\n]/g, " ")).replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
   }
 
-  it("finds no core, state or registries read in any other source file", () => {
+  it("finds no core, state, registries, snapshot or options read in any other source file", () => {
     const files = [join(root, "plugin.ts"), ...sources(join(root, "src"))];
     const found: string[] = [];
     for (const file of files) {
@@ -128,8 +128,8 @@ describe("host reads stay in the adapter", () => {
   });
 
   it("catches a read when one is written", () => {
-    const sample = code("const a = ctx.state;\nconst b = host.core?.TF;\nconst c = ctx[\"registries\"];\nconst { core } = ctx;\n// ctx.state in a comment\n");
+    const sample = code("const a = ctx.state;\nconst b = host.core?.TF;\nconst c = ctx[\"registries\"];\nconst { core } = ctx;\nconst { snapshot } = host;\nconst d = host[\"options\"];\nconst e = ctx.options?.get();\n// ctx.state in a comment\n");
     const hits = sample.split("\n").filter((line) => READS.some((pattern) => pattern.test(line)));
-    expect(hits).toHaveLength(4);
+    expect(hits).toHaveLength(7);
   });
 });
