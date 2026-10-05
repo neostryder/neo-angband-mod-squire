@@ -2,7 +2,7 @@
 
 Squire runs on mod API 1 today. This page takes each context member and plugin member Squire uses on the old API, says where it goes in API 2, and lists what Core still has to add. Squire is a first-party (P-tier) mod that plays the character for the player. It sees only what the character knows, so it uses `view`, `act`, `content`, `meta`, `store`, `ui`, `events` and `net`, never `truth`, and it declares no hooks.
 
-`src/host-adapter-api2.ts` holds the API 2 form of every read in `src/host-adapter.ts` that has one. Nothing imports it yet. Once the game can load an API 2 mod from a folder and Core has the controller below, the port swaps that import and rebuilds the plugin members listed here on `start(mod)`.
+`src/host-adapter-api2.ts` holds the API 2 form of every read in `src/host-adapter.ts` that has one, and nothing imports it. The game loads an API 2 mod from a folder, but an API 2 mod is a set of hooks, policies and a `start(mod)` call: it has no controller, birth presenter, title row or character creation, and the game builds the `ModApi2` object only for an API 2 mod. Squire therefore stays on API 1 until Core has requests 1, 3, 4 and 6, and then the port swaps that import and rebuilds the plugin members listed here on `start(mod)`.
 
 ## Where each member goes
 
@@ -23,7 +23,7 @@ The Status column has three values. **moved** means Squire no longer uses the ol
 | `ctx.prefs.get`, `ctx.prefs.set` | `store.prefs` | home, not wired | Declare `prefs: { version, migrate }` with a migration from version 0, so a player's saved Squire settings carry over. |
 | `ctx.characterStore` | `store.character` | home, not wired | The record keeps its own `format` and `schemaVersion`. |
 | `localStorage` key `squire/panelScale` | `store.prefs` | home, not wired | The panel's zoom level. It holds no secret. |
-| `ctx.events.on("combat-outcome")` | `events.on("combat-outcome")` | home, not wired | Squire counts kills by race. An API 2 listener can only read `view` after the event, when the dead monster may be gone (request 20). |
+| `ctx.events.on("combat-outcome")` | `events.on("combat-outcome")` | home, not wired | Squire counts kills by race. The API 2 payload names a killed monster by its `KnownMonster` id as the player saw it before it died, and that id stays the same for the whole level, so the listener takes the race from the monsters in the last view. |
 | `ctx.events.on("player-command")` | `events.on("player-command")` | home, not wired | Knight's Lessons reads `args.handle` and `args.spell`, which the API 2 payload drops (request 21). |
 | `ctx.net.request` | `net.request` | home, not wired | Used for the model backend, the Laya shadow, the orders channel and telemetry. |
 | `ctx.net.secrets.set`, `has`, `delete`, `fromEnv` | `net.credentials.set`, `status`, `remove`, `fromEnvironment` | home, not wired | The key name is `jev`. |
@@ -40,7 +40,7 @@ The Status column has three values. **moved** means Squire no longer uses the ol
 | `ctx.ui.registerPanelKind` | Core request | Core request | The Squire panel is a tiled panel drawn on canvases, with a settings form and a file download (request 8). |
 | `birth` plugin member (`ui:birth.replace`) | Core request | Core request | Request 3. |
 | `ctx.title.registerRow`, `choose` (`ui:title`) | Core request | Core request | Request 4. |
-| `ctx.profiles` (`profiles:manage`) | `manage.profiles` | Core request | `manage` is for the presentation mod only, and `switchTo` takes no options (request 5). |
+| `ctx.profiles` (`profiles:manage`) | `manage.profiles` | Core request | Squire's first-party entry names `profiles:manage`, so the game builds `manage` for it, but `switchTo` takes no options (request 5). |
 | `ctx.saves.create` (`saves:manage`) | Core request | Core request | Request 6. |
 | `ctx.character.key`, `onRunEnd` | Core request | Core request | Request 7. |
 | `ctx.options.get` | Core request | Core request | Birth options. The `optionsChanged` hook only runs after a change (request 10). |
@@ -50,14 +50,15 @@ The Status column has three values. **moved** means Squire no longer uses the ol
 | `CellView.glow` | Core request | Core request | Request 11. |
 | `CellView.trap` on a disabled trap | Core request | Core request | Request 25. |
 | `CellView.feat` from a terrain record | Core request | Core request | Squire reads the feature index as the record's place in the terrain file (request 12). |
+| `ItemView.timeout` on a light | Core request | Core request | Squire reads a light's fuel to tell whether it still burns and to count spare torches before a trip down (request 26). |
 | `MonsterView` exact `hp`, `speed`, `poisoned`, all `spellFlags` | Core request | Core request | Request 15. |
 | IndexedDB store `neo-angband-squire` | Core request | Core request | Run reports, the apprentice and Squire's profile list (request 16). |
 | `sessionStorage` roll-on and heir marks | Core request | Core request | Request 17. |
 | `ctx.net.secrets` page storage in the browser | Core request | Core request | Request 18. |
 
-Totals: 3 moved, 18 with an API 2 home but not wired, and 23 waiting on a Core request. Squire does not use `hud`, `menu`, `screen`, `frontend`, `regions`, `hooks` or any `truth` read.
+Totals: 3 moved, 18 with an API 2 home but not wired, and 24 waiting on a Core request. Squire does not use `hud`, `menu`, `screen`, `frontend`, `regions`, `hooks` or any `truth` read.
 
-`viewWorld` answers from the known world, so it says less than the API 1 view in six places. A monster's hit points are the middle of its look-command health band times the average hit points in its race record, kept inside the band. A monster's speed is its race speed, without the random spread or a temporary haste or slow, and `poisoned` is always false. Its race and spell flags are the ones the player's monster memory has learned. A square the character has never seen is unknown, impassable and has no trap, where API 1 read the real map. A trap the character has disabled still counts as a trap, because a remembered trap carries no timeout (request 25). Otherwise a remembered trap counts when its kind carries the TRAP flag, the check API 1 makes, so a web, a door lock, a glyph of warding or a decoy never does. No square glows, and `floorItems` answers only for the character's own square. The tests in `src/host-adapter-api2.test.ts` build the known world from the same game facts as the API 1 tests and check that everything else answers the same.
+`viewWorld` answers from the known world, so in places it says less than the API 1 view. A monster's hit points are the middle of its look-command health band times the average hit points in its race record, kept inside the band. A monster's speed is its race speed, without the random spread or a temporary haste or slow, and `poisoned` is always false. Its race and spell flags are the ones the player's monster memory has learned. A square the character has never seen is unknown, impassable and has no trap, where API 1 read the real map. A trap the character has disabled still counts as a trap, because a remembered trap carries no timeout (request 25). Otherwise a remembered trap counts when its kind carries the TRAP flag, the check API 1 makes, so a web, a door lock, a glyph of warding or a decoy never does. No square glows, and `floorItems` answers only for the character's own square. A timed effect such as a cut or a stun is the lowest duration in the grade the status line names, so a check against a grade boundary answers as API 1 does; every cut, stun and hunger line Squire checks sits on one, and a test walks each across its range. Food is the known player's food value times 100, which rounds the API 1 number down by less than 100. Recall and Deep Descent read 1 while active and 0 otherwise, because the known player does not say when they fire. An item's timeout is the number its name says are charging, which is zero exactly when the item is ready. A light's fuel is not in the known item, so a torch or lantern reads as out of fuel (request 26). The tests in `src/host-adapter-api2.test.ts` build the known world from the same game facts as the API 1 tests and check that everything else answers the same.
 
 ## The manifest
 
@@ -65,7 +66,7 @@ Totals: 3 moved, 18 with an API 2 home but not wired, and 23 waiting on a Core r
 
 `tools/check-grants.mjs` reads `data.capabilities` from a schema 2 document or `capabilities` from a schema 1 manifest. It fails a grant for the real map, any wildcard or non-read `state:` grant, any `truth`, `core` or `registries` grant, and any `registry:` grant other than `registry:command`.
 
-Schema 2 manifests and the API 2 types are on Core master but in no release yet: not in v1.22.0, not in v1.22.1-edge.165, and not in any published SDK. A released game cannot read this manifest, and a checkout on the published SDK cannot typecheck `src/host-adapter-api2.ts`. This branch builds against Core master through local links in `node_modules` (request 23).
+Schema 2 manifests and the API 2 types are on Core master but in no release yet: not in v1.22.0, not in v1.22.1-edge.166, and not in any published SDK (the SDK's 1.22.0 package on npm has no API 2 files). A released game cannot read this manifest, and a checkout on the published SDK cannot typecheck `src/host-adapter-api2.ts`. This branch builds against Core master through local links in `node_modules` (request 23).
 
 ## The four first-party grants
 
@@ -75,7 +76,7 @@ Schema 2 manifests and the API 2 types are on Core master but in no release yet:
 
 `ui:title` adds the "New Squire character" row (key S) to the title screen through `title.registerRow`, and `title.choose` asks which profile the character lives in. It needs request 4.
 
-`profiles:manage` lists and creates profiles, turns Squire on in a new profile with `setEnabledMods`, and calls `switchTo(id, { kind: "create-character", armController: true })` to start a new character there with the controller armed. `manage.profiles` covers the first three, and request 5 covers the rest.
+`profiles:manage` serves the title row. A player who picks "New Squire character" can keep the current profile or give Squire one of its own: a fresh profile with only Squire turned on (`setEnabledMods`), a copy of another, or one Squire made earlier. Either way the character starts through `switchTo(id, { kind: "create-character", armController: true })`, so Squire holds the keyboard from the first turn. Squire's first-party entry names `profiles:manage`, so the game would build `manage.profiles` for an API 2 Squire once the player allows it on that grant's own question. Listing, creating and enabling would move as they are. The armed start is request 5.
 
 ## The removal list
 
@@ -99,7 +100,7 @@ Label parsing is mod work with no Core change needed, kept for a later pass beca
 
 ## Core requests
 
-Each request says what Squire needs, the smallest Core addition that gives it, and whether only a first-party mod should get it.
+Each request says what Squire needs, the smallest Core addition that gives it, and whether only a first-party mod should get it. A request keeps its number when it closes, so a gap in the list marks one that is no longer needed.
 
 **1. A controller install in `act.controller`.** Squire plays the character, and API 2 has no way to take the keyboard. The smallest addition is a `controller` member on the API 2 definition, or an `act.controller.install(decide, { onDeath })` call, that gives the same contract as the API 1 controller described in the next section: the host's confirmation and noscore mark, a pump that calls `decide` once per tick with a fresh known world and input token, the host answering blocking prompts, `onDeath: "end"`, and hand-back through `release` and the player's stop keys. `decide` can stay synchronous over a view read just before the call, or become async with the token check `act.submit` already has. P-tier only.
 
@@ -109,7 +110,7 @@ Each request says what Squire needs, the smallest Core addition that gives it, a
 
 **4. A title-screen row for a first-party mod.** Squire adds "New Squire character" to the title screen. `ctx.title` has no API 2 form because title actions belong to the presentation mod. The smallest addition is a `ui.title.registerRow` member granted to P-tier mods through `ui:title`. P-tier only.
 
-**5. `manage.profiles` for the autoplayer, with a character-start option.** Squire makes a profile, turns itself on there and starts a new character with the controller armed, and today's plugin also reads `ctx.controllerArmed` at boot. The smallest addition is to grant `manage.profiles` to P-tier mods holding `profiles:manage`, add an option argument to `switchTo(id, { kind: "create-character", armController: true })`, and tell the mod at start that the controller is armed (for example `meta.controllerArmed`). P-tier only.
+**5. A character-start option in `manage.profiles`.** Squire makes a profile, turns itself on there and starts a new character with the controller armed, and today's plugin also reads `ctx.controllerArmed` at boot. `manage.profiles` reaches Squire, but its `switchTo(id)` only switches. The smallest addition is an option argument, `switchTo(id, { kind: "create-character", armController: true })`, and a way to tell the mod at start that the controller is armed (for example `meta.controllerArmed`). P-tier only.
 
 **6. Character creation in `manage`.** The roll-on heir needs `saves.create({ like, resumeAutoplayer: true })`. The smallest addition is `manage.saves.create` with the same two options. P-tier only.
 
@@ -123,7 +124,7 @@ Each request says what Squire needs, the smallest Core addition that gives it, a
 
 **11. Lit squares in the known level.** Before reading or casting, Squire checks that its own square is lit or that it carries a light, because the game refuses both in the dark. It also prefers a lit square when something unseen is hurting it. Without this, a character with no light in a lit room would never read a scroll. The smallest addition is `glow: boolean` on each remembered square in `KnownLevelCell`, set from the player's memory of the square. Not P-tier only.
 
-**12. A feature index on terrain records.** A remembered square holds a feature index, and Squire finds that feature's record by its place in `content.records("terrain")`. That works because the game builds feature indexes from the file in the same order and mods can only patch existing codes. The smallest addition is a `featCode` on every remembered square, or an `index` field on each terrain record. Not P-tier only.
+**12. A feature code the game fills in.** A remembered square holds a feature index, and Squire finds that feature's record by its place in `content.records("terrain")`. That works because the game builds feature indexes from the file in the same order and mods can only patch existing codes. `KnownRememberedCell` has an optional `featCode`, but the game's view builder is given no terrain registry, so the field never appears. The smallest addition is to hand the view builder the terrain registry, so every remembered square carries `featCode`, and to say how a `featCode` names a terrain record's `code`. Not P-tier only.
 
 **13. Floor items beyond the character's square.** Squire plans pickups from items it remembers on other squares, and inspects them. `view.world()` has only `floorHere`. The smallest addition is the remembered objects of each known square as `KnownItem`s, where `KnownLevelCell` now gives only a count. Not P-tier only.
 
@@ -139,8 +140,6 @@ Each request says what Squire needs, the smallest Core addition that gives it, a
 
 **19. A credential reference with a prefix.** Squire sends `Authorization: Bearer <key>`, and `net.credential` fills in the whole header value. The smallest addition is `net.credential(name, { prefix: "Bearer " })`. Not P-tier only.
 
-**20. The race of a killed monster in `combat-outcome`.** Squire counts kills by race. The API 1 listener reads the view during the event, while the dead monster still holds its index; an API 2 listener reads afterwards. The smallest addition is `targetRace` on the payload when the player saw the kill. Not P-tier only.
-
 **21. Command arguments in `player-command`.** Knight's Lessons learns which item the player used and which spell they cast from `args.handle` and `args.spell`. The smallest addition is `args` for the player's own commands, which name only items and spells the player chose. Not P-tier only.
 
 **22. The mod builder's banner.** `neo-angband-mod-build` calls `manifestFields` without importing it, so the banner names the folder rather than the mod id. The smallest fix is the missing import. Not P-tier only.
@@ -150,6 +149,8 @@ Each request says what Squire needs, the smallest Core addition that gives it, a
 **24. Messages in the known world (optional).** Squire hands its model the messages since the last decision, and the API 2 adapter collects them from the `message` event. The smallest addition is a `view.messages(since)` read. Not P-tier only.
 
 **25. Disabled traps in the known level.** Squire disarms a trap next to the character, and the disarm command will not act on a trap that Disable Traps has switched off. API 1 reads such a trap as no trap. A remembered trap in the known level has only its index and name, so the API 2 adapter still counts it. The smallest addition is `disabled: boolean` on each `KnownTrap`. Not P-tier only.
+
+**26. Light fuel in the known item.** Before a trip down, Squire checks that its light still burns and counts spare torches with fuel left, and the API 1 view gives a light's fuel as its `timeout`. A `KnownItem` has `charging` in place of `timeout`, and a light is never charging, so the API 2 adapter reads every torch and lantern as out of fuel. The player sees the fuel in the item's name, as in "a Wooden Torch (2500 turns)". The smallest addition is `fuel: number` on a `KnownItem` that burns fuel. Not P-tier only.
 
 ## The controller today
 

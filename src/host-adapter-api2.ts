@@ -1,7 +1,7 @@
 /**
  * The API 2 form of host-adapter.ts: the same reads, made through `view`, `content` and `events` on a ModApi2 object. Squire gets no `truth`, so everything here is what the character knows.
  *
- * Nothing imports this file yet. When the game can load an API 2 mod from a folder, the entry point swaps its import from host-adapter.ts to this file. Three API 1 reads have no API 2 counterpart and are left out: the turn energy table, the autoplayer mark on the save, and the birth options. docs/API2-MIGRATION.md lists the Core request each one waits on.
+ * Nothing imports this file. The game builds a ModApi2 object only for an API 2 mod, and an API 2 mod cannot hold the controller, so Squire stays on API 1 until Core adds one. Then the entry point swaps its import from host-adapter.ts to this file. Two API 1 reads have no API 2 counterpart and are left out: the autoplayer mark on the save and the birth options. docs/API2-MIGRATION.md lists the Core request each one waits on.
  *
  * Every call is asynchronous, because each API 2 call answers with a result. viewWorld reads the known world once and returns an AgentView over that one reading, so the decision code keeps its synchronous view.
  *
