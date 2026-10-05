@@ -48,15 +48,16 @@ The Status column has three values. **moved** means Squire no longer uses the ol
 | `AgentView.spellInfo`, `monsterRecall`, `inspectItem`, `simulateLoadout`, `projectionPath`, `travelPath`, `blastArea` | Core request | Core request | Request 14. |
 | `AgentView.floorItems` away from the character, `knownFloorItems`, `inspectKnownFloorItem` | Core request | Core request | `view.world()` has only `floorHere` (request 13). |
 | `CellView.glow` | Core request | Core request | Request 11. |
+| `CellView.trap` on a disabled trap | Core request | Core request | Request 25. |
 | `CellView.feat` from a terrain record | Core request | Core request | Squire reads the feature index as the record's place in the terrain file (request 12). |
 | `MonsterView` exact `hp`, `speed`, `poisoned`, all `spellFlags` | Core request | Core request | Request 15. |
 | IndexedDB store `neo-angband-squire` | Core request | Core request | Run reports, the apprentice and Squire's profile list (request 16). |
 | `sessionStorage` roll-on and heir marks | Core request | Core request | Request 17. |
 | `ctx.net.secrets` page storage in the browser | Core request | Core request | Request 18. |
 
-Totals: 3 moved, 18 with an API 2 home but not wired, and 22 waiting on a Core request. Squire does not use `hud`, `menu`, `screen`, `frontend`, `regions`, `hooks` or any `truth` read.
+Totals: 3 moved, 18 with an API 2 home but not wired, and 23 waiting on a Core request. Squire does not use `hud`, `menu`, `screen`, `frontend`, `regions`, `hooks` or any `truth` read.
 
-`viewWorld` answers from the known world, so it says less than the API 1 view in five places. A monster's hit points are the middle of its look-command health band times the average hit points in its race record, kept inside the band. A monster's speed is its race speed, without the random spread or a temporary haste or slow, and `poisoned` is always false. Its race and spell flags are the ones the player's monster memory has learned. A square the character has never seen is unknown, impassable and has no trap, where API 1 read the real map. No square glows, and `floorItems` answers only for the character's own square. The tests in `src/host-adapter-api2.test.ts` build the known world from the same game facts as the API 1 tests and check that everything else answers the same.
+`viewWorld` answers from the known world, so it says less than the API 1 view in six places. A monster's hit points are the middle of its look-command health band times the average hit points in its race record, kept inside the band. A monster's speed is its race speed, without the random spread or a temporary haste or slow, and `poisoned` is always false. Its race and spell flags are the ones the player's monster memory has learned. A square the character has never seen is unknown, impassable and has no trap, where API 1 read the real map. A trap the character has disabled still counts as a trap, because a remembered trap carries no timeout (request 25). Otherwise a remembered trap counts when its kind carries the TRAP flag, the check API 1 makes, so a web, a door lock, a glyph of warding or a decoy never does. No square glows, and `floorItems` answers only for the character's own square. The tests in `src/host-adapter-api2.test.ts` build the known world from the same game facts as the API 1 tests and check that everything else answers the same.
 
 ## The manifest
 
@@ -147,6 +148,8 @@ Each request says what Squire needs, the smallest Core addition that gives it, a
 **23. A published SDK with API 2 and schema 2.** Until one ships, a released game cannot read Squire's schema 2 manifest, and CI on the published SDK cannot typecheck the API 2 adapter. The fix is a release of Core and the SDK with both. Not P-tier only.
 
 **24. Messages in the known world (optional).** Squire hands its model the messages since the last decision, and the API 2 adapter collects them from the `message` event. The smallest addition is a `view.messages(since)` read. Not P-tier only.
+
+**25. Disabled traps in the known level.** Squire disarms a trap next to the character, and the disarm command will not act on a trap that Disable Traps has switched off. API 1 reads such a trap as no trap. A remembered trap in the known level has only its index and name, so the API 2 adapter still counts it. The smallest addition is `disabled: boolean` on each `KnownTrap`. Not P-tier only.
 
 ## The controller today
 

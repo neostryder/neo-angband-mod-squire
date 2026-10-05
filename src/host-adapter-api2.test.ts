@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownMonster, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
-import type { InputSnapshot } from "@rpgm-tools/neo-angband-core";
+import { squareIsDisarmableTrap, TRF, type InputSnapshot } from "@rpgm-tools/neo-angband-core";
 import { FEAT, world, type World } from "./harness.js";
 import { GAME_TERRAIN } from "./terrain-records.fixture.js";
+import { recordFlags } from "./terrain.js";
 import { contentTerrain as contentTerrain1, viewInput as viewInput1, viewWorld as viewWorld1, type HostReads } from "./host-adapter.js";
 import { contentTerrain, viewInput, viewWorld, watchMessages, type Api2Reads } from "./host-adapter-api2.js";
 
@@ -78,7 +79,7 @@ function harnessTerrainRecords(): JsonRecord[] {
   return Array.from({ length: size }, (_, feat) => ({ code: `F${String(feat)}`, flags: passable.has(feat) ? ["LOS | PASSABLE"] : ["WALL"] }));
 }
 
-/** Trap kinds: index 1 is a glyph and index 5 a trap door, as in the game's trap records. */
+/** The first seven trap kinds, numbered and flagged as in the game's trap records. Only the trap door and the pit carry TRAP. */
 const TRAP_RECORDS: JsonRecord[] = [
   { name: { name: "no trap" } },
   { name: { name: "glyph of warding" }, flags: ["GLYPH | VISIBLE | FLOOR"] },
@@ -86,13 +87,58 @@ const TRAP_RECORDS: JsonRecord[] = [
   { name: { name: "door lock" }, flags: ["LOCK | INVISIBLE"] },
   { name: { name: "web" }, flags: ["WEB | VISIBLE"] },
   { name: { name: "trap door" }, flags: ["TRAP | FLOOR | DOWN"] },
+  { name: { name: "pit" }, flags: ["TRAP | FLOOR | PIT"] },
 ];
+
+/** A trap on the live map: its kind, whether the character has found it, and how many turns it stays disabled. */
+interface LiveTrap {
+  readonly x: number;
+  readonly y: number;
+  readonly kind: number;
+  readonly found: boolean;
+  readonly timeout?: number;
+}
+
+/** The trap's live flags: its kind's flags, plus VISIBLE once the character has found it. */
+function liveFlags(trap: LiveTrap): Set<number> {
+  const names = recordFlags(TRAP_RECORDS[trap.kind]?.["flags"]);
+  if (trap.found) names.add("VISIBLE");
+  return new Set([...names].map((name) => TRF[name as keyof typeof TRF]));
+}
+
+/** The trap kind's name, as the known world reports it. */
+function kindName(kind: number): string {
+  const name = TRAP_RECORDS[kind]?.["name"];
+  return name !== null && typeof name === "object" && !Array.isArray(name) && typeof name["name"] === "string" ? name["name"] : "";
+}
+
+/** Whether the API 1 view reports a trap on the trap's square, asked of the game's own CellView.trap predicate over the same live traps. */
+function api1Trap(traps: readonly LiveTrap[], at: LiveTrap): boolean {
+  const width = 64;
+  const live = new Map<number, unknown[]>();
+  for (const trap of traps) {
+    const index = trap.y * width + trap.x;
+    live.set(index, [...(live.get(index) ?? []), { tidx: trap.kind, kind: { tidx: trap.kind, name: kindName(trap.kind) }, grid: { x: trap.x, y: trap.y }, power: 0, timeout: trap.timeout ?? 0, flags: liveFlags(trap) }]);
+  }
+  const state = { chunk: { width }, traps: live } as unknown as Parameters<typeof squareIsDisarmableTrap>[0];
+  return squareIsDisarmableTrap(state, { x: at.x, y: at.y });
+}
+
+/** The traps on a square as the known world remembers them: the visible ones, by kind index and name, as Core's known level lists them. */
+function rememberedTraps(traps: readonly LiveTrap[], x: number, y: number): { index: number; name: string }[] {
+  return traps.filter((trap) => trap.x === x && trap.y === y && liveFlags(trap).has(TRF.VISIBLE)).map((trap) => ({ index: trap.kind, name: kindName(trap.kind) }));
+}
+
+/** The harness world over these live traps, its API 1 view showing a trap wherever the game's predicate does. */
+function worldWithTraps(spec: Parameters<typeof world>[0], traps: readonly LiveTrap[]): World {
+  return world({ ...spec, traps: traps.filter((trap) => api1Trap(traps, trap)).map((trap) => ({ x: trap.x, y: trap.y })) });
+}
 
 /** The flags the character's monster lore has learned, for the known world. */
 const LEARNED = new Set(["ANIMAL", "EVIL"]);
 
-/** The known world Core builds from the same game the API 1 view shows. */
-function knownFrom(w: World): KnownWorldData {
+/** The known world Core builds from the same game the API 1 view shows, holding these live traps. */
+function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWorldData {
   const view = w.view;
   const { width, height } = view.mapBounds();
   const cells: NonNullable<KnownWorldData["level"]>["cells"][number][] = [];
@@ -106,7 +152,7 @@ function knownFrom(w: World): KnownWorldData {
         visible: cell.inView,
         remembered: {
           feat: cell.feat,
-          traps: cell.trap ? [{ index: 5, name: "trap door" }] : [],
+          traps: rememberedTraps(traps, x, y),
           objects: Array.from({ length: cell.objectCount }, () => ({ sensed: true as const, money: false })),
         },
       });
@@ -159,8 +205,11 @@ function api1Host(w: World): Pick<HostReads, "core" | "state" | "snapshot"> {
   };
 }
 
+/** The scene's one trap: a trap door the character has found. */
+const SCENE_TRAPS: readonly LiveTrap[] = [{ x: 2, y: 2, kind: 5, found: true }];
+
 function scene(): World {
-  return world({
+  return worldWithTraps({
     map: [
       "##########",
       "#@..*..>.#",
@@ -178,9 +227,33 @@ function scene(): World {
     quiver: ["12 Arrows"],
     worn: ["a Dagger"],
     spells: [{ name: "Magic Missile", sidx: 0, mana: 1, fail: 22 }],
-    traps: [{ x: 2, y: 2 }],
     floor: [{ x: 1, y: 1, name: "a Scroll of Phase Door" }],
-  });
+  }, SCENE_TRAPS);
+}
+
+/*
+ * One square for each trap kind. The door lock sits on a closed door, where the game puts one. The hidden pit has not been found, and the disabled pit has been found and switched off for three turns.
+ */
+const KIND_TRAPS: readonly LiveTrap[] = [
+  { x: 2, y: 1, kind: 1, found: false },
+  { x: 3, y: 1, kind: 2, found: false },
+  { x: 4, y: 1, kind: 3, found: false },
+  { x: 5, y: 1, kind: 4, found: false },
+  { x: 6, y: 1, kind: 5, found: true },
+  { x: 7, y: 1, kind: 6, found: true },
+  { x: 8, y: 1, kind: 6, found: false },
+];
+const DISABLED_PIT: LiveTrap = { x: 2, y: 2, kind: 6, found: true, timeout: 3 };
+
+function trapScene(traps: readonly LiveTrap[]): World {
+  return worldWithTraps({
+    map: [
+      "##########",
+      "#@..+....#",
+      "#........#",
+      "##########",
+    ],
+  }, traps);
 }
 
 function records(): Record<string, readonly JsonRecord[]> {
@@ -235,6 +308,45 @@ describe("viewWorld under API 2", () => {
     expect(compared).toBeGreaterThan(30);
     expect(two.cell(-1, 0)).toBeNull();
     expect(two.cell(width, 0)).toBeNull();
+  });
+
+  it("reads a trap on the same squares as API 1 for every trap kind", async () => {
+    const w = trapScene(KIND_TRAPS);
+    const known = knownFrom(w, KIND_TRAPS);
+    const one = viewWorld1(api1Host(w));
+    const two = await viewWorld(fakeApi({ world: known, records: records() }).api);
+    if (one === null || two === null) throw new Error("no view");
+    /* Every kind the character can see reaches the API 2 adapter as a remembered trap. The door lock is invisible and the hidden pit not yet found, so the known world leaves both out. */
+    const remembered = new Map(known.level?.cells.map((c) => [`${String(c.x)},${String(c.y)}`, c.remembered.traps.map((t) => t.index)]));
+    for (const trap of KIND_TRAPS) expect(remembered.get(`${String(trap.x)},${String(trap.y)}`), kindName(trap.kind)).toEqual(trap.kind === 3 || (trap.kind === 6 && !trap.found) ? [] : [trap.kind]);
+    for (const trap of KIND_TRAPS) {
+      const label = `${kindName(trap.kind)} at ${String(trap.x)},${String(trap.y)}`;
+      expect(two.cell(trap.x, trap.y)?.trap, label).toBe(one.cell(trap.x, trap.y)?.trap);
+    }
+    /* API 1 reports only a found trap that carries TRAP: the found trap door and pit. A glyph, a decoy, a door lock and a web do not count. */
+    expect(KIND_TRAPS.filter((trap) => one.cell(trap.x, trap.y)?.trap === true).map((trap) => trap.x)).toEqual([6, 7]);
+  });
+
+  it("still reads a trap the character has disabled as a trap, which API 1 does not", async () => {
+    /* A remembered trap carries no timeout, so the API 2 adapter cannot tell a disabled trap from a live one (docs/API2-MIGRATION.md, request 25). */
+    const w = trapScene([DISABLED_PIT]);
+    const one = viewWorld1(api1Host(w));
+    const two = await viewWorld(fakeApi({ world: knownFrom(w, [DISABLED_PIT]), records: records() }).api);
+    expect(one?.cell(DISABLED_PIT.x, DISABLED_PIT.y)?.trap).toBe(false);
+    expect(two?.cell(DISABLED_PIT.x, DISABLED_PIT.y)?.trap).toBe(true);
+  });
+
+  it("reads no trap from a remembered entry whose kind lacks TRAP, the door lock included", async () => {
+    /* Core leaves the invisible door lock out of the known world. If a remembered entry ever names one, it still reads as no trap. */
+    const w = trapScene([]);
+    const known = knownFrom(w, []);
+    const cells = (known.level?.cells ?? []).map((c) => (c.y === 1 && c.x >= 2 && c.x <= 7 ? { ...c, remembered: { ...c.remembered, traps: [{ index: c.x - 1, name: kindName(c.x - 1) }] } } : c));
+    const two = await viewWorld(fakeApi({ world: { ...known, level: known.level === null ? null : { ...known.level, cells } }, records: records() }).api);
+    for (let kind = 1; kind <= 6; kind++) {
+      const found: LiveTrap = { x: kind + 1, y: 1, kind, found: true };
+      expect(two?.cell(found.x, 1)?.trap, kindName(kind)).toBe(api1Trap([found], found));
+    }
+    expect([1, 2, 3, 4, 5, 6].map((kind) => two?.cell(kind + 1, 1)?.trap)).toEqual([false, false, false, false, true, true]);
   });
 
   it("shows nothing of a square the character has never seen", async () => {

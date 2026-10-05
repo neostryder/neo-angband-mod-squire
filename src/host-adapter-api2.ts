@@ -10,6 +10,7 @@
  * - A monster's hit points come from its look-command health band and the average hit points in its race record. The API 1 view gave exact numbers.
  * - A monster's speed is its race speed. Its flags and spells are the ones the player's lore has learned.
  * - A square the character has never seen is not passable, has no feature and holds no trap. The API 1 view read the real map there.
+ * - A trap the character has disabled still reads as a trap, because a remembered trap carries no timeout. The API 1 view reads it as no trap.
  * - No square glows, because the known level does not say which squares are lit.
  * - floorItems answers only for the character's own square.
  */
@@ -220,6 +221,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
   const cells = new Map<number, NonNullable<KnownWorldData["level"]>["cells"][number]>();
   for (const cell of known.level?.cells ?? []) cells.set(cell.y * width + cell.x, cell);
   const passable = (feat: number): boolean => terrain?.[feat]?.flags.has("PASSABLE") ?? false;
+  /* Under API 1, CellView.trap is the check the disarm command makes before it spends a turn: a visible trap whose kind carries TRAP and that is not disabled. The known world lists only visible traps, so the kind's TRAP flag decides here. A door lock, a web, a glyph of warding and a decoy carry no TRAP, so none of them counts. */
   const playerTrap = (index: number): boolean => recordFlags(trapKinds[index]?.["flags"]).has("TRAP");
   const inventory = (known.inventory ?? []).map(itemView);
   const equipment = (known.equipment ?? []).map((item) => (item === null ? null : itemView(item)));
