@@ -105,3 +105,28 @@ it("saves a Knight's Lessons decision as a Laya row with the knight's goal as it
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ pilot: "squire_goal", human: { goal: "retreat" }, jev: { model: "jev-1.13.0" } });
 });
+
+it("takes its panel kind back out on detach, so a second registration succeeds", () => {
+  const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
+  const kinds = new Set<string>();
+  const host: AttachHost = {
+    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, state: {} as NonNullable<AttachHost["state"]>, character: { key: () => "Mira" },
+    core: { createAgentView: () => w.view },
+    ui: {
+      openPanel: () => { throw new Error("no panels here"); },
+      registerPanelKind: (spec) => {
+        if (kinds.has(spec.kind)) throw new Error(`panel kind ${spec.kind} is already registered`);
+        kinds.add(spec.kind);
+        return () => { kinds.delete(spec.kind); };
+      },
+      openPanels: [],
+    },
+  };
+  const first = attachSquire(host, createRuntime(host, { store: memoryStore() }));
+  expect([...kinds]).toEqual(["squire"]);
+  first.detach();
+  first.detach();
+  expect(kinds.size).toBe(0);
+  attachSquire(host, createRuntime(host, { store: memoryStore() }));
+  expect([...kinds]).toEqual(["squire"]);
+});

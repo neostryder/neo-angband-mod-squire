@@ -58,7 +58,10 @@ export interface Lessons {
 const APPRENTICE_KEY = "squire/apprentice";
 const DEMONSTRATION_DECISIONS = 5;
 
-export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
+/** What attachSquire leaves behind: Knight's Lessons, and the cleanup that takes the panel kind back out of the game's panel list. */
+export type Attached = Lessons & { detach(): void };
+
+export function attachSquire(ctx: AttachHost, rt: Runtime): Attached {
   /** A view of the game while the player plays, so the apprentice knows exactly what the player knows. */
   function viewNow(): AgentView | null {
     return viewWorld(ctx);
@@ -239,9 +242,10 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
     },
   };
 
+  let unregister: (() => void) | undefined;
   const register = ctx.ui?.registerPanelKind;
   if (register !== undefined) {
-    register.call(ctx.ui, {
+    unregister = register.call(ctx.ui, {
       kind: "squire",
       label: "Squire",
       tab: "Squire",
@@ -250,5 +254,10 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Lessons {
       mount: (host) => mountPanel(host, rt, lessons),
     });
   }
-  return lessons;
+  return Object.assign(lessons, {
+    detach(): void {
+      unregister?.();
+      unregister = undefined;
+    },
+  });
 }

@@ -78,6 +78,7 @@ Fixed.
 - [Visible] **Squire stops exploring a town it has already walked.** It remembers each square of town it has stood on during a visit, so a town with no new ground left and no known stairs no longer sends it round the same streets again.
 - [Visible] **Squire lights a torch before it tries to study.** Studying needs light, so a Mage with an unlit torch and a new spell to learn used to try the spell first, get refused, and only then light the torch.
 - [Visible] **Squire sees the game's messages in the middle of a level again.** The first part of Squire to read each batch of messages used it up, so level feelings, newly learned runes and the arrival notes for a new level never reached the rest.
+- [Internal] [Modding-API] **Squire takes its panel back out when the game shuts its mods down.** Before, starting Squire a second time without a page reload failed, and the game's mod test runner does exactly that after it saves and reloads a game. Play is unchanged, because in the game itself the page reloads once the mods shut down.
 
 ## 0.2.0 - 2026-10-01
 

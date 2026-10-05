@@ -88,6 +88,9 @@ interface ControllerInstall {
   readonly onDeath: "end";
 }
 
+/** The cleanup for the registration in progress, run by uninstall(). */
+let detach: (() => void) | undefined;
+
 export default {
   api: 1,
 
@@ -95,11 +98,17 @@ export default {
    * Squire enabled, whether or not it has been handed over. */
   register(host: unknown, ctx: ControllerCtx & AttachHost & OrderCommandCtx & TitleCtx): void {
     const rt = runtime(ctx);
-    attachSquire(ctx, rt);
+    detach = attachSquire(ctx, rt).detach;
     /* The in-game order key needs registry:command and keymap:write; without them the panel's own key still works. */
     registerOrderCommand(host, ctx, rt);
     /* The title row needs ui:title and profiles:manage; without both there is no row. */
     registerSquireTitle(ctx, rt.store());
+  },
+
+  /* The game tears its mods down before it reloads, and the headless runner registers them again on the same page after a save and reload. The panel kind leaves the game's panel list here, or that second registration is refused. */
+  uninstall(): void {
+    detach?.();
+    detach = undefined;
   },
 
   /* Roll-on: accepts the one creation Squire asked for after a death, and
