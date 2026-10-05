@@ -13,10 +13,13 @@
  * - A trap the character has disabled still reads as a trap, because a remembered trap carries no timeout. The API 1 view reads it as no trap.
  * - No square glows, because the known level does not say which squares are lit.
  * - floorItems answers only for the character's own square.
+ * - A timed effect is the lowest duration in the grade the status line names, so a check against a grade boundary (a cut worse than a bad cut) answers as API 1 does, and a check inside a grade does not. Food is the status line's percentage times 100, which loses less than one percent.
+ * - Recall and Deep Descent read 1 while active and 0 otherwise, because the known player does not say when they fire.
+ * - An item's timeout is the number its name says are charging. A light's fuel is not in the known item, so a torch or lantern reads as out of fuel.
  */
 
-import type { Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownWorldData, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
-import type { AgentView, CellView, GameConstants, ItemView, MonsterView } from "@rpgm-tools/neo-angband-core";
+import type { Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStoreItem, KnownWorldData, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { AgentView, CellView, GameConstants, ItemView, MonsterView, PlayerView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
 import { recordFlags, terrainFromRecords, terrainRecords as readTerrainRecords, type Terrain, type TerrainRecord } from "./terrain.js";
 
 /** The parts of API 2 these reads use. */
@@ -194,10 +197,81 @@ async function gameConstants(api: Pick<ModApi2, "content">): Promise<GameConstan
   return out;
 }
 
+/* The player. */
+
+/** The timed effect record behind each status field, by its name in the game's player_timed file. */
+const TIMED_RECORDS: Readonly<Record<Exclude<keyof KnownPlayer["status"], "food" | "foodGrade" | "fearful">, string>> = {
+  blind: "BLIND",
+  confused: "CONFUSED",
+  afraid: "AFRAID",
+  poisoned: "POISONED",
+  cut: "CUT",
+  stun: "STUN",
+  paralyzed: "PARALYZED",
+  fast: "FAST",
+  sprint: "SPRINT",
+  protEvil: "PROTEVIL",
+  hero: "HERO",
+  shero: "SHERO",
+  shield: "SHIELD",
+  stoneskin: "STONESKIN",
+  blessed: "BLESSED",
+  fastcast: "FASTCAST",
+  resAcid: "OPP_ACID",
+  resElec: "OPP_ELEC",
+  resFire: "OPP_FIRE",
+  resCold: "OPP_COLD",
+  resPois: "OPP_POIS",
+  terror: "TERROR",
+  amnesia: "AMNESIA",
+  image: "IMAGE",
+};
+
+/** The lowest duration in each named grade of each timed effect, from the player_timed records. */
+type GradeFloors = ReadonlyMap<string, ReadonlyMap<string, number>>;
+
+async function gradeFloors(api: Pick<ModApi2, "content">): Promise<GradeFloors> {
+  const records = (await valueOf(api.content.records("player_timed"))) ?? [];
+  const out = new Map<string, Map<string, number>>();
+  for (const record of records) {
+    const name = record["name"];
+    const grades = record["grade"];
+    if (typeof name !== "string" || !Array.isArray(grades)) continue;
+    const floors = new Map<string, number>();
+    let floor = 1;
+    for (const grade of grades) {
+      if (grade === null || typeof grade !== "object" || Array.isArray(grade)) continue;
+      const label = grade["name"];
+      if (typeof label === "string" && label !== "" && !floors.has(label)) floors.set(label, floor);
+      if (typeof grade["max"] === "number") floor = grade["max"] + 1;
+    }
+    out.set(name, floors);
+  }
+  return out;
+}
+
+/** A known player as the API 1 player view, with each timed effect at the floor of its named grade. */
+function playerView(known: KnownPlayer, floors: GradeFloors): PlayerView {
+  const { status, recall, descent, ...rest } = writable(known);
+  const timed = {} as Record<keyof typeof TIMED_RECORDS, number>;
+  for (const [field, record] of Object.entries(TIMED_RECORDS) as [keyof typeof TIMED_RECORDS, string][]) {
+    const grade = status[field];
+    /* A grade the records do not name (an older or patched file) still says the effect is on. */
+    timed[field] = grade === null ? 0 : (floors.get(record)?.get(grade) ?? 1);
+  }
+  return { ...rest, status: { ...timed, food: status.food * 100, fearful: status.fearful }, recall: recall ? 1 : 0, descent: descent ? 1 : 0 };
+}
+
 /* The view. */
 
 function itemView(item: KnownItem): ItemView {
-  return writable(item);
+  const { charging, unknownRunes: _unknownRunes, ...rest } = writable(item);
+  return { ...rest, timeout: charging };
+}
+
+function storeItemView(item: KnownStoreItem): StoreItemView {
+  const { index, price } = item;
+  return { ...itemView(item), index, ...(price === undefined ? {} : { price }) };
 }
 
 /** What viewWorld needs besides the API: the message feed, when the mod keeps one. */
@@ -211,10 +285,10 @@ export interface WorldReads {
 export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise<AgentView | null> {
   const known: KnownWorldData | null = await valueOf(api.view.world());
   if (known === null || known.player === null) return null;
-  const [terrain, average, constants] = await Promise.all([terrainRecords(api), raceAverages(api), gameConstants(api)]);
+  const [terrain, average, constants, floors] = await Promise.all([terrainRecords(api), raceAverages(api), gameConstants(api), gradeFloors(api)]);
   const trapKinds = (await valueOf(api.content.records("trap"))) ?? [];
 
-  const player = writable(known.player);
+  const player = playerView(known.player, floors);
   const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, average(monster)));
   const width = known.level?.width ?? 0;
   const height = known.level?.height ?? 0;
@@ -263,9 +337,9 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
     quiver: () => [...quiver],
     equipment: () => [...equipment],
     floorItems: (x, y) => (x === player.grid.x && y === player.grid.y ? [...floorHere] : []),
-    target: () => (known.target === null ? null : { midx: known.target.midx, grid: { x: known.target.grid.x, y: known.target.grid.y } }),
+    target: () => (known.target === null ? null : { midx: known.target.monster ?? 0, grid: { x: known.target.grid.x, y: known.target.grid.y } }),
     messages: () => reads.messages?.drain() ?? [],
-    stores: () => (known.stores ?? []).map((store) => writable(store)),
+    stores: () => (known.stores ?? []).map((store): StoreView => ({ ...writable(store), stock: store.stock.map(storeItemView) })),
     spellbooks: () => (known.spellbooks ?? []).map((book) => writable(book)),
     constants: () => ({ ...constants }),
     inputToken: () => ({ epoch: known.token.epoch, revision: known.token.revision }),

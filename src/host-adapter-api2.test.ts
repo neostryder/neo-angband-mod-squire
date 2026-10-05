@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownMonster, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
-import { squareIsDisarmableTrap, TRF, type InputSnapshot } from "@rpgm-tools/neo-angband-core";
+import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStore, KnownTarget, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
+import { squareIsDisarmableTrap, TRF, TV, type InputSnapshot, type ItemView, type PlayerView, type StoreView, type TargetView } from "@rpgm-tools/neo-angband-core";
 import { FEAT, world, type World } from "./harness.js";
 import { GAME_TERRAIN } from "./terrain-records.fixture.js";
 import { recordFlags } from "./terrain.js";
+import { HUNGRY_BELOW } from "./brain/pack.js";
 import { contentTerrain as contentTerrain1, viewInput as viewInput1, viewWorld as viewWorld1, type HostReads } from "./host-adapter.js";
 import { contentTerrain, viewInput, viewWorld, watchMessages, type Api2Reads } from "./host-adapter-api2.js";
 
@@ -137,6 +138,57 @@ function worldWithTraps(spec: Parameters<typeof world>[0], traps: readonly LiveT
 /** The flags the character's monster lore has learned, for the known world. */
 const LEARNED = new Set(["ANIMAL", "EVIL"]);
 
+/** The timed effects with more than one grade, and a few with one, as the game's player_timed records grade them. */
+const TIMED_RECORDS: JsonRecord[] = [
+  { name: "BLIND", grade: [{ max: 10000, name: "Blind" }] },
+  { name: "CONFUSED", grade: [{ max: 10000, name: "Confused" }] },
+  { name: "AFRAID", grade: [{ max: 10000, name: "Afraid" }] },
+  { name: "POISONED", grade: [{ max: 10000, name: "Poisoned" }] },
+  { name: "PARALYZED", grade: [{ max: 10000, name: "Paralyzed!" }] },
+  { name: "CUT", grade: [{ max: 10, name: "Graze" }, { max: 25, name: "Light Cut" }, { max: 50, name: "Bad Cut" }, { max: 100, name: "Nasty Cut" }, { max: 200, name: "Severe Cut" }, { max: 1000, name: "Deep Gash" }, { max: 10000, name: "Mortal Wound" }] },
+  { name: "STUN", grade: [{ max: 50, name: "Stun" }, { max: 150, name: "Heavy Stun" }, { max: 10000, name: "Knocked Out" }] },
+];
+
+/** The status field each timed record stands for. */
+const STATUS_RECORD: Readonly<Record<string, string>> = { blind: "BLIND", confused: "CONFUSED", afraid: "AFRAID", poisoned: "POISONED", paralyzed: "PARALYZED", cut: "CUT", stun: "STUN" };
+
+const TIMED_FIELDS = ["blind", "confused", "afraid", "poisoned", "cut", "stun", "paralyzed", "fast", "sprint", "protEvil", "hero", "shero", "shield", "stoneskin", "blessed", "fastcast", "resAcid", "resElec", "resFire", "resCold", "resPois", "terror", "amnesia", "image"] as const;
+
+/** The name of the grade a duration falls in, by the status line's walk (prt_tmd): the first grade whose maximum covers it. Core says "active" when it has no grades to walk. */
+function gradeName(field: string, value: number): string | null {
+  if (value <= 0) return null;
+  const grades = TIMED_RECORDS.find((record) => record["name"] === STATUS_RECORD[field])?.["grade"];
+  if (!Array.isArray(grades)) return "active";
+  const found = grades.find((grade) => grade !== null && typeof grade === "object" && !Array.isArray(grade) && typeof grade["max"] === "number" && value <= grade["max"]) ?? grades[grades.length - 1];
+  return found !== null && typeof found === "object" && !Array.isArray(found) && typeof found["name"] === "string" ? found["name"] : null;
+}
+
+/** The player as the known world shows it: grade names for timed effects, the food meter as a percentage, and recall and descent as on or off. */
+function knownPlayer(player: PlayerView): KnownPlayer {
+  const { status, recall, descent, ...rest } = player;
+  const timed = Object.fromEntries(TIMED_FIELDS.map((field) => [field, gradeName(field, (status as unknown as Record<string, number | undefined>)[field] ?? 0)]));
+  return {
+    ...rest,
+    status: { ...timed, food: Math.trunc(status.food / 100), foodGrade: null, fearful: status.fearful ?? false } as KnownPlayer["status"],
+    recall: (recall ?? 0) > 0,
+    descent: (descent ?? 0) > 0,
+  };
+}
+
+/** An item as the known world shows it: a charging count where API 1 had a timeout. A light's fuel shows only in its name, so it charges nothing. */
+function knownItem(item: ItemView): KnownItem {
+  const { timeout, ...rest } = item;
+  return { ...rest, charging: item.tval !== TV.LIGHT && timeout > 0 ? 1 : 0, unknownRunes: false };
+}
+
+function knownTarget(target: TargetView | null): KnownTarget | null {
+  return target === null ? null : { monster: target.midx > 0 ? target.midx : null, grid: target.grid };
+}
+
+function knownStore(store: StoreView): KnownStore {
+  return { ...store, stock: store.stock.map((item) => ({ ...knownItem(item), index: item.index, ...(item.price === undefined ? {} : { price: item.price }) })) };
+}
+
 /** The known world Core builds from the same game the API 1 view shows, holding these live traps. */
 function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWorldData {
   const view = w.view;
@@ -164,11 +216,12 @@ function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWor
     version: 1,
     token,
     turn: view.turn(),
-    player,
-    inventory: view.inventory(),
-    equipment: view.equipment(),
-    quiver: view.quiver?.() ?? [],
-    floorHere: view.floorItems(player.grid.x, player.grid.y),
+    player: knownPlayer(player),
+    inventory: view.inventory().map(knownItem),
+    equipment: view.equipment().map((item) => (item === null ? null : knownItem(item))),
+    quiver: (view.quiver?.() ?? []).map(knownItem),
+    floorHere: view.floorItems(player.grid.x, player.grid.y).map(knownItem),
+    monstersHidden: null,
     monsters: view.monsters().map((m): KnownMonster => ({
       id: m.id,
       race: m.race,
@@ -187,9 +240,9 @@ function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWor
       questGuardian: m.questGuardian ?? false,
       finalGuardian: m.finalGuardian ?? false,
     })),
-    target: view.target(),
+    target: knownTarget(view.target()),
     targetReadable: true,
-    stores: view.stores(),
+    stores: view.stores().map(knownStore),
     spellbooks: view.spellbooks(),
     level: { token, levelId: 1, depth: player.depth, width, height, cells },
   };
@@ -265,6 +318,7 @@ function records(): Record<string, readonly JsonRecord[]> {
     trap: TRAP_RECORDS,
     monster: Array.from({ length: 13 }, (_, i) => monsters[i] ?? { name: `race ${String(i)}` }),
     constants: [{ store: [{ label: "turns", value: 1000 }], player: [{ label: "max-sight", value: 20 }] }],
+    player_timed: TIMED_RECORDS,
   };
 }
 
@@ -276,7 +330,8 @@ describe("viewWorld under API 2", () => {
     expect(one).not.toBeNull();
     expect(two).not.toBeNull();
     if (one === null || two === null) return;
-    expect(two.player()).toEqual(one.player());
+    /* The API 2 player also carries every timed effect, recall and descent, at 0 here; the harness player leaves them out. */
+    expect(two.player()).toMatchObject(one.player());
     expect(two.inventory()).toEqual(one.inventory());
     expect(two.equipment()).toEqual(one.equipment());
     expect(two.quiver?.()).toEqual(one.quiver?.());
@@ -399,6 +454,44 @@ describe("viewWorld under API 2", () => {
     expect(changed?.constants().storeTurns).toBe(500);
     const none = await viewWorld(fakeApi({ world: knownFrom(w), records: { terrain: harnessTerrainRecords() } }).api);
     expect(none?.constants().storeTurns).toBe(1000);
+  });
+
+  it("answers every cut, stun and hunger check the decision code makes as API 1 does", async () => {
+    /* goals.ts checks a cut against 25 and 50, the danger marks against 100 and 200, and pack.ts the food store against HUNGRY_BELOW. Each is a grade boundary, so the floor of the named grade answers the same way. */
+    for (const cut of [0, 5, 11, 25, 26, 40, 50, 51, 99, 100, 101, 150, 200, 201, 999, 1001, 5000]) {
+      const w = world({ map: ["#####", "#@..#", "#####"], player: { status: { cut, stun: cut } } });
+      const one = viewWorld1(api1Host(w))?.player().status;
+      const two = (await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api))?.player().status;
+      if (one === undefined || two === undefined) throw new Error("no view");
+      for (const line of [0, 25, 50, 100, 200]) expect(two.cut > line, `cut ${String(cut)} over ${String(line)}`).toBe(one.cut > line);
+      for (const line of [0, 50, 150]) expect(two.stun > line, `stun ${String(cut)} over ${String(line)}`).toBe(one.stun > line);
+      expect(gradeName("cut", two.cut)).toBe(gradeName("cut", one.cut));
+    }
+    for (const food of [99, 1499, 1500, 1501, 5000]) {
+      const w = world({ map: ["#####", "#@..#", "#####"], player: { status: { food } } });
+      const one = viewWorld1(api1Host(w))?.player().status.food ?? -1;
+      const two = (await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api))?.player().status.food ?? -1;
+      expect(two < HUNGRY_BELOW, `food ${String(food)}`).toBe(one < HUNGRY_BELOW);
+    }
+  });
+
+  it("reads Word of Recall as under way exactly when API 1 does", async () => {
+    for (const recall of [0, 1, 15, 35]) {
+      const w = world({ map: ["#####", "#@..#", "#####"], player: { recall } });
+      const one = viewWorld1(api1Host(w))?.player();
+      const two = (await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api))?.player();
+      expect((two?.recall ?? 0) > 0).toBe((one?.recall ?? 0) > 0);
+    }
+  });
+
+  it("reads a lit torch as out of fuel, which API 1 does not", async () => {
+    /* The known item carries no fuel, only a charging count, which a torch never has (docs/API2-MIGRATION.md, request 26). */
+    const w = world({ map: ["#####", "#@..#", "#####"], worn: ["a Wooden Torch (2500 turns)"] });
+    const one = viewWorld1(api1Host(w));
+    const two = await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api);
+    const light = (v: typeof one) => v?.equipment().find((item) => item?.tval === TV.LIGHT);
+    expect(light(one)?.timeout).toBe(2500);
+    expect(light(two)?.timeout).toBe(0);
   });
 
   it("is null when the known world or the player cannot be read, as API 1 is without a game", async () => {
