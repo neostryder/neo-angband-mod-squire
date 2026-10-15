@@ -23,6 +23,7 @@ import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
 import { CHAOS_METHODS, type ChaosMethod } from "./brain/chaos.js";
+import { GOAL_GATE_MODES, type GoalGateMode } from "./brain/regret.js";
 import { CONFIDENCE_FLOOR } from "./brain/tactics.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
@@ -72,6 +73,8 @@ export interface SquireConfig {
   readonly pendingHeir: { readonly lineage: string; readonly parent: Persona; readonly name?: string } | null;
   /** How Law to Chaos draws a pick: smooth sampling, or the bounded d20 and d4 roll. Stored only; no panel control sets it. */
   readonly chaosMethod: ChaosMethod;
+  /** How the goal gate treats a pick that risks more than a safer option of its class: off, shadow (price and log only), or acting. Stored only; no panel control sets it. */
+  readonly goalGate: GoalGateMode;
 }
 
 /** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
@@ -103,6 +106,7 @@ export function defaultConfig(): SquireConfig {
     lineages: {},
     pendingHeir: null,
     chaosMethod: "sampling",
+    goalGate: "shadow",
   };
 }
 
@@ -239,6 +243,7 @@ export function readConfig(stored: unknown): SquireConfig {
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...(typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {}) } : null;
     })(),
     chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod),
+    goalGate: pickOf(data["goalGate"], GOAL_GATE_MODES, base.goalGate),
   };
 }
 

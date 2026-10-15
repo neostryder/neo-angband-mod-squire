@@ -6304,6 +6304,40 @@ function tacticalLog(pack, loop) {
   };
 }
 
+// src/brain/regret.ts
+var GOAL_GATE_MODES = ["off", "shadow", "acting"];
+var REGRET_MIN = 0.05;
+var REGRET_SLOPE = 4;
+var NEED_CAP = 0.95;
+function marginOf(probabilities) {
+  const sorted = Object.values(probabilities).sort((a, b) => b - a);
+  return (sorted[0] ?? 0) - (sorted[1] ?? 0);
+}
+function safestAlternative(offers, pick2) {
+  const kind = classOf(pick2.goal);
+  return offers.filter((o) => o.goal !== pick2.goal && classOf(o.goal) === kind && o.gaps === void 0 && o.risk < pick2.risk).sort((a, b) => a.risk - b.risk || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || (a.cost ?? 0) - (b.cost ?? 0))[0];
+}
+function priceGoal(answer, offers, pick2, floor) {
+  if (answer?.type !== "choice" || answer.choice !== pick2) return null;
+  const offer = offers.find((o) => o.goal === pick2);
+  if (offer === void 0) return null;
+  const safest = safestAlternative(offers, offer);
+  if (safest === void 0) return null;
+  const regret = offer.risk - safest.risk;
+  if (regret < REGRET_MIN) return null;
+  const need = Math.min(NEED_CAP, Math.max(floor, 0) + REGRET_SLOPE * regret);
+  return {
+    pick: pick2,
+    safest: safest.goal,
+    regret: Math.round(regret * 1e3) / 1e3,
+    need: Math.round(need * 1e3) / 1e3,
+    confidence: answer.confidence,
+    margin: Math.round(marginOf(answer.probabilities) * 1e3) / 1e3,
+    unsure: answer.confidence < need,
+    acted: false
+  };
+}
+
 // src/brain/loops.ts
 var REPEAT_RUN = 3;
 var CYCLE_WINDOW = 8;
@@ -7648,6 +7682,8 @@ function createGoalPlanner(options) {
   const stateBudget2 = options.stateTokens ?? STATE_TOKEN_CAP;
   const floorOption = options.confidenceFloor ?? CONFIDENCE_FLOOR;
   const floorNow = () => typeof floorOption === "function" ? floorOption() : floorOption;
+  const gateOption = options.goalGate ?? "shadow";
+  const gateNow = () => typeof gateOption === "function" ? gateOption() : gateOption;
   let lastAwake = /* @__PURE__ */ new Set();
   const grudgeNoticed = /* @__PURE__ */ new Set();
   const visitedShops = /* @__PURE__ */ new Set();
@@ -8922,9 +8958,18 @@ function createGoalPlanner(options) {
         }
         return ownChoice(digest, view);
       }
-      const offer = digest.offers.find((o) => o.goal === pick2);
+      let offer = digest.offers.find((o) => o.goal === pick2);
       if (offer === void 0) {
         return ownChoice(digest, view);
+      }
+      const gateMode = gateNow();
+      const price = gateMode === "off" ? null : priceGoal(answer, digest.offers, offer.goal, floorNow());
+      if (price !== null) {
+        const safer = digest.offers.find((o) => o.goal === price.safest);
+        const acted = gateMode === "acting" && price.unsure && safer !== void 0 && safer.goal !== failed;
+        digest.regret = { ...price, acted };
+        if (price.unsure) log(`goal: ${pick2} asked ${price.need.toFixed(2)} for ${price.regret.toFixed(2)} more risk than ${price.safest} and the answer gave ${price.confidence.toFixed(2)}${acted ? `, so ${price.safest}` : " (shadow, followed)"}`);
+        if (acted && safer !== void 0) offer = safer;
       }
       options.orders?.decided(offer.goal, view);
       if (digest.situation !== void 0) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal, model: answeredBy ?? latestModel, packVersion: QUESTION_PACK_VERSION, policyVersion: GOAL_POLICY_VERSION };
@@ -11755,7 +11800,8 @@ function defaultConfig() {
     channelUrl: "",
     lineages: {},
     pendingHeir: null,
-    chaosMethod: "sampling"
+    chaosMethod: "sampling",
+    goalGate: "shadow"
   };
 }
 function lineagesOf(value) {
@@ -11879,7 +11925,8 @@ function readConfig(stored) {
       const heir = rec2(data["pendingHeir"]);
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {} } : null;
     })(),
-    chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod)
+    chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod),
+    goalGate: pickOf(data["goalGate"], GOAL_GATE_MODES, base.goalGate)
   };
 }
 function writeConfig(config) {
@@ -14168,6 +14215,7 @@ function createRuntime(host, options = {}) {
         stateTokens: stateBudget(config),
         confidenceFloor: () => confidenceFloor(backendFor(config) ?? backend),
         chaosMethod: config.chaosMethod,
+        goalGate: () => config.goalGate,
         lessons: (view) => journal.lessonLines(view),
         grudges: () => feelingsNow(),
         flourishes: () => character.flourishes ?? emptyFlourishes(),
@@ -14241,6 +14289,7 @@ function createRuntime(host, options = {}) {
       ...record6.context.fallback === void 0 ? {} : { fallback: record6.context.fallback },
       ...tacticalLog(record6.context.pack, record6.context.loop),
       ...chaosEntry(record6.context.chaos),
+      ...record6.context.regret === void 0 ? {} : { regret: { ...record6.context.regret } },
       state: record6.request.state,
       ...record6.context.stateHash === void 0 ? {} : { stateHash: record6.context.stateHash },
       ...record6.context.stateHash === void 0 || record6.reflex !== void 0 ? {} : { answerKey: record6.context.answerKey ?? answerKeyOf(record6.model, record6.context.stateHash) },

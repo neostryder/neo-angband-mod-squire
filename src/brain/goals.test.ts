@@ -2924,6 +2924,61 @@ describe("tactical pack rules", () => {
     expect(q2.context.pack?.lowConfidence).toBe("fight");
   });
 
+  describe("goal gate", () => {
+    /* The orc world offers one attack, so a second, safer one is added to give the gate something to price. */
+    const priced = (mode: "off" | "shadow" | "acting", confidence: number) => {
+      const w = fightWorld();
+      const logged: string[] = [];
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: 0, goalGate: mode });
+      const q = asked(p.ask(w.view));
+      const fight = q.context.offers.find((o) => o.goal === "fight")!;
+      const offers = [...q.context.offers.filter((o) => o.goal !== "fight"), { ...fight, risk: 0.5 }, { ...fight, goal: "shoot" as const, risk: 0.1 }];
+      const digest = { ...q.context, offers };
+      const made = p.choose({ goal: { type: "choice", choice: "fight", confidence, probabilities: { fight: 0.6, shoot: 0.3 } } }, digest, w.view);
+      return { digest, made, logged };
+    };
+    const labelOf = (made: ReturnType<typeof priced>["made"]): string => ("plan" in made ? made.plan.label : "");
+
+    it("prices the pick and changes nothing in shadow", () => {
+      const { digest, made, logged } = priced("shadow", 0.3);
+      expect(digest.regret).toMatchObject({ pick: "fight", safest: "shoot", unsure: true, acted: false });
+      expect(logged.some((line) => line.includes("(shadow, followed)"))).toBe(true);
+      expect(labelOf(made)).toBe(labelOf(priced("off", 0.3).made));
+    });
+
+    it("takes the safest option of the class when acting and the answer is under the price", () => {
+      const { digest, logged } = priced("acting", 0.3);
+      expect(digest.regret).toMatchObject({ pick: "fight", safest: "shoot", unsure: true, acted: true });
+      expect(logged.some((line) => line.includes(", so shoot"))).toBe(true);
+    });
+
+    it("follows a sure answer even when acting", () => {
+      const { digest } = priced("acting", 0.95);
+      expect(digest.regret).toMatchObject({ unsure: false, acted: false });
+    });
+
+    it("does nothing when off", () => {
+      expect(priced("off", 0.1).digest.regret).toBeUndefined();
+    });
+
+    it("reads the mode at each answer", () => {
+      let mode: "off" | "acting" = "off";
+      const w = fightWorld();
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, confidenceFloor: 0, goalGate: () => mode });
+      const answer = { goal: { type: "choice", choice: "fight", confidence: 0.2, probabilities: { fight: 0.6 } } } as const;
+      const run = () => {
+        const q = asked(p.ask(w.view));
+        const fight = q.context.offers.find((o) => o.goal === "fight")!;
+        const digest = { ...q.context, offers: [{ ...fight, risk: 0.5 }, { ...fight, goal: "shoot" as const, risk: 0.1 }] };
+        p.choose(answer, digest, w.view);
+        return digest.regret;
+      };
+      expect(run()).toBeUndefined();
+      mode = "acting";
+      expect(run()?.acted).toBe(true);
+    });
+  });
+
   it("follows an unsure answer when the backend sets no floor", () => {
     const w = fightWorld();
     const logged: string[] = [];

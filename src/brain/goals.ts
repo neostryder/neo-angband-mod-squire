@@ -62,6 +62,7 @@ import { rubbleDirection, trapDirection } from "./hazards.js";
 import { floorTarget, junkInPack, packFull, stillWorthIt } from "./items.js";
 import { arrivalFeeling, badLevelFeeling, lootOnlyFeeling } from "./level-feel.js";
 import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, type Feeling } from "../learning/grudges.js";
+import { priceGoal, type GoalGateMode, type RegretRecord } from "./regret.js";
 import { allowedGoals, bandOf, classOf, CONFIDENCE_FLOOR, escapeQuestion, escapeThresholds, lowConfidencePick, pruneDominated, purposeClauses, type PackRecord } from "./tactics.js";
 import { createLoopGuard, type LoopFinding } from "./loops.js";
 import { chokeLine, compass, hazardLine, hazardsNear, neighbourLine, seenBy, sightBreakLine, sightBreaks, stairLine, type SightBreak } from "./geometry.js";
@@ -302,6 +303,8 @@ export interface GoalDigest {
   loop?: LoopFinding & { fellBack?: boolean };
   /** The Law to Chaos draw behind the pick, when one was made. Kept for the decision log, never sent. */
   chaos?: ChaosRecord;
+  /** The goal gate's price for the pick and whether it would act or did, when the pick cost more than a safer option of its class. Kept for the decision log, never sent. */
+  regret?: RegretRecord;
 }
 
 function withoutDescent<T extends Readonly<Record<string, number>>>(dist: T): Record<string, number> {
@@ -377,6 +380,8 @@ export interface GoalPlannerOptions {
   readonly stateTokens?: number;
   /** An answer under this confidence is not taken at face value when the escape question went out with it. CONFIDENCE_FLOOR if unset. Pass a function to have it checked at every answer, which matters when the player switches servers mid-run. */
   readonly confidenceFloor?: number | (() => number);
+  /** How the goal gate treats a pick that costs more than a safer option of its class: `off`, `shadow` (price and log it, change nothing) or `acting` (take the safer option when the answer is under the price). `shadow` if unset. A function is checked at every answer. */
+  readonly goalGate?: GoalGateMode | (() => GoalGateMode);
   /** Whether to skip the model for forced, routine and unchanged moments. On unless set to false. */
   readonly reflex?: boolean;
   /** Whether Law to Chaos may draw the final pick. On unless set to false, which always takes the top option. */
@@ -1685,6 +1690,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const stateBudget = options.stateTokens ?? STATE_TOKEN_CAP;
   const floorOption = options.confidenceFloor ?? CONFIDENCE_FLOOR;
   const floorNow = (): number => (typeof floorOption === "function" ? floorOption() : floorOption);
+  const gateOption = options.goalGate ?? "shadow";
+  const gateNow = (): GoalGateMode => (typeof gateOption === "function" ? gateOption() : gateOption);
   /* Awake creatures seen at the last decision, so a craven persona can tell what is new. */
   let lastAwake = new Set<number>();
   /* Creatures whose grudge has been told in the log, so each is told once. */
@@ -3176,9 +3183,19 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         }
         return ownChoice(digest, view);
       }
-      const offer = digest.offers.find((o) => o.goal === pick);
+      let offer = digest.offers.find((o) => o.goal === pick);
       if (offer === undefined) {
         return ownChoice(digest, view);
+      }
+      /* The goal gate prices the pick by what a wrong one costs: how much likelier it is to end in death soon than the safest option of its class. */
+      const gateMode = gateNow();
+      const price = gateMode === "off" ? null : priceGoal(answer, digest.offers, offer.goal, floorNow());
+      if (price !== null) {
+        const safer = digest.offers.find((o) => o.goal === price.safest);
+        const acted = gateMode === "acting" && price.unsure && safer !== undefined && safer.goal !== failed;
+        digest.regret = { ...price, acted };
+        if (price.unsure) log(`goal: ${pick} asked ${price.need.toFixed(2)} for ${price.regret.toFixed(2)} more risk than ${price.safest} and the answer gave ${price.confidence.toFixed(2)}${acted ? `, so ${price.safest}` : " (shadow, followed)"}`);
+        if (acted && safer !== undefined) offer = safer;
       }
       options.orders?.decided(offer.goal, view);
       if (digest.situation !== undefined) lastAnswer = { situation: digest.situation, turn: view.turn(), pick: offer.goal, model: answeredBy ?? latestModel, packVersion: QUESTION_PACK_VERSION, policyVersion: GOAL_POLICY_VERSION };
