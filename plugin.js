@@ -1088,7 +1088,7 @@ var JEV = Object.freeze({
   kind: "jev",
   label: "Jev",
   url: "https://api.typesafe.ai/v1/systemone",
-  model: "jev-latest",
+  model: "jev-preview",
   secret: "jev",
   metered: true,
   usdPerMillionInput: 0.04,
@@ -13372,7 +13372,7 @@ function createShadow(options) {
               ts,
               state,
               questions,
-              jev: { model: record6.model ?? "jev-latest", answers: { [entry.id]: answer } },
+              jev: { model: record6.model ?? "jev-preview", answers: { [entry.id]: answer } },
               outcome: { plan: record6.outcome }
             };
             await options.rows.append(row2, seq);

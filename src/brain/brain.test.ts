@@ -652,7 +652,7 @@ describe("ask", () => {
     const result = await ask(net({ ok: true, status: 200, headers: {}, body: GOOD_BODY }, seen), JEV, REQUEST, () => 0);
     expect(result.ok).toBe(true);
     expect(seen[0]?.headers?.["Authorization"]).toBe("Bearer {secret:jev}");
-    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ model: "jev-latest" });
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ model: "jev-preview" });
   });
 
   it("names each failure the way the brain acts on it", async () => {

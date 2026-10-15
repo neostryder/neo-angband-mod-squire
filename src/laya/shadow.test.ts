@@ -94,7 +94,7 @@ describe("Laya shadow rows", () => {
     const parsed = (await exportRows(store)).trim().split("\n").map((line) => JSON.parse(line) as Record<string, unknown>);
     expect(parsed).toHaveLength(6);
     expect(parsed.every((row) => !("laya" in row))).toBe(true);
-    expect(parsed[0]?.["jev"]).toMatchObject({ model: "jev-latest" });
+    expect(parsed[0]?.["jev"]).toMatchObject({ model: "jev-preview" });
   });
 
   it("skips a pending call for each pilot and keeps the skipped teacher row", async () => {
@@ -148,7 +148,7 @@ describe("Laya shadow rows", () => {
     const store = memoryStore();
     const first = createRows(store, "a");
     const second = createRows(store, "b");
-    const make = (runId: string) => ({ id: rowId(INSTALL, runId, 0, "squire_goal"), pilot: "squire_goal" as const, ts: "1970-01-01T00:00:00.000Z", state: {}, questions: { goal }, jev: { model: "jev-latest", answers: { goal: goalAnswer } }, outcome: { plan: "fight" } });
+    const make = (runId: string) => ({ id: rowId(INSTALL, runId, 0, "squire_goal"), pilot: "squire_goal" as const, ts: "1970-01-01T00:00:00.000Z", state: {}, questions: { goal }, jev: { model: "jev-preview", answers: { goal: goalAnswer } }, outcome: { plan: "fight" } });
     await first.append(make("a"), 0);
     await second.append(make("b"), 0);
     await attachHuman(rowId(INSTALL, "a", 0, "squire_goal"), { goal: "retreat" });
