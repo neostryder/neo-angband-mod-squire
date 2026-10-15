@@ -1,4 +1,4 @@
-// s11-tactical-c3 - generated from plugin.ts by neo-angband-mod-build
+// neo-angband-mod-squire - generated from plugin.ts by neo-angband-mod-build
 // (@rpgm-tools/neo-angband-mod-sdk). Edit the TypeScript source, not this file.
 
 // src/mission.ts
