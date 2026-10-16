@@ -6324,8 +6324,8 @@ function priceGoal(answer, offers, pick2, floor) {
   const safest = safestAlternative(offers, offer);
   if (safest === void 0) return null;
   const regret = offer.risk - safest.risk;
-  if (regret < REGRET_MIN) return null;
-  const need = Math.min(NEED_CAP, Math.max(floor, 0) + REGRET_SLOPE * regret);
+  const weighed = regret >= REGRET_MIN;
+  const need = Math.min(NEED_CAP, Math.max(floor, 0) + (weighed ? REGRET_SLOPE * regret : 0));
   return {
     pick: pick2,
     safest: safest.goal,
@@ -6333,7 +6333,7 @@ function priceGoal(answer, offers, pick2, floor) {
     need: Math.round(need * 1e3) / 1e3,
     confidence: answer.confidence,
     margin: Math.round(marginOf(answer.probabilities) * 1e3) / 1e3,
-    unsure: answer.confidence < need,
+    unsure: weighed && answer.confidence < need,
     acted: false
   };
 }

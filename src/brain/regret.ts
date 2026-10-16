@@ -21,7 +21,7 @@ import type { Answer } from "./systemone.js";
 export const GOAL_GATE_MODES = ["off", "shadow", "acting"] as const;
 export type GoalGateMode = (typeof GOAL_GATE_MODES)[number];
 
-/** Under this much extra risk over the safest offer of its class, a pick is not priced. */
+/** Under this much extra risk over the safest offer of its class, a pick is logged with the price zero and is never doubted. */
 export const REGRET_MIN = 0.05;
 /** Confidence charged for each point of extra risk: 0.1 more risk asks 0.4 more confidence. */
 export const REGRET_SLOPE = 4;
@@ -63,8 +63,9 @@ function safestAlternative(offers: readonly Offer[], pick: Offer): Offer | undef
 /**
  * Price one pick. Null when the answer is not a choice, when the pick is not the
  * model's own top choice (a persona or a quirk moved it, so the confidence is
- * about another option), or when no safer offer of its class costs less than
- * `REGRET_MIN`. `floor` is the confidence the backend's answers are not
+ * about another option), or when no safer offer of its class exists. A pick whose extra risk is under
+ * `REGRET_MIN` is still recorded, so the log shows how often the gate has
+ * something to weigh, but it is never unsure. `floor` is the confidence the backend's answers are not
  * followed under at all.
  */
 export function priceGoal(answer: Answer | undefined, offers: readonly Offer[], pick: Goal, floor: number): RegretRecord | null {
@@ -74,8 +75,8 @@ export function priceGoal(answer: Answer | undefined, offers: readonly Offer[], 
   const safest = safestAlternative(offers, offer);
   if (safest === undefined) return null;
   const regret = offer.risk - safest.risk;
-  if (regret < REGRET_MIN) return null;
-  const need = Math.min(NEED_CAP, Math.max(floor, 0) + REGRET_SLOPE * regret);
+  const weighed = regret >= REGRET_MIN;
+  const need = Math.min(NEED_CAP, Math.max(floor, 0) + (weighed ? REGRET_SLOPE * regret : 0));
   return {
     pick,
     safest: safest.goal,
@@ -83,7 +84,7 @@ export function priceGoal(answer: Answer | undefined, offers: readonly Offer[], 
     need: Math.round(need * 1000) / 1000,
     confidence: answer.confidence,
     margin: Math.round(marginOf(answer.probabilities) * 1000) / 1000,
-    unsure: answer.confidence < need,
+    unsure: weighed && answer.confidence < need,
     acted: false,
   };
 }

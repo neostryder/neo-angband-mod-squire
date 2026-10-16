@@ -30,9 +30,10 @@ describe("goal gate price", () => {
     expect(priceGoal(choice("fight", 0.5), high, "fight", 0.7)!.need).toBe(NEED_CAP);
   });
 
-  it("does not price a pick that costs about what the safest option does", () => {
+  it("records a pick that costs about what the safest option does, but never doubts it", () => {
     const close = [offer("fight", 0.1 + REGRET_MIN - 0.01), offer("shoot", 0.1)];
-    expect(priceGoal(choice("fight", 0.1), close, "fight", 0)).toBeNull();
+    const price = priceGoal(choice("fight", 0.01), close, "fight", 0.3);
+    expect(price).toMatchObject({ safest: "shoot", unsure: false, need: 0.3 });
   });
 
   it("does not price the safest option of its class or a sole option", () => {
