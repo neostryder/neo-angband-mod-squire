@@ -60,6 +60,8 @@ stateDiagram-v2
   end note
 ```
 
+![How Squire decides, dark-skin view](docs/img/squire-decides.png)
+
 *Source of truth: `src/brain/brain.ts` and `src/brain/goals.ts`. The host takes at most one command per controller call, and a winning character also stops the controller.*
 
 ```mermaid
