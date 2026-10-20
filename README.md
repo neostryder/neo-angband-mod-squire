@@ -28,6 +28,72 @@ A character handed to any autoplayer is marked for good, and the game keeps it o
 
 ## How Squire decides
 
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> asking: Send question with current input token
+  idle --> running: Reflex or own-rules plan
+  idle --> waiting: No progress or recoverable refusal
+  asking --> asking: Request pending returns null
+  asking --> idle: Answer token is stale
+  asking --> idle: Request failed and retry backoff starts
+  asking --> running: Matching epoch and revision yield a plan
+  asking --> waiting: Recoverable handBack
+  running --> running: Return at most one command
+  running --> idle: Plan finishes or trigger interrupts it
+  running --> waiting: Repeated empty plans or no progress
+  waiting --> waiting: Pause has not elapsed
+  waiting --> idle: One-second pause elapses
+  idle --> stopped: Character is dead or winner
+  asking --> stopped: Character is dead or winner
+  running --> stopped: Character is dead or winner
+  waiting --> stopped: Character is dead or winner
+  stopped --> [*]
+  note right of idle
+    Own rules keep playing during request backoff
+    The host controls keyboard handover
+  end note
+  note right of running
+    Triggers include changed danger and planner watchers
+    A plan also expires after 60 seconds
+    No progress for 30 seconds causes reconsideration
+  end note
+```
+
+*Source of truth: `src/brain/brain.ts` and `src/brain/goals.ts`. The host takes at most one command per controller call, and a winning character also stops the controller.*
+
+```mermaid
+flowchart TD
+  Offers["goals.ts builds offers<br/>Fight, shoot, oil, wand, spells and consumables<br/>Escape, position, rest, food and pickup<br/>Study, gear, light, map, explore, stairs, Recall and shops"]
+  Offers --> Prune["pruneDominated<br/>Compare attacks, escapes and heals within class<br/>Risk, cost, progress, survival and certainty"]
+  Prune --> Forced{"Routine reflex or one offer<br/>without readiness gaps?"}
+  Forced -->|"yes"| Reflex["Take the reflex without a request"]
+  Forced -->|"no"| Ask["Ask goal and optional in_character<br/>Add ready_to_descend for readiness gaps<br/>Add escape when engaged with a suitable offer"]
+  Ask --> Gate{"Escape gate included?"}
+  Gate -->|"no"| Decide["decide<br/>Apply descent readiness<br/>Blend persona choices when present"]
+  Gate -->|"yes"| Band{"Escape probability band?<br/>Persona shifts low 0.55 and high 0.78"}
+  Band -->|"below low"| Stay["stay<br/>Keep offered choices"]
+  Band -->|"low through below high"| Middle["consider<br/>Escape, heal, gamble and position"]
+  Band -->|"at or above high"| High["get_out<br/>Escape and heal"]
+  High --> Allowed["allowedGoals<br/>Fall back to the lower band if empty"]
+  Middle --> Allowed
+  Stay --> Confidence{"Confidence below backend floor?<br/>Jev 0, Laya 0.7, custom 0.3"}
+  Allowed --> Confidence
+  Confidence -->|"yes"| Safest["lowConfidencePick<br/>Safest escape or heal if escape reaches low<br/>Otherwise safest attack or wait"]
+  Safest -->|"No fallback selected"| Decide
+  Safest -->|"Fallback selected"| Plan["Build the selected plan"]
+  Confidence -->|"no"| Decide
+  Decide --> Safety["Persona safety floor<br/>Reapply allowed escape band<br/>Choose an allowed option"]
+  Safety --> Repeat{"Choice repeats the tactic<br/>already challenged for a loop?"}
+  Repeat -->|"yes"| Own["ownChoice excludes the failing tactic<br/>When another offer exists"]
+  Repeat -->|"no"| Plan
+  Own --> Plan
+  Reflex --> Plan
+  Loops["loops.ts detects repeated choices,<br/>pacing, stairs and gear oscillation"] -.->|"Describe the loop in the next question"| Ask
+```
+
+*Source of truth: `src/brain/tactics.ts`, `src/persona/blend.ts`, and `src/config.ts`. The escape band allows both escape and heal.*
+
 Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door, Teleportation or Teleport Level, cast an escape spell, send a creature away with Teleport Other, step out of a creature's line of sight, back away, rest, eat, pick something up, study a new spell, wear better gear, light a fresh torch, map a new level, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, one hard hit or several smaller ones land, or hit points cross a line.
 
 Squire only knows what the character knows:
@@ -120,6 +186,44 @@ Heirloom recognition lets an heir name an artifact the family has carried before
 
 ## Knight's Lessons
 
+```mermaid
+sequenceDiagram
+  participant Player as Player
+  participant Host as Neo Angband host
+  participant Squire as Squire
+  loop Player holds the keyboard
+    Player->>Host: Ordinary game command
+    Host-->>Squire: player-command event
+    Squire->>Squire: Form own choice and compare with player
+    Squire->>Squire: Write notebook on Lessons tab
+    opt Choice surprises the apprentice
+      Squire-->>Player: Why, sir?
+      Player-->>Squire: Optional reason
+    end
+  end
+  Note over Player,Squire: Ranks progress from Page to Squire to Knight-Errant
+  opt Notebook contains at least 40 moments with situation signatures
+    Player->>Squire: Arm an exam
+  end
+  Player->>Host: Ctrl-Z and confirm
+  Host->>Squire: Install controller through command:add
+  alt squire.useModel is off and squire.errandCampaign is off
+    Squire->>Host: Run errandAutofight or errandAutoexplore
+    Squire-->>Host: Stop when the short errand ends
+  else Campaign or backend-driven play
+    loop Host requests one command at a time
+      Host->>Squire: Controller call
+      Squire-->>Host: Command or null
+    end
+  end
+  Note over Host,Squire: An armed exam compares the next 20 requested decisions with similar notebook moments, reflexes do not count
+  Note right of Squire: Viewer orders arrive through Squire Link every 5 seconds, failures retry after 30 seconds, viewer pull is lower below Devotion 90
+  Player->>Host: Any key
+  Host-->>Player: Return keyboard and consume the key
+```
+
+*Source of truth: `README.md`, `src/knight.ts`, `src/runtime.ts`, and `src/lessons/exam.ts`. A short errand replaces campaign play only when `squire.errandCampaign` is also off.*
+
 When you have the keyboard, you are the knight and Squire is your apprentice. It issues no commands, so your character stays yours. At each moment that matters it forms its own choice, compares it with yours, and writes a line in its notebook on the Lessons tab.
 
 - **Why, sir?** When your choice surprises it, the notebook offers a few one-click reasons. Answering is optional.
@@ -136,6 +240,33 @@ Knight's Lessons is on by default. With a model set up, Squire asks it for its o
 When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and post the run on X or Reddit from its links. The decision log can be saved at any time, even before a report exists, and holds the latest 20,000 decisions. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions. Its Intent card shows the step Squire is on, the aim that step serves, the first thing the next level down asks for that the character lacks, and when Squire next checks whether to drop the aim.
 
 ## What Squire sends and stores
+
+```mermaid
+flowchart TD
+  Situation["Decision state<br/>Character stats, visible creatures and ground<br/>Persona, lessons, aims and orders"] --> Choice{"Chosen backend?"}
+  Choice -->|"Jev"| Jev["api.typesafe.ai/v1/systemone"]
+  Choice -->|"Laya"| Laya["Configured Laya server"]
+  Choice -->|"Another server"| Custom["Configured System One server"]
+  Choice -->|"None"| Rules["Character's own rules"]
+  Jev --> Record["Decision record"]
+  Laya --> Record
+  Custom --> Record
+  Rules --> Record
+  Record --> Storage["Game storage<br/>Settings, personas and family records<br/>Latest 20000 decisions, reports and notebook<br/>Training rows and queued telemetry"]
+  Record --> Shadow["createShadow<br/>For Jev records only<br/>Save teacher rows for known pilots<br/>Even when shadow requests are off"]
+  Shadow --> Storage
+  Shadow --> Enabled{"Send decisions to Laya is on<br/>and question type is not busy?"}
+  Enabled -->|"yes"| Copy["Separate Laya training request<br/>Attach answer to training row<br/>Do not use the answer for play"]
+  Copy --> Storage
+  Record --> Consent{"Telemetry enabled<br/>and Setup endpoint is set?"}
+  Consent -->|"yes"| Upload["Configured telemetry endpoint<br/>Default squire.rpgm.tools<br/>Backstory needs separate consent"]
+  Consent -->|"no"| Storage
+  Keys["Jev API key"] --> Desktop["Desktop<br/>Host stores key encrypted"]
+  Keys --> Browser["Browser<br/>Page storage"]
+  Upload -->|"Failed run waits locally"| Storage
+```
+
+*Source of truth: `src/runtime.ts`, `src/config.ts`, and `src/telemetry/consent.ts`. Telemetry and Laya shadow requests default to off.*
 
 - **To the model you chose**, everything Squire weighs in a decision. That means the character's level, race, class, health, mana, gold and status, the creatures in sight and how dangerous they are, the ground around it and how the last plan ended. In a fight the ground is described up close instead of level-wide: what is on each of the eight squares around the character, the squares one or two steps away out of the creatures' sight, the turns to the nearest stairs each way, nearby choke points, and burning ground or traps within five steps. It also means the persona and its backstory, the lessons Squire has learned, its aims, your orders and the names of viewers who gave orders. Squire asks the model whether an event belongs in the Chronicle, too. When a character dies, Squire sends the cause, the depth and the last few plans, and asks which plan got the character killed. With Knight's Lessons on, these requests go out while you play as well.
 - **To Laya, if you turn on "Send decisions to Laya"** under "Train Laya while Jev plays". Each of Jev's questions goes to Laya as a separate request. If Laya is still answering the last question of that kind, Squire skips the new one. Squire never acts on what Laya answers here. This is off by default. Squire still saves Jev's answers on your computer as training rows when it is off.
