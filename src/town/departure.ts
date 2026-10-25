@@ -28,7 +28,7 @@ export function createDeparture() {
   const shelves = new Map<number, StoreView>();
   let previousDepth = -1;
   let lastTurn = -1;
-  let earning: { turn: number; gold: number; target: number | null } | null = null;
+  let earning: { turn: number; gold: number; target: number | null; wide: boolean } | null = null;
   let failedAtGold: number | null = null;
 
   function observe(view: AgentView, terrain: Terrain): void {
@@ -90,9 +90,11 @@ export function createDeparture() {
     begin(view: AgentView, target: number | null): void {
       /* A goal already met would end the trip on arrival; the soak's Rogue, with
        * 2 gold, climbed straight back 161 times. The turn limit still ends it. */
-      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null };
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold };
     },
     active: () => earning !== null,
+    /** True when the last earning trip came back with no more gold than it set out with. A trip under way keeps the answer it started with. */
+    cameBackEmpty: (view: AgentView) => earning !== null ? earning.wide : failedAtGold !== null && view.player().gold <= failedAtGold,
     finished(view: AgentView): boolean {
       return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= EARNING_TURNS || earning.target !== null && view.player().gold >= earning.target);
     },

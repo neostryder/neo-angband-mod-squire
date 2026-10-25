@@ -8,8 +8,8 @@
     "api": ">=1.0.0 <2.0.0",
     "runtime": "in-process",
     "engine": {
-      "range": ">=1.21.1",
-      "because": "It is the first version with everything Squire reads from the game: the title-screen row, profiles, and floor items as the player knows them."
+      "range": ">=1.22.0",
+      "because": "The first Neo Angband release with the engine turn table and snapshot token Squire reads, and with mod API 2."
     },
     "dependencies": {
       "required": {
@@ -45,7 +45,7 @@
       "ui:title",
       "profiles:manage"
     ],
-    "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press any key to take the keyboard back.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire keeps playing by its own rules until you take the keyboard back or the character dies. You can also choose a short errand: clear what is in front of you, or explore the floor. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
+    "description": "A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character: it fights, casts spells, uses its items, shops in town and goes deeper, asking a model (Jev, or Laya on your own computer) what to do each time something changes. Press Escape to take the keyboard back, or the errand key (& unless you change it) for a menu of errands such as collecting loot, finding the stairs or restocking in town.\n\nWhile you play, Squire watches as your apprentice and notes where its choices differ from yours. Give it a persona and it plays in character. Each run ends with a report you can save and share.\n\nWith no model set up, Squire keeps playing by its own rules until you take the keyboard back or the character dies. You can also choose a short errand: clear what is in front of you, or explore the floor. It sees only what you could see and plays by the game's rules. A character handed to any autoplayer is marked, and the game keeps it off the score table.",
     "author": "neostryder",
     "license": "GPL-3.0-only",
     "repository": "https://github.com/neostryder/neo-angband-mod-squire",
@@ -121,6 +121,13 @@
         "flag": "squire.revealLongGoal",
         "title": "Show the long-term goal",
         "description": "Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal.",
+        "default": false,
+        "requiresReload": true
+      },
+      {
+        "flag": "squire.personaErrands",
+        "title": "Let the persona colour errands",
+        "description": "The persona's traits change how an errand from the errand menu is done: the route, the risks it takes and what it picks up. The errand is still done. Off, every errand runs the plain way.",
         "default": false,
         "requiresReload": true
       }

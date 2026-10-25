@@ -214,7 +214,7 @@ export function gapFacts(view: AgentView): string | undefined {
 
 /**
  * The town basket. Its death-safety floor is two healing potions, two Phase
- * Doors, two food units and working light with one fuel unit; above that floor
+ * Doors, two food units and working light with two fuel units; above that floor
  * the persona's drive sets the extra wants (`readinessExtra`), so a cautious
  * character stocks higher. With no persona the default extra of one asks the
  * floor.
@@ -237,7 +237,8 @@ export function basketWants(persona: Persona | null): { readonly healing: number
     healing: Math.max(2, 1 + extra),
     phase: Math.max(2, 1 + extra),
     food: Math.max(2, 2 + Math.max(0, extra - 1)),
-    light: Math.max(1, 1 + Math.min(1, extra)),
+    /* Two spares, because the level 1 margin turns back at one. */
+    light: 2 + Math.max(0, extra - 1),
   };
 }
 

@@ -18,7 +18,8 @@ Open the Escape menu, then **Mods**, then Squire. The short errand switches appl
 | Pick things up on the way | `squire.collect` | on | Lets the long errand pick up what lies under the character. |
 | Take the stairs down | `squire.descend` | on | Lets the long errand take a known down staircase, and lets a model choose ordinary descent. Fleeing down the stairs in an emergency and reading Word of Recall do not depend on it. |
 | Retreat line | `squire.retreatPercent` | 50% | The share of maximum hit points at which a short errand ends, when Stop when I am hurt is on. From 10% to 90%, in 5% steps. |
-| Short errand length | `squire.errandSteps` | 200 decisions | How many decisions a short errand makes before it ends. From 50 to 500, in steps of 10. |
+| Short errand length | `squire.errandSteps` | 200 decisions | How many decisions a short errand makes before it ends. From 50 to 500, in steps of 10. An errand from the errand menu may make ten times as many. |
+| Let the persona colour errands | `squire.personaErrands` | off | Lets the persona's traits change how an errand from the errand menu is done: the route, the risks it takes and what it picks up. The errand is still done. Off, every errand runs the plain way, with no quirks, grudges or Law to Chaos. |
 
 ## Setup tab
 
@@ -54,6 +55,12 @@ The Setup tab is the first tab of the Squire panel. Its sections appear in this 
 | Setting | Default | What it does |
 | --- | --- | --- |
 | When a character dies | Stop and wait for you to make the next character | The other choices start a new character like the last one, or one of a random race and class, and hand it to Squire. This applies when a character dies while Squire is playing it. Your own characters are never replaced. |
+
+### Errand key
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Errand key | & | Opens the errand menu while Squire plays. The choices are `&`, `!`, `#`, `$`, `%`, `(` and `_`, which no game command uses. Escape always takes the keyboard back. Applies at once. |
 
 ### Knight's Lessons
 

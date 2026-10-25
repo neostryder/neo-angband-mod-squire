@@ -23,6 +23,9 @@ import type { InheritedAim } from "./strategy/heirs.js";
 import { readInstructions } from "./orders/read.js";
 import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
 import { CHAOS_METHODS, type ChaosMethod } from "./brain/chaos.js";
+import { GOAL_GATE_MODES, type GoalGateMode } from "./brain/regret.js";
+import { CONFIDENCE_FLOOR } from "./brain/tactics.js";
+import { DEFAULT_ERRAND_KEY, ERRAND_KEYS, type ErrandKey } from "./errands/keys.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -71,6 +74,10 @@ export interface SquireConfig {
   readonly pendingHeir: { readonly lineage: string; readonly parent: Persona; readonly name?: string } | null;
   /** How Law to Chaos draws a pick: smooth sampling, or the bounded d20 and d4 roll. Stored only; no panel control sets it. */
   readonly chaosMethod: ChaosMethod;
+  /** How the goal gate treats a pick that risks more than a safer option of its class: off, shadow (price and log only), or acting. Stored only; no panel control sets it. */
+  readonly goalGate: GoalGateMode;
+  /** The key that opens the errand menu while Squire drives. One no game command uses in either keyset. */
+  readonly errandKey: ErrandKey;
 }
 
 /** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
@@ -102,6 +109,8 @@ export function defaultConfig(): SquireConfig {
     lineages: {},
     pendingHeir: null,
     chaosMethod: "sampling",
+    goalGate: "shadow",
+    errandKey: DEFAULT_ERRAND_KEY,
   };
 }
 
@@ -238,6 +247,8 @@ export function readConfig(stored: unknown): SquireConfig {
       return heir !== null && typeof heir["lineage"] === "string" ? { lineage: heir["lineage"], parent: normalize(heir["parent"]), ...(typeof heir["name"] === "string" ? { name: heir["name"].slice(0, 100) } : {}) } : null;
     })(),
     chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod),
+    goalGate: pickOf(data["goalGate"], GOAL_GATE_MODES, base.goalGate),
+    errandKey: pickOf(data["errandKey"], ERRAND_KEYS, base.errandKey),
   };
 }
 
@@ -273,6 +284,24 @@ export function backstoryBudget(config: SquireConfig): number {
 /** How many tokens one decision's state may carry on this backend. */
 export function stateBudget(config: SquireConfig): number {
   return config.backend === "laya" ? LAYA_STATE_TOKENS : STATE_TOKEN_CAP;
+}
+
+/**
+ * The confidence under which an option answer is not followed on its own.
+ * Jev's confidence does not predict a right pick on the reviewed goal
+ * decisions, so it has no floor; a trained Laya adapter's does, and its
+ * answers under 0.7 are right far less often than those above. It follows the
+ * backend the brain was started with, so it always matches the server answering.
+ */
+export function confidenceFloor(backend: Backend): number {
+  switch (backend.kind) {
+    case "jev":
+      return 0;
+    case "laya":
+      return 0.7;
+    default:
+      return CONFIDENCE_FLOOR;
+  }
 }
 
 /** The persona for a new character, or null. */

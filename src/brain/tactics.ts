@@ -100,7 +100,7 @@ const ESCAPE_CRITERIA: NoulQuestion["criteria"] = {
     false: "The character can keep fighting or carry on; nothing here needs it to break off now.",
 };
 
-/** Under this confidence the option answer is not trusted on its own. */
+/** Under this confidence the option answer is not trusted on its own, on a backend with no floor of its own. */
 export const CONFIDENCE_FLOOR = 0.3;
 
 /** The safest offer of a class: one that leaves hit points under the bound first, then the lowest risk. */

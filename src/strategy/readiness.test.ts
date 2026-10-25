@@ -2,7 +2,7 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
-import { descentGaps, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin } from "./readiness.js";
+import { basketWants, descentGaps, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin } from "./readiness.js";
 import { archetype } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
@@ -200,6 +200,17 @@ describe("supply evidence and margins", () => {
     expect(supplies(w.view)).toMatchObject({ phase: 2, escapes: 0 });
     w.setPlayer({ sp: 0 });
     expect(supplies(w.view).phase).toBe(0);
+  });
+
+  it("never sends a character home from level 1 with the basket the town just filled, whatever the persona", () => {
+    for (const persona of [archetype("berserker"), null, archetype("tourist")]) {
+      const w = world({ map: ROOM, player: { depth: 0, light: 1 }, worn: ["a Wooden Torch (5000 turns)"] });
+      const want = basketWants(persona);
+      w.setPack([`${String(want.healing)} Potions of Cure Light Wounds`, `${String(want.phase)} Scrolls of Phase Door`, `${String(want.food)} Rations of Food`, `${String(want.light)} Wooden Torches (5000 turns)`]);
+      expect(missingEssentials(w.view, persona)).toEqual([]);
+      w.setPlayer({ depth: 1 });
+      expect(supplyMargin(w.view)).toBeNull();
+    }
   });
 
   it("starts the level 1 return at one food or one fuel, and never for one cure or one Phase Door", () => {

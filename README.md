@@ -2,7 +2,7 @@
 
 **A Learning Angband Autoplayer.**
 
-Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. When something changes, such as a new creature, a hit or an empty floor, it asks a model what to do. Routine upkeep and choices with only one way out it settles itself. Press any key and the keyboard is yours again.
+Press Ctrl-Z and Squire plays your character. It fights, casts spells, drinks potions, reads scrolls, throws oil, learns new spells, wears better gear, shops in town and takes the stairs down. When something changes, such as a new creature, a hit or an empty floor, it asks a model what to do. Routine upkeep and choices with only one way out it settles itself. Press Escape and the keyboard is yours again, or press & for a menu of errands to send it on.
 
 While you play, Squire rides along as your apprentice. It makes its own choice at each of those moments, notes where yours differed, and learns your style. Give it a persona and it plays in character: a coward who flees too early, a berserker who never backs down, a miser who won't spend a coin.
 
@@ -20,13 +20,81 @@ Squire is a mod. It installs and uninstalls in the game's mod manager and reache
 4. **Pick a persona** on the Persona tab, or keep the default.
 5. **Press Ctrl-Z in play.** The game warns you, asks you to confirm, and Squire takes over from the next turn.
 
-Press any key to take the keyboard back. The character stays where it is, and the key you pressed is not acted on. Ctrl-Z hands it over again.
+Press Escape or Ctrl-Z to take the keyboard back. The character stays where it is, and the key you pressed is not acted on. Any other key leaves Squire playing and shows a line saying how to take over, except the errand key, which opens [the errand menu](#the-errand-menu). Ctrl-Z hands the keyboard over again.
 
 On a game new enough to offer it, the title screen has a **New Squire character** row (key S). It starts a character with Squire already playing, in this profile or in a separate one that keeps Squire's options, mods and characters apart from yours. A separate profile can start fresh or copy another profile's options, mods and mod settings, but never its characters. Next time, Squire offers the profiles it made before.
 
 A character handed to any autoplayer is marked for good, and the game keeps it off the score table. That is the game's own rule, and Squire follows it.
 
 ## How Squire decides
+
+```mermaid
+stateDiagram-v2
+  [*] --> idle
+  idle --> asking: Send question with current input token
+  idle --> running: Reflex or own-rules plan
+  idle --> waiting: No progress or recoverable refusal
+  asking --> asking: Request pending returns null
+  asking --> idle: Answer token is stale
+  asking --> idle: Request failed and retry backoff starts
+  asking --> running: Matching epoch and revision yield a plan
+  asking --> waiting: Recoverable handBack
+  running --> running: Return at most one command
+  running --> idle: Plan finishes or trigger interrupts it
+  running --> waiting: Repeated empty plans or no progress
+  waiting --> waiting: Pause has not elapsed
+  waiting --> idle: One-second pause elapses
+  idle --> stopped: Character is dead or winner
+  asking --> stopped: Character is dead or winner
+  running --> stopped: Character is dead or winner
+  waiting --> stopped: Character is dead or winner
+  stopped --> [*]
+  note right of idle
+    Own rules keep playing during request backoff
+    The host controls keyboard handover
+  end note
+  note right of running
+    Triggers include changed danger and planner watchers
+    A plan also expires after 60 seconds
+    No progress for 30 seconds causes reconsideration
+  end note
+```
+
+![How Squire decides, dark-skin view](docs/img/squire-decides.png)
+
+*Source of truth: `src/brain/brain.ts` and `src/brain/goals.ts`. The host takes at most one command per controller call, and a winning character also stops the controller.*
+
+```mermaid
+flowchart TD
+  Offers["goals.ts builds offers<br/>Fight, shoot, oil, wand, spells and consumables<br/>Escape, position, rest, food and pickup<br/>Study, gear, light, map, explore, stairs, Recall and shops"]
+  Offers --> Prune["pruneDominated<br/>Compare attacks, escapes and heals within class<br/>Risk, cost, progress, survival and certainty"]
+  Prune --> Forced{"Routine reflex or one offer<br/>without readiness gaps?"}
+  Forced -->|"yes"| Reflex["Take the reflex without a request"]
+  Forced -->|"no"| Ask["Ask goal and optional in_character<br/>Add ready_to_descend for readiness gaps<br/>Add escape when engaged with a suitable offer"]
+  Ask --> Gate{"Escape gate included?"}
+  Gate -->|"no"| Decide["decide<br/>Apply descent readiness<br/>Blend persona choices when present"]
+  Gate -->|"yes"| Band{"Escape probability band?<br/>Persona shifts low 0.55 and high 0.78"}
+  Band -->|"below low"| Stay["stay<br/>Keep offered choices"]
+  Band -->|"low through below high"| Middle["consider<br/>Escape, heal, gamble and position"]
+  Band -->|"at or above high"| High["get_out<br/>Escape and heal"]
+  High --> Allowed["allowedGoals<br/>Fall back to the lower band if empty"]
+  Middle --> Allowed
+  Stay --> Confidence{"Confidence below backend floor?<br/>Jev 0, Laya 0.7, custom 0.3"}
+  Allowed --> Confidence
+  Confidence -->|"yes"| Safest["lowConfidencePick<br/>Safest escape or heal if escape reaches low<br/>Otherwise safest attack or wait"]
+  Safest -->|"No fallback selected"| Decide
+  Safest -->|"Fallback selected"| Plan["Build the selected plan"]
+  Confidence -->|"no"| Decide
+  Decide --> Safety["Persona safety floor<br/>Reapply allowed escape band<br/>Choose an allowed option"]
+  Safety --> Repeat{"Choice repeats the tactic<br/>already challenged for a loop?"}
+  Repeat -->|"yes"| Own["ownChoice excludes the failing tactic<br/>When another offer exists"]
+  Repeat -->|"no"| Plan
+  Own --> Plan
+  Reflex --> Plan
+  Loops["loops.ts detects repeated choices,<br/>pacing, stairs and gear oscillation"] -.->|"Describe the loop in the next question"| Ask
+```
+
+*Source of truth: `src/brain/tactics.ts`, `src/persona/blend.ts`, and `src/config.ts`. The escape band allows both escape and heal.*
 
 Squire works out what options make sense right now: fight the nearest creature, shoot or throw oil at it, aim a wand, cast an attack or healing spell, drink a healing potion, read Phase Door, Teleportation or Teleport Level, cast an escape spell, send a creature away with Teleport Other, step out of a creature's line of sight, back away, rest, eat, pick something up, study a new spell, wear better gear, light a fresh torch, map a new level, explore, take the stairs, read Word of Recall, or visit the shops. It describes the situation to the model in plain words, with each creature rated from an easy kill to deadly, and asks which option gives the character the best chance. The chosen option then runs until something changes: the plan finishes, a new creature appears, one hard hit or several smaller ones land, or hit points cross a line.
 
@@ -57,7 +125,7 @@ Squire doesn't rank its ways out ahead of time. Teleport Other, ducking out of s
 
 In a fight it weighs melee, arrows and bolts, thrown oil, spells and wands by the damage each does per action, and by whether one blow could finish the target. It keeps back what the next escape needs: the mana for an escape spell when there is no scroll, the last flask to refill a lantern, the last charge of an escape device. It checks that reserve before every shot in a volley. It spends the reserve only on a finishing attack, when even its weakest hit would kill, the attack has at least a three-in-four chance to work, and the other creatures in sight can't kill the character before its next action.
 
-In a fight where an escape, a heal or an untried potion or scroll is on offer, each request also carries a yes-or-no question: should the character stop and get clear? The answer is a probability, and two lines on it decide what happens next. Under the lower line, near 0.55, nothing changes. Between the lines, the choice narrows to getting away, healing, an untried potion or scroll, or a better square to fight from. Above the upper line, near 0.78, only Phase Door, Teleportation, retreating and the stairs remain, as long as one of them is on offer. The persona moves both lines: a character bolder than it is careful has them higher, but the question is never skipped. If the model is unsure of its pick (confidence under 0.3), Squire flees when the escape answer was 0.5 or more and otherwise makes its safest attack or waits.
+In a fight where an escape, a heal or an untried potion or scroll is on offer, each request also carries a yes-or-no question: should the character stop and get clear? The answer is a probability, and two lines on it decide what happens next. Under the lower line, near 0.55, nothing changes. Between the lines, the choice narrows to getting away, healing, an untried potion or scroll, or a better square to fight from. Above the upper line, near 0.78, only Phase Door, Teleportation, retreating and the stairs remain, as long as one of them is on offer. The persona moves both lines: a character bolder than it is careful has them higher, but the question is never skipped. If the model is unsure of its pick, Squire flees when the escape answer reached the lower line and otherwise makes its safest attack or waits. What counts as unsure depends on the server. Laya's picks under 0.7 confidence are set aside, and so are a custom server's under 0.3. Jev's picks are always followed, because its confidence says little about whether a pick is right.
 
 Before it asks, Squire drops any attack, escape or heal that another option of the same kind beats on risk, cost and progress at once, such as throwing oil at a creature one free blow would kill. Each option left carries a short note on what it serves, how far it gets, what it uses up and how risky it is, and the note names only what differs between the options. An option that moves the current step along says so. When only one option is left, Squire takes it without asking the model. If that option is a descent the character isn't ready for, Squire stops the plan and tries another move instead.
 
@@ -75,7 +143,7 @@ If the model fails or reaches your spend limit, Squire keeps playing by its own 
 
 Squire watches for going in circles: the same choice three times with nothing changing, pacing over a few squares, going up and down between two levels, putting an item back on soon after swapping it out, buying back on one town visit what it just sold, coming back to the same part of a level three times with nothing new seen or picked up, trying a command sequence that fails three times, or stepping around a few squares without getting closer to what the character is after. When it spots one, it tells the model which choice kept failing and why, and asks once more. If the model picks the same thing again, Squire chooses from the other options itself. Each loop it finds goes in the log.
 
-Squire plays on until you take the keyboard back, the character wins or the character dies. Press any key, including Ctrl-Z, to take control. If a plan fails, Squire chooses another offered action or tries a safe step. After 30 seconds without a game turn or depth change, it pauses for one second and tries again. Your roll-on setting decides whether Squire starts another character after a death.
+Squire plays on until you take the keyboard back, the character wins or the character dies. Press Escape or Ctrl-Z to take control. If a plan fails, Squire chooses another offered action or tries a safe step. After 30 seconds without a game turn or depth change, it pauses for one second and tries again. Your roll-on setting decides whether Squire starts another character after a death.
 
 After a hit from an unseen attacker, Squire can detect or light the area, gain See Invisible, swing at an adjacent square, cast an area spell, use a known staff, aim a wand or zap a rod. It uses the last observed direction when one is known, otherwise it guesses an adjacent square. Each offer accounts for another hit while acting. An aggressive persona favours swings and blasts, a cautious one favours detection and light, and a craven one favours an exit.
 
@@ -120,6 +188,44 @@ Heirloom recognition lets an heir name an artifact the family has carried before
 
 ## Knight's Lessons
 
+```mermaid
+sequenceDiagram
+  participant Player as Player
+  participant Host as Neo Angband host
+  participant Squire as Squire
+  loop Player holds the keyboard
+    Player->>Host: Ordinary game command
+    Host-->>Squire: player-command event
+    Squire->>Squire: Form own choice and compare with player
+    Squire->>Squire: Write notebook on Lessons tab
+    opt Choice surprises the apprentice
+      Squire-->>Player: Why, sir?
+      Player-->>Squire: Optional reason
+    end
+  end
+  Note over Player,Squire: Ranks progress from Page to Squire to Knight-Errant
+  opt Notebook contains at least 40 moments with situation signatures
+    Player->>Squire: Arm an exam
+  end
+  Player->>Host: Ctrl-Z and confirm
+  Host->>Squire: Install controller through command:add
+  alt squire.useModel is off and squire.errandCampaign is off
+    Squire->>Host: Run errandAutofight or errandAutoexplore
+    Squire-->>Host: Stop when the short errand ends
+  else Campaign or backend-driven play
+    loop Host requests one command at a time
+      Host->>Squire: Controller call
+      Squire-->>Host: Command or null
+    end
+  end
+  Note over Host,Squire: An armed exam compares the next 20 requested decisions with similar notebook moments, reflexes do not count
+  Note right of Squire: Viewer orders arrive through Squire Link every 5 seconds, failures retry after 30 seconds, viewer pull is lower below Devotion 90
+  Player->>Host: Any key
+  Host-->>Player: Return keyboard and consume the key
+```
+
+*Source of truth: `README.md`, `src/knight.ts`, `src/runtime.ts`, and `src/lessons/exam.ts`. A short errand replaces campaign play only when `squire.errandCampaign` is also off.*
+
 When you have the keyboard, you are the knight and Squire is your apprentice. It issues no commands, so your character stays yours. At each moment that matters it forms its own choice, compares it with yours, and writes a line in its notebook on the Lessons tab.
 
 - **Why, sir?** When your choice surprises it, the notebook offers a few one-click reasons. Answering is optional.
@@ -136,6 +242,33 @@ Knight's Lessons is on by default. With a model set up, Squire asks it for its o
 When a character Squire played dies, wins or retires, the Report tab shows how the run went: the outcome and depth, the most killed creatures and uniques, how often Squire went against the model's advice, what it learned, the apprenticeship, and the tokens it used. You can save the report as Markdown or JSON, save a share card image, and post the run on X or Reddit from its links. The decision log can be saved at any time, even before a report exists, and holds the latest 20,000 decisions. The Dashboard tab shows the same run while it is happening, with a depth chart and the latest decisions. Its Intent card shows the step Squire is on, the aim that step serves, the first thing the next level down asks for that the character lacks, and when Squire next checks whether to drop the aim.
 
 ## What Squire sends and stores
+
+```mermaid
+flowchart TD
+  Situation["Decision state<br/>Character stats, visible creatures and ground<br/>Persona, lessons, aims and orders"] --> Choice{"Chosen backend?"}
+  Choice -->|"Jev"| Jev["api.typesafe.ai/v1/systemone"]
+  Choice -->|"Laya"| Laya["Configured Laya server"]
+  Choice -->|"Another server"| Custom["Configured System One server"]
+  Choice -->|"None"| Rules["Character's own rules"]
+  Jev --> Record["Decision record"]
+  Laya --> Record
+  Custom --> Record
+  Rules --> Record
+  Record --> Storage["Game storage<br/>Settings, personas and family records<br/>Latest 20000 decisions, reports and notebook<br/>Training rows and queued telemetry"]
+  Record --> Shadow["createShadow<br/>For Jev records only<br/>Save teacher rows for known pilots<br/>Even when shadow requests are off"]
+  Shadow --> Storage
+  Shadow --> Enabled{"Send decisions to Laya is on<br/>and question type is not busy?"}
+  Enabled -->|"yes"| Copy["Separate Laya training request<br/>Attach answer to training row<br/>Do not use the answer for play"]
+  Copy --> Storage
+  Record --> Consent{"Telemetry enabled<br/>and Setup endpoint is set?"}
+  Consent -->|"yes"| Upload["Configured telemetry endpoint<br/>Default squire.rpgm.tools<br/>Backstory needs separate consent"]
+  Consent -->|"no"| Storage
+  Keys["Jev API key"] --> Desktop["Desktop<br/>Host stores key encrypted"]
+  Keys --> Browser["Browser<br/>Page storage"]
+  Upload -->|"Failed run waits locally"| Storage
+```
+
+*Source of truth: `src/runtime.ts`, `src/config.ts`, and `src/telemetry/consent.ts`. Telemetry and Laya shadow requests default to off.*
 
 - **To the model you chose**, everything Squire weighs in a decision. That means the character's level, race, class, health, mana, gold and status, the creatures in sight and how dangerous they are, the ground around it and how the last plan ended. In a fight the ground is described up close instead of level-wide: what is on each of the eight squares around the character, the squares one or two steps away out of the creatures' sight, the turns to the nearest stairs each way, nearby choke points, and burning ground or traps within five steps. It also means the persona and its backstory, the lessons Squire has learned, its aims, your orders and the names of viewers who gave orders. Squire asks the model whether an event belongs in the Chronicle, too. When a character dies, Squire sends the cause, the depth and the last few plans, and asks which plan got the character killed. With Knight's Lessons on, these requests go out while you play as well.
 - **To Laya, if you turn on "Send decisions to Laya"** under "Train Laya while Jev plays". Each of Jev's questions goes to Laya as a separate request. If Laya is still answering the last question of that kind, Squire skips the new one. Squire never acts on what Laya answers here. This is off by default. Squire still saves Jev's answers on your computer as training rows when it is off.
@@ -154,6 +287,29 @@ The Orders tab takes orders and standing instructions in plain words, such as `s
 
 If you stream your game, Squire Link can also read your Twitch chat or a Discord channel and keep the orders viewers give there, such as `!squire run from uniques`. Enter its orders address, `http://127.0.0.1:8765/v1/orders`, as the "Viewer orders address" under Orders on the Setup tab. While Squire plays, it checks that address every 5 seconds and adds each order to the Orders tab. The Orders tab and the journal name the viewer, as in "New order from viewer Grip: run from uniques". A viewer's order pulls on Squire less than one of yours, unless the persona's Devotion is 90 or higher. If the address can't be reached, Squire notes it once in the log and tries again 30 seconds later. With the field empty, Squire asks nothing. Squire Link's own README explains how to turn chat on and how to keep a busy chat from flooding the squire.
 
+## The errand menu
+
+While Squire plays, press & to open the errand menu. Play pauses while it is open. Press an errand's number or click it, and Squire carries out that errand, then gives the keyboard back with a status line saying how it ended. Press & again to close the menu, or Escape to take the keyboard back straight away. The Setup tab can move the menu to `!`, `#`, `$`, `%`, `(` or `_` instead, since no game command uses any of those keys.
+
+| Errand | What it does | When it can start |
+| --- | --- | --- |
+| **1. Collect the valuable loot** | Walks to the known items worth using or selling and picks them up. With a full pack, it drops something worthless to make room, or leaves the pile. | Something worth taking is known on this level. |
+| **2. Return to town** | Reads Word of Recall when the pack has one, and otherwise climbs the up staircases. | Away from town. |
+| **3. Find a down staircase** | Walks to the nearest known down staircase, exploring until it finds one, and stops on it. | When the character is not already on one. |
+| **4. Find an up staircase** | Does the same for an up staircase. | Away from town, when the character is not already on one. |
+| **5. Get off this level** | Takes the nearest staircase, up or down. | Always. |
+| **6. Explore this level** | Walks the parts of the level not yet seen. | While unexplored ground can be reached. |
+| **7. Clear this level** | Hunts down every creature on the level, sleeping ones too, exploring to find them. | Away from town, where the townspeople keep coming back. |
+| **8. Restock** | Visits the town's shops to buy supplies and sell loot. | In town. |
+
+An errand that cannot start yet stays on the list with the reason, and choosing it does nothing. With a model set up, up to three errands it suggests for the moment sit at the top of the menu. If the model has not answered within three seconds, the menu goes without them.
+
+Staying alive comes first in every errand. When a creature is awake in sight, hit points reach the retreat line, or the character is blind, confused, standing on harmful ground or hungry with food to eat, Squire deals with that the way it always does, by fighting, healing or escaping, and then goes on with the errand.
+
+An errand runs the plain way, with no quirks, grudges or Law to Chaos from the persona. Switch on "Let the persona colour errands" under Mods, then Squire, and the persona shapes how an errand is done: a wary persona keeps a step away from creatures, and a bold one holds on a little past the retreat line. The errand is still done either way.
+
+When you take the keyboard back, Squire drops its plan. When you hand it over again, Squire's model hears where the character went, what it fought, killed and used while you played, and that its earlier plan may no longer apply.
+
 ## Without a model: errands
 
 With no model set up, a normal handover plays on using Squire's own rules. To ask for a short errand, switch off "Let a model choose what to do" and enable the errand you want under Mods, then Squire. "Play on until I take the keyboard back" takes precedence over both short errands.
@@ -164,7 +320,7 @@ With no model set up, a normal handover plays on using Squire's own rules. To as
 | **Explore this floor** | Walks toward the nearest unmapped ground until the floor is walked out. | The floor is finished, anything comes into view, any hit lands, a status effect lands, or the character stops making progress. |
 | **Play on until I take the keyboard back** | Plays by Squire's own rules and keeps looking for a way on. | You take the keyboard back, the character wins or the character dies. |
 
-When a short errand ends, Squire waits for you to take the keyboard back with a keypress. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
+When a short errand ends, Squire gives the keyboard back. The long errand keeps playing. [SETTINGS.md](SETTINGS.md) lists every setting.
 
 When a fixed errand ends, the autoplayer status names the reason, such as "Stopped: cave spider came into view." Each line is read from the game state rather than the message stream, so it holds in every language.
 
@@ -172,7 +328,7 @@ The fighting errand leaves sleeping creatures alone unless you switch that on or
 
 ## Installing
 
-Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.21.1 or newer. Either:
+Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.22.0 or newer. Either:
 
 - **In the game.** Mods, then **Install a mod...**, which fetches this repository at a release tag, never a branch, so what arrives can't change afterwards. The install records a SHA-256 of every byte that arrived, which lets the manager tell later whether the copy on your machine has changed.
 - **A folder.** Clone this repository into your mods directory, or point the browser build at it with **Load mod folder**.

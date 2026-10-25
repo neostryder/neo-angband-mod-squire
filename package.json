@@ -7,7 +7,7 @@
   "author": "neostryder (RPGM Tools)",
   "homepage": "https://github.com/neostryder/neo-angband-mod-squire",
   "type": "module",
-  "packageManager": "pnpm@12.3.4",
+  "packageManager": "pnpm@12.16.1",
   "//private": [
     "Not published to npm, and not intended to be. A mod is distributed as a FOLDER the",
     "game fetches - manifest.json plus plugin.js, at a tag, verified against a digest",
@@ -32,14 +32,15 @@
     "verify": "pnpm typecheck && pnpm test && pnpm check"
   },
   "devDependencies": {
-    "@rpgm-tools/neo-angband-core": "1.21.1",
-    "@rpgm-tools/neo-angband-mod-sdk": "1.21.1",
-    "@types/node": "^22.20.1",
+    "@rpgm-tools/neo-angband-core": "1.22.0",
+    "@rpgm-tools/neo-angband-mod-sdk": "1.22.0",
+    "@types/node": "^26.6.6",
+    "@typescript/typescript6": "6.0.2",
     "esbuild": "^0.28.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "typescript": "7.0.2",
+    "vitest": "^5.1.0"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=26"
   }
 }

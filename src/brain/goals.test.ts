@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { answerKeyOf, createGoalPlanner, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, threatIndex, type GoalDigest } from "./goals.js";
+import { answerKeyOf, createGoalPlanner, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
@@ -362,6 +362,27 @@ describe("third soak survival regressions", () => {
     w.setMonsters([grip]);
     expect(choice.plan.step(w.view, w.act)).toBeNull();
     expect(offered(p.ask(w.view))).not.toContain("retreat");
+  });
+
+  it("backs away instead of taking a down staircase to a depth the character is not ready for", () => {
+    /* From a bench run: no potions, so the Warrior went up from 4 to 3, landed on a down staircase, and the first creature that woke sent it back down. */
+    const map = ["##########", "#..>.....#", "##########"];
+    const spec = { map, player: { cls: "Warrior", depth: 3, maxDepth: 4, level: 6, maxLevel: 6, hp: 77, maxHp: 77 }, monsters: [{ grid: { x: 8, y: 1 }, race: "jackal", level: 5 }] };
+    const bare = world({ ...spec, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
+    bare.moveTo({ x: 3, y: 1 });
+    const q = asked(planner(bare).p.ask(bare.view));
+    expect(q.context.offers.find((o) => o.goal === "retreat")?.criteria).toMatch(/^Step up to three steps/);
+    const supplied = suppliedWorld(spec);
+    supplied.moveTo({ x: 3, y: 1 });
+    expect(asked(planner(supplied).p.ask(supplied.view)).context.offers.find((o) => o.goal === "retreat")?.criteria).toMatch(/^Head for a known down staircase/);
+    const firstStep = (w: ReturnType<typeof world>) => {
+      const { p } = planner(w);
+      const choice = p.choose(pick("retreat"), asked(p.ask(w.view)).context, w.view);
+      if (!("plan" in choice)) throw new Error("expected a retreat plan");
+      return choice.plan.step(w.view, w.act)?.code;
+    };
+    expect(firstStep(bare)).not.toBe("descend");
+    expect(firstStep(supplied)).toBe("descend");
   });
 
   it("takes stairs underfoot instead of walking toward a distant down staircase", () => {
@@ -1019,6 +1040,22 @@ describe("refusals", () => {
     expect(next.context.offers.map((o) => o.goal)).toContain("cast_attack");
   });
 
+  it("holds back a plan that found nothing to do here, as it would a refused one", () => {
+    const w = suppliedWorld({ map: CORRIDOR, floor: [{ x: 5, y: 1, name: "a Flask of Oil" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("fetch");
+    w.setFloor([]);
+    const choice = p.choose(pick("fetch"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    w.setFloor([{ x: 5, y: 1, name: "a Flask of Oil" }]);
+    w.advance(10);
+    expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
+    w.advance(300);
+    expect(offered(asked(p.ask(w.view)))).toContain("fetch");
+  });
+
   it("keeps a refused goal out until the character's situation changes", () => {
     const w = world({ map: CORRIDOR, monsters: [{ grid: { x: 5, y: 1 }, race: "cave orc", level: 3 }], player: { sp: 5, maxSp: 5 }, spells: [{ name: "Magic Missile", sidx: 0 }] });
     const { p } = planner(w);
@@ -1642,6 +1679,36 @@ describe("soak findings", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 17, y: 1 });
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("explores past the leash when the only offer is a descent the character is not ready for", () => {
+    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 20, maxHp: 20 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    expect(offered(q)).toContain("explore");
+    const choice = p.choose(pick("none_of_these"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected wider exploration");
+    expect(choice.plan.label).toBe("explore");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 18, y: 1 });
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps a badly hurt character inside the leash when the descent is held back", () => {
+    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 6, maxHp: 20 } });
+    const { p } = planner(w);
+    expect(offered(asked(p.ask(w.view)))).not.toContain("explore");
+  });
+
+  it("still takes a step when poison alone could kill the character, so game time passes", () => {
+    const w = world({ map: ["#######", "#..@..#", "#######"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 2, maxDepth: 2, hp: 1, maxHp: 20, status: { poisoned: 10 } } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toEqual(["step_aside"]);
+    const choice = p.choose(pick("step_aside"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a step");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
   });
 
   it("lets the town Warrior walk to the stairs after refusing every offer", () => {
@@ -2857,6 +2924,87 @@ describe("tactical pack rules", () => {
     expect(q2.context.pack?.lowConfidence).toBe("fight");
   });
 
+  describe("goal gate", () => {
+    /* The orc world offers one attack, so a second, safer one is added to give the gate something to price. */
+    const priced = (mode: "off" | "shadow" | "acting", confidence: number) => {
+      const w = fightWorld();
+      const logged: string[] = [];
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: 0, goalGate: mode });
+      const q = asked(p.ask(w.view));
+      const fight = q.context.offers.find((o) => o.goal === "fight")!;
+      const offers = [...q.context.offers.filter((o) => o.goal !== "fight"), { ...fight, risk: 0.5 }, { ...fight, goal: "shoot" as const, risk: 0.1 }];
+      const digest = { ...q.context, offers };
+      const made = p.choose({ goal: { type: "choice", choice: "fight", confidence, probabilities: { fight: 0.6, shoot: 0.3 } } }, digest, w.view);
+      return { digest, made, logged };
+    };
+    const labelOf = (made: ReturnType<typeof priced>["made"]): string => ("plan" in made ? made.plan.label : "");
+
+    it("prices the pick and changes nothing in shadow", () => {
+      const { digest, made, logged } = priced("shadow", 0.3);
+      expect(digest.regret).toMatchObject({ pick: "fight", safest: "shoot", unsure: true, acted: false });
+      expect(logged.some((line) => line.includes("(shadow, followed)"))).toBe(true);
+      expect(labelOf(made)).toBe(labelOf(priced("off", 0.3).made));
+    });
+
+    it("takes the safest option of the class when acting and the answer is under the price", () => {
+      const { digest, logged } = priced("acting", 0.3);
+      expect(digest.regret).toMatchObject({ pick: "fight", safest: "shoot", unsure: true, acted: true });
+      expect(logged.some((line) => line.includes(", so shoot"))).toBe(true);
+    });
+
+    it("follows a sure answer even when acting", () => {
+      const { digest } = priced("acting", 0.95);
+      expect(digest.regret).toMatchObject({ unsure: false, acted: false });
+    });
+
+    it("does nothing when off", () => {
+      expect(priced("off", 0.1).digest.regret).toBeUndefined();
+    });
+
+    it("reads the mode at each answer", () => {
+      let mode: "off" | "acting" = "off";
+      const w = fightWorld();
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, confidenceFloor: 0, goalGate: () => mode });
+      const answer = { goal: { type: "choice", choice: "fight", confidence: 0.2, probabilities: { fight: 0.6 } } } as const;
+      const run = () => {
+        const q = asked(p.ask(w.view));
+        const fight = q.context.offers.find((o) => o.goal === "fight")!;
+        const digest = { ...q.context, offers: [{ ...fight, risk: 0.5 }, { ...fight, goal: "shoot" as const, risk: 0.1 }] };
+        p.choose(answer, digest, w.view);
+        return digest.regret;
+      };
+      expect(run()).toBeUndefined();
+      mode = "acting";
+      expect(run()?.acted).toBe(true);
+    });
+  });
+
+  it("follows an unsure answer when the backend sets no floor", () => {
+    const w = fightWorld();
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: 0 });
+    const q = asked(p.ask(w.view));
+    p.choose({ goal: { type: "choice", choice: "fight", confidence: 0.05, probabilities: { fight: 0.3, phase: 0.25 } }, escape: { type: "noul", p: 0.6 } }, q.context, w.view);
+    expect(q.context.pack?.lowConfidence).toBeUndefined();
+    expect(logged.some((line) => line.includes("the answer was unsure"))).toBe(false);
+  });
+
+  it("reads the floor at each answer, so a change of server takes effect at once", () => {
+    let floor = 0.7;
+    const w = fightWorld();
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (m) => logged.push(m), reflex: false, confidenceFloor: () => floor });
+    const unsureAfter = (confidence: number) => {
+      logged.length = 0;
+      const q = asked(p.ask(w.view));
+      p.choose({ goal: { type: "choice", choice: "fight", confidence, probabilities: { fight: 0.3, phase: 0.25 } }, escape: { type: "noul", p: 0.6 } }, q.context, w.view);
+      return logged.some((line) => line.includes("the answer was unsure"));
+    };
+    expect(unsureAfter(0.5)).toBe(true);
+    floor = 0;
+    expect(unsureAfter(0.5)).toBe(false);
+  });
+
   it("takes a sole option without asking, whatever its risk", () => {
     const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, hp: 1, maxHp: 30, status: { poisoned: 10 } } });
     const q = planner(w, true).p.ask(w.view);
@@ -3129,5 +3277,26 @@ describe("bound prompt targets", () => {
     expect(choice.plan.step(w.view, w.act)).toBeNull();
     expect(target).not.toHaveBeenCalledWith(9);
     expect(w.issued.some((command) => command.code === "cast")).toBe(false);
+  });
+});
+
+describe("the safety focus an errand plans with", () => {
+  function focused(w: ReturnType<typeof world>) {
+    return createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, focus: () => SAFETY_GOALS });
+  }
+
+  it("offers only what keeps the character alive, leaving the errand's own work out", () => {
+    const spec = { map: CORRIDOR, floor: [{ x: 5, y: 1, name: "a Potion of Cure Light Wounds" }], monsters: [{ grid: { x: 6, y: 1 }, race: "cave orc" }] };
+    const open = suppliedWorld(spec);
+    expect(offered(planner(open).p.ask(open.view))).toEqual(expect.arrayContaining(["fight", "retreat", "fetch", "explore"]));
+    const w = suppliedWorld(spec);
+    const goals = offered(focused(w).ask(w.view));
+    expect(goals).toEqual(expect.arrayContaining(["fight", "retreat"]));
+    for (const goal of goals) expect(SAFETY_GOALS.has(goal as never)).toBe(true);
+  });
+
+  it("waits rather than exploring when nothing threatens", () => {
+    const w = suppliedWorld({ map: CORRIDOR });
+    expect(offered(focused(w).ask(w.view))).toEqual(["wait"]);
   });
 });

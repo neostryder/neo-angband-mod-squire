@@ -88,6 +88,63 @@ describe("journey offer and execution guards", () => {
     expect(out.find((offer) => offer.goal === "explore")?.criteria).toContain("staircase onward");
   });
 
+  it("explores past the leash instead of climbing when levels persist and the next depth is not yet earned", () => {
+    /* Record shape: a Rogue on level 2, ready for it but not for level 3, with the up stairs out of the leash and leave_level as the only offer. */
+    const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 } });
+    const persisting = createJourney(w.terrain, undefined, () => true);
+    expect(persisting.searching(w.view)).toBe(true);
+    const out = persisting.apply(offers("explore", "leave_level", "rest"), w.view, null, new Set(), false);
+    expect(out.map((offer) => offer.goal)).toContain("explore");
+    expect(out.map((offer) => offer.goal)).not.toContain("leave_level");
+    expect(out.find((offer) => offer.goal === "explore")?.criteria).toContain("persistent levels");
+    const fresh = createJourney(w.terrain);
+    expect(fresh.searching(w.view)).toBe(false);
+    expect(goals(w, fresh, false, offers("explore", "leave_level", "rest"))).toContain("leave_level");
+  });
+
+  it("still climbs from a persistent level when hurt", () => {
+    const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 10, maxHp: 38 } });
+    const journey = createJourney(w.terrain, undefined, () => true);
+    expect(journey.searching(w.view)).toBe(false);
+    expect(goals(w, journey, false, offers("explore", "leave_level", "rest"))).toContain("leave_level");
+  });
+
+  it("does not stay on level 1, after an unseen hit, when ready to go on, or for ground it cannot reach", () => {
+    const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
+    const wall = "#".repeat(row.length);
+    const player = { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 };
+    const first = suppliedWorld({ map: [wall, row, wall], player: { ...player, depth: 1, maxDepth: 1, level: 1, maxLevel: 1 } });
+    expect(createJourney(first.terrain, undefined, () => true).searching(first.view)).toBe(false);
+    const hit = suppliedWorld({ map: [wall, row, wall], player });
+    expect(createJourney(hit.terrain, () => true, () => true).searching(hit.view)).toBe(false);
+    const long = `#<${".".repeat(40)}@...${",".repeat(5)}#`;
+    const ready = suppliedWorld({ map: ["#".repeat(long.length), long, "#".repeat(long.length)], player: { ...player, level: 8, maxLevel: 8, hp: 60, maxHp: 60 } });
+    const onward = createJourney(ready.terrain, undefined, () => true).apply(offers("explore", "rest"), ready.view, null, new Set(), false);
+    expect(onward.find((offer) => offer.goal === "explore")?.criteria).toContain("staircase onward");
+    const walled = `#<${".".repeat(27)}@..#.${",".repeat(4)}#`;
+    const cut = suppliedWorld({ map: [wall, walled, wall], player });
+    const journey = createJourney(cut.terrain, undefined, () => true);
+    expect(journey.searching(cut.view)).toBe(false);
+    expect(goals(cut, journey, false, offers("leave_level", "rest"))).toContain("leave_level");
+  });
+
+  it("reads persistent levels from the birth options", () => {
+    const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 } });
+    const ask = (persist: boolean) => {
+      const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, birthOptions: () => [{ name: "birth_levels_persist", value: persist }] });
+      const q = planner.ask(w.view);
+      return "context" in q ? q.context.offers.find((offer) => offer.goal === "explore")?.criteria ?? "" : "";
+    };
+    expect(ask(true)).toContain("persistent levels");
+    expect(ask(false)).not.toContain("persistent levels");
+  });
+
   it("keeps the stair search to the leash when hurt or a dangerous creature is in sight", () => {
     const row = `#<@${".".repeat(27)}${",".repeat(7)}#`;
     const wall = "#".repeat(row.length);
@@ -436,6 +493,24 @@ describe("bounded exploration and earning", () => {
     expect(goals(w, journey, false, offers("descend"))).toEqual([]);
     w.setPlayer({ gold: 1 });
     expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
+  });
+
+  /* The soak's Priest, at 13 gold, went down and back 22 times: each trip kept
+   * within six steps of the stairs, found nothing and came back with 13 gold. */
+  it("lets the trip after an empty one roam the ordinary stair leash", () => {
+    const w = world({ map: ["##############", "#<@.........,#", "##############"], player: { cls: "Priest", depth: 0, gold: 13, level: 1, maxLevel: 1, hp: 13, maxHp: 13, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    goals(w, journey, false, offers("descend"));
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    expect(goals(w, journey, false, offers("explore"))).not.toContain("explore");
+    w.setPlayer({ depth: 0 });
+    expect(goals(w, journey, false, offers("descend"))).toEqual([]);
+    const wide = journey.apply(offers("descend"), w.view, null, new Set(), false, true);
+    expect(wide.find((offer) => offer.goal === "descend")?.criteria).toContain("within 12 path steps");
+    journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1, maxDepth: 1 });
+    expect(goals(w, journey, false, offers("explore"))).toContain("explore");
   });
 
   it("never leaves town on a widened choice without spare fuel for the light", () => {

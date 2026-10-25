@@ -74,10 +74,16 @@ export function engineTravel(ctx: SquireContext, goals: readonly Loc[], options:
      * here. So `goals` must be every known stair of the kind, and the command is
      * used only when the route to each one is clear. A stair with no route is
      * one the game cannot path to either, so it cannot be the one it picks. */
+    /* The navigate command also refuses with a sleeping creature in view. */
+    if (ctx.view.monsters().some((monster) => monster.visible)) return null;
+    let routed = false;
     for (const goal of goals) {
       const route = ctx.view.travelPath?.({ x: goal.x, y: goal.y }) ?? null;
       if (route !== null && !routeClear(ctx, route.grids)) return null;
+      if (route !== null) routed = true;
     }
+    /* With no route the game knows of, the command is refused without a turn passing, and the walk would start the same way every time. */
+    if (!routed) return null;
     return ctx.act.raw(options.stairs === "down" ? "navigate-down" : "navigate-up");
   }
 

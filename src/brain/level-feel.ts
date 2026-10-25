@@ -29,6 +29,19 @@ export function badLevelFeeling(messages: readonly string[]): string | null {
   return null;
 }
 
+/** Whether a bad feeling line speaks only of loot: a floor picked clean, with no word of danger. */
+export function lootOnlyFeeling(line: string): boolean {
+  return !BAD_MONSTER.some((pattern) => pattern.test(line));
+}
+
+/** The level-feeling line among these messages that says the level is dangerous, or null. */
+export function dangerousLevelFeeling(messages: readonly string[]): string | null {
+  for (const message of messages) {
+    if (BAD_MONSTER.some((pattern) => pattern.test(message))) return message;
+  }
+  return null;
+}
+
 /** Every monster-feeling opening (mon_feeling_text, cmd-cave.c); the game prints one on arrival at each new level. */
 const ARRIVAL: readonly string[] = [
   "You are still uncertain about this place",

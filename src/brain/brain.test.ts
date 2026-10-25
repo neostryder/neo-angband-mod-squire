@@ -652,7 +652,7 @@ describe("ask", () => {
     const result = await ask(net({ ok: true, status: 200, headers: {}, body: GOOD_BODY }, seen), JEV, REQUEST, () => 0);
     expect(result.ok).toBe(true);
     expect(seen[0]?.headers?.["Authorization"]).toBe("Bearer {secret:jev}");
-    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ model: "jev-latest" });
+    expect(JSON.parse(seen[0]?.body ?? "{}")).toMatchObject({ model: "jev-preview" });
   });
 
   it("names each failure the way the brain acts on it", async () => {
@@ -667,5 +667,61 @@ describe("ask", () => {
     expect(!noHost.ok && noHost.failure.kind).toBe("not-allowed");
     const offline = await ask(net({ ok: false, code: "unreachable", problem: "offline" }), JEV, REQUEST, () => 0);
     expect(!offline.ok && offline.failure).toMatchObject({ kind: "unreachable", retryable: true });
+  });
+});
+
+describe("the hand-back epoch", () => {
+  function epochRig() {
+    let epoch = 0;
+    let settle: ((result: AskResult) => void) | null = null;
+    const logs: string[] = [];
+    const brain = createBrain({
+      backend: JEV,
+      planner: planner(() => walks(1)),
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => new Promise<AskResult>((resolve) => { settle = resolve; }),
+      token: () => ({ epoch: 1, revision: 1 }),
+      now: () => 1_000_000,
+      log: (m) => logs.push(m),
+      status: () => {},
+      epoch: () => epoch,
+    });
+    return {
+      brain,
+      logs,
+      tick: () => brain.controller(view, act),
+      land: () => settle?.(answered()),
+      handBack: () => { epoch += 1; },
+    };
+  }
+
+  it("uses an answer asked under the current epoch", async () => {
+    const r = epochRig();
+    expect(r.tick()).toBeNull();
+    r.land();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+  });
+
+  it("drops an answer asked before the keyboard changed hands, even with the same input token", async () => {
+    const r = epochRig();
+    expect(r.tick()).toBeNull();
+    r.handBack();
+    r.land();
+    await flush();
+    expect(r.tick()).toBeNull();
+    expect(r.logs.join("\n")).toContain("asked before the keyboard changed hands");
+    expect(r.brain.state()).toBe("idle");
+    expect(r.tick()).toBeNull();
+    expect(r.brain.state()).toBe("asking");
+  });
+
+  it("forgets a running plan and a question in flight when dropped", async () => {
+    const r = epochRig();
+    r.tick();
+    r.brain.drop("The keyboard went back to the player.");
+    r.land();
+    await flush();
+    expect(r.brain.state()).toBe("idle");
   });
 });

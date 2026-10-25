@@ -8,7 +8,7 @@
 import type { AgentView } from "../host-adapter.js";
 import type { Answer, SystemOneRequest } from "../brain/systemone.js";
 import { canRead } from "../brain/pack.js";
-import { badLevelFeeling } from "../brain/level-feel.js";
+import { dangerousLevelFeeling } from "../brain/level-feel.js";
 import { fastUniqueAtLowLevel, threatIndex } from "../brain/threat-model.js";
 import { frontiers } from "../map.js";
 import type { Persona } from "../persona/persona.js";
@@ -155,7 +155,7 @@ export function nearCandidates(view: AgentView, facts: NearFacts): NearCandidate
   if (facts.terrain !== null && frontiers(view, facts.terrain).length > 0 && journeyKeeps(view, facts.terrain, facts.persona, "explore")) out.push(candidate("explore"));
   if (hurt(view) && !awake(view)) out.push(candidate("rest"));
   if (facts.terrain !== null && descentGaps(view, player.depth + 1).hard.length === 0 && journeyKeeps(view, facts.terrain, facts.persona, "descend")) out.push(candidate("down"));
-  const danger: LeaveDanger | null = badLevelFeeling(view.messages()) !== null ? "feeling" : dangerousUnique(view) ? "unique" : null;
+  const danger: LeaveDanger | null = dangerousLevelFeeling(view.messages()) !== null ? "feeling" : dangerousUnique(view) ? "unique" : null;
   if (danger !== null) out.push({ ...candidate("leave"), detail: DANGER_NOW[danger], danger });
   if (player.depth > 0 && recallItem(view) !== null && supplyMargin(view) !== null && canRead(view)) out.push(candidate("recall"));
   if (shopsWanted(view, facts)) out.push(candidate("shop"));

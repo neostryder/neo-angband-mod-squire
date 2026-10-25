@@ -98,7 +98,7 @@ export function createShadow(options: {
               ts,
               state,
               questions,
-              jev: { model: record.model ?? "jev-latest", answers: { [entry.id]: answer } },
+              jev: { model: record.model ?? "jev-preview", answers: { [entry.id]: answer } },
               outcome: { plan: record.outcome },
             };
             await options.rows.append(row, seq);

@@ -24,9 +24,9 @@ import { stepsBand, turnsBand } from "../brain/bands.js";
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
 
 /** Below this share of maximum hit points, a stair search falls back to the leash and a hurt character is not sent farther out. */
-const SEARCH_HP_FRACTION = 0.35;
+export const SEARCH_HP_FRACTION = 0.35;
 
-export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView) => boolean) {
+export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView) => boolean, levelsPersist: () => boolean = () => false) {
   const pacing = createLevelPacing();
   const departure = createDeparture();
   let returnReason: string | null = null;
@@ -136,6 +136,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
 
   /** How far from the up stairs an earning trip may roam: a bold persona ranges toward the ordinary stair leash. */
   function earningLeash(view: AgentView): number {
+    /* Six steps from the stairs turned up no gold last time, so this trip gets the normal leash. */
+    if (departure.cameBackEmpty(view)) return Math.max(EARNING_LEASH, stairLeash(view.player().level));
     const bold = Math.min(100, Math.max(0, lastPersona?.sliders.boldness ?? 0)) / 100;
     return EARNING_LEASH + Math.round(Math.max(0, stairLeash(view.player().level) - EARNING_LEASH) * bold);
   }
@@ -150,21 +152,37 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
    * costs more than the trip makes there.
    */
   function searching(view: AgentView): boolean {
+    return searchKind(view) !== null;
+  }
+
+  /** Why the character searches past the leash, or null when it keeps to it. */
+  function searchKind(view: AgentView): "exit" | "onward" | "stay" | null {
     const player = view.player();
     const depth = player.depth;
-    if (depth <= 0 || depth >= RECALL_FROM_DEPTH) return false;
+    if (depth <= 0 || depth >= RECALL_FROM_DEPTH) return null;
     const front = frontiers(view, terrain);
-    if (front.length === 0) return false;
-    if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return true;
-    if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return true;
+    if (front.length === 0) return null;
+    if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return "exit";
+    if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return "exit";
     /* Ready to descend, no down staircase known, nothing left to explore inside the
      * leash. A wounded character, or one with a creature rated dangerous or worse in
      * sight, keeps to the leash: straying far from the up stairs costs the most when
      * a fight is already close, and the watcher only reacts once a blow lands. */
     const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
     const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, undefined, terrain).band >= 2);
-    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return true;
-    return false;
+    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
+    return stayingOn(view, dangerous, front) ? "stay" : null;
+  }
+
+  /** True when a persistent-levels game should keep this character exploring past the leash. Climbing would be pointless: the stairs up lead back to the level it already cleared, and the stairs down from there land it right here again. So a character with the hit points and supplies for this depth, but short of what the next depth asks, walks farther out for experience. A wound below the search floor, a dangerous creature in sight, a breeder level or a trip home all turn this off. */
+  function stayingOn(view: AgentView, dangerous: boolean, front: readonly Loc[]): boolean {
+    const player = view.player();
+    if (!levelsPersist() || player.depth < 2 || breederLevel || departure.active() || returnReason !== null || expired || unseenDanger?.(view)) return false;
+    if (missingPreparation(view, player.depth).length > 0 || missingPreparation(view, player.depth + 1).length === 0) return false;
+    if (player.hp < player.maxHp * SEARCH_HP_FRACTION || dangerous || front.some((grid) => leashed(view, grid))) return false;
+    /* Ground the character cannot walk to would leave it with no climb and nothing to explore. */
+    const field = flowFrom({ goals: [...front], canEnter: (grid) => isRoutable(view, terrain, grid) });
+    return Number.isFinite(field.distance(player.grid));
   }
 
   /** Read the journey state from this view before answering, so a caller outside `apply` is not a step behind. */
@@ -212,11 +230,12 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     /* Compute `searching` once for this apply: the filter and the post-filter both read it, and each call
      * costs an assessThreat walk over every awake creature. The view does not change inside apply. */
-    let searchCache: { value: boolean } | null = null;
-    const search = (): boolean => {
-      if (searchCache === null) searchCache = { value: searching(view) };
+    let searchCache: { value: ReturnType<typeof searchKind> } | null = null;
+    const searchFor = (): ReturnType<typeof searchKind> => {
+      if (searchCache === null) searchCache = { value: searchKind(view) };
       return searchCache.value;
     };
+    const search = (): boolean => searchFor() !== null;
     let out = offers.filter((offer) => {
       /* The widen path is the safety net when the model has nothing else; a hurt character past the
        * leash should head back toward known stairs or rest, not be sent further out. */
@@ -233,7 +252,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth).length === 0;
       if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && descentGaps(view, player.depth + 1).hard.length === 0);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
-      if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null;
+      if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null && searchFor() !== "stay";
       if (offer.goal === "explore" && search()) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
       if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
@@ -247,7 +266,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     /* Soft gaps leave the descent to the model's readiness answer; the goal planner holds it back below the persona's threshold. */
     const soft = player.depth > 0 ? descentGaps(view, player.depth + 1).soft.map((gap) => gap.reason) : [];
     if (soft.length > 0) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `${offer.criteria} The next level still asks for ${soft.join("; ")}.`, gaps: soft } : offer);
-    if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns (${turnsBand(EARNING_TURNS)}) and stays within ${String(EARNING_LEASH)} path steps (${stepsBand(EARNING_LEASH)}) of the up stairs.` } : offer);
+    if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns (${turnsBand(EARNING_TURNS)}) and stays within ${String(earningLeash(view))} path steps (${stepsBand(earningLeash(view))}) of the up stairs.` } : offer);
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired)) {
       const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || search());
@@ -265,7 +284,10 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     }
     if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
     /* A stair search that is not the return-to-town search keeps its own wording. */
-    if (search() && !(player.depth > 0 && (home || expired))) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: breederLevel ? `Search this level on foot for a staircase to leave the breeders behind. ${offer.criteria}` : `Search this level on foot for a staircase onward. ${offer.criteria}` } : offer);
+    if (search() && !(player.depth > 0 && (home || expired))) {
+      const why = breederLevel ? "Search this level on foot for a staircase to leave the breeders behind." : searchFor() === "stay" ? "Walk past the stair leash to find more creatures to fight; the next depth wants a higher level first. With persistent levels, the stairs up only lead back to the level already cleared." : "Search this level on foot for a staircase onward.";
+      out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `${why} ${offer.criteria}` } : offer);
+    }
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1)[0];
       if (missing !== undefined) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
