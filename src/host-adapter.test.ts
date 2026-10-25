@@ -103,6 +103,10 @@ describe("the other reads", () => {
 /*
  * Mod API 2 gives Squire no core namespace, no game state and no registries,
  * so a read of any of them outside the adapter is a read the port would miss.
+ * The runtime is the one other file that may name `host.snapshot` and
+ * `host.options`: its host is the API 2 bridge (src/api2/host.ts), whose
+ * members carry those names over copies it filled from API 2 reads, not over
+ * the game's own state.
  */
 describe("host reads stay in the adapter", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
@@ -117,7 +121,7 @@ describe("host reads stay in the adapter", () => {
     return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
       const path = join(dir, entry.name);
       if (entry.isDirectory()) return sources(path);
-      return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") && entry.name !== "host-adapter.ts" ? [path] : [];
+      return entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts") && entry.name !== "host-adapter.ts" && entry.name !== "runtime.ts" ? [path] : [];
     });
   }
 

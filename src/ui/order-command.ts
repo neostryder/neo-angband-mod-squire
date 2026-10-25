@@ -5,8 +5,7 @@
  */
 
 import type { Runtime } from "../runtime.js";
-import type { ModKeymaps, ModPanel, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
-import type { CommandFacade } from "../host-adapter.js";
+import type { Api2DomPanel, Api2DomUi, Api2Manage, Api2Ui } from "@rpgm-tools/neo-angband-mod-sdk";
 import { h, STYLE } from "./dom.js";
 import { mountOrders } from "./orders.js";
 
@@ -16,28 +15,23 @@ export const ORDER_VERB = "give an order";
 export const ORDER_KEYS: readonly string[] = ["O", "N"];
 export const ORDER_PANEL_LABEL = "Give Squire an order";
 
-type PanelLike = ModPanel;
-
-/** The registry host `register` receives, as far as this command reads it. */
-export interface OrderCommandHost {
-  readonly commands?: Pick<CommandFacade, "register" | "setVerb">;
+/** The parts of the mod object this command reads. */
+export interface OrderCommandCtx {
+  readonly log?: (message: string) => void;
+  readonly panels?: Pick<Api2DomUi, "openPanel">;
+  readonly commands?: Api2Ui["commands"];
+  readonly keys?: Pick<Api2Manage["keys"], "set">;
 }
 
-export type OrderCommandCtx = Partial<Pick<ModPluginContext, "log">> & {
-  readonly ui?: Pick<ModUi, "openPanel">;
-  readonly keymaps?: Pick<ModKeymaps, "isBindableTriggerKey" | "bind">;
-};
-
 /** Register the command and bind a key to it. Returns the key bound, or null. */
-export function registerOrderCommand(host: unknown, ctx: OrderCommandCtx, rt: Runtime): string | null {
-  const commands = (host as OrderCommandHost | null | undefined)?.commands;
-  const openPanel = ctx.ui?.openPanel;
-  if (commands === undefined || openPanel === undefined) return null;
-  let shown: PanelLike | null = null;
+export async function registerOrderCommand(ctx: OrderCommandCtx, rt: Runtime): Promise<string | null> {
+  const { commands, panels } = ctx;
+  if (commands === undefined || panels === undefined) return null;
+  let shown: Api2DomPanel | null = null;
 
   function prompt(): void {
     if (shown?.open === true) return;
-    const panel = openPanel!.call(ctx.ui, { id: "order", modal: true, label: ORDER_PANEL_LABEL });
+    const panel = panels!.openPanel({ id: "order", modal: true, label: ORDER_PANEL_LABEL });
     const body = h("div", { class: "body" });
     panel.root.append(h("style", {}, STYLE), h("div", { class: "squire" }, body));
     const cleanup = mountOrders(body, rt, "hotkey");
@@ -49,22 +43,25 @@ export function registerOrderCommand(host: unknown, ctx: OrderCommandCtx, rt: Ru
   }
 
   /* Opening the prompt takes no game time. */
-  commands.register(ORDER_COMMAND, () => {
+  const registered = await commands.register(ORDER_COMMAND, ORDER_VERB, () => {
     try {
       prompt();
     } catch (error) {
       ctx.log?.(`Squire couldn't open the order prompt: ${String(error)}`);
     }
-    return 0;
   });
-  commands.setVerb(ORDER_COMMAND, ORDER_VERB);
-  const keymaps = ctx.keymaps;
-  if (keymaps === undefined) {
+  if (!registered.ok) {
+    ctx.log?.(`Squire's order command isn't registered: ${registered.message}`);
+    return null;
+  }
+  const keys = ctx.keys;
+  if (keys === undefined) {
     ctx.log?.("Squire's order key isn't bound, because this game doesn't let mods bind keys.");
     return null;
   }
   for (const key of ORDER_KEYS) {
-    if (keymaps.isBindableTriggerKey(key) && keymaps.bind(key, ORDER_COMMAND)) {
+    const bound = await keys.set(key, ORDER_COMMAND);
+    if (bound.ok) {
       ctx.log?.(`Squire's order key is ${key}.`);
       return key;
     }

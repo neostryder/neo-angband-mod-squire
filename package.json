@@ -27,13 +27,15 @@
   "scripts": {
     "build": "node tools/build.mjs",
     "check": "node tools/build.mjs --check",
+    "capabilities": "neo-angband-mod-check --first-party",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "pnpm typecheck && pnpm test && pnpm check"
+    "verify": "pnpm typecheck && pnpm test && pnpm check && pnpm capabilities"
   },
   "devDependencies": {
-    "@rpgm-tools/neo-angband-core": "1.22.0",
-    "@rpgm-tools/neo-angband-mod-sdk": "1.22.0",
+    "@rpgm-tools/neo-angband-content": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz",
+    "@rpgm-tools/neo-angband-core": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz",
+    "@rpgm-tools/neo-angband-mod-sdk": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz",
     "@types/node": "^26.6.6",
     "@typescript/typescript6": "6.0.2",
     "esbuild": "^0.28.1",

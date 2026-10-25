@@ -51,8 +51,10 @@ export interface Api2Host {
     on(name: "combat-outcome", listener: (payload: Api2CombatEvent) => void): void;
     on(name: "player-command", listener: (payload: Api2CommandEvent) => void): void;
   };
-  /** The game as the player last saw it, read fresh for each decision. */
+  /** The game as it was last read: at the last decision, or the last `readWorld`. */
   readonly viewNow: () => AgentView | null;
+  /** Read the game now. Null while the game has no character to show. */
+  readonly readWorld: () => Promise<AgentView | null>;
 }
 
 export interface Bridge {
@@ -146,6 +148,11 @@ export function createBridge(mod: ModApi2): Bridge {
       on: ((name: "combat-outcome" | "player-command", listener: (payload: never) => void) => subscribe(name, listener as never)) as Api2Host["events"]["on"],
     },
     viewNow: () => world,
+    readWorld: async () => {
+      const read = await readWorld();
+      void refreshCharacter();
+      return read;
+    },
   };
 
   return {
@@ -162,11 +169,7 @@ export function createBridge(mod: ModApi2): Bridge {
       subscribe("driver-changed", (event) => { driver = event; });
       await readWorld();
     },
-    readWorld: async () => {
-      const read = await readWorld();
-      void refreshCharacter();
-      return read;
-    },
+    readWorld: host.readWorld,
     setInput(next) { input = next; driver = next.driver; },
     autoplayed: () => autoplayed,
     driver: () => driver,

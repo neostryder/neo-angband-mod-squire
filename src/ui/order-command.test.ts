@@ -1,46 +1,55 @@
 import { describe, expect, it } from "vitest";
 import type { Runtime } from "../runtime.js";
-import { ORDER_COMMAND, ORDER_KEYS, ORDER_VERB, registerOrderCommand } from "./order-command.js";
+import { ORDER_COMMAND, ORDER_KEYS, ORDER_VERB, registerOrderCommand, type OrderCommandCtx } from "./order-command.js";
 
 const rt = {} as unknown as Runtime;
+const done = <T,>(value: T) => Promise.resolve({ ok: true as const, value });
 
 function rig(taken: readonly string[] = []) {
   const registered: string[] = [];
   const verbs: Record<string, string> = {};
   const bound: Record<string, string> = {};
   const logs: string[] = [];
-  const host = { commands: { register: (code: string) => { registered.push(code); }, setVerb: (code: string, verb: string) => { verbs[code] = verb; } } };
   const ctx = {
-    ui: { openPanel: () => { throw new Error("no document"); } },
-    keymaps: { isBindableTriggerKey: (k: string) => k.length === 1, bind: (k: string, action: string) => { if (taken.includes(k)) return false; bound[k] = action; return true; } },
+    panels: { openPanel: () => { throw new Error("no document"); } },
+    commands: { register: (code: string, verb: string) => { registered.push(code); verbs[code] = verb; return done(null); } },
+    keys: {
+      set: (trigger: string, action: string) => {
+        if (taken.includes(trigger)) return Promise.resolve({ ok: false as const, reason: "refused" as const, code: "taken", message: "That key is taken." });
+        bound[trigger] = action;
+        return done(null);
+      },
+    },
     log: (m: string) => { logs.push(m); },
-  };
-  return { host, ctx, registered, verbs, bound, logs };
+  } satisfies OrderCommandCtx;
+  return { ctx, registered, verbs, bound, logs };
 }
 
 describe("the order command", () => {
-  it("registers a command with a verb and binds the first free key", () => {
+  it("registers a command with a verb and binds the first free key", async () => {
     const r = rig();
-    expect(registerOrderCommand(r.host, r.ctx, rt)).toBe(ORDER_KEYS[0]);
+    expect(await registerOrderCommand(r.ctx, rt)).toBe(ORDER_KEYS[0]);
     expect(r.registered).toEqual([ORDER_COMMAND]);
     expect(r.verbs[ORDER_COMMAND]).toBe(ORDER_VERB);
     expect(r.bound).toEqual({ [ORDER_KEYS[0]!]: ORDER_COMMAND });
   });
 
-  it("falls to the next key when one is taken, and to none when all are", () => {
-    expect(registerOrderCommand(rig([ORDER_KEYS[0]!]).host, rig([ORDER_KEYS[0]!]).ctx, rt)).toBe(ORDER_KEYS[1]);
+  it("falls to the next key when one is taken, and to none when all are", async () => {
+    expect(await registerOrderCommand(rig([ORDER_KEYS[0]!]).ctx, rt)).toBe(ORDER_KEYS[1]);
     const all = rig(ORDER_KEYS);
-    expect(registerOrderCommand(all.host, all.ctx, rt)).toBeNull();
+    expect(await registerOrderCommand(all.ctx, rt)).toBeNull();
     expect(all.registered).toEqual([ORDER_COMMAND]);
   });
 
-  it("registers nothing without the registry, the panel API or keymap access", () => {
+  it("registers nothing without the command registry or the panel API, and binds no key without key access", async () => {
     const r = rig();
-    expect(registerOrderCommand({}, r.ctx, rt)).toBeNull();
-    expect(registerOrderCommand(r.host, { keymaps: r.ctx.keymaps }, rt)).toBeNull();
+    const { commands: _c, ...noCommands } = r.ctx;
+    expect(await registerOrderCommand(noCommands, rt)).toBeNull();
+    const { panels: _p, ...noPanels } = r.ctx;
+    expect(await registerOrderCommand(noPanels, rt)).toBeNull();
     expect(r.registered).toEqual([]);
-    const { keymaps: _k, ...noKeys } = r.ctx;
-    expect(registerOrderCommand(r.host, noKeys, rt)).toBeNull();
+    const { keys: _k, ...noKeys } = r.ctx;
+    expect(await registerOrderCommand(noKeys, rt)).toBeNull();
     expect(r.registered).toEqual([ORDER_COMMAND]);
   });
 });
