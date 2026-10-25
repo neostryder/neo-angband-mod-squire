@@ -48,7 +48,7 @@ export const JEV: Backend = Object.freeze({
   kind: "jev",
   label: "Jev",
   url: "https://api.typesafe.ai/v1/systemone",
-  model: "jev-latest",
+  model: "jev-preview",
   secret: "jev",
   metered: true,
   usdPerMillionInput: 0.04,

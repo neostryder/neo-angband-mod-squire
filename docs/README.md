@@ -1,6 +1,6 @@
 # Squire: quick reference
 
-A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character, asking a model what to do at each moment that matters. Press any key to take the keyboard back. With no model set up, it keeps playing by its own rules. You can choose a short errand under Mods, then Squire.
+A learning Angband autoplayer. Press Ctrl-Z and Squire plays your character, asking a model what to do at each moment that matters. Press Escape to take the keyboard back, or & for a menu of errands. With no model set up, it keeps playing by its own rules. You can choose a short errand under Mods, then Squire.
 
 This page is the short version: every setting, what the mod asks the game for,
 and where the longer material is. The account of why each of these exists is in
@@ -26,6 +26,7 @@ switch has no flag of its own, the game knows it by its section id instead.
 | Pick things up on the way | `squire.collect` | on | During the long errand, pick up whatever is lying on a square the character has already walked onto. |
 | Take the stairs down | `squire.descend` | on | During the long errand, walk to a known down staircase and use it once the floor has been walked out. |
 | Show the long-term goal | `squire.revealLongGoal` | off | Puts it on the Squire panel. With this off, the panel hides the line and the character still follows the goal. |
+| Let the persona colour errands | `squire.personaErrands` | off | The persona's traits change how an errand from the errand menu is done: the route, the risks it takes and what it picks up. The errand is still done. |
 
 ## Shop memory
 
@@ -33,7 +34,7 @@ Squire learns a shop's stock when the character enters it. It saves the names, p
 
 ## What it needs
 
-- **Engine:** `>=1.21.1`
+- **Engine:** `>=1.22.0`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
 - **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:floor.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:options.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `ui:title`, `registry:command`, `keymap:write`, `saves:manage`, `profiles:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`

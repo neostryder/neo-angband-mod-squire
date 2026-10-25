@@ -1,6 +1,7 @@
 /**
  * The setup tab: which model Squire asks, the key or address, a connection
- * test, spend limits, telemetry consent, and what happens after a death.
+ * test, spend limits, telemetry consent, what happens after a death, and the
+ * errand key.
  */
 
 import type { Runtime } from "../runtime.js";
@@ -10,6 +11,8 @@ import { CHANNEL_HELP, CHANNEL_LABEL, CHANNEL_PLACEHOLDER, KEPT_HELP, KEPT_LABEL
 import { describeLevel, type ConsentLevel } from "../telemetry/consent.js";
 import { DEFAULT_ENDPOINT, createSender } from "../telemetry/sender.js";
 import { installId } from "../memory/install.js";
+import { ERRAND_KEYS, type ErrandKey } from "../errands/keys.js";
+import { ERRAND_TEXT } from "../errands/text.js";
 import { download, fill, h } from "./dom.js";
 
 const BACKUP_HELP = "Squire tries these in order when the first server is busy or not answering, such as a second computer running Laya at http://192.168.1.21:8010/v1/systemone. Separate addresses with commas.";
@@ -138,6 +141,10 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
   for (const [value, label] of ROLL_ON) rollOn.append(h("option", { value, selected: config.rollOn === value }, label));
   rollOn.addEventListener("change", () => update({ rollOn: rollOn.value as RollOn }));
 
+  const errandKey = h("select");
+  for (const key of ERRAND_KEYS) errandKey.append(h("option", { value: key, selected: config.errandKey === key }, key));
+  errandKey.addEventListener("change", () => update({ errandKey: errandKey.value as ErrandKey }));
+
   const knights = h("input", { type: "checkbox", checked: config.knightsLessons.enabled });
   knights.addEventListener("change", () => update({ knightsLessons: { ...config.knightsLessons, enabled: knights.checked } }));
 
@@ -154,6 +161,9 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
     h("h3", {}, "When a character dies"),
     rollOn,
     h("p", { class: "muted" }, "Only for characters Squire is playing. Your own characters are never replaced."),
+    h("h3", {}, ERRAND_TEXT.keyTitle),
+    errandKey,
+    h("p", { class: "muted" }, ERRAND_TEXT.keyHelp),
     h("h3", {}, "Knight's Lessons"),
     h("label", {}, knights, " Learn from how I play while I have the keyboard"),
     h("h3", {}, ORDERS_HEADING),

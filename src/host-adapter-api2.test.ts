@@ -126,8 +126,8 @@ function api1Trap(traps: readonly LiveTrap[], at: LiveTrap): boolean {
 }
 
 /** The traps on a square as the known world remembers them: the visible ones, by kind index and name, as Core's known level lists them. */
-function rememberedTraps(traps: readonly LiveTrap[], x: number, y: number): { index: number; name: string }[] {
-  return traps.filter((trap) => trap.x === x && trap.y === y && liveFlags(trap).has(TRF.VISIBLE)).map((trap) => ({ index: trap.kind, name: kindName(trap.kind) }));
+function rememberedTraps(traps: readonly LiveTrap[], x: number, y: number): { index: number; name: string; disabled: boolean }[] {
+  return traps.filter((trap) => trap.x === x && trap.y === y && liveFlags(trap).has(TRF.VISIBLE)).map((trap) => ({ index: trap.kind, name: kindName(trap.kind), disabled: false }));
 }
 
 /** The harness world over these live traps, its API 1 view showing a trap wherever the game's predicate does. */
@@ -172,13 +172,13 @@ function knownPlayer(player: PlayerView): KnownPlayer {
     status: { ...timed, food: Math.trunc(status.food / 100), foodGrade: null, fearful: status.fearful ?? false } as KnownPlayer["status"],
     recall: (recall ?? 0) > 0,
     descent: (descent ?? 0) > 0,
-  };
+  } as unknown as KnownPlayer;
 }
 
 /** An item as the known world shows it: a charging count where API 1 had a timeout. A light's fuel shows only in its name, so it charges nothing. */
 function knownItem(item: ItemView): KnownItem {
   const { timeout, ...rest } = item;
-  return { ...rest, charging: item.tval !== TV.LIGHT && timeout > 0 ? 1 : 0, unknownRunes: false };
+  return { ...rest, charging: item.tval !== TV.LIGHT && timeout > 0 ? 1 : 0, unknownRunes: false } as unknown as KnownItem;
 }
 
 function knownTarget(target: TargetView | null): KnownTarget | null {
@@ -202,8 +202,13 @@ function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWor
         x,
         y,
         visible: cell.inView,
+        lit: cell.inView ? true : null,
+        seen: cell.inView,
+        glow: false,
         remembered: {
           feat: cell.feat,
+          passable: true,
+          items: null,
           traps: rememberedTraps(traps, x, y),
           objects: Array.from({ length: cell.objectCount }, () => ({ sensed: true as const, money: false })),
         },
@@ -222,6 +227,7 @@ function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWor
     quiver: (view.quiver?.() ?? []).map(knownItem),
     floorHere: view.floorItems(player.grid.x, player.grid.y).map(knownItem),
     monstersHidden: null,
+    equipmentSlots: null,
     monsters: view.monsters().map((m): KnownMonster => ({
       id: m.id,
       race: m.race,
@@ -239,6 +245,10 @@ function knownFrom(w: World, traps: readonly LiveTrap[] = SCENE_TRAPS): KnownWor
       unique: m.unique,
       questGuardian: m.questGuardian ?? false,
       finalGuardian: m.finalGuardian ?? false,
+      blows: [],
+      spellFrequency: null,
+      innateFrequency: null,
+      averageHp: null,
     })),
     target: knownTarget(view.target()),
     targetReadable: true,
@@ -395,7 +405,7 @@ describe("viewWorld under API 2", () => {
     /* Core leaves the invisible door lock out of the known world. If a remembered entry ever names one, it still reads as no trap. */
     const w = trapScene([]);
     const known = knownFrom(w, []);
-    const cells = (known.level?.cells ?? []).map((c) => (c.y === 1 && c.x >= 2 && c.x <= 7 ? { ...c, remembered: { ...c.remembered, traps: [{ index: c.x - 1, name: kindName(c.x - 1) }] } } : c));
+    const cells = (known.level?.cells ?? []).map((c) => (c.y === 1 && c.x >= 2 && c.x <= 7 ? { ...c, remembered: { ...c.remembered, traps: [{ index: c.x - 1, name: kindName(c.x - 1), disabled: false }] } } : c));
     const two = await viewWorld(fakeApi({ world: { ...known, level: known.level === null ? null : { ...known.level, cells } }, records: records() }).api);
     for (let kind = 1; kind <= 6; kind++) {
       const found: LiveTrap = { x: kind + 1, y: 1, kind, found: true };
@@ -504,7 +514,7 @@ describe("viewWorld under API 2", () => {
 
 describe("viewInput under API 2", () => {
   it("gives the same input wait as API 1", async () => {
-    const input: Api2InputState = { token: { epoch: 2, revision: 9 }, driver: { kind: "controller", owner: "squire" }, phase: "play", messagePending: false, prompt: null };
+    const input = { token: { epoch: 2, revision: 9 }, driver: { kind: "controller", owner: "squire" }, phase: "play", messagePending: false, prompt: null } as unknown as Api2InputState;
     const snapshot = { ...input, core: {} } as unknown as InputSnapshot;
     const one = viewInput1({ snapshot: () => snapshot });
     const two = await viewInput(fakeApi({ input }).api);

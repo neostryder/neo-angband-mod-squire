@@ -200,7 +200,7 @@ describe("town readiness reads drive", () => {
     expect(readinessExtra(null)).toBe(1);
     expect(readinessExtra(archetype("tourist"))).toBe(2);
     const w = world({ map: ROOM, player: { depth: 0, light: 1 }, pack: ["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "2 Rations of Food", "a Wooden Torch (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
-    expect(missingEssentials(w.view, archetype("berserker")).map((need) => need.kind)).toEqual(["healing", "phase"]);
+    expect(missingEssentials(w.view, archetype("berserker")).map((need) => need.kind)).toEqual(["healing", "phase", "light"]);
     expect(missingEssentials(w.view, archetype("tourist")).map((need) => need.kind)).toEqual(expect.arrayContaining(["healing", "phase", "food"]));
   });
 

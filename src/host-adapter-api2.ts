@@ -200,7 +200,7 @@ async function gameConstants(api: Pick<ModApi2, "content">): Promise<GameConstan
 /* The player. */
 
 /** The timed effect record behind each status field, by its name in the game's player_timed file. */
-const TIMED_RECORDS: Readonly<Record<Exclude<keyof KnownPlayer["status"], "food" | "foodGrade" | "fearful">, string>> = {
+const TIMED_RECORDS: Readonly<Record<Exclude<keyof KnownPlayer["status"], "timed" | "food" | "foodGrade" | "fearful">, string>> = {
   blind: "BLIND",
   confused: "CONFUSED",
   afraid: "AFRAID",

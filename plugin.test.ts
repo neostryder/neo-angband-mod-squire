@@ -7,6 +7,7 @@
 import { describe, expect, it } from "vitest";
 import type * as Core from "@rpgm-tools/neo-angband-core";
 import plugin from "./plugin.js";
+import { ERRAND_TEXT } from "./src/errands/text.js";
 
 const NOSCORE_BORG = 0x0020;
 
@@ -58,11 +59,20 @@ describe("the Squire plugin", () => {
     expect(plugin.controller({ ...ctx, controllerArmed: false })).toBeUndefined();
   });
 
+  it("answers keys while it drives: the errand key opens the menu and any other key keeps playing", () => {
+    const { ctx } = context({ noscore: NOSCORE_BORG });
+    const installed = plugin.controller(ctx);
+    if (installed === undefined || typeof installed === "function") throw new Error("expected an install with a key handler");
+    const key = (k: string) => installed.onKey({ key: k, ctrl: false, alt: false, shift: false, meta: false, repeat: false });
+    expect(key("x")).toEqual({ kind: "keep", message: ERRAND_TEXT.notice("&") });
+    expect(key("&")).toEqual({ kind: "keep", message: ERRAND_TEXT.menuHint("&") });
+  });
+
   it("declares no hooks, because it changes no rule", () => {
     /* register adds the panel and listens to events, and birth only accepts a
      * roll-on creation Squire asked for; neither overrides a rule. */
     expect(plugin.api).toBe(1);
-    expect(Object.keys(plugin).sort()).toEqual(["api", "birth", "controller", "register"]);
+    expect(Object.keys(plugin).sort()).toEqual(["api", "birth", "controller", "register", "uninstall"]);
   });
 
   it("says how much terrain it can read, so a diminished run is visible", () => {

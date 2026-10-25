@@ -40,6 +40,26 @@ describe("the town survival basket", () => {
     expect(departure.finished(w.view)).toBe(true);
   });
 
+  it("sends the trip after an empty one farther out, for the whole of that trip", () => {
+    const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, gold: 13, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const departure = createDeparture();
+    departure.observe(w.view, w.terrain);
+    departure.begin(w.view, 76);
+    expect(departure.cameBackEmpty(w.view)).toBe(false);
+    w.setPlayer({ depth: 1 });
+    departure.observe(w.view, w.terrain);
+    w.setPlayer({ depth: 0 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.cameBackEmpty(w.view)).toBe(true);
+    departure.begin(w.view, 76);
+    w.setPlayer({ depth: 1, gold: 20 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.cameBackEmpty(w.view)).toBe(true);
+    w.setPlayer({ depth: 0 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.cameBackEmpty(w.view)).toBe(false);
+  });
+
   it("buys a first Phase Door before discretionary potion top-ups when only 18 gold remains", () => {
     const w = world({ map: ["@"], player: { depth: 0, gold: 18 }, pack: ["a Potion of Cure Light Wounds", ...PANTRY] });
     const needs = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
