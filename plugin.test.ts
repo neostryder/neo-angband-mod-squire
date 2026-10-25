@@ -1,15 +1,17 @@
 /**
- * The plugin ABI, checked at the seam the host actually calls.
+ * The plugin definition, checked at the seam the game actually calls.
  *
- * These tests build the plugin context by hand. The game passes the whole engine namespace and every composed record file, but the plugin reads only the terrain records and the save's autoplayer mark, so casts fill in the rest. Checking that an uninstalled mod declines should not need a booted game.
+ * These tests build the mod object by hand. The game passes every domain; Squire reads the terrain records, its stored settings and the world, and answers an input wait, so a fake that refuses what it is not asked for fills in the rest. Checking that an uninstalled mod declines should not need a booted game.
  */
 
-import { describe, expect, it } from "vitest";
-import type * as Core from "@rpgm-tools/neo-angband-core";
+import { afterEach, describe, expect, it } from "vitest";
+import type { Api2ControllerContext, Api2InputState, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import plugin from "./plugin.js";
-import { ERRAND_TEXT } from "./src/errands/text.js";
 
 const NOSCORE_BORG = 0x0020;
+
+const ok = <T,>(value: T) => Promise.resolve({ ok: true as const, value });
+const refused = () => Promise.resolve({ ok: false as const, reason: "unavailable" as const, message: "no game" });
 
 /** Three terrain records, in the shape the game composes them. */
 function terrain(): unknown[] {
@@ -21,83 +23,119 @@ function terrain(): unknown[] {
 }
 
 interface Built {
-  ctx: Parameters<typeof plugin.controller>[0];
+  mod: ModApi2;
   logged: string[];
+  registered: string[];
+  submitted: unknown[];
 }
 
-function context(options: { noscore?: number; withRecords?: boolean } = {}): Built {
+function build(options: { withRecords?: boolean; flags?: Record<string, boolean>; input?: Api2InputState } = {}): Built {
   const logged: string[] = [];
-  const records = options.withRecords === false ? {} : { terrain: terrain() };
-  return {
-    logged,
-    ctx: {
-      flags: {},
-      core: {} as unknown as typeof Core,
+  const registered: string[] = [];
+  const submitted: unknown[] = [];
+  const mod = {
+    meta: {
+      id: "squire",
+      flags: options.flags ?? {},
+      controllerArmed: false,
       log: (message: string) => logged.push(message),
-      composedRecords: records as unknown as NonNullable<Parameters<typeof plugin.controller>[0]["composedRecords"]>,
-      state: { actor: { player: { noscore: options.noscore ?? 0 } } } as unknown as { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } },
+      settings: () => ok({}),
     },
-  };
+    view: {
+      character: refused,
+      options: refused,
+      player: refused,
+      world: refused,
+      input: () => (options.input === undefined ? refused() : ok(options.input)),
+    },
+    content: { records: (file: string) => (file === "terrain" && options.withRecords !== false ? ok(terrain()) : refused()) },
+    events: { on: () => ok({ id: "s" }), off: () => ok(null) },
+    store: {
+      prefs: { get: () => ok(null), set: () => ok(null) },
+      character: { get: () => ok(null), set: () => ok(null) },
+    },
+    act: {
+      submit: (_token: string, intent: unknown) => { submitted.push(intent); return ok(null); },
+      answer: () => ok(null),
+      controller: { setStatus: () => ok(null), markNondeterministic: () => ok(null), release: () => ok(null) },
+    },
+    ui: { commands: { register: (code: string) => { registered.push(code); return ok(null); } } },
+    presentation: { panels: { openPanel: () => { throw new Error("no document"); } } },
+  } as unknown as ModApi2;
+  return { mod, logged, registered, submitted };
+}
+
+function context(overrides: Partial<Api2ControllerContext> & { noscore?: number } = {}): Api2ControllerContext {
+  const { noscore, ...rest } = overrides;
+  return { id: "squire", flags: {}, armed: false, engine: { state: { actor: { player: { noscore: noscore ?? 0 } } } }, ...rest } as unknown as Api2ControllerContext;
+}
+
+let started: Built | undefined;
+afterEach(() => {
+  plugin.stop?.();
+  started = undefined;
+});
+
+async function start(options: Parameters<typeof build>[0] = {}): Promise<Built> {
+  started = build(options);
+  await plugin.start?.(started.mod);
+  return started;
 }
 
 describe("the Squire plugin", () => {
   it("declines the keyboard on a character that has never handed it over", () => {
-    const { ctx, logged } = context({ noscore: 0 });
-    expect(plugin.controller(ctx)).toBeUndefined();
-    expect(logged).toHaveLength(0);
+    expect(plugin.armed?.(context({ noscore: 0 }))).toBe(false);
   });
 
-  it("offers a controller once the character carries the autoplayer mark", () => {
-    const { ctx } = context({ noscore: NOSCORE_BORG });
-    const installed = plugin.controller(ctx);
-    expect(installed).toMatchObject({ controller: expect.any(Function), onDeath: "end" });
+  it("offers to play once the character carries the autoplayer mark", () => {
+    expect(plugin.armed?.(context({ noscore: NOSCORE_BORG }))).toBe(true);
   });
 
-  it("offers a controller to a new character started with Squire armed", () => {
-    const { ctx } = context({ noscore: 0 });
-    expect(plugin.controller({ ...ctx, controllerArmed: true })).toMatchObject({ controller: expect.any(Function) });
-    expect(plugin.controller({ ...ctx, controllerArmed: false })).toBeUndefined();
+  it("offers to play on a new character started with Squire armed", () => {
+    expect(plugin.armed?.(context({ armed: true }))).toBe(true);
+    expect(plugin.armed?.(context({ armed: false }))).toBe(false);
   });
 
-  it("answers keys while it drives: the errand key opens the menu and any other key keeps playing", () => {
-    const { ctx } = context({ noscore: NOSCORE_BORG });
-    const installed = plugin.controller(ctx);
-    if (installed === undefined || typeof installed === "function") throw new Error("expected an install with a key handler");
-    const key = (k: string) => installed.onKey({ key: k, ctrl: false, alt: false, shift: false, meta: false, repeat: false });
-    expect(key("x")).toEqual({ kind: "keep", message: ERRAND_TEXT.notice("&") });
-    expect(key("&")).toEqual({ kind: "keep", message: ERRAND_TEXT.menuHint("&") });
+  it("is an API 2 definition that declares no hooks, because it changes no rule", () => {
+    expect(plugin.api).toBe(">=2.0.0 <3.0.0");
+    expect(Object.keys(plugin).sort()).toEqual(["api", "armed", "birth", "controller", "prefs", "start", "stop"]);
   });
 
-  it("declares no hooks, because it changes no rule", () => {
-    /* register adds the panel and listens to events, and birth only accepts a
-     * roll-on creation Squire asked for; neither overrides a rule. */
-    expect(plugin.api).toBe(1);
-    expect(Object.keys(plugin).sort()).toEqual(["api", "birth", "controller", "register", "uninstall"]);
-  });
-
-  it("says how much terrain it can read, so a diminished run is visible", () => {
-    const { ctx, logged } = context({ noscore: NOSCORE_BORG });
-    plugin.controller(ctx);
+  it("says how much terrain it can read, so a diminished run is visible", async () => {
+    const { logged } = await start();
     expect(logged.join("\n")).toContain("3 terrain features");
   });
 
-  it("keeps playing without terrain records, and says what it lost", () => {
-    const { ctx, logged } = context({ noscore: NOSCORE_BORG, withRecords: false });
-    const installed = plugin.controller(ctx);
-    expect(installed).toMatchObject({ controller: expect.any(Function), onDeath: "end" });
+  it("keeps running without terrain records, and says what it lost", async () => {
+    const { logged } = await start({ withRecords: false });
     expect(logged.join("\n")).toContain("will not take stairs or open doors");
   });
 
-  it("reports settings that are not on their stock value", () => {
-    const { ctx, logged } = context({ noscore: NOSCORE_BORG });
-    const withFlag = { ...ctx, flags: { "squire.errandCampaign": true } };
-    plugin.controller(withFlag);
+  it("reports settings that are not on their stock value", async () => {
+    const { logged } = await start({ flags: { "squire.errandCampaign": true } });
     expect(logged.join("\n")).toContain("errandCampaign=true");
   });
 
-  it("reports a stock configuration as stock", () => {
-    const { ctx, logged } = context({ noscore: NOSCORE_BORG });
-    plugin.controller(ctx);
+  it("reports a stock configuration as stock", async () => {
+    const { logged } = await start();
     expect(logged.join("\n")).toContain("stock settings");
+  });
+
+  it("registers its order command", async () => {
+    const { registered } = await start();
+    expect(registered).toContain("squire:order");
+  });
+
+  it("submits nothing at an input wait when the game shows no character", async () => {
+    const input = { token: "t", phase: "play", prompt: null, driver: null } as unknown as Api2InputState;
+    const { mod, submitted } = await start({ input });
+    await plugin.controller?.(mod, input);
+    expect(submitted).toEqual([]);
+  });
+
+  it("does nothing at an input wait before it has started", async () => {
+    const { mod, submitted } = build();
+    await plugin.controller?.(mod, { token: "t", phase: "play", prompt: null, driver: null } as unknown as Api2InputState);
+    expect(submitted).toEqual([]);
   });
 });

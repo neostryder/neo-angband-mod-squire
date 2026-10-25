@@ -1349,11 +1349,11 @@ function createBrain(deps) {
     deps.status("stopped", message);
     return null;
   }
-  function failed(failure, view) {
-    const wait = Math.min(MAX_RETRY_AFTER_MS, failure.retryAfterMs ?? BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
+  function failed(failure2, view) {
+    const wait = Math.min(MAX_RETRY_AFTER_MS, failure2.retryAfterMs ?? BACKOFF_MS[Math.min(attempt, BACKOFF_MS.length - 1)]);
     attempt += 1;
     retryAt = deps.now() + wait;
-    useRules(failure.message);
+    useRules(failure2.message);
     state = { kind: "idle" };
     startAsking(view);
     return null;
@@ -2265,7 +2265,7 @@ function attackOutcome(view, target, kind, source = null) {
   const player = view.player();
   let damage = null;
   let minimum = null;
-  let failure = 0.5;
+  let failure2 = 0.5;
   let accuracyKnown = false;
   const text = source === null ? "" : "sidx" in source ? view.spellInfo?.(source.sidx)?.description ?? "" : view.inspectItem?.(source.handle)?.text ?? "";
   if (kind === "fight") {
@@ -2278,9 +2278,9 @@ function attackOutcome(view, target, kind, source = null) {
     }
   } else if (kind === "cast_attack" && source !== null && "sidx" in source) {
     const info = view.spellInfo?.(source.sidx);
-    failure = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
+    failure2 = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
     accuracyKnown = true;
-    if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure = 1;
+    if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure2 = 1;
     damage = describedDamage(text, target);
     const element = ATTACK_ELEMENTS.find(([pattern]) => pattern.test(source.name));
     if (element !== void 0 && !ATTACK_ELEMENTS.some(([pattern]) => pattern.test(text)) && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
@@ -2288,7 +2288,7 @@ function attackOutcome(view, target, kind, source = null) {
     if (dice !== null && damage !== null) minimum = Math.min(damage, Number(dice[1]));
     if (/(?:ball|orb|cloud|storm)/i.test(source.name) && view.blastArea !== void 0 && view.projectionPath !== void 0) {
       const aim = bestBallAim(view, view.monsters().filter((monster) => monster.visible && !monster.asleep), target);
-      if (aim === null) failure = 1;
+      if (aim === null) failure2 = 1;
       else if (!view.blastArea(aim, 2).grids.some((grid) => grid.x === target.grid.x && grid.y === target.grid.y)) damage = minimum = null;
     }
   } else if (source !== null && "handle" in source) {
@@ -2309,7 +2309,7 @@ function attackOutcome(view, target, kind, source = null) {
     }
     const chance = /(?:chance of (?:hitting|success)|(?:hit|success) (?:chance|rate))[^\d]*([\d.]+)%/i.exec(text);
     if (chance !== null) {
-      failure = 1 - Number(chance[1]) / 100;
+      failure2 = 1 - Number(chance[1]) / 100;
       accuracyKnown = true;
     }
     const element = ATTACK_ELEMENTS.find(([pattern]) => pattern.test(source.name));
@@ -2321,7 +2321,7 @@ function attackOutcome(view, target, kind, source = null) {
     source,
     damage,
     minimum,
-    failure,
+    failure: failure2,
     accuracyKnown,
     kill: killingDamage !== null && target.hp > 0 && killingDamage >= target.hp,
     manaReserve: escapeMana(view),
@@ -2986,8 +2986,8 @@ function blend(best, inCharacter, strength01) {
 }
 function jitteredStrength(persona, rng) {
   const draw = rng();
-  const unit6 = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
-  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit6 * 2 - 1) * persona.sliders.volatility / 400));
+  const unit7 = Number.isFinite(draw) ? Math.max(0, Math.min(1, draw)) : 0.5;
+  return Math.max(0, Math.min(1, persona.sliders.strength / 100 + (unit7 * 2 - 1) * persona.sliders.volatility / 400));
 }
 function riskCeiling(persona) {
   return 0.6 - persona.sliders.selfpreservation * 5e-3;
@@ -5948,14 +5948,14 @@ function joinFacts(facts) {
   if (facts.length <= 1) return facts.join("");
   return `${facts.slice(0, -1).join(", ")} and ${facts.at(-1) ?? ""}`;
 }
-function createManual(birthOptions2 = () => []) {
+function createManual(birthOptions = () => []) {
   let key2 = "";
   let entries = {};
   return (view) => {
     const player = view.player();
     let options = [];
     try {
-      options = birthOptions2();
+      options = birthOptions();
     } catch {
     }
     const next = JSON.stringify([player.race, player.cls, player.classFlags, options.map((option) => [option.name, option.value])]);
@@ -9622,7 +9622,7 @@ function createErrandDriver(deps) {
   let mode = "free";
   let menu = false;
   let suggestedIds = [];
-  let running = null;
+  let running2 = null;
   let safety = null;
   let safetyDecisions = 0;
   let safetyWaits = 0;
@@ -9682,7 +9682,7 @@ function createErrandDriver(deps) {
     closeMenu();
     safety = null;
     ending = null;
-    running = { id: entry.id, label: entry.label, mission: null, progress: null, startDepth: lastView?.player().depth ?? 0, decisions: 0 };
+    running2 = { id: entry.id, label: entry.label, mission: null, progress: null, startDepth: lastView?.player().depth ?? 0, decisions: 0 };
     mode = "errand";
     deps.status(ERRAND_TEXT.running(entry.label));
     log(`errand started: ${entry.label}${cfg.personaErrands ? ", coloured by the persona" : ""}`);
@@ -9691,11 +9691,11 @@ function createErrandDriver(deps) {
     return { view, act, terrain, cfg, progress, log };
   }
   function end(stop2, view, act) {
-    const label = running?.label ?? "";
+    const label = running2?.label ?? "";
     const text = stop2.reason === "done" ? ERRAND_TEXT.done(label, stop2.detail) : ERRAND_TEXT.stopped(label, stop2.detail);
     log(`errand ended (${stop2.reason}): ${stop2.detail}`);
     deps.status(ERRAND_TEXT.endedLabel, text);
-    running = null;
+    running2 = null;
     safety = null;
     mode = "ended";
     ending = { text, shopLeft: false, released: false };
@@ -9714,7 +9714,7 @@ function createErrandDriver(deps) {
     return null;
   }
   function errandStep(view, act) {
-    const job = running;
+    const job = running2;
     if (job === null) return null;
     const player = view.player();
     if (job.mission === null || job.progress === null) {
@@ -9772,8 +9772,8 @@ function createErrandDriver(deps) {
   function noteHandBack(source) {
     epoch += 1;
     closeMenu();
-    if (running !== null) log(`errand abandoned: ${running.label}`);
-    running = null;
+    if (running2 !== null) log(`errand abandoned: ${running2.label}`);
+    running2 = null;
     safety = null;
     log(`Squire handed the keyboard back (${source})`);
     deps.onHandBack?.(source);
@@ -9797,7 +9797,7 @@ function createErrandDriver(deps) {
     epoch: () => epoch,
     mode: () => mode,
     menuOpen: () => menu,
-    errand: () => running?.id ?? null,
+    errand: () => running2?.id ?? null,
     suggested: () => suggestedIds,
     handBack(source) {
       noteHandBack(source);
@@ -10983,7 +10983,7 @@ function createStrategy(deps) {
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
   }
-  async function ask2(request2) {
+  async function ask3(request2) {
     const backend = deps.backend();
     if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
     if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
@@ -11021,7 +11021,7 @@ function createStrategy(deps) {
     if (args.longDue !== null) {
       let longSent;
       try {
-        longSent = await ask2(longGoalRequest(args.view, args.pursuits));
+        longSent = await ask3(longGoalRequest(args.view, args.pursuits));
       } finally {
         if (args.mine === generation) longAsking = false;
       }
@@ -11040,7 +11040,7 @@ function createStrategy(deps) {
     if (!ranks || args.mine !== generation) return;
     const open = openAims(args.candidates, blocks, args.turn);
     const askAims = open.filter((aim) => aim.kind !== "win").length >= 2;
-    const midSent = args.midTrigger !== null && askAims ? await ask2(midGoalRequest(args.view, open, pursuitsNow())) : null;
+    const midSent = args.midTrigger !== null && askAims ? await ask3(midGoalRequest(args.view, open, pursuitsNow())) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
     const scored = args.midTrigger === null ? args.candidates : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
@@ -11053,7 +11053,7 @@ function createStrategy(deps) {
       nearReason = "because the mid-term goal changed";
     }
     const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
-    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask2(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask3(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
     if (args.mine !== generation || seq !== latest) return;
     if (args.midTrigger !== null && args.view.player().depth === args.depth) judge2(args.depth, args.judgments);
     if (args.midTrigger !== null) {
@@ -11110,7 +11110,7 @@ function createStrategy(deps) {
     const run = (async () => {
       let sent;
       try {
-        sent = await ask2(request2);
+        sent = await ask3(request2);
       } finally {
         if (mine === generation) reviseAsking = false;
       }
@@ -12267,11 +12267,11 @@ function createChannelPoller(deps) {
   let inFlight = null;
   let generation = 0;
   let failing = false;
-  function failed(url, problem) {
+  function failed(url, problem2) {
     dueAt = deps.now() + CHANNEL_RETRY_MS;
     if (failing) return;
     failing = true;
-    deps.log(`Squire couldn't collect viewer orders from ${url}: ${problem}. It will try again in ${String(CHANNEL_RETRY_MS / 1e3)} seconds.`);
+    deps.log(`Squire couldn't collect viewer orders from ${url}: ${problem2}. It will try again in ${String(CHANNEL_RETRY_MS / 1e3)} seconds.`);
   }
   async function collect(net, url, mine) {
     const stale = () => mine !== generation || deps.url().trim() !== url;
@@ -13433,12 +13433,12 @@ function buildBatches(input, level) {
     mod_version: input.modVersion,
     game_version: input.gameVersion
   };
-  const running = { ...summary, outcome: { ...summary.outcome, ended: false } };
+  const running2 = { ...summary, outcome: { ...summary.outcome, ended: false } };
   const batches = [];
   const make = (records, seq) => ({
     ...base,
     seq,
-    summary: running,
+    summary: running2,
     ...level === "summary" ? {} : { decisions: records }
   });
   let current2 = make([], input.seq);
@@ -13480,7 +13480,7 @@ function buildBatches(input, level) {
     if (bytes(batches[last]) > LIMITS[level]) {
       const final = { ...make([], input.seq + batches.length), summary };
       if (bytes(final) > LIMITS[level]) throw new RangeError("The final summary exceeds the batch byte limit.");
-      batches[last] = { ...batches[last], summary: running };
+      batches[last] = { ...batches[last], summary: running2 };
       batches.push(final);
     }
   }
@@ -14468,112 +14468,6 @@ function createShadow(options) {
   };
 }
 
-// src/terrain.ts
-var SHOP_NAMES = {
-  STORE_GENERAL: "General Store",
-  STORE_ALCHEMY: "Alchemy Shop",
-  STORE_WEAPON: "Weapon Smiths",
-  STORE_ARMOR: "Armoury",
-  STORE_BOOK: "Bookseller",
-  STORE_MAGIC: "Magic Shop",
-  STORE_BLACK: "Black Market",
-  HOME: "Home"
-};
-function readTerrain(features, tf) {
-  const down = /* @__PURE__ */ new Set();
-  const up = /* @__PURE__ */ new Set();
-  const closed = /* @__PURE__ */ new Set();
-  const open = /* @__PURE__ */ new Set();
-  const shops = /* @__PURE__ */ new Set();
-  const shopNames = /* @__PURE__ */ new Map();
-  const harmful = /* @__PURE__ */ new Set();
-  const diggable = /* @__PURE__ */ new Set();
-  for (const feature of features) {
-    const has = (flag) => flag > 0 && feature.flags.has(flag);
-    if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
-    if (has(tf.UPSTAIR)) up.add(feature.fidx);
-    if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
-    if (tf.CLOSABLE !== void 0 && has(tf.CLOSABLE)) open.add(feature.fidx);
-    if (has(tf.SHOP)) {
-      shops.add(feature.fidx);
-      const name = SHOP_NAMES[feature.code];
-      if (name !== void 0) shopNames.set(feature.fidx, name);
-    }
-    if (tf.ROCK !== void 0 && has(tf.ROCK) && !(tf.PERMANENT !== void 0 && has(tf.PERMANENT))) diggable.add(feature.fidx);
-    if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
-  }
-  return {
-    isDownStair: (feat) => down.has(feat),
-    isUpStair: (feat) => up.has(feat),
-    isClosedDoor: (feat) => closed.has(feat),
-    isOpenDoor: (feat) => open.has(feat),
-    isShopEntrance: (feat) => shops.has(feat),
-    shopName: (feat) => shopNames.get(feat) ?? null,
-    isHarmful: (feat) => harmful.has(feat),
-    isDiggable: (feat) => diggable.has(feat),
-    size: features.length
-  };
-}
-function recordFlags(value) {
-  const lines2 = Array.isArray(value) ? value : value === void 0 ? [] : [value];
-  const names = /* @__PURE__ */ new Set();
-  for (const line of lines2) {
-    if (typeof line !== "string") continue;
-    for (const name of line.split("|")) {
-      const trimmed = name.trim();
-      if (trimmed !== "") names.add(trimmed);
-    }
-  }
-  return names;
-}
-function terrainRecords(records) {
-  return records.map((record6, fidx) => ({ fidx, code: typeof record6["code"] === "string" ? record6["code"] : "", flags: recordFlags(record6["flags"]) }));
-}
-var FLAG_NUMBERS = { PASSABLE: 1, DOWNSTAIR: 2, UPSTAIR: 3, DOOR_CLOSED: 4, CLOSABLE: 5, SHOP: 6, FIERY: 7, ROCK: 8, PERMANENT: 9 };
-var FLAG_NAMES = new Map(Object.entries(FLAG_NUMBERS).map(([name, n]) => [n, name]));
-function terrainFromRecords(records) {
-  if (records === null || records === void 0) return noTerrain();
-  return readTerrain(records.map((record6) => ({ fidx: record6.fidx, code: record6.code, flags: { has: (n) => record6.flags.has(FLAG_NAMES.get(n) ?? "") } })), FLAG_NUMBERS);
-}
-function noTerrain() {
-  return {
-    isDownStair: () => false,
-    isUpStair: () => false,
-    isClosedDoor: () => false,
-    isShopEntrance: () => false,
-    shopName: () => null,
-    isHarmful: () => false,
-    isDiggable: () => false,
-    size: 0
-  };
-}
-
-// src/host-adapter.ts
-function viewWorld(host) {
-  const make = host.core?.createAgentView;
-  if (make === void 0 || host.state === void 0) return null;
-  const base = make(host.state);
-  const snap = host.snapshot?.();
-  const inventory = [...snap?.core.inventory ?? []];
-  const equipment = [...snap?.core.equipment ?? []];
-  return { ...base, inventory: () => inventory, equipment: () => equipment };
-}
-function viewInput(host) {
-  return host.snapshot?.() ?? null;
-}
-function contentTerrain(host) {
-  const records = host.composedRecords?.["terrain"];
-  return terrainFromRecords(records === void 0 ? null : terrainRecords(records));
-}
-var NOSCORE_BORG = 32;
-function autoplayedBefore(host) {
-  const noscore = host.state?.actor?.player?.noscore ?? 0;
-  return (noscore & NOSCORE_BORG) !== 0;
-}
-function birthOptions(host) {
-  return host.options?.get().entries.filter((entry) => entry.page === "birth") ?? [];
-}
-
 // src/energy.ts
 var EXTRACT_ENERGY = [
   /* Slow */
@@ -14842,7 +14736,9 @@ function readCharacter(stored) {
   };
 }
 function commandKey(command) {
-  return JSON.stringify([command.code, command.dir ?? null, command.args ?? null]);
+  const args = command.args !== null && typeof command.args === "object" ? command.args : {};
+  const pick2 = (name) => typeof args[name] === "number" ? args[name] : null;
+  return JSON.stringify([command.code, command.dir ?? null, pick2("handle"), pick2("floor"), pick2("spell"), pick2("index")]);
 }
 function messagesOnce(view) {
   const messages = view.messages();
@@ -15534,7 +15430,7 @@ function createRuntime(host, options = {}) {
       }),
       tally,
       send: (request2) => self.send(request2),
-      token: () => viewInput(host)?.token ?? null,
+      token: () => host.snapshot?.()?.token ?? null,
       now,
       log: host.log,
       status,
@@ -15581,11 +15477,11 @@ function createRuntime(host, options = {}) {
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
-        birthOptions: () => birthOptions(host)
+        birthOptions: () => host.options?.get().entries ?? []
       }),
       tally,
       send: (request2) => self.send(request2),
-      token: () => viewInput(host)?.token ?? null,
+      token: () => host.snapshot?.()?.token ?? null,
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === void 0 ? { label } : { label, reason }),
@@ -17078,14 +16974,15 @@ function ghostAfterCommand(hint, previousGoal, knight) {
 // src/attach.ts
 var APPRENTICE_KEY = "squire/apprentice";
 var DEMONSTRATION_DECISIONS = 5;
-function attachSquire(ctx, rt) {
+function attachSquire(ctx, rt, terrain) {
   function viewNow() {
-    return viewWorld(ctx);
+    return ctx.viewNow();
   }
-  ctx.events?.on("combat-outcome", (_name, p) => {
-    if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
+  ctx.events?.on("combat-outcome", (p) => {
+    if (p.attacker !== "player" || !p.died || typeof p.target !== "object") return;
+    const target = p.target.monster;
     const view = viewNow();
-    const monster = view?.monsters().find((m) => m.id === p.target);
+    const monster = view?.monsters().find((m) => m.id === target);
     if (monster !== void 0) rt.recordKill(monster.race, monster.raceFlags.includes("UNIQUE"), view ?? null);
   });
   let apprentice = emptyApprentice();
@@ -17131,8 +17028,7 @@ function attachSquire(ctx, rt) {
     void rt.store().set(APPRENTICE_KEY, next);
     for (const l of listeners) l(next);
   }
-  const terrain = contentTerrain(ctx);
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags ?? {}, ctx.settings), terrain, log: () => {
   }, speedEnergy: turnEnergy });
   function record6(squire, knight, view, dangerousNear, serial, confidence) {
     const p = view.player();
@@ -17156,11 +17052,14 @@ function attachSquire(ctx, rt) {
       save({ ...apprentice, ghostHint: ghostHint(squire, knight, view), ghostGoal: squire === knight ? null : squire });
     }
   }
-  ctx.events?.on("player-command", (_name, payload) => {
+  ctx.events?.on("player-command", (payload) => {
     exam.end();
     if (rt.takeOwnCommand(payload, Date.now())) return;
-    const view = viewNow();
-    if (view === null) return;
+    void ctx.readWorld().then((view) => {
+      if (view !== null) learnFrom(payload, view);
+    });
+  });
+  function learnFrom(payload, view) {
     const serial = ++decisionSerial;
     rt.observe(view, terrain);
     rt.recordCommand(payload, view);
@@ -17222,7 +17121,7 @@ function attachSquire(ctx, rt) {
         record6(offline, knight, view, dangerousNear, serial);
       }
     });
-  });
+  }
   const lessons = {
     apprentice: () => apprentice,
     onChange(listener) {
@@ -17291,14 +17190,13 @@ var ORDER_COMMAND = "squire:order";
 var ORDER_VERB = "give an order";
 var ORDER_KEYS = ["O", "N"];
 var ORDER_PANEL_LABEL = "Give Squire an order";
-function registerOrderCommand(host, ctx, rt) {
-  const commands = host?.commands;
-  const openPanel = ctx.ui?.openPanel;
-  if (commands === void 0 || openPanel === void 0) return null;
+async function registerOrderCommand(ctx, rt) {
+  const { commands, panels } = ctx;
+  if (commands === void 0 || panels === void 0) return null;
   let shown = null;
   function prompt() {
     if (shown?.open === true) return;
-    const panel = openPanel.call(ctx.ui, { id: "order", modal: true, label: ORDER_PANEL_LABEL });
+    const panel = panels.openPanel({ id: "order", modal: true, label: ORDER_PANEL_LABEL });
     const body2 = h("div", { class: "body" });
     panel.root.append(h("style", {}, STYLE), h("div", { class: "squire" }, body2));
     const cleanup = mountOrders(body2, rt, "hotkey");
@@ -17308,22 +17206,25 @@ function registerOrderCommand(host, ctx, rt) {
       if (shown === panel) shown = null;
     });
   }
-  commands.register(ORDER_COMMAND, () => {
+  const registered = await commands.register(ORDER_COMMAND, ORDER_VERB, () => {
     try {
       prompt();
     } catch (error) {
       ctx.log?.(`Squire couldn't open the order prompt: ${String(error)}`);
     }
-    return 0;
   });
-  commands.setVerb(ORDER_COMMAND, ORDER_VERB);
-  const keymaps = ctx.keymaps;
-  if (keymaps === void 0) {
+  if (!registered.ok) {
+    ctx.log?.(`Squire's order command isn't registered: ${registered.message}`);
+    return null;
+  }
+  const keys = ctx.keys;
+  if (keys === void 0) {
     ctx.log?.("Squire's order key isn't bound, because this game doesn't let mods bind keys.");
     return null;
   }
   for (const key2 of ORDER_KEYS) {
-    if (keymaps.isBindableTriggerKey(key2) && keymaps.bind(key2, ORDER_COMMAND)) {
+    const bound = await keys.set(key2, ORDER_COMMAND);
+    if (bound.ok) {
       ctx.log?.(`Squire's order key is ${key2}.`);
       return key2;
     }
@@ -17346,6 +17247,10 @@ var COPY_PROMPT = "Copy which profile? Its options, mods and mod settings come a
 var FALLBACK_HERE = "Start the character in this profile";
 var GIVE_UP = "Back to the title";
 var ARMED = { kind: "create-character", armController: true };
+async function ask2(title, label, choices) {
+  const answer2 = await title.choose(label, choices);
+  return answer2.ok ? answer2.value : null;
+}
 async function remembered2(store) {
   const saved = await store.get(PROFILES_KEY).catch(() => void 0);
   return Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : [];
@@ -17361,22 +17266,22 @@ function registerSquireTitle(ctx, store) {
   if (title === void 0 || profiles === void 0) return false;
   const self = ctx.id ?? "squire";
   async function here() {
-    const active2 = profiles.list();
+    const active2 = await profiles.list();
     const id = active2.ok ? active2.value.find((profile) => profile.active)?.id ?? null : null;
-    const started = profiles.switchTo(id, ARMED);
-    if (!started.ok) await title.choose(`Squire could not start the character: ${started.reason}`, [GIVE_UP]);
+    const started = await profiles.switchTo(id, ARMED);
+    if (!started.ok) await ask2(title, `Squire could not start the character: ${started.message}`, [GIVE_UP]);
   }
   async function refused(reason) {
-    const answer2 = await title.choose(`Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
+    const answer2 = await ask2(title, `Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
     if (answer2 === 0) await here();
   }
   async function separate() {
-    const listed = profiles.list();
-    if (!listed.ok) return refused(listed.reason);
+    const listed = await profiles.list();
+    if (!listed.ok) return refused(listed.message);
     const all = listed.value;
     const ours = new Set(await remembered2(store));
     const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
-    const which = await title.choose(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
+    const which = await ask2(title, WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
     if (which === null) return;
     let target;
     if (which >= 2) {
@@ -17386,82 +17291,778 @@ function registerSquireTitle(ctx, store) {
     } else {
       let copyFrom;
       if (which === 1) {
-        const source = await title.choose(COPY_PROMPT, all.map((profile) => profile.name));
+        const source = await ask2(title, COPY_PROMPT, all.map((profile) => profile.name));
         if (source === null) return;
         const picked2 = all[source];
         if (picked2 === void 0) return;
         copyFrom = picked2.id;
       }
-      const created = profiles.create(freshName(all.map((profile) => profile.name)), copyFrom === void 0 ? {} : { copyFrom });
-      if (!created.ok) return refused(created.reason);
+      const created = await profiles.create(freshName(all.map((profile) => profile.name)), copyFrom);
+      if (!created.ok) return refused(created.message);
       target = created.value;
       if (target.id === null) return refused("the new profile has no id");
       if (copyFrom === void 0) {
-        const enabled = profiles.setEnabledMods(target.id, [self]);
-        if (!enabled.ok) return refused(enabled.reason);
+        const enabled = await profiles.setEnabledMods(target.id, [self]);
+        if (!enabled.ok) return refused(enabled.message);
       }
       await store.set(PROFILES_KEY, [...ours, target.id]).catch(() => void 0);
     }
-    const switched = profiles.switchTo(target.id, ARMED);
-    if (!switched.ok) return refused(switched.reason);
+    const switched = await profiles.switchTo(target.id, ARMED);
+    if (!switched.ok) return refused(switched.message);
   }
-  title.registerRow({
+  void title.registerRow({
+    id: "squire:new-character",
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
-      const where2 = await title.choose(WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
+      const where2 = await ask2(title, WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
       if (where2 === 0) await separate();
       else if (where2 === 1) await here();
     }
-  });
+  }).catch(() => void 0);
   return true;
 }
 
+// src/terrain.ts
+var SHOP_NAMES = {
+  STORE_GENERAL: "General Store",
+  STORE_ALCHEMY: "Alchemy Shop",
+  STORE_WEAPON: "Weapon Smiths",
+  STORE_ARMOR: "Armoury",
+  STORE_BOOK: "Bookseller",
+  STORE_MAGIC: "Magic Shop",
+  STORE_BLACK: "Black Market",
+  HOME: "Home"
+};
+function readTerrain(features, tf) {
+  const down = /* @__PURE__ */ new Set();
+  const up = /* @__PURE__ */ new Set();
+  const closed = /* @__PURE__ */ new Set();
+  const open = /* @__PURE__ */ new Set();
+  const shops = /* @__PURE__ */ new Set();
+  const shopNames = /* @__PURE__ */ new Map();
+  const harmful = /* @__PURE__ */ new Set();
+  const diggable = /* @__PURE__ */ new Set();
+  for (const feature of features) {
+    const has = (flag) => flag > 0 && feature.flags.has(flag);
+    if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
+    if (has(tf.UPSTAIR)) up.add(feature.fidx);
+    if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
+    if (tf.CLOSABLE !== void 0 && has(tf.CLOSABLE)) open.add(feature.fidx);
+    if (has(tf.SHOP)) {
+      shops.add(feature.fidx);
+      const name = SHOP_NAMES[feature.code];
+      if (name !== void 0) shopNames.set(feature.fidx, name);
+    }
+    if (tf.ROCK !== void 0 && has(tf.ROCK) && !(tf.PERMANENT !== void 0 && has(tf.PERMANENT))) diggable.add(feature.fidx);
+    if (has(tf.PASSABLE) && has(tf.FIERY)) harmful.add(feature.fidx);
+  }
+  return {
+    isDownStair: (feat) => down.has(feat),
+    isUpStair: (feat) => up.has(feat),
+    isClosedDoor: (feat) => closed.has(feat),
+    isOpenDoor: (feat) => open.has(feat),
+    isShopEntrance: (feat) => shops.has(feat),
+    shopName: (feat) => shopNames.get(feat) ?? null,
+    isHarmful: (feat) => harmful.has(feat),
+    isDiggable: (feat) => diggable.has(feat),
+    size: features.length
+  };
+}
+function recordFlags(value) {
+  const lines2 = Array.isArray(value) ? value : value === void 0 ? [] : [value];
+  const names = /* @__PURE__ */ new Set();
+  for (const line of lines2) {
+    if (typeof line !== "string") continue;
+    for (const name of line.split("|")) {
+      const trimmed = name.trim();
+      if (trimmed !== "") names.add(trimmed);
+    }
+  }
+  return names;
+}
+function terrainRecords(records) {
+  return records.map((record6, fidx) => ({ fidx, code: typeof record6["code"] === "string" ? record6["code"] : "", flags: recordFlags(record6["flags"]) }));
+}
+var FLAG_NUMBERS = { PASSABLE: 1, DOWNSTAIR: 2, UPSTAIR: 3, DOOR_CLOSED: 4, CLOSABLE: 5, SHOP: 6, FIERY: 7, ROCK: 8, PERMANENT: 9 };
+var FLAG_NAMES = new Map(Object.entries(FLAG_NUMBERS).map(([name, n]) => [n, name]));
+function terrainFromRecords(records) {
+  if (records === null || records === void 0) return noTerrain();
+  return readTerrain(records.map((record6) => ({ fidx: record6.fidx, code: record6.code, flags: { has: (n) => record6.flags.has(FLAG_NAMES.get(n) ?? "") } })), FLAG_NUMBERS);
+}
+function noTerrain() {
+  return {
+    isDownStair: () => false,
+    isUpStair: () => false,
+    isClosedDoor: () => false,
+    isShopEntrance: () => false,
+    shopName: () => null,
+    isHarmful: () => false,
+    isDiggable: () => false,
+    size: 0
+  };
+}
+
+// src/host-adapter-api2.ts
+function writable(value) {
+  return structuredClone(value);
+}
+async function valueOf(call) {
+  const result = await call;
+  return result.ok ? result.value : null;
+}
+async function watchMessages(api) {
+  let batch = [];
+  const subscription = await valueOf(api.events.on("message", (event) => {
+    batch.push(event.text);
+  }));
+  return {
+    drain: () => {
+      const out = batch;
+      batch = [];
+      return out;
+    },
+    stop: async () => {
+      if (subscription !== null) await api.events.off(subscription);
+    }
+  };
+}
+async function terrainRecords2(api) {
+  const records = await valueOf(api.content.records("terrain"));
+  return records === null ? null : terrainRecords(records);
+}
+async function contentTerrain(api) {
+  return terrainFromRecords(await terrainRecords2(api));
+}
+var BAND_SHARE = { unhurt: 1, somewhat: 0.8, wounded: 0.42, badly: 0.17, almost: 0.05 };
+function hitPoints(monster, average) {
+  const maxHp = average !== void 0 && average > 0 ? average : 100;
+  if (monster.health === "unhurt") return { hp: maxHp, maxHp };
+  return { hp: Math.min(maxHp - 1, Math.max(1, Math.round(maxHp * BAND_SHARE[monster.health]))), maxHp };
+}
+function monsterView(monster, average) {
+  const has = (status) => monster.status.includes(status);
+  const view = {
+    id: monster.id,
+    race: monster.race,
+    raceIndex: monster.raceIndex,
+    grid: { x: monster.grid.x, y: monster.grid.y },
+    visible: monster.visible,
+    ...hitPoints(monster, average),
+    speed: monster.raceSpeed,
+    asleep: has("asleep"),
+    afraid: has("afraid"),
+    confused: has("confused"),
+    stunned: has("stunned"),
+    level: monster.raceLevel,
+    poisoned: false,
+    raceFlags: [...monster.knownFlags],
+    unique: monster.unique,
+    questGuardian: monster.questGuardian,
+    finalGuardian: monster.finalGuardian,
+    spellFlags: [...monster.knownSpells],
+    knownSpellFlags: [...monster.knownSpells]
+  };
+  if (monster.raceId !== void 0) view.raceId = monster.raceId;
+  if (monster.glyph !== void 0) view.glyph = monster.glyph;
+  return view;
+}
+async function raceAverages(api) {
+  const records = await valueOf(api.content.records("monster")) ?? [];
+  return (monster) => {
+    const record6 = records[monster.raceIndex];
+    const hp = record6?.["hit-points"];
+    return record6?.["name"] === monster.race && typeof hp === "number" ? hp : void 0;
+  };
+}
+var DEFAULT_CONSTANTS = {
+  moveEnergy: 100,
+  maxSight: 20,
+  maxRange: 20,
+  fleeRange: 5,
+  turnRange: 5,
+  reproMonsterMax: 100,
+  reproMonsterRate: 8,
+  glyphHardness: 550,
+  dayLength: 1e4,
+  foodValue: 100,
+  foodStarve: 100,
+  foodFaint: 400,
+  foodWeak: 800,
+  foodHungry: 1500,
+  allocMonsterChance: 500,
+  storeTurns: 1e3,
+  lifeDrainPercent: 2,
+  levelMonsterMax: 1024,
+  floorSize: 23,
+  maxDepth: 128,
+  stairSkip: 1
+};
+var CONSTANT_SOURCES = {
+  maxSight: ["player", "max-sight"],
+  maxRange: ["player", "max-range"],
+  floorSize: ["carry-cap", "floor-size"],
+  maxDepth: ["world", "max-depth"],
+  stairSkip: ["world", "stair-skip"],
+  dayLength: ["world", "day-length"],
+  foodValue: ["player", "food-value"],
+  allocMonsterChance: ["mon-gen", "chance"],
+  storeTurns: ["store", "turns"],
+  lifeDrainPercent: ["mon-play", "life-drain"],
+  levelMonsterMax: ["level-max", "monsters"]
+};
+async function gameConstants(api) {
+  const records = await valueOf(api.content.records("constants")) ?? [];
+  const lookup = (section, label) => {
+    for (const record6 of records) {
+      const entries = record6[section];
+      if (!Array.isArray(entries)) continue;
+      for (const entry of entries) {
+        if (entry !== null && typeof entry === "object" && !Array.isArray(entry) && entry["label"] === label && typeof entry["value"] === "number") return entry["value"];
+      }
+    }
+    return void 0;
+  };
+  const out = { ...DEFAULT_CONSTANTS };
+  for (const [field, source] of Object.entries(CONSTANT_SOURCES)) {
+    const value = lookup(source[0], source[1]);
+    if (value !== void 0) out[field] = value;
+  }
+  return out;
+}
+var TIMED_RECORDS = {
+  blind: "BLIND",
+  confused: "CONFUSED",
+  afraid: "AFRAID",
+  poisoned: "POISONED",
+  cut: "CUT",
+  stun: "STUN",
+  paralyzed: "PARALYZED",
+  fast: "FAST",
+  sprint: "SPRINT",
+  protEvil: "PROTEVIL",
+  hero: "HERO",
+  shero: "SHERO",
+  shield: "SHIELD",
+  stoneskin: "STONESKIN",
+  blessed: "BLESSED",
+  fastcast: "FASTCAST",
+  resAcid: "OPP_ACID",
+  resElec: "OPP_ELEC",
+  resFire: "OPP_FIRE",
+  resCold: "OPP_COLD",
+  resPois: "OPP_POIS",
+  terror: "TERROR",
+  amnesia: "AMNESIA",
+  image: "IMAGE"
+};
+async function gradeFloors(api) {
+  const records = await valueOf(api.content.records("player_timed")) ?? [];
+  const out = /* @__PURE__ */ new Map();
+  for (const record6 of records) {
+    const name = record6["name"];
+    const grades = record6["grade"];
+    if (typeof name !== "string" || !Array.isArray(grades)) continue;
+    const floors = /* @__PURE__ */ new Map();
+    let floor = 1;
+    for (const grade of grades) {
+      if (grade === null || typeof grade !== "object" || Array.isArray(grade)) continue;
+      const label = grade["name"];
+      if (typeof label === "string" && label !== "" && !floors.has(label)) floors.set(label, floor);
+      if (typeof grade["max"] === "number") floor = grade["max"] + 1;
+    }
+    out.set(name, floors);
+  }
+  return out;
+}
+function playerView(known, floors) {
+  const { status, recall, descent, ...rest } = writable(known);
+  const timed = {};
+  for (const [field, record6] of Object.entries(TIMED_RECORDS)) {
+    const grade = status[field];
+    timed[field] = grade === null ? 0 : floors.get(record6)?.get(grade) ?? 1;
+  }
+  return { ...rest, status: { ...timed, food: status.food * 100, fearful: status.fearful }, recall: recall ? 1 : 0, descent: descent ? 1 : 0 };
+}
+function itemView(item) {
+  const { charging, fuel, unknownRunes: _unknownRunes, ...rest } = writable(item);
+  return { ...rest, timeout: fuel ?? charging };
+}
+function storeItemView(item) {
+  const { index, price } = item;
+  return { ...itemView(item), index, ...price === void 0 ? {} : { price } };
+}
+async function viewWorld(api, reads = {}) {
+  const known = await valueOf(api.view.world());
+  if (known === null || known.player === null) return null;
+  const [terrain, average, constants, floors] = await Promise.all([terrainRecords2(api), raceAverages(api), gameConstants(api), gradeFloors(api)]);
+  const trapKinds = await valueOf(api.content.records("trap")) ?? [];
+  const player = playerView(known.player, floors);
+  const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? average(monster)));
+  const width = known.level?.width ?? 0;
+  const height = known.level?.height ?? 0;
+  const cells = /* @__PURE__ */ new Map();
+  for (const cell3 of known.level?.cells ?? []) cells.set(cell3.y * width + cell3.x, cell3);
+  const passable = (feat) => terrain?.[feat]?.flags.has("PASSABLE") ?? false;
+  const playerTrap = (index) => recordFlags(trapKinds[index]?.["flags"]).has("TRAP");
+  const inventory = (known.inventory ?? []).map(itemView);
+  const equipment = (known.equipment ?? []).map((item) => item === null ? null : itemView(item));
+  const quiver = (known.quiver ?? []).map(itemView);
+  const floorHere = (known.floorHere ?? []).map(itemView);
+  const cell2 = (x, y) => {
+    if (x < 0 || y < 0 || x >= width || y >= height) return null;
+    const occupant = player.grid.x === x && player.grid.y === y ? -1 : monsters.find((m) => m.grid.x === x && m.grid.y === y)?.id ?? 0;
+    const remembered3 = cells.get(y * width + x);
+    if (remembered3 === void 0) {
+      return { x, y, feat: 0, passable: false, inView: false, known: false, monster: occupant, objectCount: 0, knownObjectCount: 0, glow: false, trap: false };
+    }
+    const view2 = {
+      x,
+      y,
+      feat: remembered3.remembered.feat,
+      passable: passable(remembered3.remembered.feat),
+      inView: remembered3.visible,
+      known: true,
+      monster: occupant,
+      objectCount: remembered3.remembered.objects.length,
+      knownObjectCount: remembered3.remembered.objects.length,
+      glow: remembered3.glow,
+      trap: remembered3.remembered.traps.some((trap) => !trap.disabled && playerTrap(trap.index))
+    };
+    if (remembered3.remembered.featCode !== void 0) view2.featCode = remembered3.remembered.featCode;
+    return view2;
+  };
+  const view = {
+    apiVersion: "2.0.0",
+    turn: () => known.turn ?? 0,
+    player: () => writable(player),
+    monsters: () => monsters.map((m) => writable(m)),
+    cell: cell2,
+    mapBounds: () => ({ width, height }),
+    inventory: () => [...inventory],
+    quiver: () => [...quiver],
+    equipment: () => [...equipment],
+    floorItems: (x, y) => {
+      if (x === player.grid.x && y === player.grid.y) return [...floorHere];
+      return (cells.get(y * width + x)?.remembered.items ?? []).map(itemView);
+    },
+    target: () => known.target === null ? null : { midx: known.target.monster ?? 0, grid: { x: known.target.grid.x, y: known.target.grid.y } },
+    messages: () => reads.messages?.drain() ?? [],
+    stores: () => (known.stores ?? []).map((store) => ({ ...writable(store), stock: store.stock.map(storeItemView) })),
+    spellbooks: () => (known.spellbooks ?? []).map((book) => writable(book)),
+    constants: () => ({ ...constants }),
+    inputToken: () => ({ epoch: known.token.epoch, revision: known.token.revision })
+  };
+  return view;
+}
+
+// src/api2/net.ts
+var PLACEHOLDER = /^(.*)\{secret:([^}]+)\}$/s;
+function headersOf(net, headers) {
+  if (headers === void 0) return void 0;
+  const out = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const match = typeof value === "string" ? PLACEHOLDER.exec(value) : null;
+    if (match === null) {
+      out[name] = String(value);
+      continue;
+    }
+    out[name] = net.credential(match[2], match[1] === "" ? void 0 : match[1]);
+  }
+  return out;
+}
+function problem(result) {
+  return result.message;
+}
+function failure(result) {
+  const code = result.reason === "refused" && result.code !== "" ? result.code : "unreachable";
+  return { ok: false, code, problem: problem(result) };
+}
+function netFromApi2(net) {
+  let storage = "os";
+  const note2 = (kept) => {
+    if (kept?.storage !== void 0) storage = kept.storage;
+  };
+  const secrets = {
+    get storage() {
+      return storage === "page" ? "page" : "os";
+    },
+    async set(name, value, options) {
+      const result = await net.credentials.set(name, value, options.hosts);
+      if (!result.ok) return { ok: false, problem: problem(result) };
+      note2(result.value);
+      return { ok: true, storage: result.value.storage };
+    },
+    async fromEnv(name, variables, options) {
+      const result = await net.credentials.fromEnvironment(name, variables, options.hosts);
+      if (!result.ok) return { ok: false, problem: problem(result) };
+      note2(result.value);
+      return { ok: true, storage: result.value.storage };
+    },
+    async has(name) {
+      const result = await net.credentials.status(name);
+      if (!result.ok) return { present: false };
+      note2(result.value);
+      return result.value.storage === void 0 ? { present: result.value.present } : { present: result.value.present, storage: result.value.storage };
+    },
+    async delete(name) {
+      const result = await net.credentials.remove(name);
+      return { ok: result.ok };
+    }
+  };
+  return {
+    get transport() {
+      return storage === "page" ? "page" : "relay";
+    },
+    secrets,
+    async request(request2) {
+      const headers = headersOf(net, request2.headers);
+      const result = await net.request({
+        url: request2.url,
+        ...request2.method === void 0 ? {} : { method: request2.method },
+        ...headers === void 0 ? {} : { headers },
+        ...request2.body === void 0 ? {} : { body: request2.body },
+        ...request2.timeoutMs === void 0 ? {} : { timeoutMs: request2.timeoutMs }
+      });
+      if (!result.ok) return failure(result);
+      return { ok: true, status: result.value.status, headers: result.value.headers, body: result.value.body };
+    }
+  };
+}
+
+// src/api2/host.ts
+var unit6 = () => void 0;
+function createBridge(mod) {
+  const log = (message) => mod.meta.log(message);
+  let settings = {};
+  let prefs = null;
+  let character = null;
+  let key2 = null;
+  let birth = [];
+  let input = null;
+  let driver = null;
+  let autoplayed = false;
+  let world = null;
+  let feed = null;
+  const stops = [];
+  const kept = (call, onValue) => call.then((result) => {
+    if (result.ok) onValue(result.value);
+  }, unit6);
+  const write = (slot2, value, what) => {
+    void slot2.set(value ?? null).then((result) => {
+      if (!result.ok) log(`Squire could not keep ${what}.`);
+    }, () => log(`Squire could not keep ${what}.`));
+  };
+  const subscribe = (name, listener) => {
+    const call = mod.events.on(name, listener);
+    void call.then((result) => {
+      if (!result.ok) {
+        log(`Squire is not told about ${name}: ${result.message}`);
+        return;
+      }
+      stops.push(async () => {
+        await mod.events.off(result.value);
+      });
+    }, unit6);
+  };
+  const refreshCharacter = async () => {
+    await kept(mod.view.character(), (value) => {
+      key2 = value.key;
+    });
+    await kept(mod.view.options(), (value) => {
+      birth = Object.entries(value.birth).map(([name, on]) => ({ name, value: on }));
+    });
+    await kept(mod.view.player(), (value) => {
+      autoplayed = value.autoplayed;
+    });
+  };
+  const readWorld = async () => {
+    const read = await viewWorld(mod, feed === null ? {} : { messages: feed });
+    if (read !== null) world = read;
+    return read;
+  };
+  const host = {
+    log,
+    flags: mod.meta.flags,
+    settings: { get: (id) => settings[id] },
+    prefs: { get: () => prefs, set: (value) => {
+      prefs = value ?? null;
+      write(mod.store.prefs, value, "its settings");
+    } },
+    characterStore: { get: () => character, set: (value) => {
+      character = value ?? null;
+      write(mod.store.character, value, "this character's data");
+    } },
+    controller: {
+      setStatus: (status) => {
+        void mod.act.controller.setStatus(status).catch(unit6);
+      },
+      markNondeterministic: () => {
+        void mod.act.controller.markNondeterministic().catch(unit6);
+      },
+      release: (reason) => {
+        void mod.act.controller.release(reason).catch(unit6);
+      }
+    },
+    saves: mod.manage === void 0 ? void 0 : {
+      create: async (options) => {
+        const result = await mod.manage.saves.create(options);
+        return result.ok ? { ok: true } : { ok: false, reason: result.message };
+      }
+    },
+    character: {
+      key: () => key2,
+      onRunEnd: (listener) => subscribe("run-end", (event) => {
+        if (event.report !== null) listener(event.report);
+      })
+    },
+    net: mod.net === void 0 ? void 0 : netFromApi2(mod.net),
+    snapshot: () => input,
+    options: { get: () => ({ entries: birth }) },
+    controllerArmed: mod.meta.controllerArmed,
+    ui: mod.presentation?.panels,
+    events: {
+      on: ((name, listener) => subscribe(name, listener))
+    },
+    viewNow: () => world,
+    readWorld: async () => {
+      const read = await readWorld();
+      void refreshCharacter();
+      return read;
+    }
+  };
+  return {
+    host,
+    async prime() {
+      await Promise.all([
+        kept(mod.meta.settings(), (value) => {
+          settings = value;
+        }),
+        kept(mod.store.prefs.get(), (value) => {
+          prefs = value;
+        }),
+        kept(mod.store.character.get(), (value) => {
+          character = value;
+        }),
+        refreshCharacter()
+      ]);
+      feed = await watchMessages(mod);
+      stops.push(() => feed?.stop() ?? Promise.resolve());
+      subscribe("driver-changed", (event) => {
+        driver = event;
+      });
+      await readWorld();
+    },
+    readWorld: host.readWorld,
+    setInput(next) {
+      input = next;
+      driver = next.driver;
+    },
+    autoplayed: () => autoplayed,
+    driver: () => driver,
+    async dispose() {
+      for (const stop2 of stops.splice(0)) await stop2().catch(unit6);
+    }
+  };
+}
+
+// src/api2/act.ts
+var REST_COMPLETE = -2;
+function createActFacade() {
+  let targets = [];
+  const cmd = (code, args) => args ? { code, args } : { code };
+  const dirCmd = (code, dir) => ({ code, dir });
+  const itemCmd = (code, handle) => cmd(code, { handle });
+  const act = {
+    move: (dir) => dirCmd("walk", dir),
+    melee: (dir) => dirCmd("walk", dir),
+    hold: () => cmd("hold"),
+    rest: (count2) => cmd("rest", { count: count2 ?? REST_COMPLETE }),
+    descend: () => cmd("descend"),
+    ascend: () => cmd("ascend"),
+    tunnel: (dir) => dirCmd("tunnel", dir),
+    open: (dir) => dirCmd("open", dir),
+    close: (dir) => dirCmd("close", dir),
+    disarm: (dir) => dirCmd("disarm", dir),
+    quaff: (handle) => itemCmd("quaff", handle),
+    read: (handle) => itemCmd("read", handle),
+    eat: (handle) => itemCmd("eat", handle),
+    wear: (handle) => itemCmd("wield", handle),
+    takeoff: (handle) => itemCmd("takeoff", handle),
+    drop: (handle, number3) => cmd("drop", number3 !== void 0 ? { handle, quantity: number3 } : { handle }),
+    pickup: () => cmd("pickup"),
+    destroy: (handle) => itemCmd("destroy", handle),
+    aimWand: (handle) => itemCmd("aim-wand", handle),
+    zapRod: (handle) => itemCmd("zap-rod", handle),
+    useStaff: (handle) => itemCmd("use-staff", handle),
+    activate: (handle) => itemCmd("activate", handle),
+    fire: (handle) => itemCmd("fire", handle),
+    throw: (handle) => itemCmd("throw", handle),
+    cast: (spell) => cmd("cast", { spell }),
+    setTargetMonster: (midx) => {
+      targets = [...targets, { kind: "target", midx }];
+      return true;
+    },
+    setTargetLocation: (x, y) => {
+      targets = [...targets, { kind: "target", x, y }];
+    },
+    shopBuy: (index, number3) => cmd("shop-buy", number3 !== void 0 ? { index, quantity: number3 } : { index }),
+    shopSell: (handle, number3) => cmd("shop-sell", number3 !== void 0 ? { handle, quantity: number3 } : { handle }),
+    shopExit: () => cmd("shop-exit"),
+    raw: (code, args) => cmd(code, args)
+  };
+  return {
+    act,
+    take() {
+      const taken = targets;
+      targets = [];
+      return taken;
+    }
+  };
+}
+function intentOf(command) {
+  const { code, dir, args } = command;
+  return {
+    kind: "command",
+    command: {
+      code,
+      ...dir !== void 0 ? { dir } : {},
+      ...args !== void 0 ? { args } : {}
+    }
+  };
+}
+
+// src/api2/controller.ts
+var REFUSALS_BEFORE_RELEASE = 25;
+function promptAnswer(prompt) {
+  switch (prompt.kind) {
+    case "ack":
+      return { action: "acknowledge" };
+    case "confirm":
+      return true;
+    case "quantity":
+      return prompt.defaultValue;
+    case "text":
+      return prompt.defaultValue;
+    default:
+      return { action: "cancel" };
+  }
+}
+function createTick(bridge2, decide) {
+  let refusals = 0;
+  let announced = false;
+  return async (mod, input) => {
+    bridge2.setInput(input);
+    if (input.prompt !== null) {
+      await mod.act.answer(input.prompt.promptId, promptAnswer(input.prompt));
+      return;
+    }
+    if (input.phase !== "play" && input.phase !== "store") return;
+    const view = await bridge2.readWorld();
+    if (view === null) return;
+    const facade = createActFacade();
+    const command = decide(view, facade.act);
+    const targets = facade.take();
+    if (command === null) return;
+    if (!announced) {
+      announced = true;
+      mod.meta.log("Squire is playing.");
+    }
+    let token = input.token;
+    for (const target of targets) {
+      const result = await mod.act.submit(token, target);
+      if (!result.ok) mod.meta.log(`Squire's target was refused: ${result.message}`);
+    }
+    if (targets.length > 0) {
+      const fresh = await mod.view.input();
+      if (fresh.ok) token = fresh.value.token;
+    }
+    const sent = await mod.act.submit(token, intentOf(command));
+    if (sent.ok) {
+      refusals = 0;
+      return;
+    }
+    refusals += 1;
+    if (refusals === 1 || refusals % 10 === 0) mod.meta.log(`Squire's ${command.code} was refused: ${sent.message}`);
+    if (refusals >= REFUSALS_BEFORE_RELEASE) {
+      refusals = 0;
+      await mod.act.controller.release("The game kept refusing Squire's commands.");
+    }
+  };
+}
+
 // plugin.ts
-function characterAlreadyAutoplayed(ctx) {
-  return autoplayedBefore(ctx);
+var NOSCORE_BORG = 32;
+function characterAlreadyAutoplayed(context) {
+  const state = context.engine?.state;
+  return ((state?.actor?.player?.noscore ?? 0) & NOSCORE_BORG) !== 0;
 }
-function terrainFrom(ctx) {
-  return contentTerrain(ctx);
+var bridge;
+var running;
+function bridgeFor(mod) {
+  bridge ??= createBridge(mod);
+  return bridge;
 }
-var detach;
-var plugin_default = {
-  api: 1,
+async function begin(mod) {
+  const made = bridgeFor(mod);
+  await made.prime();
+  const host = made.host;
+  const cfg = cfgFromFlags(mod.meta.flags, host.settings);
+  const terrain = await contentTerrain(mod);
+  host.log(
+    terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain records: it will not take stairs or open doors"
+  );
+  const changed = changedFrom(cfg);
+  host.log(
+    changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
+  );
+  const rt = runtime(host);
+  const attached = attachSquire(host, rt, terrain);
+  const errands = () => createSquire({ cfg, terrain, log: host.log, status: (reason) => host.controller.setStatus({ label: "Errand ended", reason }), release: (reason) => host.controller.release(reason) }).controller;
+  const tick = createTick(made, rt.controllerFor(cfg, terrain, errands));
+  void registerOrderCommand({ log: host.log, ...mod.presentation?.panels ? { panels: mod.presentation.panels } : {}, commands: mod.ui.commands, ...mod.manage ? { keys: mod.manage.keys } : {} }, rt);
+  registerSquireTitle({ id: mod.meta.id, ...mod.presentation?.title ? { title: mod.presentation.title } : {}, ...mod.manage ? { profiles: mod.manage.profiles } : {} }, rt.store());
+  return { bridge: made, rt, tick, detach: attached.detach };
+}
+var definition = {
+  api: ">=2.0.0 <3.0.0",
+  /* Stored preferences keep the shape they had before the move to API 2. */
+  prefs: { version: 1, migrate: (value) => value },
   /* The panel, Knight's Lessons and run bookkeeping, for every character with
    * Squire enabled, whether or not it has been handed over. */
-  register(host, ctx) {
-    const rt = runtime(ctx);
-    detach = attachSquire(ctx, rt).detach;
-    registerOrderCommand(host, ctx, rt);
-    registerSquireTitle(ctx, rt.store());
+  async start(mod) {
+    running = begin(mod).catch((error) => {
+      mod.meta.log(`Squire could not start: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    await running;
   },
   /* The game tears its mods down before it reloads, and the headless runner registers them again on the same page after a save and reload. The panel kind leaves the game's panel list here, or that second registration is refused. */
-  uninstall() {
-    detach?.();
-    detach = void 0;
+  stop() {
+    const done2 = running;
+    running = void 0;
+    const held2 = bridge;
+    bridge = void 0;
+    void done2?.then((r) => {
+      r?.detach();
+    }).then(() => held2?.dispose());
+  },
+  /* Offer to play only when this character was handed to an autoplayer before, was armed from Squire's title row, or is the roll-on heir the birth presenter marked. */
+  armed(context) {
+    return context.armed || characterAlreadyAutoplayed(context) || takeRollOn(sessionMarks(), Date.now(), HEIR_KEY);
   },
   /* Roll-on: accepts the one creation Squire asked for after a death, and
    * declines every other, so the game shows its own birth screens. */
-  birth(ctx) {
-    return rollOnPresenter(ctx);
+  birth(mod) {
+    return rollOnPresenter(bridgeFor(mod).host);
   },
-  controller(ctx) {
-    if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return void 0;
-    const cfg = cfgFromFlags(ctx.flags, ctx.settings);
-    const terrain = terrainFrom(ctx);
-    ctx.log(
-      terrain.size > 0 ? `Squire is reading ${String(terrain.size)} terrain features` : "Squire has no terrain records: it will not take stairs or open doors"
-    );
-    const changed = changedFrom(cfg);
-    ctx.log(
-      changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
-    );
-    const release = ctx.controller?.release === void 0 ? {} : { release: (reason) => ctx.controller?.release(reason) };
-    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }), ...release }).controller;
-    const rt = runtime(ctx);
-    return { controller: rt.controllerFor(cfg, terrain, errands), onDeath: "end", onKey: (press) => rt.onKey(press) };
+  async controller(mod, input) {
+    const live = await running;
+    if (live === void 0 || live === null) return;
+    await live.tick(mod, input);
   }
 };
+var plugin_default = definition;
 export {
   plugin_default as default
 };

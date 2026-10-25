@@ -5,7 +5,7 @@
     "id": "squire",
     "name": "Squire",
     "version": "0.2.0",
-    "api": ">=1.0.0 <2.0.0",
+    "api": ">=2.0.0 <3.0.0",
     "runtime": "in-process",
     "engine": {
       "range": ">=1.22.0",
@@ -41,7 +41,10 @@
       "network:squire.rpgm.tools",
       "ui:birth.replace",
       "registry:command",
-      "keymap:write",
+      "keymap:edit",
+      "event:message",
+      "event:run-end",
+      "event:driver-changed",
       "ui:title",
       "profiles:manage"
     ],

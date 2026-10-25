@@ -3,8 +3,10 @@
  * not: the Squire panel, Knight's Lessons, and the kill count.
  */
 
-import type { ModPluginContext, PanelKindSpec, PanelMount } from "@rpgm-tools/neo-angband-core";
-import { contentTerrain, viewWorld, type AgentView, type HostReads } from "./host-adapter.js";
+import type { Api2PanelKindSpec, Api2PanelMount } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { AgentView } from "./host-adapter.js";
+import type { Api2Host } from "./api2/host.js";
+import type { Terrain } from "./terrain.js";
 import { turnEnergy } from "./energy.js";
 import { createGoalPlanner, type GoalDigest } from "./brain/goals.js";
 import type { Question } from "./brain/brain.js";
@@ -35,9 +37,8 @@ import { activePersona } from "./config.js";
 import type { Persona } from "./persona/persona.js";
 
 /** The plugin context fields used while attaching Squire's panels and events. */
-export type AttachHost = Pick<ModPluginContext, "flags" | "settings" | "events" | "ui"> & SquireHost & HostReads;
-export type PanelHostLike = Pick<PanelMount, "root" | "onStateChange" | "requestFocus">;
-type PanelKindSpecLike = PanelKindSpec;
+export type AttachHost = Pick<Api2Host, "settings" | "events" | "viewNow" | "readWorld"> & SquireHost;
+export type PanelHostLike = Pick<Api2PanelMount, "root" | "onStateChange" | "requestFocus">;
 
 /** Knight's Lessons, as the panel sees it. */
 export interface Lessons {
@@ -61,18 +62,19 @@ const DEMONSTRATION_DECISIONS = 5;
 /** What attachSquire leaves behind: Knight's Lessons, and the cleanup that takes the panel kind back out of the game's panel list. */
 export type Attached = Lessons & { detach(): void };
 
-export function attachSquire(ctx: AttachHost, rt: Runtime): Attached {
-  /** A view of the game while the player plays, so the apprentice knows exactly what the player knows. */
+export function attachSquire(ctx: AttachHost, rt: Runtime, terrain: Terrain): Attached {
+  /** The game as last read, for an event that fires while the monster is still in it. */
   function viewNow(): AgentView | null {
-    return viewWorld(ctx);
+    return ctx.viewNow();
   }
 
   /* Kills, for the report and telemetry. A killing blow fires while the
    * monster still holds its index, so its race can be read then. */
-  ctx.events?.on("combat-outcome", (_name, p) => {
-    if (p.attacker !== "player" || p.died !== true || typeof p.target !== "number") return;
+  ctx.events?.on("combat-outcome", (p) => {
+    if (p.attacker !== "player" || !p.died || typeof p.target !== "object") return;
+    const target = p.target.monster;
     const view = viewNow();
-    const monster = view?.monsters().find((m) => m.id === p.target);
+    const monster = view?.monsters().find((m) => m.id === target);
     if (monster !== undefined) rt.recordKill(monster.race, monster.raceFlags.includes("UNIQUE"), view ?? null);
   });
 
@@ -107,8 +109,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Attached {
     for (const l of listeners) l(next);
   }
 
-  const terrain = contentTerrain(ctx);
-  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags, ctx.settings), terrain, log: () => {}, speedEnergy: turnEnergy });
+  const planner = createGoalPlanner({ cfg: cfgFromFlags(ctx.flags ?? {}, ctx.settings), terrain, log: () => {}, speedEnergy: turnEnergy });
 
   function record(squire: Goal, knight: Goal, view: AgentView, dangerousNear: boolean, serial: number, confidence?: number): void {
     const p = view.player();
@@ -133,12 +134,15 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Attached {
     }
   }
 
-  ctx.events?.on("player-command", (_name, payload) => {
+  ctx.events?.on("player-command", (payload) => {
     exam.end();
     /* Only the player's commands teach the apprentice. */
     if (rt.takeOwnCommand(payload as PlayerCommand, Date.now())) return;
-    const view = viewNow();
-    if (view === null) return;
+    /* The game is read after the event, so a command that has already run shows its effect; the apprentice learns from the turn that follows. */
+    void ctx.readWorld().then((view) => { if (view !== null) learnFrom(payload as PlayerCommand, view); });
+  });
+
+  function learnFrom(payload: PlayerCommand, view: AgentView): void {
     const serial = ++decisionSerial;
     /* The journal follows the whole run, including the turns the player
      * plays, so the depth chart and report have no gaps. */
@@ -200,7 +204,7 @@ export function attachSquire(ctx: AttachHost, rt: Runtime): Attached {
         record(offline, knight, view, dangerousNear, serial);
       }
     });
-  });
+  }
 
   const lessons: Lessons = {
     apprentice: () => apprentice,

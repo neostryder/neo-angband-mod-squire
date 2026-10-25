@@ -23,4 +23,4 @@ minimumReleaseAgeExclude:
 # core pack's own dependency on the SDK would otherwise resolve to the registry's
 # 1.22.0 and TypeScript would merge the two copies by name and version.
 overrides:
-  "@rpgm-tools/neo-angband-mod-sdk": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz"
+  "@rpgm-tools/neo-angband-mod-sdk": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz"

@@ -18,15 +18,15 @@
  * WHY THIS FILE IS SHORT
  * ------------------------------------------------------------------
  *
- * Its whole job is to satisfy the plugin ABI: decide whether to offer to play at all, read the terrain classification out of the terrain records, fold the player's rule toggles into settings, and return a controller. Everything that decides anything lives under src/.
+ * Its whole job is to satisfy the mod API: decide whether to offer to play at all, read the terrain classification out of the terrain records, fold the player's rule toggles into settings, and take a decision at each input wait. Everything that decides anything lives under src/.
  *
  * ------------------------------------------------------------------
  * WHY THIS DECLARES NO HOOKS AND REGISTERS NOTHING
  * ------------------------------------------------------------------
  *
- * Squire changes no rule, adds no record, and overrides no system. A plugin
- * whose only member is `controller` is a complete plugin, because playing the
- * game is not nothing.
+ * Squire changes no rule, adds no record, and overrides no system. A mod whose
+ * only decision-making member is `controller` is a complete mod, because
+ * playing the game is not nothing.
  *
  * ------------------------------------------------------------------
  * ONE AUTOPLAYER AT A TIME
@@ -39,117 +39,122 @@
  * is one thing driving it and one thing that believes it is.
  */
 
-import type * as Core from "@rpgm-tools/neo-angband-core";
-import type { AgentController, ControllerKeyAnswer, ControllerKeyPress, ModPluginContext } from "@rpgm-tools/neo-angband-core";
+import type { Api2ControllerContext, Api2InputState, Api2ModDefinition, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import { createSquire } from "./src/squire.js";
-import { runtime, type SquireHost } from "./src/runtime.js";
-import { attachSquire, type AttachHost } from "./src/attach.js";
-import { registerOrderCommand, type OrderCommandCtx } from "./src/ui/order-command.js";
-import { registerSquireTitle, type TitleCtx } from "./src/title.js";
-import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn, type BirthHost } from "./src/birth.js";
+import { runtime, type Runtime } from "./src/runtime.js";
+import { attachSquire } from "./src/attach.js";
+import { registerOrderCommand } from "./src/ui/order-command.js";
+import { registerSquireTitle } from "./src/title.js";
+import { HEIR_KEY, rollOnPresenter, sessionMarks, takeRollOn } from "./src/birth.js";
 import { cfgFromFlags, changedFrom } from "./src/settings.js";
 import type { Terrain } from "./src/terrain.js";
-import { autoplayedBefore, contentTerrain } from "./src/host-adapter.js";
+import { contentTerrain } from "./src/host-adapter-api2.js";
+import { createBridge, type Bridge } from "./src/api2/host.js";
+import { createTick, type Tick } from "./src/api2/controller.js";
 
-type ControllerCtx = Pick<ModPluginContext, "flags" | "settings" | "core" | "log" | "composedRecords"> & SquireHost & {
-  readonly log: (msg: string) => void;
-  readonly state?: { readonly actor: { readonly player: Pick<Core.Player, "noscore"> } };
-};
+/** The autoplayer mark on a save (NOSCORE_BORG): this character was handed to an autoplayer at some point. */
+const NOSCORE_BORG = 0x0020;
 
 /**
  * Whether this character has already handed the keyboard to an autoplayer.
  *
  * Enabling a mod and giving away the keyboard are different decisions. The host
- * owns the second one: Ctrl-Z warns, confirms, marks the save and reloads. This
- * plugin returns a controller only once that permanent mark is set, so
- * installing Squire does nothing at all to a character until the player asks it
- * to, and a character that has run an autoplayer before is offered it again
- * through the host's own confirmation rather than silently.
+ * owns the second one: Ctrl-Z warns, confirms, marks the save and reloads. Squire
+ * offers to play only once that permanent mark is set, so installing it does
+ * nothing at all to a character until the player asks it to, and a character
+ * that has run an autoplayer before is offered it again through the host's own
+ * confirmation rather than silently.
  */
-function characterAlreadyAutoplayed(ctx: ControllerCtx): boolean {
-  return autoplayedBefore(ctx);
+function characterAlreadyAutoplayed(context: Api2ControllerContext): boolean {
+  const state = context.engine?.state as { readonly actor?: { readonly player?: { readonly noscore?: number } } } | undefined;
+  return ((state?.actor?.player?.noscore ?? 0) & NOSCORE_BORG) !== 0;
 }
 
-/**
- * Classify the game's terrain from its terrain records, or say why it could not be.
- *
- * The records name each feature's flags, so the game's terrain and a mod's are classified on the same terms: a mod's own staircase is a staircase here because it carries the flag, not because this file has heard of it.
- *
- * With no terrain records, Squire still walks the floor but never takes a staircase or opens a door. The log line says so, since from the player's seat that looks the same as a level whose stairs the character has not found yet.
- */
-function terrainFrom(ctx: ControllerCtx): Terrain {
-  return contentTerrain(ctx);
+/** What one running mod holds: the bridge to the game, the runtime built over it, and the decision tick. */
+interface Running {
+  readonly bridge: Bridge;
+  readonly rt: Runtime;
+  readonly tick: Tick;
+  readonly detach: () => void;
 }
 
-/** The host's richer controller return. */
-interface ControllerInstall {
-  readonly controller: AgentController;
-  /** Keep the ordinary death, with its tombstone and run report, instead of reincarnating in place. */
-  readonly onDeath: "end";
-  /**
-   * A key pressed while Squire drives. Escape and Ctrl-Z never get here: the
-   * host gives the keyboard back for those itself. A game that predates the
-   * handler ignores it and gives the keyboard back on any key, as before.
-   */
-  readonly onKey: (press: ControllerKeyPress) => ControllerKeyAnswer;
+let bridge: Bridge | undefined;
+let running: Promise<Running | null> | undefined;
+
+function bridgeFor(mod: ModApi2): Bridge {
+  bridge ??= createBridge(mod);
+  return bridge;
 }
 
-/** The cleanup for the registration in progress, run by uninstall(). */
-let detach: (() => void) | undefined;
+async function begin(mod: ModApi2): Promise<Running | null> {
+  const made = bridgeFor(mod);
+  await made.prime();
+  const host = made.host;
+  const cfg = cfgFromFlags(mod.meta.flags, host.settings);
+  const terrain: Terrain = await contentTerrain(mod);
+  host.log(
+    terrain.size > 0
+      ? `Squire is reading ${String(terrain.size)} terrain features`
+      : "Squire has no terrain records: it will not take stairs or open doors",
+  );
+  const changed = changedFrom(cfg);
+  host.log(
+    changed.length === 0
+      ? "Squire is on its stock settings"
+      : `Squire's settings differ from stock: ${changed.join(", ")}`,
+  );
+  const rt = runtime(host);
+  const attached = attachSquire(host, rt, terrain);
+  const errands = () => createSquire({ cfg, terrain, log: host.log, status: (reason) => host.controller.setStatus({ label: "Errand ended", reason }), release: (reason: string) => host.controller.release(reason) }).controller;
+  const tick = createTick(made, rt.controllerFor(cfg, terrain, errands));
+  /* The in-game order key needs ui:commands and keymap:edit; without them the panel's own key still works. */
+  void registerOrderCommand({ log: host.log, ...(mod.presentation?.panels ? { panels: mod.presentation.panels } : {}), commands: mod.ui.commands, ...(mod.manage ? { keys: mod.manage.keys } : {}) }, rt);
+  /* The title row needs ui:title and profiles:manage; without both there is no row. */
+  registerSquireTitle({ id: mod.meta.id, ...(mod.presentation?.title ? { title: mod.presentation.title } : {}), ...(mod.manage ? { profiles: mod.manage.profiles } : {}) }, rt.store());
+  return { bridge: made, rt, tick, detach: attached.detach };
+}
 
-export default {
-  api: 1,
+const definition: Api2ModDefinition = {
+  api: ">=2.0.0 <3.0.0",
+
+  /* Stored preferences keep the shape they had before the move to API 2. */
+  prefs: { version: 1, migrate: (value) => value },
 
   /* The panel, Knight's Lessons and run bookkeeping, for every character with
    * Squire enabled, whether or not it has been handed over. */
-  register(host: unknown, ctx: ControllerCtx & AttachHost & OrderCommandCtx & TitleCtx): void {
-    const rt = runtime(ctx);
-    detach = attachSquire(ctx, rt).detach;
-    /* The in-game order key needs registry:command and keymap:write; without them the panel's own key still works. */
-    registerOrderCommand(host, ctx, rt);
-    /* The title row needs ui:title and profiles:manage; without both there is no row. */
-    registerSquireTitle(ctx, rt.store());
+  async start(mod) {
+    running = begin(mod).catch((error: unknown) => {
+      mod.meta.log(`Squire could not start: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    });
+    await running;
   },
 
   /* The game tears its mods down before it reloads, and the headless runner registers them again on the same page after a save and reload. The panel kind leaves the game's panel list here, or that second registration is refused. */
-  uninstall(): void {
-    detach?.();
-    detach = undefined;
+  stop() {
+    const done = running;
+    running = undefined;
+    const held = bridge;
+    bridge = undefined;
+    void done?.then((r) => { r?.detach(); }).then(() => held?.dispose());
+  },
+
+  /* Offer to play only when this character was handed to an autoplayer before, was armed from Squire's title row, or is the roll-on heir the birth presenter marked. */
+  armed(context) {
+    return context.armed || characterAlreadyAutoplayed(context) || takeRollOn(sessionMarks(), Date.now(), HEIR_KEY);
   },
 
   /* Roll-on: accepts the one creation Squire asked for after a death, and
    * declines every other, so the game shows its own birth screens. */
-  birth(ctx: BirthHost) {
-    return rollOnPresenter(ctx);
+  birth(mod) {
+    return rollOnPresenter(bridgeFor(mod).host);
   },
 
-  controller(ctx: ControllerCtx): AgentController | ControllerInstall | undefined {
-    /* Returning undefined is a decline, and the host leaves the human at the
-     * keyboard. This is the normal case: the mod is installed and enabled, and
-     * this character has never been handed to an autoplayer. */
-    /* A roll-on heir is not marked yet: the birth presenter left a one-time
-     * mark saying Squire asked for this character. A character started from
-     * Squire's title row arrives with the controller armed. */
-    if (!characterAlreadyAutoplayed(ctx) && ctx.controllerArmed !== true && !takeRollOn(sessionMarks(), Date.now(), HEIR_KEY)) return undefined;
-
-    const cfg = cfgFromFlags(ctx.flags, ctx.settings);
-    const terrain = terrainFrom(ctx);
-
-    ctx.log(
-      terrain.size > 0
-        ? `Squire is reading ${String(terrain.size)} terrain features`
-        : "Squire has no terrain records: it will not take stairs or open doors",
-    );
-    const changed = changedFrom(cfg);
-    ctx.log(
-      changed.length === 0
-        ? "Squire is on its stock settings"
-        : `Squire's settings differ from stock: ${changed.join(", ")}`,
-    );
-
-    const release = ctx.controller?.release === undefined ? {} : { release: (reason: string) => ctx.controller?.release(reason) };
-    const errands = () => createSquire({ cfg, terrain, log: ctx.log, status: (reason) => ctx.controller?.setStatus({ label: "Errand ended", reason }), ...release }).controller;
-    const rt = runtime(ctx);
-    return { controller: rt.controllerFor(cfg, terrain, errands), onDeath: "end", onKey: (press) => rt.onKey(press) };
+  async controller(mod: ModApi2, input: Api2InputState) {
+    const live = await running;
+    if (live === undefined || live === null) return;
+    await live.tick(mod, input);
   },
 };
+
+export default definition;

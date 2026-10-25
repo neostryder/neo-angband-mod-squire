@@ -4,18 +4,18 @@
  * profile first and this profile second, and starts character creation with
  * Squire armed in either.
  *
- * Without the title and profile seams (an older game) the row is not
- * registered and Squire behaves as it did before.
+ * Without the title and profile seams (a mod the game does not give the
+ * management namespace) the row is not registered.
  */
 
-import type { ModProfile, ModProfiles, ModTitle, ModTitleRow, ProfileResult } from "@rpgm-tools/neo-angband-core";
+import type { Api2Manage, Api2Profile, Api2ProfileAction, Api2Title } from "@rpgm-tools/neo-angband-mod-sdk";
 import type { KvStore } from "./memory/kv.js";
 
 /** The parts of the plugin context the row reads. */
 export interface TitleCtx {
   readonly id?: string;
-  readonly title?: ModTitle;
-  readonly profiles?: ModProfiles;
+  readonly title?: Api2Title;
+  readonly profiles?: Api2Manage["profiles"];
 }
 
 export const TITLE_LABEL = "New Squire character";
@@ -34,7 +34,13 @@ export const COPY_PROMPT = "Copy which profile? Its options, mods and mod settin
 export const FALLBACK_HERE = "Start the character in this profile";
 export const GIVE_UP = "Back to the title";
 
-const ARMED = { kind: "create-character", armController: true } as const;
+const ARMED: Api2ProfileAction = { kind: "create-character", armController: true };
+
+/** The player's choice, or null for Escape or a game that cannot ask. */
+async function ask(title: Api2Title, label: string, choices: readonly string[]): Promise<number | null> {
+  const answer = await title.choose(label, choices);
+  return answer.ok ? answer.value : null;
+}
 
 async function remembered(store: KvStore): Promise<string[]> {
   const saved = await store.get(PROFILES_KEY).catch(() => undefined);
@@ -56,27 +62,27 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
   const self = ctx.id ?? "squire";
 
   async function here(): Promise<void> {
-    const active = profiles!.list();
+    const active = await profiles!.list();
     const id = active.ok ? active.value.find((profile) => profile.active)?.id ?? null : null;
-    const started = profiles!.switchTo(id, ARMED);
-    if (!started.ok) await title!.choose(`Squire could not start the character: ${started.reason}`, [GIVE_UP]);
+    const started = await profiles!.switchTo(id, ARMED);
+    if (!started.ok) await ask(title!, `Squire could not start the character: ${started.message}`, [GIVE_UP]);
   }
 
   /** A refusal on the way to a separate profile falls back to this one. */
   async function refused(reason: string): Promise<void> {
-    const answer = await title!.choose(`Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
+    const answer = await ask(title!, `Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
     if (answer === 0) await here();
   }
 
   async function separate(): Promise<void> {
-    const listed = profiles!.list();
-    if (!listed.ok) return refused(listed.reason);
+    const listed = await profiles!.list();
+    if (!listed.ok) return refused(listed.message);
     const all = listed.value;
     const ours = new Set(await remembered(store));
     const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
-    const which = await title!.choose(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
+    const which = await ask(title!, WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
     if (which === null) return;
-    let target: ModProfile;
+    let target: Api2Profile;
     if (which >= 2) {
       const chosen = made[which - 2];
       if (chosen === undefined) return;
@@ -84,35 +90,36 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
     } else {
       let copyFrom: string | null | undefined;
       if (which === 1) {
-        const source = await title!.choose(COPY_PROMPT, all.map((profile) => profile.name));
+        const source = await ask(title!, COPY_PROMPT, all.map((profile) => profile.name));
         if (source === null) return;
         const picked = all[source];
         if (picked === undefined) return;
         copyFrom = picked.id;
       }
-      const created = profiles!.create(freshName(all.map((profile) => profile.name)), copyFrom === undefined ? {} : { copyFrom });
-      if (!created.ok) return refused(created.reason);
+      const created = await profiles!.create(freshName(all.map((profile) => profile.name)), copyFrom);
+      if (!created.ok) return refused(created.message);
       target = created.value;
       if (target.id === null) return refused("the new profile has no id");
       /* A copy keeps the loadout it was copied for; a fresh profile needs Squire, which depends on no other mod. */
       if (copyFrom === undefined) {
-        const enabled = profiles!.setEnabledMods(target.id, [self]);
-        if (!enabled.ok) return refused(enabled.reason);
+        const enabled = await profiles!.setEnabledMods(target.id, [self]);
+        if (!enabled.ok) return refused(enabled.message);
       }
       await store.set(PROFILES_KEY, [...ours, target.id]).catch(() => undefined);
     }
-    const switched = profiles!.switchTo(target.id, ARMED);
-    if (!switched.ok) return refused(switched.reason);
+    const switched = await profiles!.switchTo(target.id, ARMED);
+    if (!switched.ok) return refused(switched.message);
   }
 
-  title.registerRow({
+  void title.registerRow({
+    id: "squire:new-character",
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
-      const where = await title.choose(WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
+      const where = await ask(title, WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
       if (where === 0) await separate();
       else if (where === 1) await here();
     },
-  });
+  }).catch(() => undefined);
   return true;
 }

@@ -106,21 +106,21 @@ settings:
   excludeLinksFromLockfile: false
 
 overrides:
-  '@rpgm-tools/neo-angband-mod-sdk': file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
+  '@rpgm-tools/neo-angband-mod-sdk': file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
 
 importers:
 
   .:
     devDependencies:
       '@rpgm-tools/neo-angband-content':
-        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-content-1.22.0.tgz
-        version: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-content-1.22.0.tgz
+        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz
+        version: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz
       '@rpgm-tools/neo-angband-core':
-        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-core-1.22.0.tgz
-        version: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-core-1.22.0.tgz
+        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz
+        version: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz
       '@rpgm-tools/neo-angband-mod-sdk':
-        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
-        version: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
+        specifier: file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
+        version: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
       '@types/node':
         specifier: ^22.20.1
         version: 22.20.1
@@ -397,18 +397,18 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  '@rpgm-tools/neo-angband-content@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-content-1.22.0.tgz':
-    resolution: {integrity: sha512-EKURhC5+6aUXf4Ag5tV+7iQW0/+xXvIVBFvQNsmeQAK8hnkuW+xS8ve9NRm71jNcz6PIwP7I8vNMIzPt8555eg==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-content-1.22.0.tgz}
+  '@rpgm-tools/neo-angband-content@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz':
+    resolution: {integrity: sha512-EKURhC5+6aUXf4Ag5tV+7iQW0/+xXvIVBFvQNsmeQAK8hnkuW+xS8ve9NRm71jNcz6PIwP7I8vNMIzPt8555eg==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz}
     version: 1.22.0
     engines: {node: '>=22'}
 
-  '@rpgm-tools/neo-angband-core@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-core-1.22.0.tgz':
-    resolution: {integrity: sha512-pUR3v45b6OsUxZ35Hk/jzhbKgOpRZtaoT5+ugiTogc/82UfwZ1C2UKu6J6xTO4T40ojeuRUQawep93P3gFETfw==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-core-1.22.0.tgz}
+  '@rpgm-tools/neo-angband-core@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz':
+    resolution: {integrity: sha512-3M5viuiuU8EsAMaowpHcZyARbSoysjnJz1ntK11SNlmD/WIxG6Uii62IvMMQ9gFDI+RjWD/avME8sBWglRGmFA==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz}
     version: 1.22.0
     engines: {node: '>=22'}
 
-  '@rpgm-tools/neo-angband-mod-sdk@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz':
-    resolution: {integrity: sha512-4HmO/Qr86/znCYeRjHGP7wF720ag7RBHHjMUr1ai6u/smHX9ZeukbCQVTUZ2mWwUTfEnvOYaL8Z5Qd9vODXK8g==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz}
+  '@rpgm-tools/neo-angband-mod-sdk@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz':
+    resolution: {integrity: sha512-rZScysT5uXI5rq9UixOc/dV+H0uyOjKqHyDhchkCB8VUlKSTjE21eKj7jusOwLT+0DtBWbcfgbgEvM0TbccQFA==, tarball: file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz}
     version: 1.22.0
     engines: {node: '>=22'}
     hasBin: true
@@ -867,13 +867,13 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@rpgm-tools/neo-angband-content@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-content-1.22.0.tgz': {}
+  '@rpgm-tools/neo-angband-content@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-content-1.22.0.tgz': {}
 
-  '@rpgm-tools/neo-angband-core@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-core-1.22.0.tgz':
+  '@rpgm-tools/neo-angband-core@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-core-1.22.0.tgz':
     dependencies:
-      '@rpgm-tools/neo-angband-mod-sdk': file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
+      '@rpgm-tools/neo-angband-mod-sdk': file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz
 
-  '@rpgm-tools/neo-angband-mod-sdk@file:../../../_outbox/na-overhaul-core/sdk-local/78be251/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz':
+  '@rpgm-tools/neo-angband-mod-sdk@file:../../../_outbox/na-overhaul-core/sdk-local/d487b40e0/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz':
     dependencies:
       acorn: 8.19.0
 
