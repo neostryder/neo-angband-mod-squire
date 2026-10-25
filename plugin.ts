@@ -110,7 +110,7 @@ async function begin(mod: ModApi2): Promise<Running | null> {
   /* The in-game order key needs ui:commands and keymap:edit; without them the panel's own key still works. */
   void registerOrderCommand({ log: host.log, ...(mod.presentation?.panels ? { panels: mod.presentation.panels } : {}), commands: mod.ui.commands, ...(mod.manage ? { keys: mod.manage.keys } : {}) }, rt);
   /* The title row needs ui:title and profiles:manage; without both there is no row. */
-  registerSquireTitle({ id: mod.meta.id, ...(mod.presentation?.title ? { title: mod.presentation.title } : {}), ...(mod.manage ? { profiles: mod.manage.profiles } : {}) }, rt.store());
+  registerSquireTitle({ id: mod.meta.id, log: host.log, ...(mod.presentation?.title ? { title: mod.presentation.title } : {}), ...(mod.manage ? { profiles: mod.manage.profiles } : {}) }, rt.store());
   return { bridge: made, rt, tick, detach: attached.detach };
 }
 

@@ -17263,7 +17263,10 @@ function freshName(taken) {
 function registerSquireTitle(ctx, store) {
   const title = ctx.title;
   const profiles = ctx.profiles;
-  if (title === void 0 || profiles === void 0) return false;
+  if (title === void 0 || profiles === void 0) {
+    ctx.log?.(`Squire has no title row, because this game gives it no ${title === void 0 ? "title seam" : "profile seam"}.`);
+    return false;
+  }
   const self = ctx.id ?? "squire";
   async function here() {
     const active2 = await profiles.list();
@@ -17311,7 +17314,7 @@ function registerSquireTitle(ctx, store) {
     if (!switched.ok) return refused(switched.message);
   }
   void title.registerRow({
-    id: "squire:new-character",
+    id: "new-character",
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
@@ -17319,7 +17322,9 @@ function registerSquireTitle(ctx, store) {
       if (where2 === 0) await separate();
       else if (where2 === 1) await here();
     }
-  }).catch(() => void 0);
+  }).then((result) => {
+    if (!result.ok) ctx.log?.(`Squire's title row isn't registered: ${result.message}`);
+  }, (error) => ctx.log?.(`Squire's title row isn't registered: ${String(error)}`));
   return true;
 }
 
@@ -18021,7 +18026,7 @@ async function begin(mod) {
   const errands = () => createSquire({ cfg, terrain, log: host.log, status: (reason) => host.controller.setStatus({ label: "Errand ended", reason }), release: (reason) => host.controller.release(reason) }).controller;
   const tick = createTick(made, rt.controllerFor(cfg, terrain, errands));
   void registerOrderCommand({ log: host.log, ...mod.presentation?.panels ? { panels: mod.presentation.panels } : {}, commands: mod.ui.commands, ...mod.manage ? { keys: mod.manage.keys } : {} }, rt);
-  registerSquireTitle({ id: mod.meta.id, ...mod.presentation?.title ? { title: mod.presentation.title } : {}, ...mod.manage ? { profiles: mod.manage.profiles } : {} }, rt.store());
+  registerSquireTitle({ id: mod.meta.id, log: host.log, ...mod.presentation?.title ? { title: mod.presentation.title } : {}, ...mod.manage ? { profiles: mod.manage.profiles } : {} }, rt.store());
   return { bridge: made, rt, tick, detach: attached.detach };
 }
 var definition = {
