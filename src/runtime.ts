@@ -958,7 +958,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...(host.core?.turnEnergy === undefined ? {} : { speedEnergy: host.core.turnEnergy }),
+        ...(engineTurnEnergy(host) === undefined ? {} : { speedEnergy: engineTurnEnergy(host)! }),
         log: host.log,
         persona: () => (coloured ? character.persona : null),
         chaos: coloured,
@@ -975,7 +975,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       }),
       tally,
       send: (request) => self.send(request),
-      token: () => host.snapshot?.()?.token ?? null,
+      token: () => viewInput(host)?.token ?? null,
       now,
       log: host.log,
       status,
