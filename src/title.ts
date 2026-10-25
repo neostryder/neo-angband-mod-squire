@@ -14,6 +14,7 @@ import type { KvStore } from "./memory/kv.js";
 /** The parts of the plugin context the row reads. */
 export interface TitleCtx {
   readonly id?: string;
+  readonly log?: (message: string) => void;
   readonly title?: Api2Title;
   readonly profiles?: Api2Manage["profiles"];
 }
@@ -58,7 +59,10 @@ export function freshName(taken: readonly string[]): string {
 export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
   const title = ctx.title;
   const profiles = ctx.profiles;
-  if (title === undefined || profiles === undefined) return false;
+  if (title === undefined || profiles === undefined) {
+    ctx.log?.(`Squire has no title row, because this game gives it no ${title === undefined ? "title seam" : "profile seam"}.`);
+    return false;
+  }
   const self = ctx.id ?? "squire";
 
   async function here(): Promise<void> {
@@ -112,7 +116,7 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
   }
 
   void title.registerRow({
-    id: "squire:new-character",
+    id: "new-character",
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
@@ -120,6 +124,8 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
       if (where === 0) await separate();
       else if (where === 1) await here();
     },
-  }).catch(() => undefined);
+  }).then((result) => {
+    if (!result.ok) ctx.log?.(`Squire's title row isn't registered: ${result.message}`);
+  }, (error: unknown) => ctx.log?.(`Squire's title row isn't registered: ${String(error)}`));
   return true;
 }

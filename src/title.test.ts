@@ -62,6 +62,13 @@ async function pick(fake: Fake, store: KvStore = memoryStore()): Promise<void> {
 }
 
 describe("the Squire title row", () => {
+  it("registers its row under an id the game accepts", () => {
+    /* The game refuses any id outside a lowercase letter then lowercase letters, digits and hyphens, and says so only in its log. */
+    const fake = host([]);
+    registerSquireTitle({ id: "squire", title: fake.title, profiles: fake.profiles }, memoryStore());
+    expect(fake.rows[0]?.id).toMatch(/^[a-z][a-z0-9-]{0,63}$/);
+  });
+
   it("registers nothing without the title and profile seams", () => {
     const fake = host([]);
     expect(registerSquireTitle({}, memoryStore())).toBe(false);
