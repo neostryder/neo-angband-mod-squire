@@ -265,8 +265,9 @@ function playerView(known: KnownPlayer, floors: GradeFloors): PlayerView {
 /* The view. */
 
 function itemView(item: KnownItem): ItemView {
-  const { charging, unknownRunes: _unknownRunes, ...rest } = writable(item);
-  return { ...rest, timeout: charging };
+  const { charging, fuel, unknownRunes: _unknownRunes, ...rest } = writable(item);
+  /* A light's fuel and a rod's recharge both read as the timeout, as they did under API 1. */
+  return { ...rest, timeout: fuel ?? charging };
 }
 
 function storeItemView(item: KnownStoreItem): StoreItemView {
@@ -289,7 +290,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
   const trapKinds = (await valueOf(api.content.records("trap"))) ?? [];
 
   const player = playerView(known.player, floors);
-  const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, average(monster)));
+  const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? average(monster)));
   const width = known.level?.width ?? 0;
   const height = known.level?.height ?? 0;
   const cells = new Map<number, NonNullable<KnownWorldData["level"]>["cells"][number]>();
@@ -319,8 +320,8 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
       monster: occupant,
       objectCount: remembered.remembered.objects.length,
       knownObjectCount: remembered.remembered.objects.length,
-      glow: false,
-      trap: remembered.remembered.traps.some((trap) => playerTrap(trap.index)),
+      glow: remembered.glow,
+      trap: remembered.remembered.traps.some((trap) => !trap.disabled && playerTrap(trap.index)),
     };
     if (remembered.remembered.featCode !== undefined) view.featCode = remembered.remembered.featCode;
     return view;
@@ -336,7 +337,10 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
     inventory: () => [...inventory],
     quiver: () => [...quiver],
     equipment: () => [...equipment],
-    floorItems: (x, y) => (x === player.grid.x && y === player.grid.y ? [...floorHere] : []),
+    floorItems: (x, y) => {
+      if (x === player.grid.x && y === player.grid.y) return [...floorHere];
+      return (cells.get(y * width + x)?.remembered.items ?? []).map(itemView);
+    },
     target: () => (known.target === null ? null : { midx: known.target.monster ?? 0, grid: { x: known.target.grid.x, y: known.target.grid.y } }),
     messages: () => reads.messages?.drain() ?? [],
     stores: () => (known.stores ?? []).map((store): StoreView => ({ ...writable(store), stock: store.stock.map(storeItemView) })),
