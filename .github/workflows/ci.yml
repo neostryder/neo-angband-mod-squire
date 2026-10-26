@@ -33,8 +33,7 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      # Fail when the manifest asks for a wildcard state grant or the real map, so every
-      # state domain the mod reads stays listed by name.
+      # Fail when the manifest asks for the real map, a wildcard state grant, or raw truth, core, state or registry access, so every state domain the mod reads stays listed by name.
       - run: node tools/check-grants.mjs
 
       # typecheck, then test, then confirm the committed plugin.js is a current build of

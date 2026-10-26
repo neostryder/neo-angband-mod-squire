@@ -8,7 +8,8 @@
  * whichever call comes first and lives until the page goes.
  */
 
-import type { AgentCommand, AgentController, AgentView, ControllerKeyAnswer, ControllerKeyPress, InputSnapshot, ModNet, ModPluginContext, ModUi } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentController, AgentView, ControllerKeyAnswer, ControllerKeyPress } from "@rpgm-tools/neo-angband-core";
+import type { Api2Host } from "./api2/host.js";
 import { ask, JEV, JEV_KEY_VARIABLES, type Backend, type NetLike } from "./brain/backend.js";
 import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
@@ -55,26 +56,11 @@ import { createSender } from "./telemetry/sender.js";
 import { createRows, countRows, exportRows, goalSeqCounter, rowId } from "./laya/rows.js";
 import { createShadow } from "./laya/shadow.js";
 import { unknownFlavour } from "./brain/items.js";
-import { birthOptions, engineTurnEnergy, viewInput } from "./host-adapter.js";
+import { turnEnergy } from "./energy.js";
 import type { Apprentice } from "./knight.js";
 
-/** The plugin context fields used by Squire's runtime. */
-export type SquireHost = Pick<ModPluginContext, "log"> & {
-  readonly prefs?: Pick<ModPluginContext["prefs"], "get" | "set">;
-  readonly characterStore?: ModPluginContext["characterStore"];
-  readonly controller?: ModPluginContext["controller"];
-  readonly saves?: ModPluginContext["saves"];
-  readonly character?: Pick<NonNullable<ModPluginContext["character"]>, "key" | "onRunEnd">;
-  readonly net?: ModNet;
-  readonly snapshot?: () => InputSnapshot | null;
-  readonly core?: Partial<Pick<ModPluginContext["core"], "turnEnergy">>;
-  readonly options?: Pick<NonNullable<ModPluginContext["options"]>, "get">;
-  readonly controllerArmed?: boolean;
-  /** The panel API, for the errand menu. */
-  readonly ui?: Pick<ModUi, "openPanel">;
-  /** Resolved manifest rules. Absent in tests that build a host by hand. */
-  readonly flags?: Readonly<Record<string, boolean>>;
-};
+/** The host members Squire's runtime uses: the bridge's, all optional so a test can build a host by hand. */
+export type SquireHost = Pick<Api2Host, "log"> & Partial<Pick<Api2Host, "prefs" | "characterStore" | "controller" | "saves" | "character" | "net" | "snapshot" | "options" | "controllerArmed" | "ui" | "flags">>;
 
 /** The host's run report. */
 export type RunReportLike = RunReport;
@@ -220,9 +206,16 @@ export interface Runtime {
   net(): NetLike | null;
 }
 
-/** A command's code, direction and arguments, for telling one command from another. */
+/**
+ * A command's code, direction and the arguments the game reports back, for
+ * telling one command from another. The command event carries only a handle, a
+ * floor index, a spell and a store index, so those are all the key reads, on
+ * the command Squire gave and on the one the game reports alike.
+ */
 function commandKey(command: { readonly code: string; readonly dir?: number; readonly args?: unknown }): string {
-  return JSON.stringify([command.code, command.dir ?? null, command.args ?? null]);
+  const args = command.args !== null && typeof command.args === "object" ? (command.args as Record<string, unknown>) : {};
+  const pick = (name: string): number | null => (typeof args[name] === "number" ? args[name] : null);
+  return JSON.stringify([command.code, command.dir ?? null, pick("handle"), pick("floor"), pick("spell"), pick("index")]);
 }
 
 /**
@@ -958,7 +951,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...(engineTurnEnergy(host) === undefined ? {} : { speedEnergy: engineTurnEnergy(host)! }),
+        speedEnergy: turnEnergy,
         log: host.log,
         persona: () => (coloured ? character.persona : null),
         chaos: coloured,
@@ -975,7 +968,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       }),
       tally,
       send: (request) => self.send(request),
-      token: () => viewInput(host)?.token ?? null,
+      token: () => host.snapshot?.()?.token ?? null,
       now,
       log: host.log,
       status,
@@ -999,14 +992,13 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     }
     if (!rulesOnly) mark?.call(host.controller);
     const persona = personaFor();
-    const speedEnergy = engineTurnEnergy(host);
     brain = createBrain<GoalDigest>({
       backend,
       rulesOnly,
       planner: createGoalPlanner({
         cfg,
         terrain,
-        ...(speedEnergy === undefined ? {} : { speedEnergy }),
+        speedEnergy: turnEnergy,
         log: host.log,
         persona: () => (persona === null ? null : character.persona),
         backstoryTokens: backstoryBudget(config),
@@ -1024,11 +1016,11 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         townCall: () => strategy.townCall(),
         purchaseOrder: () => strategy.purchaseOrder(),
         orders,
-        birthOptions: () => birthOptions(host),
+        birthOptions: () => host.options?.get().entries ?? [],
       }),
       tally,
       send: (request) => self.send(request),
-      token: () => viewInput(host)?.token ?? null,
+      token: () => host.snapshot?.()?.token ?? null,
       now,
       log: host.log,
       status: (label, reason) => host.controller?.setStatus(reason === undefined ? { label } : { label, reason }),
