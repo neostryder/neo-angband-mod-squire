@@ -33,9 +33,9 @@
     "verify": "pnpm typecheck && pnpm test && pnpm check && pnpm capabilities"
   },
   "devDependencies": {
-    "@rpgm-tools/neo-angband-content": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/ccc4d685a/rpgm-tools-neo-angband-content-1.22.0.tgz",
-    "@rpgm-tools/neo-angband-core": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/ccc4d685a/rpgm-tools-neo-angband-core-1.22.0.tgz",
-    "@rpgm-tools/neo-angband-mod-sdk": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/ccc4d685a/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz",
+    "@rpgm-tools/neo-angband-content": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/b53b9981c/rpgm-tools-neo-angband-content-1.22.0.tgz",
+    "@rpgm-tools/neo-angband-core": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/b53b9981c/rpgm-tools-neo-angband-core-1.22.0.tgz",
+    "@rpgm-tools/neo-angband-mod-sdk": "file:D:/Repositories/_outbox/na-overhaul-core/sdk-local/b53b9981c/rpgm-tools-neo-angband-mod-sdk-1.22.0.tgz",
     "@types/node": "^22.20.1",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
