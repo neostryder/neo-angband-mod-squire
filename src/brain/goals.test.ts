@@ -2419,6 +2419,24 @@ describe("tactical safety", () => {
     expect(criteria(q, "throw_oil")).toMatch(/for about [\d.]+ damage \([\w ]+\) when it lands/);
   });
 
+  it("takes the staircase it stands on when a floating eye seals the only way out and the level is too deep for it", () => {
+    const w = world({ map: ["###", "#>#", "#.#", "#.#", "###"], player: { depth: 1, level: 1, hp: 17, maxHp: 17 },
+      monsters: [{ ...eye, grid: { x: 1, y: 2 } }], monsterRecall: lore });
+    w.moveTo({ x: 1, y: 1 });
+    const { p } = planner(w);
+    const rounds: string[][] = [];
+    /* The world does not change level after a descent, so the same-turn limit ends the walk-through after six asks. */
+    for (let round = 0; round < 6; round += 1) {
+      const q = asked(p.ask(w.view));
+      rounds.push(offered(q));
+      const choice = p.choose(pick(offered(q)[0]!), q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected a plan");
+      expect(choice.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+    }
+    expect(rounds.flat()).not.toContain("swing_unseen");
+    expect(rounds.flat()).toContain("leave_level");
+  });
+
   it("says a creature never moves and that stepping away from it is safe", () => {
     const w = world({ map: ROOM, player: { depth: 1, level: 1, hp: 12, maxHp: 12 }, monsters: [eye], monsterRecall: lore });
     const q = asked(planner(w).p.ask(w.view));
