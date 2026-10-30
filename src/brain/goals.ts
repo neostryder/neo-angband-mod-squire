@@ -1041,7 +1041,10 @@ function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
 
 /**
  * Which stairs a retreat may take. In town the only staircase leads down into
- * the dungeon, which is no escape, so a retreat there only steps away. Below,
+ * the dungeon, and no town creature follows: a hurt character that a mercenary
+ * keeps pace with cannot get clear by stepping away, so when the danger is
+ * pressing the retreat takes the stairs, and otherwise it only steps away.
+ * Below,
  * any staircase will do when the danger is pressing; otherwise only a down
  * staircase, because backing up the stairs from the first level at good health
  * is a trip to town and back that never gets deeper.
@@ -1049,8 +1052,8 @@ function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
  */
 function retreatStairs(s: Situation, terrain: Terrain, widen: boolean): "any" | "down" | "none" {
   const player = s.view.player();
-  if (player.depth === 0) return "none";
   const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
+  if (player.depth === 0) return pressing && reachableAnyStairs(s.view, terrain) ? "down" : "none";
   if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
   return reachableStairs(s.view, terrain) && (player.depth === 1 || missingPreparation(s.view, player.depth + 1).length === 0) ? "down" : "none";
 }

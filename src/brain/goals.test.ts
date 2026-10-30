@@ -1804,7 +1804,7 @@ describe("soak findings", () => {
     expect(planOf(planner(w).p, w, "retreat").step(w.view, w.act)).toEqual({ code: "ascend" });
   });
 
-  it("never takes the town's down staircase as an escape", () => {
+  it("takes the town's down staircase as an escape when hurt, since no townsperson follows", () => {
     /* The soak's priest in town at 7 of 13 hit points, standing on the staircase with a townsperson beside it. */
     const w = world({
       map: ["##########", "#........#", "#...>@...#", "#........#", "##########"],
@@ -1813,9 +1813,19 @@ describe("soak findings", () => {
     });
     w.moveTo({ x: 4, y: 2 });
     const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
-    expect(offer?.criteria).toContain("three steps");
-    const step = planOf(planner(w).p, w, "retreat").step(w.view, w.act);
-    expect(step?.code).toBe("walk");
+    expect(offer?.criteria).toContain("down staircase");
+    expect(planOf(planner(w).p, w, "retreat").step(w.view, w.act)).toEqual({ code: "descend" });
+  });
+
+  it("only steps away from a townsperson at good health, without taking the town's staircase", () => {
+    const w = world({
+      map: ["##########", "#........#", "#...>@...#", "#........#", "##########"],
+      player: { level: 1, cls: "Priest", depth: 0, maxDepth: 1, hp: 13, maxHp: 13 },
+      monsters: [{ grid: { x: 6, y: 2 }, race: "mean-looking mercenary", level: 0, speed: 100 }],
+    });
+    w.moveTo({ x: 4, y: 2 });
+    const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
+    if (offer !== undefined) expect(offer.criteria).not.toContain("staircase");
   });
 
   it("leaves a goal out once it has started three times on one game turn", () => {
