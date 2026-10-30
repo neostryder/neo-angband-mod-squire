@@ -17939,6 +17939,7 @@ function intentOf(command) {
 
 // src/api2/controller.ts
 var REFUSALS_BEFORE_RELEASE = 25;
+var STORE_CODES = /* @__PURE__ */ new Set(["shop-buy", "shop-sell", "shop-exit"]);
 function promptAnswer(prompt) {
   switch (prompt.kind) {
     case "ack":
@@ -17982,7 +17983,8 @@ function createTick(bridge2, decide) {
       const fresh = await mod.view.input();
       if (fresh.ok) token = fresh.value.token;
     }
-    const sent = await mod.act.submit(token, intentOf(command));
+    const code = command.code;
+    const sent = await mod.act.submit(token, input.phase === "store" && !STORE_CODES.has(code) ? intentOf({ code: "shop-exit" }) : intentOf(command));
     if (sent.ok) {
       refusals = 0;
       return;
