@@ -7255,8 +7255,8 @@ function reachableAnyStairs(view, terrain) {
 }
 function retreatStairs(s, terrain, widen) {
   const player = s.view.player();
-  if (player.depth === 0) return "none";
   const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
+  if (player.depth === 0) return pressing && reachableAnyStairs(s.view, terrain) ? "down" : "none";
   if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
   return reachableStairs(s.view, terrain) && (player.depth === 1 || missingPreparation(s.view, player.depth + 1).length === 0) ? "down" : "none";
 }
