@@ -8453,11 +8453,12 @@ function createGoalPlanner(options) {
         })(), { mode: "explore" });
       case "leave_level": {
         const way = journey.exitWay(view) ?? (leaveStep(situationNow(view), terrain)?.down === true ? "down" : null);
+        const stranded = offeredWiden;
         return stepsPlan(way === "down" ? "take the stairs down" : way === "up" ? "take the stairs up" : "take the nearest stairs", view, (ctx) => {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell2 = ctx.view.cell(here.grid.x, here.grid.y);
-          if (cell2 !== null && terrain.isDownStair(cell2.feat) && missingPreparation(ctx.view, here.depth + 1).length === 0) return ctx.act.descend();
+          if (cell2 !== null && terrain.isDownStair(cell2.feat) && (stranded || missingPreparation(ctx.view, here.depth + 1).length === 0)) return ctx.act.descend();
           if (cell2 !== null && terrain.isUpStair(cell2.feat)) return ctx.act.ascend();
           const checked = leaveStep(situationNow(ctx.view), terrain);
           if (checked === null) return null;
@@ -8749,6 +8750,8 @@ function createGoalPlanner(options) {
         if (offers.length === 0) {
           if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && !view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && creatureDamageFor(s, grid, terrain) < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
           if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
+          const stairsOut = { goal: "leave_level", criteria: "Take the staircase underfoot: nothing else can be done from here, and staying gains nothing.", risk: exposure(s) };
+          if (offers.length === 0 && stairsUnderfoot(s, terrain) && usable(stairsOut)) offers.push(stairsOut);
           if (offers.length === 0 && player.status.afraid === 0) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
