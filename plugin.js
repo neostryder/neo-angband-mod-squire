@@ -17960,7 +17960,9 @@ function createTick(bridge2, decide) {
   return async (mod, input) => {
     bridge2.setInput(input);
     if (input.prompt !== null) {
-      await mod.act.answer(input.prompt.promptId, promptAnswer(input.prompt));
+      const answer2 = promptAnswer(input.prompt);
+      const result = await mod.act.answer(input.prompt.promptId, answer2);
+      if (!result.ok) mod.meta.log(`Squire's answer to a ${input.prompt.kind} prompt was refused: ${result.message}`);
       return;
     }
     if (input.phase !== "play" && input.phase !== "store") return;
