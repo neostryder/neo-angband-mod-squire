@@ -42,7 +42,9 @@ export function createTick(bridge: Bridge, decide: AgentController): Tick {
   return async (mod, input) => {
     bridge.setInput(input);
     if (input.prompt !== null) {
-      await mod.act.answer(input.prompt.promptId, promptAnswer(input.prompt));
+      const answer = promptAnswer(input.prompt);
+      const result = await mod.act.answer(input.prompt.promptId, answer);
+      if (!result.ok) mod.meta.log(`Squire's answer to a ${input.prompt.kind} prompt was refused: ${result.message}`);
       return;
     }
     if (input.phase !== "play" && input.phase !== "store") return;
