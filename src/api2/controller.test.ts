@@ -92,6 +92,15 @@ describe("the decision tick", () => {
     expect(r.submitted).toEqual([]);
   });
 
+  it("leaves an open store instead of walking, and keeps a store command as chosen", async () => {
+    const r = rig();
+    await createTick(bridge("view"), ((_view, act) => act.move(6)) as AgentController)(r.mod, input({ phase: "store" }));
+    await createTick(bridge("view"), ((_view, act) => act.shopBuy(2)) as AgentController)(r.mod, input({ phase: "store" }));
+    await createTick(bridge("view"), ((_view, act) => act.move(6)) as AgentController)(r.mod, input());
+    const codes = r.submitted.map((intent) => (intent as { command: { code: string } }).command.code);
+    expect(codes).toEqual(["shop-exit", "shop-buy", "walk"]);
+  });
+
   it("gives the keyboard back after a run of refusals", async () => {
     const r = rig(() => false);
     const tick = createTick(bridge("view"), () => ({ code: "hold" }) as never);

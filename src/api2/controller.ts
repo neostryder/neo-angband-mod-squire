@@ -10,13 +10,16 @@
  * refusals ends the errand so the keyboard goes back instead of looping.
  */
 
-import type { AgentController } from "@rpgm-tools/neo-angband-core";
+import type { AgentCommand, AgentController } from "@rpgm-tools/neo-angband-core";
 import type { Api2InputState, Api2Prompt, Api2PromptAnswer, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import type { Bridge } from "./host.js";
 import { createActFacade, intentOf } from "./act.js";
 
 /** Consecutive refusals after which the errand ends and the keyboard goes back. */
 export const REFUSALS_BEFORE_RELEASE = 25;
+
+/** The only command codes the game accepts while a store is open. */
+const STORE_CODES: ReadonlySet<string> = new Set(["shop-buy", "shop-sell", "shop-exit"]);
 
 export interface Tick {
   (mod: ModApi2, input: Api2InputState): Promise<void>;
@@ -62,7 +65,9 @@ export function createTick(bridge: Bridge, decide: AgentController): Tick {
       const fresh = await mod.view.input();
       if (fresh.ok) token = fresh.value.token;
     }
-    const sent = await mod.act.submit(token, intentOf(command));
+    /* A store is open and the decision is a walk or a rest, which the game refuses until the store is left. */
+    const code = (command as { code: string }).code;
+    const sent = await mod.act.submit(token, input.phase === "store" && !STORE_CODES.has(code) ? intentOf({ code: "shop-exit" } as AgentCommand) : intentOf(command));
     if (sent.ok) {
       refusals = 0;
       return;
