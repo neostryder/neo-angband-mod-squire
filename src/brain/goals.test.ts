@@ -3362,3 +3362,24 @@ describe("town as an errand for a young character", () => {
     expect(townErrand(null, 0, 4)).toBe(true);
   });
 });
+
+describe("explore that keeps looping on one level", () => {
+  const pickExplore = (): Readonly<Record<string, Answer>> => ({ goal: { type: "choice", choice: "explore", confidence: 0.9, probabilities: { explore: 0.9 } } });
+
+  it("stops offering explore after two loops and offers a fresh floor instead", () => {
+    const w = suppliedWorld({ map: ["#######", "#<.@..#", "#.....#", "#...   ", "#######"], player: { cls: "Mage", depth: 1, level: 1, hp: 15, maxHp: 15 } });
+    const { p } = planner(w);
+    let exploreAfter: string[] | null = null;
+    for (let round = 0; round < 12 && exploreAfter === null; round++) {
+      const q = asked(p.ask(w.view));
+      if (!offered(q).includes("explore")) {
+        exploreAfter = offered(q);
+        break;
+      }
+      p.choose(pickExplore(), q.context, w.view);
+      w.advance(10);
+    }
+    expect(exploreAfter).not.toBeNull();
+    expect(exploreAfter).toContain("leave_level");
+  });
+});

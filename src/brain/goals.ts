@@ -171,6 +171,9 @@ const ESCAPE_BELOW_HP = 0.7;
  * where a timid one has already left. The first four levels add a little, since
  * a few hit points go in one blow.
  */
+/** Explore loops on one level after which the ground still unexplored is treated as out of reach. */
+const EXPLORE_LOOPS_GIVEN_UP = 2;
+
 /**
  * Town is an errand for a young character: arrive, shop, take the stairs. Walking up to townspeople or
  * spending oil on them risks a weak character against something like a mercenary for next to no
@@ -1133,7 +1136,7 @@ function manaSpend(mana: number, sp: number): Spend {
 
 const FREE: Spend = { cost: 0, costNote: "nothing" };
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes(), storeMemory?: readonly StoreMemory[], homeStock?: HomeStock): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes(), storeMemory?: readonly StoreMemory[], homeStock?: HomeStock, exploreExhausted = false): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -1342,10 +1345,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     addLeave(`Leave the level: the game says "${feeling}"`, exposure(s) * 0.3);
   }
   /* A floor walked out with no way down found has nothing left to stay for, and a new level by any staircase has its own way down. */
-  if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
+  if (player.depth > 0 && s.awake.length === 0 && (exploreExhausted || !reachableFrontier(view, terrain)) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
     addLeave("Take the nearest staircase to a new level: nothing unexplored can be reached here and no way down is known.", exposure(s) + 0.02);
   }
-  if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && missingPreparation(view, player.depth + 1).length > 0) {
+  if (player.depth > 0 && s.awake.length === 0 && (exploreExhausted || !reachableFrontier(view, terrain)) && missingPreparation(view, player.depth + 1).length > 0) {
     addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
   /* Backing off from an easy creature at good health only costs turns, and
@@ -1518,7 +1521,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const townNeedsStairs = player.depth === 0 && knownDownStairs(view, terrain).length === 0;
   /* Town explore only looks for the way down, so with a reachable staircase it has nothing to walk to. */
   const townStairsReached = player.depth === 0 && !townNeedsStairs && reachableStairs(view, terrain);
-  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (reachableFrontier(view, terrain) || townNeedsStairs && townUnwalked(s, terrain))) {
+  if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (!exploreExhausted && reachableFrontier(view, terrain) || townNeedsStairs && townUnwalked(s, terrain))) {
     add("explore", s.unseenDamage > 0 ? "Keep exploring toward unexplored ground despite the recent unexplained hits. Small hits can be endured, but an empty visible list does not prove safety." : "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
@@ -1814,6 +1817,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const loops = createLoopGuard();
   /* A loop found and not yet answered. The next decision is a re-plan told which tactic failed. */
   let loopFound: LoopFinding | null = null;
+  /* Explore loops found on this level. The ground it keeps failing to reach counts as walked out. */
+  let exploreLoops = 0;
   /**
    * Closes a loop once a decision answers it, and returns the tactic that
    * decision must not repeat. The history starts over either way, so the same
@@ -2942,6 +2947,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
+      if (newLevel) exploreLoops = 0;
+      const exploreExhausted = exploreLoops >= EXPLORE_LOOPS_GIVEN_UP;
+      const frontierLeft = (v: AgentView): boolean => !exploreExhausted && reachableFrontier(v, terrain);
       const widen = s.hpShare < 0.35 || (s.awake.length > 0 && player.hp <= player.maxHp * cfg.retreatFraction);
       offeredWiden = widen;
       if (sameTurnAt !== turn) {
@@ -2960,7 +2968,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const focus = options.focus?.() ?? null;
       const usable = (offer: Offer) => (focus === null || focus.has(offer.goal)) && !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted);
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const chosenHome = options.townCall?.() ?? null;
       const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
@@ -2976,8 +2984,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         const reason = journey.blocked(view) ?? nothingToDo(view, tried);
         offeredWiden = true;
-        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims);
-        if (reachableFrontier(view, terrain) && !wider.some((o) => o.goal === "explore") && !walksIntoDeath(s, terrain, "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
+        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims, [], emptyFlourishes(), undefined, undefined, exploreExhausted);
+        if (frontierLeft(view) && !wider.some((o) => o.goal === "explore") && !walksIntoDeath(s, terrain, "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
         if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend") && !walksIntoDeath(s, terrain, "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
         offers = journey.apply(wider, view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
         if (offers.length === 0) {
@@ -2995,7 +3003,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * everything inside the leash is explored. Walking past the leash is how
        * it finds the creatures it needs to level up. */
       exploreUnleashed = false;
-      if (player.depth > 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && offers.some((o) => o.goal === "descend" && o.gaps !== undefined) && !offers.some((o) => o.goal === "explore") && reachableFrontier(view, terrain) && !walksIntoDeath(s, terrain, "explore")) {
+      if (player.depth > 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && offers.some((o) => o.goal === "descend" && o.gaps !== undefined) && !offers.some((o) => o.goal === "explore") && frontierLeft(view) && !walksIntoDeath(s, terrain, "explore")) {
         const explore: Offer = { goal: "explore", criteria: "Explore unknown ground farther from the stairs to earn the experience the next depth asks for.", risk: exposure(s) + 0.02 };
         if (usable(explore)) {
           offers.push(explore);
@@ -3006,6 +3014,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const found = loops.detect(view);
       if (found !== null && loopFound === null) {
         loopFound = found;
+        if (found.tactic === "explore") exploreLoops += 1;
         lastAnswer = null;
         log(`goal: loop detected (${found.kind}: ${found.detail})${found.tactic === null ? "" : `; re-planning without trusting ${found.tactic}`}`);
       }
@@ -3052,7 +3061,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const awakeNow = new Set(s.awake.map((m) => m.id));
       const newCreatures = [...awakeNow].filter((id) => !lastAwake.has(id)).length;
       lastAwake = awakeNow;
-      const unexplored = reachableFrontier(view, terrain);
+      const unexplored = frontierLeft(view);
       const stairs = knownDownStairs(view, terrain).length > 0;
       /* The creatures line is the plain truth, for the best-move question. A
        * persona's optimism or delusion is what the character believes, so it
