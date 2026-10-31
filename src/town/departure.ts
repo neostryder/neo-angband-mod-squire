@@ -10,6 +10,20 @@ import { shopEntrances } from "./plan.js";
 import { storesFor } from "./shop.js";
 
 export const EARNING_TURNS = 1000;
+/** The longest an earning trip runs for the most driven persona, in game turns. */
+export const EARNING_TURNS_MAX = 6000;
+
+/**
+ * How long an earning trip runs before the character goes back up. A cautious
+ * persona keeps the short trip; a bold, ambitious one that rarely goes home stays
+ * on level 1 long enough to earn the gold and the levels it came for.
+ */
+export function earningTurns(persona: Persona | null): number {
+  if (persona === null) return EARNING_TURNS;
+  const { boldness, ambition, towntrips } = persona.sliders;
+  const drive = Math.min(1, Math.max(0, (boldness + ambition + (100 - towntrips)) / 300));
+  return Math.round(EARNING_TURNS + (EARNING_TURNS_MAX - EARNING_TURNS) * drive * drive);
+}
 export const EARNING_LEASH = 6;
 
 /** Optional stock and gear wait until the whole survival basket is present. */
@@ -28,7 +42,7 @@ export function createDeparture() {
   const shelves = new Map<number, StoreView>();
   let previousDepth = -1;
   let lastTurn = -1;
-  let earning: { turn: number; gold: number; target: number | null; wide: boolean } | null = null;
+  let earning: { turn: number; gold: number; target: number | null; wide: boolean; limit: number } | null = null;
   let failedAtGold: number | null = null;
 
   function observe(view: AgentView, terrain: Terrain): void {
@@ -87,16 +101,16 @@ export function createDeparture() {
 
   return {
     status,
-    begin(view: AgentView, target: number | null): void {
+    begin(view: AgentView, target: number | null, persona: Persona | null = null): void {
       /* A goal already met would end the trip on arrival; the soak's Rogue, with
        * 2 gold, climbed straight back 161 times. The turn limit still ends it. */
-      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold };
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold, limit: earningTurns(persona) };
     },
     active: () => earning !== null,
     /** True when the last earning trip came back with no more gold than it set out with. A trip under way keeps the answer it started with. */
     cameBackEmpty: (view: AgentView) => earning !== null ? earning.wide : failedAtGold !== null && view.player().gold <= failedAtGold,
     finished(view: AgentView): boolean {
-      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= EARNING_TURNS || earning.target !== null && view.player().gold >= earning.target);
+      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= earning.limit || earning.target !== null && view.player().gold >= earning.target);
     },
     observe,
   };

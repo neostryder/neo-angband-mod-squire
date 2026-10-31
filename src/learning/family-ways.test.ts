@@ -34,6 +34,7 @@ const baseLine: Lineage = { name: "Ada", generation: 1, ancestors: [], lore: [],
 
 function parent() {
   const p = defaultPersona("Ada");
+  Object.assign(p.sliders, { boldness: 50, ambition: 50, selfpreservation: 70, towntrips: 50, retreatat: 50 });
   p.sliders.inheritance = 100;
   p.sliders.resemblance = 0;
   return p;

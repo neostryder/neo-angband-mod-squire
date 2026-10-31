@@ -131,7 +131,7 @@ type Override = {
 
 /** Style presets: lever values plus a play rule. The persona sheet offers them in this order. */
 export const ARCHETYPES = {
-  coward: { rule: "retreats at the first real loss of hit points", sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  coward: { rule: "retreats at the first real loss of hit points", sliders: { boldness: 10, ambition: 40, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
   berserker: { rule: "closes to melee and presses every fight", sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
   miser: { rule: "spends gold only on what keeps it alive", sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
   scholar: { rule: "studies every unknown item it finds", sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },

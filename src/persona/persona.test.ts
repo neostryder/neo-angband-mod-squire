@@ -8,7 +8,8 @@ describe("persona", () => {
     const persona = defaultPersona("Ada");
     expect(persona.name).toBe("Ada");
     expect(persona.sliders.strength).toBe(35);
-    expect(persona.sliders.selfpreservation).toBe(70);
+    expect(persona.sliders.selfpreservation).toBe(55);
+    expect(persona.sliders.boldness).toBe(65);
     expect(persona.toggles.grudges).toBe(true);
     expect(persona.quirks.deathwish).toEqual({ on: false, strength: 50 });
   });

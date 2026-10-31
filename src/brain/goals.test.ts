@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { answerKeyOf, createGoalPlanner, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, type GoalDigest } from "./goals.js";
+import { answerKeyOf, createGoalPlanner, escapeShare, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
@@ -3326,5 +3326,14 @@ describe("the safety focus an errand plans with", () => {
   it("waits rather than exploring when nothing threatens", () => {
     const w = suppliedWorld({ map: CORRIDOR });
     expect(offered(focused(w).ask(w.view))).toEqual(["wait"]);
+  });
+});
+
+describe("the health share under which escapes are offered", () => {
+  it("is lower for a bold persona than a timid one, and higher at the first levels", () => {
+    expect(escapeShare(null, 20)).toBe(0.7);
+    expect(escapeShare(archetype("berserker"), 20)).toBeLessThan(escapeShare(defaultPersona(), 20));
+    expect(escapeShare(defaultPersona(), 20)).toBeLessThan(escapeShare(archetype("coward"), 20));
+    expect(escapeShare(defaultPersona(), 2)).toBeGreaterThan(escapeShare(defaultPersona(), 20));
   });
 });

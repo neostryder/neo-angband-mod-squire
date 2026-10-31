@@ -3,7 +3,8 @@ import type { StoreView } from "@rpgm-tools/neo-angband-core";
 import { FEAT, itemNamed, world } from "../harness.js";
 import { readPack } from "../brain/pack.js";
 import { defaultPersona } from "../persona/persona.js";
-import { basketNeeds, createDeparture } from "./departure.js";
+import { archetype } from "../persona/persona.js";
+import { basketNeeds, createDeparture, EARNING_TURNS, EARNING_TURNS_MAX, earningTurns } from "./departure.js";
 import { supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shoppingList } from "./shop.js";
 
@@ -87,5 +88,14 @@ describe("the town survival basket", () => {
     const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
     expect(shoppingList(basket, alchemy, 100, null)).toEqual([]);
     expect(basket.map((need) => need.kind)).not.toContain("oil");
+  });
+});
+
+describe("how long an earning trip runs", () => {
+  it("grows with drive and shrinks with a taste for town", () => {
+    expect(earningTurns(null)).toBe(EARNING_TURNS);
+    expect(earningTurns(archetype("tourist"))).toBeLessThan(earningTurns(defaultPersona()));
+    expect(earningTurns(defaultPersona())).toBeLessThan(earningTurns(archetype("berserker")));
+    expect(earningTurns(archetype("berserker"))).toBeLessThanOrEqual(EARNING_TURNS_MAX);
   });
 });

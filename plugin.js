@@ -1916,6 +1916,7 @@ function supplyNeeds(view, pack, persona, darkLesson = false) {
     ...pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []
   ];
 }
+var PRICE_FLOOR = { healing: 20, phase: 15, escape: 40, recall: 125, oil: 3, food: 3, light: 4, ammo: 1 };
 function lowOnSupplies(needs) {
   if ((needs.find((n) => n.kind === "recall")?.have ?? 0) < 1) return false;
   return (needs.find((n) => n.kind === "healing")?.have ?? 0) < 2 || (needs.find((n) => n.kind === "phase")?.have ?? 0) < 1 || needs.some((n) => n.kind === "food" && n.have === 0 && n.hungry === true);
@@ -2519,7 +2520,7 @@ var GROUPS = [
   "meta"
 ];
 var PARAMETERS = [
-  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off." },
+  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off.", default: 65 },
   { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
   { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
   { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
@@ -2530,9 +2531,9 @@ var PARAMETERS = [
   { id: "volatility", group: "temperament", name: "Volatility", kind: "slider", scale: "steady to mood swings", description: "How much persona strength wanders between decisions." },
   { id: "pride", group: "temperament", name: "Pride", kind: "slider", scale: "humble to glory-seeking", description: "Hunting uniques and chasing depth records." },
   { id: "lawchaos", group: "temperament", name: "Law to Chaos", kind: "slider", scale: "lawful to chaotic", description: "How often the character skips its best-rated option, and how quickly it drops a goal for a new one." },
-  { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 70 },
+  { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 55 },
   { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
-  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate." },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate.", default: 70 },
   { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
   { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
   { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
@@ -2546,13 +2547,13 @@ var PARAMETERS = [
   { id: "hoarding", group: "habits", name: "Pack weight", kind: "slider", scale: "travels light to carries everything", description: "How much the character carries." },
   { id: "tidiness", group: "habits", name: "Tidiness", kind: "slider", scale: "ignores junk rules to ignores aggressively", description: "How eagerly it sets ignore rules." },
   { id: "home", group: "habits", name: "Home use", kind: "slider", scale: "never uses the home to stashes treasures", description: "Whether spare gear goes home." },
-  { id: "towntrips", group: "habits", name: "Town trips", kind: "slider", scale: "rarely returns to returns often", description: "When low supplies prompt a return to town." },
+  { id: "towntrips", group: "habits", name: "Town trips", kind: "slider", scale: "rarely returns to returns often", description: "When low supplies prompt a return to town.", default: 35 },
   { id: "detection", group: "habits", name: "Detection habit", kind: "slider", scale: "never detects to detects on arrival", description: "Use of detection and mapping on a new level." },
   { id: "levelfeel", group: "habits", name: "Level thoroughness", kind: "slider", scale: "takes the first stairs to clears every level", description: "How much ground is explored before descending." },
   { id: "range", group: "tactics", name: "Engagement range", kind: "slider", scale: "melee to ranged and kiting", description: "Closing to melee versus firing from afar." },
   { id: "escapes", group: "tactics", name: "Escape readiness", kind: "slider", scale: "keeps none to keeps many", description: "How many escapes to keep before descending." },
   { id: "healat", group: "tactics", name: "Heal threshold", kind: "slider", scale: "heals late to heals early", description: "Hit-point level at which healing becomes an option." },
-  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds out to leaves early", description: "Hit-point level at which fleeing becomes an option." },
+  { id: "retreatat", group: "tactics", name: "Retreat threshold", kind: "slider", scale: "holds out to leaves early", description: "Hit-point level at which fleeing becomes an option.", default: 40 },
   { id: "targets", group: "tactics", name: "Target priority", kind: "slider", scale: "weakest first to most dangerous first", description: "Which monster in a group is attacked first." },
   { id: "consumables", group: "tactics", name: "Consumable use", kind: "slider", scale: "saves for emergencies to uses freely", description: "How readily potions, scrolls, and charges are spent." },
   { id: "corridors", group: "tactics", name: "Corridor discipline", kind: "slider", scale: "fights in the open to always backs into a corridor", description: "Pulling groups into corridors before fighting." },
@@ -2691,7 +2692,7 @@ function randomPersona(rng, name = "Squire") {
   return result;
 }
 var ARCHETYPES = {
-  coward: { rule: "retreats at the first real loss of hit points", sliders: { boldness: 10, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
+  coward: { rule: "retreats at the first real loss of hit points", sliders: { boldness: 10, ambition: 40, selfpreservation: 90, retreatat: 85, escapes: 90, paranoia: 80, strength: 65 }, quirks: { cowardice: { on: true } } },
   berserker: { rule: "closes to melee and presses every fight", sliders: { boldness: 90, impulsiveness: 85, selfpreservation: 30, range: 10, strength: 70, pride: 80 } },
   miser: { rule: "spends gold only on what keeps it alive", sliders: { greed: 95, savings: 90, pricesense: 90, hoarding: 85, selling: 80, strength: 65 } },
   scholar: { rule: "studies every unknown item it finds", sliders: { curiosity: 90, patience: 85, detection: 80, levelfeel: 85, impulsiveness: 20, strength: 65 }, lists: { elements: ["magic", "healing"] } },
@@ -4691,6 +4692,13 @@ function aimStores(aim) {
 
 // src/town/departure.ts
 var EARNING_TURNS = 1e3;
+var EARNING_TURNS_MAX = 6e3;
+function earningTurns(persona) {
+  if (persona === null) return EARNING_TURNS;
+  const { boldness, ambition, towntrips } = persona.sliders;
+  const drive2 = Math.min(1, Math.max(0, (boldness + ambition + (100 - towntrips)) / 300));
+  return Math.round(EARNING_TURNS + (EARNING_TURNS_MAX - EARNING_TURNS) * drive2 * drive2);
+}
 var EARNING_LEASH = 6;
 function basketNeeds(view, needs, persona = null) {
   if (missingEssentials(view, persona).length === 0) return [...needs];
@@ -4758,14 +4766,14 @@ function createDeparture() {
   }
   return {
     status,
-    begin(view, target) {
-      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold };
+    begin(view, target, persona = null) {
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold, limit: earningTurns(persona) };
     },
     active: () => earning !== null,
     /** True when the last earning trip came back with no more gold than it set out with. A trip under way keeps the answer it started with. */
     cameBackEmpty: (view) => earning !== null ? earning.wide : failedAtGold !== null && view.player().gold <= failedAtGold,
     finished(view) {
-      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= EARNING_TURNS || earning.target !== null && view.player().gold >= earning.target);
+      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= earning.limit || earning.target !== null && view.player().gold >= earning.target);
     },
     observe
   };
@@ -5788,7 +5796,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false) {
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
         if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1).hard.length > 0) return null;
-        if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target);
+        if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target, lastPersona);
       }
       if (goal === null) {
         const command = plan.step(view, act);
@@ -6823,6 +6831,12 @@ function hpShare(damage, hp) {
 }
 var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
+function escapeShare(persona, level) {
+  if (persona === null) return ESCAPE_BELOW_HP;
+  const { retreatat, selfpreservation, boldness } = persona.sliders;
+  const share3 = 0.3 + 4e-3 * retreatat + 2e-3 * (selfpreservation - 50) - 2e-3 * (boldness - 50) + (level < 5 ? 0.08 : 0);
+  return Math.max(0.2, Math.min(0.9, share3));
+}
 var DAMAGE_SHARE_REDECIDE = 0.1;
 var MANA_STRANDED_MELEE = 3;
 var BAD_CUT = 25;
@@ -7253,9 +7267,9 @@ function reachableAnyStairs(view, terrain) {
   const field = flowFrom({ goals: stairs, canEnter: (grid) => isRoutable(view, terrain, grid) });
   return Number.isFinite(field.distance(me));
 }
-function retreatStairs(s, terrain, widen) {
+function retreatStairs(s, terrain, widen, escapeBelow) {
   const player = s.view.player();
-  const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
+  const pressing = widen || s.worst >= 2 || s.hpShare < escapeBelow || player.status.afraid > 0;
   if (player.depth === 0) return pressing && reachableAnyStairs(s.view, terrain) ? "down" : "none";
   if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
   return reachableStairs(s.view, terrain) && (player.depth === 1 || missingPreparation(s.view, player.depth + 1).length === 0) ? "down" : "none";
@@ -7458,7 +7472,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (player.depth > 0 && s.awake.length === 0 && !reachableFrontier(view, terrain) && missingPreparation(view, player.depth + 1).length > 0) {
     addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
   }
-  if (nearDeath || s.unseenDamage > 0 || meleeDanger || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0)) {
+  if (nearDeath || s.unseenDamage > 0 || meleeDanger || s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < escapeShare(persona, player.level) || player.status.afraid > 0)) {
     const scroll = s.pack.phase[0];
     if (scroll !== void 0) {
       add3("phase", `Read ${scroll.name}: a short random teleport that breaks contact for a moment.`, Math.max(0.1, exposure(s) * 0.4), false, player.hp, true);
@@ -7513,7 +7527,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add3("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns (${turnsBand(7)} at most). It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
       tag("deep_descent", 0.5, itemSpend(view, s.pack.descent[0].handle, 1.5));
     }
-    const flight = retreatStairs(s, terrain, widen);
+    const flight = retreatStairs(s, terrain, widen, escapeShare(persona, player.level));
     const retreat = retreatStep(s, terrain, flight);
     if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add3("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
@@ -8322,7 +8336,7 @@ function createGoalPlanner(options) {
         return once("read Deep Descent", view, (ctx) => scroll === void 0 ? null : ctx.act.read(scroll.handle));
       }
       case "retreat": {
-        const flight = retreatStairs(situationNow(view), terrain, offeredWiden);
+        const flight = retreatStairs(situationNow(view), terrain, offeredWiden, escapeShare(personaOf(), view.player().level));
         const depth2 = view.player().depth;
         return stepsPlan("back away", view, (ctx, i) => {
           if (ctx.view.player().depth !== depth2) return null;
@@ -10266,7 +10280,7 @@ function townReason(view, persona, pursuits = []) {
   if (player.depth === 0 || player.dead || supplyMargin(view) !== null) return null;
   const recall = recallItem(view) !== null;
   if (!recall && player.depth >= RECALL_FROM_DEPTH) return null;
-  const short2 = supplyNeeds(view, readPack(view), persona).filter((need) => need.kind !== "recall" && need.kind !== "ammo" && need.kind !== "oil" && need.have < need.want && wanted2(need.kind, persona, pursuits));
+  const short2 = supplyNeeds(view, readPack(view), persona).filter((need) => need.kind !== "recall" && need.kind !== "ammo" && need.kind !== "oil" && need.have < need.want && PRICE_FLOOR[need.kind] <= player.gold && wanted2(need.kind, persona, pursuits));
   if (short2.length === 0) return null;
   const listed = short2.map((need) => `${String(need.have)} of ${String(need.want)} ${need.name}`).join(", ");
   return `The pack holds ${listed}. Supplies are above the level that forces a trip home. ${recall ? "A Word of Recall scroll is in the pack." : "The way home is on foot, up the stairs."} The character has ${String(player.gold)} gold.`;

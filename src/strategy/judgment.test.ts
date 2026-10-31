@@ -70,6 +70,13 @@ describe("the trip to town as the persona's call", () => {
     expect(townReason(low.view, defaultPersona())).toBeNull();
   });
 
+  it("makes no early trip when the gold cannot buy one of what the pack lacks", () => {
+    const w = shortKit();
+    expect(townReason(w.view, defaultPersona())).not.toBeNull();
+    w.setPlayer({ gold: 2 });
+    expect(townReason(w.view, defaultPersona())).toBeNull();
+  });
+
   it("counts only supplies the persona would buy before saving its gold", () => {
     const w = shortKit();
     const saver: Persona = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, savings: 100 } };
