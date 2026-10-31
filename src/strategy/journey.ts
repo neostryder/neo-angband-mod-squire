@@ -163,7 +163,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const front = frontiers(view, terrain);
     if (front.length === 0) return null;
     if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return "exit";
-    if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return "exit";
+    if (upStairs(view).length === 0 && (departure.active() && (expired || departure.finished(view)) || returnReason !== null) && checkedRoute(view, exitTargets(view)) === null) return "exit";
     /* Ready to descend, no down staircase known, nothing left to explore inside the
      * leash. A wounded character, or one with a creature rated dangerous or worse in
      * sight, keeps to the leash: straying far from the up stairs costs the most when

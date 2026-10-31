@@ -482,6 +482,17 @@ describe("bounded exploration and earning", () => {
     expect(late.find((offer) => offer.goal === "explore")?.criteria).toContain("up stairs");
   });
 
+  /* A character that came up a staircase stands on a down staircase with no up staircase known. Wanting
+   * town for healing, it used to have nothing to offer: exploring was held back as optional and
+   * the route home had nowhere to go. */
+  it("searches on foot for the up stairs when it wants town and none is known", () => {
+    const w = world({ map: ["############", "#.@>....,,,#", "############"], player: { cls: "Priest", depth: 2, maxDepth: 3, gold: 100, level: 8, maxLevel: 8, hp: 50, maxHp: 50 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food"] });
+    w.moveTo({ x: 4, y: 1 });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "wait"), w.view, null, new Set(), false, false, "healing");
+    expect(out.find((offer) => offer.goal === "explore")?.criteria).toContain("up stairs");
+  });
+
   it("does not repeat an earning trip that returned with no gold gain", () => {
     const w = world({ map: ROOM, player: { depth: 0, gold: 0, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const journey = createJourney(w.terrain);
