@@ -8,7 +8,7 @@
     "api": ">=2.0.0 <3.0.0",
     "runtime": "in-process",
     "engine": {
-      "range": ">=1.22.0",
+      "range": ">=1.23.0-beta.1",
       "because": "The first Neo Angband release with the engine turn table and snapshot token Squire reads, and with mod API 2."
     },
     "dependencies": {

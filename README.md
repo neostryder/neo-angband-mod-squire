@@ -328,7 +328,7 @@ The fighting errand leaves sleeping creatures alone unless you switch that on or
 
 ## Installing
 
-Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.22.0 or newer. Either:
+Two files: `manifest.json` and `plugin.js`. Squire needs Neo Angband 1.23.0-beta.1 or newer. Either:
 
 - **In the game.** Mods, then **Install a mod...**, which fetches this repository at a release tag, never a branch, so what arrives can't change afterwards. The install records a SHA-256 of every byte that arrived, which lets the manager tell later whether the copy on your machine has changed.
 - **A folder.** Clone this repository into your mods directory, or point the browser build at it with **Load mod folder**.
