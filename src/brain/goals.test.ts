@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import type { Answer, ChoiceQuestion } from "./systemone.js";
-import { answerKeyOf, createGoalPlanner, escapeShare, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, type GoalDigest } from "./goals.js";
+import { answerKeyOf, createGoalPlanner, escapeShare, GOAL_POLICY_VERSION, healthBand, QUESTION_PACK_VERSION, RECALL_WAIT_TURNS, recallPending, SAFETY_GOALS, threatIndex, townErrand, type GoalDigest } from "./goals.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { createBrain, type Question, type Reflex } from "./brain.js";
 import { JEV } from "./backend.js";
@@ -1820,12 +1820,25 @@ describe("soak findings", () => {
   it("only steps away from a townsperson at good health, without taking the town's staircase", () => {
     const w = world({
       map: ["##########", "#........#", "#...>@...#", "#........#", "##########"],
-      player: { level: 1, cls: "Priest", depth: 0, maxDepth: 1, hp: 13, maxHp: 13 },
+      player: { level: 5, cls: "Priest", depth: 0, maxDepth: 1, hp: 13, maxHp: 13 },
       monsters: [{ grid: { x: 6, y: 2 }, race: "mean-looking mercenary", level: 0, speed: 100 }],
     });
     w.moveTo({ x: 4, y: 2 });
     const offer = asked(planner(w).p.ask(w.view)).context.offers.find((o) => o.goal === "retreat");
     if (offer !== undefined) expect(offer.criteria).not.toContain("staircase");
+  });
+
+  it("does not walk up to a mercenary in town at the first levels, and takes the stairs instead", () => {
+    const w = world({
+      map: ["##########", "#........#", "#...>@...#", "#........#", "##########"],
+      player: { level: 1, cls: "Priest", depth: 0, maxDepth: 1, hp: 13, maxHp: 13 },
+      monsters: [{ grid: { x: 8, y: 2 }, race: "mean-looking mercenary", level: 0, speed: 100 }],
+    });
+    w.moveTo({ x: 4, y: 2 });
+    const goals = offered(planner(w).p.ask(w.view));
+    expect(goals).not.toContain("fight");
+    expect(goals).not.toContain("throw_oil");
+    expect(goals).toContain("retreat");
   });
 
   it("leaves a goal out once it has started three times on one game turn", () => {
@@ -3335,5 +3348,17 @@ describe("the health share under which escapes are offered", () => {
     expect(escapeShare(archetype("berserker"), 20)).toBeLessThan(escapeShare(defaultPersona(), 20));
     expect(escapeShare(defaultPersona(), 20)).toBeLessThan(escapeShare(archetype("coward"), 20));
     expect(escapeShare(defaultPersona(), 2)).toBeGreaterThan(escapeShare(defaultPersona(), 20));
+  });
+});
+
+describe("town as an errand for a young character", () => {
+  it("holds in town below a level that falls as boldness rises, and never in the dungeon", () => {
+    expect(townErrand(defaultPersona(), 0, 1)).toBe(true);
+    expect(townErrand(defaultPersona(), 0, 4)).toBe(true);
+    expect(townErrand(defaultPersona(), 0, 5)).toBe(false);
+    expect(townErrand(defaultPersona(), 1, 1)).toBe(false);
+    expect(townErrand(archetype("berserker"), 0, 4)).toBe(false);
+    expect(townErrand(archetype("coward"), 0, 6)).toBe(true);
+    expect(townErrand(null, 0, 4)).toBe(true);
   });
 });

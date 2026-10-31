@@ -171,6 +171,18 @@ const ESCAPE_BELOW_HP = 0.7;
  * where a timid one has already left. The first four levels add a little, since
  * a few hit points go in one blow.
  */
+/**
+ * Town is an errand for a young character: arrive, shop, take the stairs. Walking up to townspeople or
+ * spending oil on them risks a weak character against something like a mercenary for next to no
+ * experience. The level below which this holds falls as boldness rises. Erratic wanderers such as
+ * Farmer Maggot are harmless and stay worth the walk.
+ */
+export function townErrand(persona: Persona | null, depth: number, level: number): boolean {
+  if (depth !== 0) return false;
+  const cap = persona === null ? 5 : Math.ceil(7.5 - persona.sliders.boldness / 20);
+  return level < cap;
+}
+
 export function escapeShare(persona: Persona | null, level: number): number {
   if (persona === null) return ESCAPE_BELOW_HP;
   const { retreatat, selfpreservation, boldness } = persona.sliders;
@@ -1199,7 +1211,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
     /* Walking up to a creature that stays where it is, a mold or a mushroom
      * patch, only trades blows with something that would never have followed. */
     const adjacent = steps(at, s.target.grid) <= 1;
-    const walkUp = !adjacent && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    const errand = townErrand(persona, player.depth, player.level) && !harmlessKind(s.target, view);
+    const walkUp = !adjacent && !errand && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     /* The game refuses every blow from an afraid character without spending a turn.
      * A creature that can paralyse is left to ranged attacks or left alone. */
     if ((adjacent || walkUp) && player.status.afraid === 0 && melee !== undefined && !meleeBarred(s, s.target)) {
@@ -1220,7 +1233,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
       addAttack("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${missile.source?.name ?? "ammunition"}).`, missile);
     }
     const oil = combatOptions(s, "throw_oil")[0];
-    if (ranged && clear && oil !== undefined) {
+    if (ranged && clear && oil !== undefined && !(errand && !adjacent)) {
       addAttack("throw_oil", `Throw ${oil.source?.name ?? "a flask of oil"} at the ${s.target.race}${hitFor(oil, s.target)}.`, oil);
     }
     const wand = combatOptions(s, "aim_wand")[0];
