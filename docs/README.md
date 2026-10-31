@@ -34,7 +34,7 @@ Squire learns a shop's stock when the character enters it. It saves the names, p
 
 ## What it needs
 
-- **Engine:** `>=1.22.0`
+- **Engine:** `>=1.23.0-beta.1`
 - **Shape:** `plugin`
 - **Facets:** `plugin`
 - **Capabilities:** `command:add`, `state:player.read`, `state:monsters.read`, `state:map.read`, `state:floor.read`, `state:target.read`, `state:inventory.read`, `state:spells.read`, `state:stores.read`, `state:constants.read`, `state:options.read`, `state:turn.read`, `state:messages.read`, `event:combat-outcome`, `event:player-command`, `ui:panel.mount`, `ui:birth.replace`, `ui:title`, `registry:command`, `keymap:write`, `saves:manage`, `profiles:manage`, `network:api.typesafe.ai`, `network:local`, `network:squire.rpgm.tools`
