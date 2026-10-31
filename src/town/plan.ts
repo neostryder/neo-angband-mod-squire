@@ -13,7 +13,7 @@ import type { Persona } from "../persona/persona.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores, unaimedUpgradePurchase } from "./aims-shop.js";
-import { shownName, supplyNeeds } from "./needs.js";
+import { PRICE_FLOOR, shownName, supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
 import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
@@ -69,7 +69,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
       const spares = homeSpares(view, persona, flourishes.darkLesson).length > 0;
       return covers || spares || !home.entered;
     }
-    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const buying = needs.some((need) => need.have < need.want && PRICE_FLOOR[need.kind] <= gold && storesFor(need.kind).includes(entrance.name));
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === undefined ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
     const exploring = memories !== undefined && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
     /* The Black Market buys anything, so it is a trip only for what no other store takes. */

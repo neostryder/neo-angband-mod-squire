@@ -5167,7 +5167,7 @@ function neededEntrances(view, terrain, persona, visited = /* @__PURE__ */ new S
       const spares = homeSpares(view, persona, flourishes.darkLesson).length > 0;
       return covers || spares || !home.entered;
     }
-    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const buying = needs.some((need) => need.have < need.want && PRICE_FLOOR[need.kind] <= gold && storesFor(need.kind).includes(entrance.name));
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === void 0 ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
     const exploring = memories !== void 0 && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
     const selling = entrance.name === "Black Market" ? sales.some((sale) => !SPECIALISTS.some((shop) => saleFits(sale.tval, shop))) : sales.some((sale) => saleFits(sale.tval, entrance.name));
