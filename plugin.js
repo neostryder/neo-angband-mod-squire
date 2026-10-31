@@ -6831,6 +6831,11 @@ function hpShare(damage, hp) {
 }
 var RECALL_MIN_GOLD = 50;
 var ESCAPE_BELOW_HP = 0.7;
+function townErrand(persona, depth2, level) {
+  if (depth2 !== 0) return false;
+  const cap2 = persona === null ? 5 : Math.ceil(7.5 - persona.sliders.boldness / 20);
+  return level < cap2;
+}
 function escapeShare(persona, level) {
   if (persona === null) return ESCAPE_BELOW_HP;
   const { retreatat, selfpreservation, boldness } = persona.sliders;
@@ -7362,7 +7367,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   }
   if (s.target !== null) {
     const adjacent2 = steps(at, s.target.grid) <= 1;
-    const walkUp = !adjacent2 && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    const errand = townErrand(persona, player.depth, player.level) && !harmlessKind(s.target, view);
+    const walkUp = !adjacent2 && !errand && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     if ((adjacent2 || walkUp) && player.status.afraid === 0 && melee !== void 0 && !meleeBarred(s, s.target)) {
       const away = steps(at, s.target.grid);
       const touch = hurtsOnTouch(view, s.target);
@@ -7376,7 +7382,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       addAttack("shoot", `Fire at the ${s.target.race} with the equipped launcher (carrying ${missile.source?.name ?? "ammunition"}).`, missile);
     }
     const oil = combatOptions(s, "throw_oil")[0];
-    if (ranged && clear && oil !== void 0) {
+    if (ranged && clear && oil !== void 0 && !(errand && !adjacent2)) {
       addAttack("throw_oil", `Throw ${oil.source?.name ?? "a flask of oil"} at the ${s.target.race}${hitFor(oil, s.target)}.`, oil);
     }
     const wand = combatOptions(s, "aim_wand")[0];
@@ -9401,7 +9407,7 @@ function lootErrand(env) {
     }
   };
 }
-function townErrand(env) {
+function townErrand2(env) {
   const explore = { inner: null };
   let read = null;
   let depth2 = null;
@@ -9534,7 +9540,7 @@ function errandMission(id, env) {
     case "loot":
       return lootErrand(env);
     case "town":
-      return townErrand(env);
+      return townErrand2(env);
     case "down":
       return stairErrand("down", env);
     case "up":
