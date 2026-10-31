@@ -132,6 +132,14 @@ describe("town trip", () => {
     expect(w.issued.filter((command) => command.code === "shop-buy")).toHaveLength(2);
   });
 
+  it("names no shop for a need the purse cannot buy even one of", () => {
+    const store: StoreView = { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [] };
+    const w = suppliedWorld({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, maxDepth: 5, gold: 50 }, stores: [store] });
+    expect(neededEntrances(w.view, w.terrain, null).map((entry) => entry.name)).toEqual(["Alchemy Shop"]);
+    w.setPlayer({ gold: 1 });
+    expect(neededEntrances(w.view, w.terrain, null)).toEqual([]);
+  });
+
   it("does not read any stock before stepping inside the matching shop", () => {
     const stock = [{ ...itemNamed("a Scroll of Word of Recall", 0), index: 0, price: 35, number: 2 }] as StoreItemView[];
     /* The engine names stores by terrain code, as the live game does. */
