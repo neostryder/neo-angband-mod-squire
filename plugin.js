@@ -5667,7 +5667,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false) {
     const front = frontiers(view, terrain);
     if (front.length === 0) return null;
     if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return "exit";
-    if (departure.active() && upStairs(view).length === 0 && (returnReason !== null || expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return "exit";
+    if (upStairs(view).length === 0 && (departure.active() && (expired || departure.finished(view)) || returnReason !== null) && checkedRoute(view, exitTargets(view)) === null) return "exit";
     const awake2 = view.monsters().filter((monster) => monster.visible && !monster.asleep);
     const dangerous = awake2.some((monster) => assessThreat(monster, player, awake2, view, void 0, terrain).band >= 2);
     if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth2 + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
