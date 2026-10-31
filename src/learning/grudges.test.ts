@@ -23,6 +23,7 @@ function persona(sliders: Partial<Persona["sliders"]> = {}, name = "Heir"): Pers
   const p = defaultPersona(name);
   p.sliders.inheritance = 100;
   p.sliders.resemblance = 0;
+  p.sliders.boldness = 50;
   Object.assign(p.sliders, sliders);
   return p;
 }

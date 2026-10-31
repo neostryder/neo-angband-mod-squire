@@ -161,8 +161,22 @@ export function threatBand(monsterLevel: number, characterLevel: number): Threat
 /** Gold below which a trip to town cannot buy enough healing to be worth a recall scroll. */
 const RECALL_MIN_GOLD = 50;
 
-/** Health share under which escapes are offered even against easy creatures. */
+/** Health share under which escapes are offered even against easy creatures, for a character with no persona. */
 const ESCAPE_BELOW_HP = 0.7;
+
+/**
+ * The health share under which escapes are offered even against easy
+ * creatures. A persona that leaves early and values its life raises it; a bold
+ * one lowers it, so a driven character keeps fighting at three quarters health
+ * where a timid one has already left. The first four levels add a little, since
+ * a few hit points go in one blow.
+ */
+export function escapeShare(persona: Persona | null, level: number): number {
+  if (persona === null) return ESCAPE_BELOW_HP;
+  const { retreatat, selfpreservation, boldness } = persona.sliders;
+  const share = 0.3 + 0.004 * retreatat + 0.002 * (selfpreservation - 50) - 0.002 * (boldness - 50) + (level < 5 ? 0.08 : 0);
+  return Math.max(0.2, Math.min(0.9, share));
+}
 
 /** One blow of this share of maximum hit points, or twice it in all since the plan began, sends the decision back to the model. */
 const DAMAGE_SHARE_REDECIDE = 0.1;
@@ -1050,9 +1064,9 @@ function reachableAnyStairs(view: AgentView, terrain: Terrain): boolean {
  * is a trip to town and back that never gets deeper.
  * Below the first level, down is ruled out too while the next depth's checklist has gaps. With connected stairs, a character who just climbed up is standing on a down staircase, and stepping onto it during a retreat sends it back to the level it was walking away from.
  */
-function retreatStairs(s: Situation, terrain: Terrain, widen: boolean): "any" | "down" | "none" {
+function retreatStairs(s: Situation, terrain: Terrain, widen: boolean, escapeBelow: number): "any" | "down" | "none" {
   const player = s.view.player();
-  const pressing = widen || s.worst >= 2 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0;
+  const pressing = widen || s.worst >= 2 || s.hpShare < escapeBelow || player.status.afraid > 0;
   if (player.depth === 0) return pressing && reachableAnyStairs(s.view, terrain) ? "down" : "none";
   if (pressing) return reachableAnyStairs(s.view, terrain) ? "any" : "none";
   return reachableStairs(s.view, terrain) && (player.depth === 1 || missingPreparation(s.view, player.depth + 1).length === 0) ? "down" : "none";
@@ -1326,7 +1340,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
   /* Low health makes escapes worth offering even against easy creatures. */
   /* A caster with no mana for its spells cannot kill at range and should not trade blows with a creature that hurts on touch. */
-  if (nearDeath || s.unseenDamage > 0 || meleeDanger || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < ESCAPE_BELOW_HP || player.status.afraid > 0))) {
+  if (nearDeath || s.unseenDamage > 0 || meleeDanger || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < escapeShare(persona, player.level) || player.status.afraid > 0))) {
     /* Every way out is its own option with its own cost and risk, and none is
      * ranked ahead of another here: the model weighs them, and pruning drops
      * only one that another escape beats on every count. */
@@ -1394,7 +1408,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
       add("deep_descent", `Read ${s.pack.descent[0].name} to leave this level after a delay of 4 to 7 turns (${turnsBand(7)} at most). It drops the character several levels deeper.`, exposure(s) * 0.8 + 0.2);
       tag("deep_descent", 0.5, itemSpend(view, s.pack.descent[0].handle, 1.5));
     }
-    const flight = retreatStairs(s, terrain, widen);
+    const flight = retreatStairs(s, terrain, widen, escapeShare(persona, player.level));
     const retreat = retreatStep(s, terrain, flight);
     if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add("retreat", s.unseenDamage > 0
       ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow."
@@ -2458,7 +2472,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       case "retreat": {
         /* Fleeing heads for the way out of the level when one is known and
          * leads somewhere safer, and only backs up a few steps when not. */
-        const flight = retreatStairs(situationNow(view), terrain, offeredWiden);
+        const flight = retreatStairs(situationNow(view), terrain, offeredWiden, escapeShare(personaOf(), view.player().level));
         const depth = view.player().depth;
         return stepsPlan("back away", view, (ctx, i) => {
           if (ctx.view.player().depth !== depth) return null;

@@ -18,6 +18,7 @@ const MAP = ["########", "#.@....#", "########"];
 
 function persona(name = "Mira"): Persona {
   const p = defaultPersona(name);
+  Object.assign(p.sliders, { boldness: 50, ambition: 50, selfpreservation: 70, towntrips: 50, retreatat: 50 });
   p.sliders.inheritance = 100;
   p.sliders.resemblance = 0;
   return p;

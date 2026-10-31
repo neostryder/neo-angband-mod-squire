@@ -92,6 +92,9 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
   ];
 }
 
+/** The cheapest price a shop asks for one of each supply, in gold, so a trip home is never made with too little to buy anything. */
+export const PRICE_FLOOR: Readonly<Record<SupplyKind, number>> = { healing: 20, phase: 15, escape: 40, recall: 125, oil: 3, food: 3, light: 4, ammo: 1 };
+
 /** A recall trip is useful only if a visible recall scroll can start it. */
 export function lowOnSupplies(needs: readonly SupplyNeed[]): boolean {
   if ((needs.find((n) => n.kind === "recall")?.have ?? 0) < 1) return false;

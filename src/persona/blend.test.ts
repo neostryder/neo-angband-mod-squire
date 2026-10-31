@@ -11,6 +11,7 @@ describe("decision blending", () => {
   it("jitters with a deterministic draw and computes risk", () => {
     const persona = defaultPersona();
     persona.sliders.volatility = 100;
+    persona.sliders.selfpreservation = 70;
     expect(jitteredStrength(persona, () => 1)).toBeCloseTo(0.6);
     expect(jitteredStrength(persona, () => 0)).toBeCloseTo(0.1);
     expect(riskCeiling(persona)).toBeCloseTo(0.25);
