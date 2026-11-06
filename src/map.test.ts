@@ -151,3 +151,15 @@ describe("paralysing gaze routes", () => {
     expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(true);
   });
 });
+
+describe("hazard checks over a whole floor", () => {
+  it("read the creature list once for a flood, not once per grid", () => {
+    const row = `#${".".repeat(30)}#`;
+    const map = ["#".repeat(32), row, row, row, "#".repeat(32)];
+    const w = world({ map, player: { level: 3 }, monsters: [{ grid: { x: 20, y: 2 }, race: "rock lizard", raceFlags: ["NEVER_MOVE"] }] });
+    let reads = 0;
+    const counted = { ...w.view, monsters: () => { reads++; return w.view.monsters(); } };
+    for (let y = 0; y < 5; y++) for (let x = 0; x < 32; x++) isRoutable(counted, w.terrain, { x, y });
+    expect(reads).toBeLessThanOrEqual(2);
+  });
+});

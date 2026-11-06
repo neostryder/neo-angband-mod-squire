@@ -48,6 +48,7 @@ import type {
 } from "@rpgm-tools/neo-angband-core";
 import { TV, type InspectResult } from "@rpgm-tools/neo-angband-core";
 import type { Loc } from "./grid.js";
+import { invalidateHazards } from "./map.js";
 import type { Terrain } from "./terrain.js";
 import type { SquireContext } from "./context.js";
 import type { Decision, Mission, Stop } from "./mission.js";
@@ -498,15 +499,19 @@ export function world(spec: WorldSpec): World {
     issued,
     at: () => where,
     advance(turns: number): void {
+      invalidateHazards();
       turn += turns;
     },
     moveTo(to: Loc): void {
+      invalidateHazards();
       where = to;
     },
     setPlayer(patch: PlayerSpec): void {
+      invalidateHazards();
       playerSpec = { ...playerSpec, ...patch, status: { ...playerSpec.status, ...patch.status } };
     },
     setMonsters(next: readonly MonsterSpec[]): void {
+      invalidateHazards();
       monsterSpecs = next;
     },
     setPack(next: readonly string[]): void {
