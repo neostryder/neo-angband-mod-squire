@@ -954,6 +954,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       backend: backendFor(config) ?? JEV,
       rulesOnly: !modelReady,
       planner: createGoalPlanner({
+        now,
         decisionMemory,
         cfg,
         terrain,
@@ -1002,6 +1003,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       backend,
       rulesOnly,
       planner: createGoalPlanner({
+        now,
         decisionMemory,
         cfg,
         terrain,

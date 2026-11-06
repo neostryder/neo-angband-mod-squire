@@ -127,7 +127,18 @@ export interface DamageEstimate {
   readonly uncertainty: number;
 }
 
+/** Only observed weak physical breeders qualify; poison, paralysis and magic keep their bounds. */
+export function breederBlow(view: AgentView, monster: MonsterView, observed?: ReadonlyMap<string, number>): number | null {
+  if (!monster.raceFlags.includes("MULTIPLY") || monster.raceFlags.includes("UNIQUE") || monster.level > 2 || monster.spellFlags.some((flag) => !HARMLESS_SPELLS.has(flag))) return null;
+  const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
+  if (/poison|acid|paraly|confus|hold|drain|may breathe|may cast spells/i.test(text)) return null;
+  const blows = [...text.matchAll(/\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
+  const damage = blows.length > 0 ? blows.reduce((sum, blow) => sum + Number(blow[1]) * Number(blow[2]), 0) : observed?.get(monster.race);
+  return damage !== undefined && damage <= 2 ? damage : null;
+}
+
 export interface ThreatFacts {
+  readonly observedDamage?: ReadonlyMap<string, number>;
   readonly monsters?: readonly MonsterView[];
   readonly unseenDamage?: number;
   readonly unseenHit?: UnseenHit;
@@ -200,10 +211,13 @@ function resistedDamage(damage: number, attack: string, player: PlayerView, stat
   return damage;
 }
 
-function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
+function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>, observed?: ReadonlyMap<string, number>): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
   const player = view.player();
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
-  const fallback = townsperson(monster, player.depth) ? TOWN_ROUND : roundEstimate(monster.level);
+  const weak = breederBlow(view, monster, observed);
+  const lowBreeder = monster.level <= 2 && monster.raceFlags.includes("MULTIPLY") && !monster.raceFlags.includes("UNIQUE") && monster.spellFlags.length === 0 && !/poison|acid|paraly|confus|hold|drain|may breathe|may cast spells/i.test(text);
+  const fallback = weak ?? (townsperson(monster, player.depth) ? TOWN_ROUND : lowBreeder
+    ? Math.min(roundEstimate(monster.level), Math.max(2, monster.level + Math.ceil(player.maxHp * 0.1))) : roundEstimate(monster.level));
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
   const spellFlags = knownSpellFlags(view, monster);
   /* Recall omits method flags, so resistance cannot erase a physical component. */
@@ -301,7 +315,7 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
     const count = monsterActions(monster, player, actions, facts.energy);
     const seen = monster.visible ? undefined : facts.lastSeen?.get(monster.id);
     const prior = seen === undefined ? 0 : Math.max(0, Math.ceil((view.turn() - seen) * energyBounds(monster.speed, facts.energy).high / 100));
-    const read = attackFacts(view, monster, stats);
+    const read = attackFacts(view, monster, stats, facts.observedDamage);
     const positions = attackPositions(view, monster, at, count, terrain, monsters, facts.openedDoor, false, prior);
     const meleeDamage = Math.max(0, ...positions.values()) * read.melee;
     const path = rangedPath(view, monster.grid, at, read.bolt, monsters, facts.openedDoor);

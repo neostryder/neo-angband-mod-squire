@@ -132,14 +132,30 @@ function classFloor(cls: string, depth: number, persona: Persona | null): readon
     const scale = 1 + 0.3 * (drive(null) - drive(persona));
     return [Math.ceil(hp * scale), Math.max(depth + 1, Math.ceil(4 * scale))];
   }
+  if (depth <= 10 && ["Mage", "Necromancer"].includes(cls)) return [36 + 4 * (depth - 5), 15];
   if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
   if (cls === "Rogue") return [60, 10];
   if (["Priest", "Druid"].includes(cls)) return [60, 15];
   return [80, 15];
 }
 
+/** A stalled early dive keeps its HP floor and supplies while ambition shortens the wait. */
+export function descentWait(persona: Persona | null): number {
+  return 2.5 - 1.5 * Math.max(0, Math.min(1, (persona?.sliders.ambition ?? 50) / 100));
+}
+
+export function earlyDescentReady(view: AgentView): boolean {
+  const player = view.player();
+  const pack = readPack(view);
+  const caster = ["Mage", "Necromancer"].includes(player.cls);
+  return player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 &&
+    player.status.blind === 0 && player.status.confused === 0 && player.status.afraid === 0 &&
+    (!caster || pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0) &&
+    supplies(view).cures + escapeItems(view) >= 2;
+}
+
 /** The actual destination is checked even when the command starts in town. */
-export function missingPreparation(view: AgentView, depth: number, persona: Persona | null = null): Requirement[] {
+export function missingPreparation(view: AgentView, depth: number, persona: Persona | null = null, depthMinutes = 0, earlyStair = false): Requirement[] {
   if (depth <= 1) return [];
   const player = view.player();
   const stock = supplies(view);
@@ -151,10 +167,15 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
   const pack = readPack(view);
   const ranged = pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
   /* Lower caster HP is viable only while a known ranged attack is available. */
-  const hpFloor = caster && depth < 5 && !ranged ? Math.max(classHp, classFloor("Warrior", depth, persona)[0]) : classHp;
-  const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, depth < 5 || level < depth || level * 2 < levelFloor);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, depth < 5 || player.maxHp * 2 < hpFloor);
+  const hpFloor = caster && depth <= 10 && !ranged ? Math.max(classHp, classFloor("Warrior", depth, persona)[0]) : classHp;
+  const normalLevel = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
+  const stocked = stock.phase + stock.escapes >= 2 || earlyStair && depth <= 5;
+  const paced = depth <= 10 && earlyDescentReady(view) && stocked && player.maxHp >= hpFloor &&
+    (depthMinutes >= descentWait(persona) || earlyStair && depth <= 5);
+  /* Level 2 apprentices still rule out sending a level 2 character deeper. */
+  const levelFloor = paced ? Math.min(normalLevel, Math.max(3, Math.ceil(depth * 0.6) + 1)) : normalLevel;
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, depth <= 10 || level < depth || level * 2 < levelFloor);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, depth <= 10 || player.maxHp * 2 < hpFloor);
   need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
   if (depth >= 2 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
@@ -211,8 +232,8 @@ const HARD_GAPS: ReadonlySet<Requirement["kind"]> = new Set(["light", "food"]);
  * The preparation a level asks for, split into gaps that always forbid the trip and gaps the
  * model weighs against the persona's readiness threshold.
  */
-export function descentGaps(view: AgentView, depth: number, persona: Persona | null = null): { readonly hard: Requirement[]; readonly soft: Requirement[] } {
-  const all = missingPreparation(view, depth, persona);
+export function descentGaps(view: AgentView, depth: number, persona: Persona | null = null, depthMinutes = 0, earlyStair = false): { readonly hard: Requirement[]; readonly soft: Requirement[] } {
+  const all = missingPreparation(view, depth, persona, depthMinutes, earlyStair);
   const hard = (gap: Requirement) => HARD_GAPS.has(gap.kind) || gap.severe === true;
   return { hard: all.filter(hard), soft: all.filter((gap) => !hard(gap)) };
 }
@@ -230,9 +251,9 @@ export function readinessThreshold(persona: Persona | null, depth = 5, turnsWith
 }
 
 /** One sentence on what the next level down still asks for, for the purpose layer. */
-export function gapFacts(view: AgentView, persona: Persona | null = null): string | undefined {
+export function gapFacts(view: AgentView, persona: Persona | null = null, depthMinutes = 0, earlyStair = false): string | undefined {
   const depth = view.player().depth + 1;
-  const gaps = missingPreparation(view, depth, persona);
+  const gaps = missingPreparation(view, depth, persona, depthMinutes, earlyStair);
   if (depth <= 1) return undefined;
   const phase = persona !== null && depth < 6 && supplies(view).phase === 0
     ? ` Optional escape warning: this persona wants ${String(Math.max(1, Math.ceil(persona.sliders.escapes / 50)))} Phase Door scrolls, but carries none.` : "";
