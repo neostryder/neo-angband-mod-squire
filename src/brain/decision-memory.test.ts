@@ -38,10 +38,16 @@ describe("decision memory", () => {
   });
 
   it("requires hunting and the persona cooldown between refresh attempts", () => {
-    const { w, memory, decide } = rig();
+    const w = world({ map: ROOM });
+    let time = 0;
+    const memory = createDecisionMemory(() => time);
+    const decide = (goal: Goal) => { memory.begin(goal, w.view); w.advance(10); memory.finish(w.view); };
+    expect(memory.canRefresh(w.view, null)).toBe(false);
+    time = 180000;
     expect(memory.canRefresh(w.view, null)).toBe(true);
     decide("leave_level");
     w.advance(stuckThresholds(null).cooldown);
+    time += 180000;
     expect(memory.canRefresh(w.view, null)).toBe(false);
     w.setPlayer({ exp: w.view.player().exp + 1 });
     expect(memory.canRefresh(w.view, null)).toBe(true);
@@ -213,5 +219,34 @@ describe("futile decision backstop", () => {
     memory.finish(w.view);
     expect(memory.facts(w.view, null).cooling).toEqual([]);
     expect(memory.withhold([offer("step_aside"), offer("descend")], w.view, null)).toHaveLength(2);
+  });
+});
+
+describe("quiet refresh pacing", () => {
+  it("requires three minutes on each visit even after a kill and thousands of game turns", () => {
+    const w = world({ map: ROOM });
+    let time = 0;
+    const memory = createDecisionMemory(() => time);
+    memory.observe(w.view);
+    w.advance(5000);
+    memory.kill(w.view);
+    time = 179999;
+    expect(memory.canRefresh(w.view, null)).toBe(false);
+    time = 180000;
+    expect(memory.canRefresh(w.view, null)).toBe(true);
+    memory.begin("leave_level", w.view);
+    w.setPlayer({ depth: 0 });
+    memory.observe(w.view);
+    time += 1000;
+    w.setPlayer({ depth: 1 });
+    memory.observe(w.view);
+    memory.kill(w.view);
+    w.advance(5000);
+    time += 179999;
+    expect(memory.canRefresh(w.view, null)).toBe(false);
+    time += 1;
+    expect(memory.canRefresh(w.view, null)).toBe(true);
+    w.advance(-10000);
+    expect(memory.canRefresh(w.view, null)).toBe(false);
   });
 });

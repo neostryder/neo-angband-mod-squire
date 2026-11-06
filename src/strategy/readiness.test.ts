@@ -12,7 +12,7 @@ describe("descent pace", () => {
     [2, 29, 19, 3, 3, 3], [3, 38, 27, 4, 4, 3], [4, 38, 27, 5, 5, 4],
     [5, 60, 36, 6, 15, 4], [6, 60, 40, 6, 15, 5], [7, 60, 44, 7, 15, 6],
     [8, 60, 48, 8, 15, 6], [9, 60, 52, 9, 15, 7], [10, 60, 56, 10, 15, 7],
-  ])("keeps the default HP floor and relaxes only the level gate for DL%i", (depth, warriorHp, mageHp, warriorLevel, mageLevel, pacedLevel) => {
+  ])("applies the timed HP and level floors for DL%i", (depth, warriorHp, mageHp, warriorLevel, mageLevel, pacedLevel) => {
     const persona = defaultPersona();
     for (const [cls, hp, normal] of [["Warrior", warriorHp, warriorLevel], ["Mage", mageHp, mageLevel]] as const) {
       const w = suppliedWorld({ map: ROOM, player: { cls, depth: depth - 1, level: pacedLevel, maxLevel: pacedLevel, hp, maxHp: hp, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["5 Flasks of Oil", "a Scroll of Word of Recall", "3 Potions of Cure Critical Wounds", "2 Scrolls of Teleportation"] });
@@ -21,7 +21,7 @@ describe("descent pace", () => {
       const before = missingPreparation(w.view, depth, persona, wait - 0.01).filter((gap) => gap.kind === "level");
       expect(before.map((gap) => gap.reason)).toEqual(normal > pacedLevel ? [`maximum character level ${String(normal)}`] : []);
       w.setPlayer({ hp: hp - 1, maxHp: hp - 1 });
-      expect(descentGaps(w.view, depth, persona, wait).hard.map((gap) => gap.kind)).toContain("hp");
+      expect(descentGaps(w.view, depth, persona, wait).hard.some((gap) => gap.kind === "hp")).toBe(depth >= 5);
       w.setPlayer({ hp, maxHp: hp, maxLevel: pacedLevel - 1 });
       expect(descentGaps(w.view, depth, persona, wait).hard.map((gap) => gap.kind)).toContain("level");
     }
@@ -367,5 +367,42 @@ describe("descent gaps", () => {
     expect(plain).toBeGreaterThan(berserker);
     expect(Math.min(coward, plain, berserker)).toBeGreaterThanOrEqual(0.3);
     expect(Math.max(coward, plain, berserker)).toBeLessThanOrEqual(0.85);
+  });
+});
+
+describe("timed DL2 to DL4 preparation", () => {
+  it.each([2, 3, 4])("uses sixty percent of the class HP floor and one cure plus one phase for DL%i", (depth) => {
+    const hp = Math.ceil((depth === 2 ? 30 : 40) * 0.6);
+    const level = depth === 4 ? 4 : 3;
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: depth - 1, level, maxLevel: level, hp, maxHp: hp } });
+    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const wait = descentWait(null);
+    expect(missingPreparation(w.view, depth, null, wait - 0.001).map((gap) => gap.kind)).toContain("hp");
+    expect(missingPreparation(w.view, depth, null, wait)).toEqual([]);
+    w.setPlayer({ hp: hp - 1, maxHp: hp - 1 });
+    expect(descentGaps(w.view, depth, null, wait).hard.map((gap) => gap.kind)).toContain("hp");
+  });
+
+  it("accepts stairs underfoot as the escape but never a merely known down staircase", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 12, maxHp: 12 }, pack: ["3 Flasks of Oil"] });
+    w.setPack(["3 Flasks of Oil", "a Potion of Cure Light Wounds", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    expect(missingPreparation(w.view, 2, null, 5, true).map((gap) => gap.kind)).toContain("hp");
+    expect(missingPreparation(w.view, 2, null, 5, true, true)).toEqual([]);
+  });
+
+  it.each(["cure", "escape", "hurt", "poison", "food", "light", "ranged"])("retains the %s requirement after the wait", (gap) => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 12, maxHp: 12 } });
+    const pack = ["3 Flasks of Oil", "a Potion of Cure Light Wounds", "a Scroll of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"];
+    w.setPack(pack.filter((name) => !(gap === "cure" && /Potion/.test(name) || gap === "escape" && /Scroll/.test(name) || gap === "food" && /Food/.test(name) || gap === "ranged" && /Oil/.test(name))));
+    if (gap === "hurt") w.setPlayer({ hp: 11 });
+    if (gap === "poison") w.setPlayer({ status: { poisoned: 1 } });
+    const view: AgentView = gap === "light" ? { ...w.view, equipment: () => [] } : w.view;
+    expect(missingPreparation(view, 2, null, 5).length).toBeGreaterThan(0);
+  });
+
+  it("keeps DL5 at its original HP and healing floors", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 4, level: 6, maxLevel: 6, hp: 36, maxHp: 36 } });
+    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "a Scroll of Word of Recall", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    expect(missingPreparation(w.view, 5, null, 30, true, true).map((gap) => gap.kind)).toEqual(["hp", "healing"]);
   });
 });

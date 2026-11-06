@@ -445,7 +445,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
 exports[`decision context > compiles a stationary floating eye into layers and the same state > state 1`] = `
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 1 (shallow); deepest reached 1 (shallow).",
-  "creatures": "floating eye: an easy kill, 1 steps away (adjacent)",
+  "creatures": "floating eye: an easy kill, 1 steps away (adjacent), never moves",
   "gaps": "The character is prepared for dungeon level 2 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
