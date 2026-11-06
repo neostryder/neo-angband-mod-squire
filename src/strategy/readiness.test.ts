@@ -26,40 +26,40 @@ describe("prepared depths", () => {
 
   it.each([2, 3])("keeps a level floor for the level 1 Warrior at depth %i", (depth) => {
     const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", level: 1, maxLevel: 1, hp: 20, maxHp: 20 } });
-    expect(missingPreparation(w.view, depth).map((need) => need.kind)).toEqual(depth === 2 ? ["level"] : ["level", "hp"]);
+    expect(missingPreparation(w.view, depth).map((need) => need.kind)).toEqual(["level", "hp"]);
   });
 
-  it("opens depth 2 at the early class floor, maximum level 2, light and five food units", () => {
-    const w = suppliedWorld({ map: ROOM, player: { level: 2, maxLevel: 2, hp: 10, maxHp: 20, light: 1 } });
+  it("opens depth 2 at the survival floor, maximum level 3, light and five food units", () => {
+    const w = suppliedWorld({ map: ROOM, player: { level: 3, maxLevel: 3, hp: 30, maxHp: 30, light: 1 } });
     expect(missingPreparation(w.view, 2)).toEqual([]);
     w.setPack(["4 Rations of Food"]);
     expect(missingPreparation(w.view, 2).map((need) => need.kind)).toContain("food");
   });
 
   it.each([
-    ["Warrior", 20], ["Blackguard", 20], ["Rogue", 16], ["Priest", 14],
-    ["Druid", 14], ["Paladin", 20], ["Ranger", 20], ["Mage", 12], ["Necromancer", 12],
+    ["Warrior", 30], ["Blackguard", 30], ["Rogue", 26], ["Priest", 24],
+    ["Druid", 24], ["Paladin", 30], ["Ranger", 30], ["Mage", 20], ["Necromancer", 20],
   ] as const)("opens depth 2 for %s at its attainable early HP floor", (cls, maxHp) => {
-    const w = suppliedWorld({ map: ROOM, player: { cls, level: 2, maxLevel: 2, hp: maxHp, maxHp } });
+    const w = suppliedWorld({ map: ROOM, player: { cls, level: 3, maxLevel: 3, hp: maxHp, maxHp }, pack: ["5 Flasks of Oil"] });
     expect(missingPreparation(w.view, 2)).toEqual([]);
     w.setPlayer({ maxHp: maxHp - 1 });
     expect(missingPreparation(w.view, 2).map((gap) => gap.kind)).toEqual(["hp"]);
   });
 
   it("scales the early HP floor with persona drive while keeping food and light mandatory", () => {
-    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", level: 2, maxLevel: 2, hp: 12, maxHp: 12 } });
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", level: 3, maxLevel: 3, hp: 20, maxHp: 20 }, pack: ["5 Flasks of Oil"] });
     expect(missingPreparation(w.view, 2, archetype("berserker"))).toEqual([]);
-    expect(missingPreparation(w.view, 2, archetype("coward")).map((gap) => gap.kind)).toEqual(["hp"]);
+    expect(missingPreparation(w.view, 2, archetype("coward")).map((gap) => gap.kind)).toEqual(["level", "hp"]);
     w.setPack([]);
     expect(descentGaps(w.view, 2, archetype("berserker")).hard.map((gap) => gap.kind)).toContain("food");
   });
 
   it.each([
-    ["Warrior", 30, 3], ["Blackguard", 30, 3], ["Rogue", 26, 4],
-    ["Priest", 22, 4], ["Druid", 22, 4], ["Paladin", 30, 3],
-    ["Ranger", 30, 3], ["Mage", 22, 4], ["Necromancer", 22, 4],
+    ["Warrior", 40, 4], ["Blackguard", 40, 4], ["Rogue", 34, 4],
+    ["Priest", 28, 4], ["Druid", 28, 4], ["Paladin", 40, 4],
+    ["Ranger", 40, 4], ["Mage", 28, 4], ["Necromancer", 28, 4],
   ] as const)("uses the depth 3 class floor for %s", (cls, maxHp, maxLevel) => {
-    const w = suppliedWorld({ map: ROOM, player: { cls, level: 1, maxLevel, maxHp, hp: maxHp } });
+    const w = suppliedWorld({ map: ROOM, player: { cls, level: 1, maxLevel, maxHp, hp: maxHp }, pack: ["5 Flasks of Oil"] });
     expect(missingPreparation(w.view, 3)).toEqual([]);
     w.setPlayer({ maxHp: maxHp - 1 });
     expect(missingPreparation(w.view, 3).map((need) => need.kind)).toContain("hp");
@@ -127,7 +127,7 @@ describe("prepared depths", () => {
   it("makes the missing HP and supplies an acquisition aim", () => {
     const w = world({ map: ROOM, player: { level: 1, maxLevel: 1, maxHp: 18 } });
     const aim = candidateAims(w.view).find((entry) => entry.kind === "preparation");
-    expect(aim?.detail).toContain("20 maximum hit points");
+    expect(aim?.detail).toContain("30 maximum hit points");
     expect(aim?.detail).toContain("five food units");
   });
 
@@ -260,11 +260,11 @@ describe("supply evidence and margins", () => {
 
   /* The soak's Ranger read one Phase Door on level 1 at full health and was
    * sent home by Recall, then waited for it 21 times in a row. */
-  it("keeps the soak Ranger on level 1 with no cure and one Phase Door left", () => {
+  it("returns the shallow Ranger before its last Phase Door is its only defence", () => {
     const w = world({ map: ROOM, player: { cls: "Ranger", depth: 1, hp: 26, maxHp: 26 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["a Scroll of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)", "a Scroll of Word of Recall"] });
-    expect(supplyMargin(w.view)).toBeNull();
+    expect(supplyMargin(w.view)).toBe("healing and Phase Door");
     w.setPlayer({ depth: 2 });
-    expect(supplyMargin(w.view)).toBeNull();
+    expect(supplyMargin(w.view)).toBe("healing and Phase Door");
   });
 
   it.each([[3, 0, 0], [5, 0, 0], [6, 1, 1], [10, 3, 1]] as const)("starts the return at depth %i with %i cures or %i Phase Doors", (depth, cures, phase) => {
@@ -279,19 +279,42 @@ describe("supply evidence and margins", () => {
 });
 
 describe("descent gaps", () => {
+  it.each(["berserker", "coward"] as const)("keeps an 8-HP level 1 caster above depth 2 for %s even after stagnation", (name) => {
+    const persona = archetype(name);
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 8, maxHp: 8 }, pack: ["5 Flasks of Oil"] });
+    expect(readinessThreshold(persona, 2, 100000)).toBeLessThan(readinessThreshold(persona, 2));
+    expect(descentGaps(w.view, 2, persona).hard.map((gap) => gap.kind)).toEqual(["level", "hp"]);
+  });
+
+  it.each(["Mage", "Necromancer"])("requires known ranged damage for the lower %s HP floor", (cls) => {
+    const w = suppliedWorld({ map: ROOM, player: { cls, depth: 1, level: 3, maxLevel: 3, hp: 20, maxHp: 20 } });
+    expect(descentGaps(w.view, 2).hard.map((gap) => gap.kind)).toContain("hp");
+    w.setPack(["5 Flasks of Oil", "5 Rations of Food", "3 Potions of Cure Light Wounds"]);
+    expect(descentGaps(w.view, 2).hard).toEqual([]);
+  });
+
+  it("raises the binding level minimum with early destination depth", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 3, maxLevel: 3, hp: 60, maxHp: 60 } });
+    expect(descentGaps(w.view, 2).hard).toEqual([]);
+    expect(descentGaps(w.view, 3).hard.map((gap) => gap.kind)).toContain("level");
+    w.setPlayer({ level: 4, maxLevel: 4 });
+    expect(descentGaps(w.view, 3).hard).toEqual([]);
+    expect(descentGaps(w.view, 4).hard.map((gap) => gap.kind)).toContain("level");
+  });
+
   it("keeps light, food and a severe shortfall out of the persona's hands", () => {
     const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1, hp: 18, maxHp: 18, light: 0 } });
     const gaps = descentGaps(w.view, 2);
-    expect(gaps.hard.map((gap) => gap.kind)).toEqual(["light"]);
-    expect(gaps.soft.map((gap) => gap.kind)).toEqual(["level", "hp"]);
+    expect(gaps.hard.map((gap) => gap.kind)).toEqual(["level", "hp", "light"]);
+    expect(gaps.soft).toEqual([]);
     w.setPlayer({ maxHp: 9 });
-    expect(descentGaps(w.view, 2).hard.map((gap) => gap.kind)).toEqual(["hp", "light"]);
+    expect(descentGaps(w.view, 2).hard.map((gap) => gap.kind)).toEqual(["level", "hp", "light"]);
   });
 
   it("states the next level's gaps, or that the character is prepared", () => {
     const w = suppliedWorld({ map: ROOM, player: { depth: 1, level: 1, maxLevel: 1, hp: 30, maxHp: 30 } });
-    expect(gapFacts(w.view)).toBe("For dungeon level 2 (shallow) the character still lacks: maximum character level 2.");
-    w.setPlayer({ level: 2, maxLevel: 2 });
+    expect(gapFacts(w.view)).toBe("For dungeon level 2 (shallow) the character still lacks: maximum character level 3.");
+    w.setPlayer({ level: 3, maxLevel: 3 });
     expect(gapFacts(w.view)).toBe("The character is prepared for dungeon level 2 (shallow).");
     w.setPlayer({ depth: 0 });
     expect(gapFacts(w.view)).toBeUndefined();

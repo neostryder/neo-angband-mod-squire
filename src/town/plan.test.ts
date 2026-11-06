@@ -106,6 +106,29 @@ function commandText(command: AgentCommand): string {
 }
 
 describe("town trip", () => {
+  it("leaves gold for oil while a starting Mage buys cures and Phase Door", () => {
+    const ware = (name: string, index: number, price: number, number: number): StoreItemView => ({ ...itemNamed(name, 0), index, price, number } as StoreItemView);
+    const stores: StoreView[] = [
+      { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [ware("a Potion of Cure Light Wounds", 0, 20, 20), ware("a Scroll of Phase Door", 1, 15, 20)] },
+      { feat: FEAT.GENERAL, featName: "General Store", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [ware("a Flask of Oil", 0, 3, 20)] },
+    ];
+    const pantry = ["5 Rations of Food", "2 Wooden Torches (5000 turns)"];
+    const w = world({ map: ["########", "#@.A.G.#", "########"], player: { cls: "Mage", level: 1, depth: 0, hp: 8, maxHp: 8, maxSp: 2, gold: 76 }, pack: pantry, worn: ["a Wooden Torch (5000 turns)"], stores });
+    const plan = townTripPlan(w.terrain, null);
+    let pack = pantry;
+    let gold = 76;
+    for (let step = 0; step < 40; step += 1) {
+      if (plan.step(w.view, w.act) === null) break;
+      ({ pack, gold } = applyTownCommand(w, pack, gold, stores));
+    }
+    const kit = readPack(w.view);
+    expect(kit.heal).toHaveLength(1);
+    expect(kit.phase).toHaveLength(1);
+    expect(kit.oil).toHaveLength(1);
+    expect(w.view.inventory().find((item) => item.name?.includes("Flasks of Oil"))?.number).toBe(2);
+    expect(gold).toBe(0);
+  });
+
   it("leaves the general store to buy survival supplies before oil or gear", () => {
     const stores: StoreView[] = [
       { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
@@ -279,7 +302,7 @@ describe("a first town trip's commands", () => {
     }
     const carried = pack.filter((line) => line !== "");
     expect({ count: commands.length, gold, carried, commands }).toEqual({
-      count: 18,
+      count: 19,
       gold: 2,
       carried: [
         "2 Wooden Torches (5000 turns)",
@@ -305,8 +328,9 @@ describe("a first town trip's commands", () => {
         "shop-sell {\"handle\":4,\"quantity\":1}",
         "shop-buy {\"index\":0,\"quantity\":2}",
         "shop-buy {\"index\":1,\"quantity\":1}",
+        "shop-buy {\"index\":2,\"quantity\":2}",
         "shop-buy {\"index\":0,\"quantity\":3}",
-        "shop-buy {\"index\":2,\"quantity\":5}",
+        "shop-buy {\"index\":2,\"quantity\":3}",
         "shop-exit",
       ],
     });

@@ -308,20 +308,19 @@ describe("journey offer and execution guards", () => {
   });
 
   it("checks the actual Recall landing depth, rather than a shallower fraction", () => {
-    const w = suppliedWorld({ map: ROOM, player: { depth: 0, maxDepth: 3, level: 2, maxLevel: 2, hp: 30, maxHp: 30 }, pack: ["a Scroll of Word of Recall"] });
+    const w = suppliedWorld({ map: ROOM, player: { depth: 0, maxDepth: 3, level: 3, maxLevel: 3, hp: 30, maxHp: 30 }, pack: ["a Scroll of Word of Recall"] });
     expect(goals(w, undefined, false, offers("descend", "recall_dungeon"))).toEqual(["descend"]);
     w.setPlayer({ maxDepth: 2 });
     expect(goals(w, undefined, false, offers("recall_dungeon"))).toEqual(["recall_dungeon"]);
   });
 
   it("rechecks maximum HP before a previously eligible descent command", () => {
-    const w = suppliedWorld({ map: ROOM, player: { level: 2, maxLevel: 2, hp: 30, maxHp: 30 } });
+    const w = suppliedWorld({ map: ROOM, player: { level: 3, maxLevel: 3, hp: 30, maxHp: 30 } });
     const journey = createJourney(w.terrain);
     expect(goals(w, journey)).toContain("descend");
     const plan = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
-    /* A small shortfall is the readiness answer's to weigh; under half the floor the guard stops it. */
-    w.setPlayer({ maxHp: 20 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
+    w.setPlayer({ maxHp: 29 });
+    expect(plan.step(w.view, w.act)).toBeNull();
     w.setPlayer({ maxHp: 9 });
     expect(plan.step(w.view, w.act)).toBeNull();
   });
@@ -422,7 +421,7 @@ describe("journey offer and execution guards", () => {
 });
 
 describe("bounded exploration and earning", () => {
-  it("stops optional exploration and names the gaps of an unprepared descent after the budget", () => {
+  it("stops optional exploration and blocks an unprepared descent after the budget", () => {
     const w = suppliedWorld({ map: ROOM, player: { level: 1, maxLevel: 1, hp: 20, maxHp: 20 } });
     const journey = createJourney(w.terrain);
     goals(w, journey);
@@ -430,23 +429,21 @@ describe("bounded exploration and earning", () => {
     const available = journey.apply(offers("explore", "descend", "recall_town", "wait", "rest", "fight"), w.view, null, new Set(), false);
     expect(available.map((offer) => offer.goal)).toContain("leave_level");
     expect(available.map((offer) => offer.goal)).not.toContain("explore");
-    const descend = available.find((offer) => offer.goal === "descend");
-    expect(descend?.gaps).toEqual(["maximum character level 2"]);
-    expect(descend?.criteria).toContain("The next level still asks for maximum character level 2.");
+    expect(available.map((offer) => offer.goal)).not.toContain("descend");
   });
 
   it("never offers a descent without light, without food or far below the level floor", () => {
-    const base = { map: ROOM, player: { level: 2, maxLevel: 2, hp: 30, maxHp: 30 } };
+    const base = { map: ROOM, player: { level: 3, maxLevel: 3, hp: 30, maxHp: 30 } };
     expect(goals(suppliedWorld(base))).toContain("descend");
     expect(goals(suppliedWorld({ ...base, player: { ...base.player, maxHp: 9, hp: 9 } }))).not.toContain("descend");
     expect(goals(suppliedWorld({ ...base, player: { ...base.player, status: { food: 100 } } }))).not.toContain("descend");
   });
 
   it("keeps a prepared descent available when the level budget runs out", () => {
-    const w = suppliedWorld({ map: ROOM, player: { level: 2, maxLevel: 2, hp: 30, maxHp: 30 } });
+    const w = suppliedWorld({ map: ROOM, player: { level: 3, maxLevel: 3, hp: 30, maxHp: 30 } });
     const journey = createJourney(w.terrain);
     goals(w, journey);
-    w.advance(1000);
+    w.advance(1500);
     expect(goals(w, journey)).toEqual(expect.arrayContaining(["descend", "leave_level"]));
   });
 

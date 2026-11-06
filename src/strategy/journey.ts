@@ -18,7 +18,7 @@ import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createLevelPacing, stairLeash } from "./pacing.js";
-import { descentGaps, missingPreparation, supplies, supplyMargin, tripLight } from "./readiness.js";
+import { descentGaps, missingPreparation, poisonRecovery, supplies, supplyMargin, tripLight } from "./readiness.js";
 import { stepsBand, turnsBand } from "../brain/bands.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
@@ -80,19 +80,19 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       returnReason = null;
       chosenReturn = false;
     }
-    if (chosenReturn && supplyMargin(view) === null) {
+    if (chosenReturn && supplyMargin(view, lastPersona) === null) {
       returnReason = null;
       chosenReturn = false;
     }
     for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
     for (const [id, entry] of remembered) if (!live.has(id) || entry.until < turn) remembered.delete(id);
-    if (previousHp !== null && player.hp < previousHp && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
+    if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && !standingOnHarm(view, terrain, player.grid) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
     departure.observe(view, terrain);
     if (player.depth > 0) {
-      if (!departure.active()) returnReason ??= supplyMargin(view);
+      if (!departure.active()) returnReason ??= supplyMargin(view, lastPersona);
       /* A widened trip can start with no rations and too little gold to buy one,
        * so an empty pack ends it only once the character is hungry. */
       else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || upStairs(view).length > 0 && checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
@@ -104,7 +104,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function safeDelay(view: AgentView, recoveringStatus = false): boolean {
     const player = view.player();
     if (standingOnHarm(view, terrain, player.grid)) return false;
-    if (player.status.poisoned > 0 || player.status.cut > 0 || !recoveringStatus && (player.status.blind > 0 || player.status.confused > 0) || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return false;
+    if (player.status.poisoned > 0 && !(recoveringStatus && poisonRecovery(view, lastPersona)) || player.status.cut > 0 || !recoveringStatus && (player.status.blind > 0 || player.status.confused > 0) || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return false;
     if (view.monsters().some((monster) => monster.visible && (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, player.grid) <= 10 || !monster.asleep || steps(monster.grid, player.grid) <= 8))) return false;
     return ![...remembered.values()].some((entry) => entry.until >= view.turn());
   }
@@ -228,7 +228,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     observe(view);
     const player = view.player();
     /* An early restock preference must not forbid progress while the pack can last. */
-    if (player.depth > 0 && chosen !== null && returnReason === null && supplyMargin(view) !== null) {
+    if (player.depth > 0 && chosen !== null && returnReason === null && supplyMargin(view, lastPersona) !== null) {
       returnReason = chosen;
       chosenReturn = true;
     }
@@ -253,7 +253,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
       if (breederLevel && !(offer.goal === "explore" && search()) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
-      if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
+      if (offer.goal === "wait" && recalling && !safeDelay(view, player.status.poisoned > 0)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth, lastPersona).length === 0;
@@ -315,7 +315,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
         if (target === null || steps(target.grid, player.grid) > 1) return null;
       }
-      if (goal === "wait" && !safeDelay(view, !recalling)) return null;
+      if (goal === "wait" && !safeDelay(view, !recalling || player.status.poisoned > 0)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
       if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth, lastPersona).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;

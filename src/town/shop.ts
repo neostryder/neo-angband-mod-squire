@@ -51,7 +51,7 @@ export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gol
   const stockBought = new Map<number, number>();
   /* Alternating small purchases leaves gold for both kinds when a full stack would consume it. */
   for (const target of [1, 2]) {
-    for (const kind of ["healing", "phase", "food", "light"] as const) {
+    for (const kind of ["healing", "phase", "food", "light", "oil"] as const) {
       const need = needs.find((entry) => entry.kind === kind);
       const already = starterBought.get(kind) ?? 0;
       if (need === undefined || need.have + already >= Math.min(target, need.want) || !storesFor(kind).includes(store.featName)) continue;
