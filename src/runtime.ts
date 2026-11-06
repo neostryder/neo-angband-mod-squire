@@ -15,6 +15,7 @@ import { keyReady, type SecretsLike } from "./brain/boot.js";
 import { createBrain, outcomeLine, type Brain, type DecisionRecord, type PlanEnd, type Token } from "./brain/brain.js";
 import type { DecisionContext } from "./brain/context.js";
 import { answerKeyOf, createGoalPlanner, SAFETY_GOALS, type GoalDigest } from "./brain/goals.js";
+import { createDecisionMemory } from "./brain/decision-memory.js";
 import type { Steering } from "./strategy/steer.js";
 import { townTripPlan } from "./town/plan.js";
 import { createErrandDriver, type ErrandDriver } from "./errands/driver.js";
@@ -390,7 +391,9 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
 
   const nextGoalSeq = goalSeqCounter(layaRows);
   let goalRecorded: Promise<void> = Promise.resolve();
+  const decisionMemory = createDecisionMemory();
   const strategy = createStrategy({
+    stuck: (view) => decisionMemory.facts(view, character.persona ?? activePersona(config)),
     backend: () => backendFor(config),
     send: (request) => self.send(request),
     tally,
@@ -457,6 +460,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     },
     character: () => character,
     saveCharacter(next) {
+      if (next.runId !== character.runId) decisionMemory.reset();
       character = next;
       host.characterStore?.set({ format: CHARACTER_FORMAT, schemaVersion: 1, data: next });
     },
@@ -567,6 +571,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       return own;
     },
     recordKill(race, unique, view) {
+      if (view !== null) decisionMemory.kill(view);
       const persona = character.persona;
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       const run = character.flourishes ?? emptyFlourishes();
@@ -949,6 +954,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       backend: backendFor(config) ?? JEV,
       rulesOnly: !modelReady,
       planner: createGoalPlanner({
+        decisionMemory,
         cfg,
         terrain,
         speedEnergy: turnEnergy,
@@ -996,6 +1002,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       backend,
       rulesOnly,
       planner: createGoalPlanner({
+        decisionMemory,
         cfg,
         terrain,
         speedEnergy: turnEnergy,

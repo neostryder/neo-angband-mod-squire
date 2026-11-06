@@ -11,6 +11,7 @@ import { CHECKPOINT_ACTIONS } from "./revise.js";
 import { candidateAims } from "./aims.js";
 import { LEAD_FACTOR, leadPursuits, pursuitFacts, pursuitsFor } from "./pursuits.js";
 import { TV } from "../gear/compare.js";
+import { createDecisionMemory, stuckThresholds } from "../brain/decision-memory.js";
 
 const ROOM = ["#####", "#.@.#", "#####"];
 
@@ -48,6 +49,36 @@ function rig(send: (request: SystemOneRequest) => Promise<AskResult>, backend: t
 }
 
 const never = (): Promise<AskResult> => Promise.reject(new Error("unexpected request"));
+
+it("sends the same stuck facts to near-term and mid-term goal reviews", async () => {
+  const w = world({ map: ROOM, worn: ["Wooden Torch"], pack: ["a Ring of Protection {??}"], player: { depth: 1, hp: 10, maxHp: 40 } });
+  const memory = createDecisionMemory();
+  for (let i = 0; i < stuckThresholds(null).repeat; i++) {
+    memory.begin("step_aside", w.view);
+    w.advance(10);
+    memory.finish(w.view);
+  }
+  const requests: SystemOneRequest[] = [];
+  const strategy = createStrategy({
+    backend: () => JEV,
+    send: (request) => {
+      requests.push(request);
+      return Promise.resolve(reply({ depth: 1 }));
+    },
+    stuck: (view) => memory.facts(view, null),
+    tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+    now: () => 0,
+    log: () => {},
+    persona: () => defaultPersona(),
+  });
+  strategy.observe(w.view);
+  await strategy.settled();
+  for (const key of ["mid_goal", "near_goal"]) {
+    const request = requests.find((request) => request.questions[key] !== undefined);
+    expect(request).toBeDefined();
+    expect(request?.state["stuck"]).toEqual(memory.facts(w.view, null));
+  }
+});
 
 describe("review triggers", () => {
   it("reviews on the first look, which is an arrival", () => {

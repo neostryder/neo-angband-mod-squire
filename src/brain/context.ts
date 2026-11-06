@@ -1,7 +1,5 @@
 /**
- * Every fact Squire sends with a decision, filed under one of ten layers. The
- * state is built from the entries in order, and an empty layer adds nothing.
- * The goal planner puts the character's situation first and the rules last.
+ * Every fact Squire sends with a decision, filed under one of eleven layers. The state is built from the entries in order, and an empty layer adds nothing. The goal planner puts the character's situation first and the rules last.
  */
 
 import { estimateTokens } from "./systemone.js";
@@ -24,6 +22,8 @@ export const LAYERS = [
   "near_goal",
   /** How goals ended and what they bought. */
   "outcomes",
+  /** Repeated decisions, progress counts and alternatives still untried. */
+  "stuck",
 ] as const;
 
 export type Layer = (typeof LAYERS)[number];

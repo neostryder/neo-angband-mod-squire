@@ -3,6 +3,7 @@ import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { archetype } from "../persona/persona.js";
 import { createGoalPlanner, type GoalPlannerOptions } from "./goals.js";
+import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 import { LAYERS, LAYA_STATE_TOKENS, STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, layerOf, stateHash, stateOf, stateTokens } from "./context.js";
 
 type Options = Partial<Omit<GoalPlannerOptions, "terrain" | "log">>;
@@ -103,6 +104,24 @@ describe("decision context", () => {
     expect(stateOf(context)).toEqual({ rules: "r", lessons: "l" });
     expect(layerOf(context, "knowledge")).toEqual({ lessons: "l" });
     expect(() => contextOf([["manual", "rules", 1], ["memory", "rules", 2]])).toThrow(/twice/);
+  });
+
+  it("keeps stuck facts through budget shedding and names untried choices", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1, hp: 20, maxHp: 40 } });
+    const memory = createDecisionMemory();
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    const count = stuckThresholds(null).repeat;
+    for (let i = 0; i < count; i++) {
+      memory.begin("rest", w.view);
+      w.advance(10);
+      memory.finish(w.view);
+    }
+    const q = p.ask(w.view);
+    if ("handBack" in q || "reflex" in q || q.context.layers === undefined) throw new Error("expected context layers");
+    const stuck = layerOf(q.context.layers, "stuck");
+    expect(stuck).toEqual({ stuck: q.request.state["stuck"] });
+    expect(stuck["stuck"]).toMatchObject({ repeated: [{ cycle: ["rest"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10 });
+    expect(layerOf(fitToBudget(q.context.layers, 1).context, "stuck")).toEqual(stuck);
   });
 
   it("drops whole layers, least needed first, only when a state is over budget", () => {
