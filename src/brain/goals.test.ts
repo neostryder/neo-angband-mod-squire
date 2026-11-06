@@ -1440,6 +1440,53 @@ describe("town goals", () => {
     expect(asked(planner(w).p.ask(w.view)).context.offers.map((offer) => offer.goal)).toContain("descend");
   });
 
+  it("offers town stairs without resting for a healthy Blackguard with no mana", () => {
+    const w = suppliedWorld({ map: ["#####", "#@>##", "#####"], player: { depth: 0, cls: "Blackguard", hp: 60, maxHp: 60, sp: 0, maxSp: 3 } });
+    w.moveTo({ x: 2, y: 1 });
+    const goals = offered(planner(w).p.ask(w.view));
+    expect(goals).not.toContain("rest");
+    expect(goals).toContain("descend");
+  });
+
+  it("offers rest for a healthy Mage in town with missing mana", () => {
+    const w = suppliedWorld({ map: ["#####", "#@>##", "#####"], player: { depth: 0, cls: "Mage", hp: 60, maxHp: 60, sp: 0, maxSp: 3 } });
+    expect(offered(planner(w).p.ask(w.view))).toContain("rest");
+  });
+
+  it("offers rest for a hurt Blackguard in town with no mana", () => {
+    const w = suppliedWorld({ map: ["#####", "#@>##", "#####"], player: { depth: 0, cls: "Blackguard", hp: 30, maxHp: 60, sp: 0, maxSp: 3 } });
+    expect(offered(planner(w).p.ask(w.view))).toContain("rest");
+  });
+
+  it("offers town stairs after a shop has no stock to read", () => {
+    const w = suppliedWorld({ map: ["######", "#@>A##", "######"], player: { depth: 0, gold: 100 }, pack: ["a Scroll of Word of Recall"] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("shop");
+    expect(offered(q)).not.toContain("descend");
+    const choice = p.choose(pick("shop"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a shop plan");
+    w.moveTo({ x: 3, y: 1 });
+    expect(choice.plan.step(w.view, w.act)?.code).toBe("shop-exit");
+    const goals = offered(p.ask(w.view));
+    expect(goals).not.toContain("shop");
+    expect(goals).toContain("descend");
+  });
+
+  it("offers town stairs when a shop plan made no progress", () => {
+    const w = suppliedWorld({ map: ["######", "#@>A##", "######"], player: { depth: 0, cls: "Blackguard", hp: 30, maxHp: 60, sp: 0, maxSp: 3 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("shop"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a shop plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+    expect(p.trigger(w.view, choice.plan)).not.toBeNull();
+    const goals = offered(p.ask(w.view));
+    expect(goals).toContain("rest");
+    expect(goals).not.toContain("shop");
+    expect(goals).toContain("descend");
+  });
+
   it("keeps exploring town when every visible grid is explored but the stairs are unknown", () => {
     const w = world({ map: ["#####", "#...#", "#.@.#", "#...#", "#####"], player: { depth: 0, gold: 0, light: 0 } });
     const { p } = planner(w);

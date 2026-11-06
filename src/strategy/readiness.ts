@@ -106,6 +106,10 @@ export interface Requirement {
   readonly severe?: true;
 }
 
+export function restRestoresMana(cls: string): boolean {
+  return cls !== "Blackguard";
+}
+
 /** Unknown classes use the strictest early class floor. */
 function classFloor(cls: string, depth: number): readonly [number, number] {
   if (depth < 5) {
