@@ -13,6 +13,7 @@ const TF: TerrainFlagIndex = {
   SHOP: 21,
   FIERY: 31,
   ROCK,
+  WALL: 16,
   PERMANENT,
 };
 
@@ -68,6 +69,9 @@ describe("readTerrain", () => {
 
   it("calls rubble diggable and a permanent wall not", () => {
     expect(terrain.isDiggable?.(16)).toBe(true);
+    expect(terrain.isRubble?.(16)).toBe(true);
+    const wall = readTerrain([feature(40, "GRANITE", [ROCK, TF.WALL!])], TF);
+    expect(wall.isRubble?.(40)).toBe(false);
     expect(terrain.isDiggable?.(21)).toBe(false);
     expect(terrain.isDiggable?.(1)).toBe(false);
   });
@@ -84,6 +88,12 @@ describe("shop names", () => {
     const shops = readTerrain(codes.map((code, i) => feature(30 + i, code, [TF.PASSABLE, TF.SHOP])), TF);
     expect(codes.map((_code, i) => shops.shopName(30 + i))).toEqual(["General Store", "Armoury", "Weapon Smiths", "Bookseller", "Alchemy Shop", "Magic Shop", "Black Market", "Home", null]);
   });
+});
+
+it("classifies a jammed door for tunnelling even without DOOR_CLOSED", () => {
+  const terrain = readTerrain([feature(30, "JAMMED", [22])], { ...TF, DOOR_JAMMED: 22 });
+  expect(terrain.isClosedDoor(30)).toBe(true);
+  expect(terrain.isJammedDoor?.(30)).toBe(true);
 });
 
 describe("noTerrain", () => {

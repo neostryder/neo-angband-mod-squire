@@ -3107,6 +3107,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const player = view.player();
       if (player.depth > 0) visitedShops.clear();
       if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
+      if (journey.refreshReturn(view)) {
+        const why = "finish the depth-preserving refresh on the connected down staircase";
+        const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: [{ goal: "descend", criteria: why, risk: 0, survival: player.hp }], reflex: why };
+        return { reflex: why, plan: noteStalls("descend", build("descend", view), view), context, answers: { goal: { type: "choice", choice: "descend", confidence: 1, probabilities: { descend: 1 } } } };
+      }
       settleFallback(view);
       decisionMemory.finish(view);
       noteSeen(view);

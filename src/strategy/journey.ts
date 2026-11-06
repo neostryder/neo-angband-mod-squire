@@ -57,6 +57,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   const relaxed = new Set<string>();
   const blockedDark = new Set<string>();
   const gazers = new Map<number, MonsterView>();
+  let refresh: { depth: number; arrived: boolean } | null = null;
+  const blockedObstacles = new Set<string>();
+  const obstacleAttempts = new Map<string, number>();
+  const jammed = new Set<string>();
+  let obstacle: { grid: Loc; turn: number; code: string } | null = null;
   let darkStep: { from: Loc; to: Loc; turn: number } | null = null;
 
   function depthMinutes(view: AgentView): number {
@@ -116,10 +121,19 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const turn = view.turn();
     depthMinutes(view);
     const state = pacing.observe(view, terrain);
+    if (turn < lastTurn) refresh = null;
+    if (refresh !== null && player.depth !== (refresh.arrived ? refresh.depth - 1 : refresh.depth)) {
+      if (!refresh.arrived && player.depth === refresh.depth - 1) refresh.arrived = true;
+      else refresh = null;
+    }
     breederExit(view);
     leashField = null;
     if (state.fresh) {
       blockedDark.clear();
+      blockedObstacles.clear();
+      obstacleAttempts.clear();
+      jammed.clear();
+      obstacle = null;
       gazers.clear();
       darkStep = null;
       if (turn < lastTurn) {
@@ -129,6 +143,19 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       previousHp = null;
       unseenUntil = -1;
       remembered.clear();
+    }
+    if (obstacle !== null) {
+      const { grid, code, turn: attempted } = obstacle;
+      const cell = view.cell(grid.x, grid.y);
+      if (cell?.known === true && (terrain.isClosedDoor(cell.feat) || diggableObstacle(view, grid))) {
+        const messages = view.messages().join(" ");
+        if (code === "open" && /jammed|stuck/i.test(messages)) jammed.add(key(grid));
+        else if (turn === attempted || (obstacleAttempts.get(key(grid)) ?? 0) >= 3 || /cannot tunnel|too hard|cannot make any progress/i.test(messages)) {
+          blockedObstacles.add(key(grid));
+          log(`exploration blocked ${code} at ${key(grid)} for this level: ${turn === attempted ? "no game time passed" : "the bounded attempts failed"}.`);
+        }
+      }
+      obstacle = null;
     }
     if (darkStep !== null) {
       if (turn === darkStep.turn && key(player.grid) === key(darkStep.from)) blockedDark.add(key(darkStep.to));
@@ -291,7 +318,25 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return field.distance(at) <= limit;
   }
 
+  function returningRefresh(view: AgentView): boolean {
+    if (refresh === null || !refresh.arrived) return false;
+    if (returnReason !== null || missingPreparation(view, refresh.depth, lastPersona).length > 0) {
+      refresh = null;
+      return false;
+    }
+    return true;
+  }
+
+  function refreshReturn(view: AgentView): boolean {
+    observe(view);
+    const player = view.player();
+    return returningRefresh(view) && player.hp === player.maxHp &&
+      [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0) &&
+      terrain.isDownStair(view.cell(player.grid.x, player.grid.y)?.feat ?? -1);
+  }
+
   function exitTargets(view: AgentView): Loc[] {
+    if (returningRefresh(view)) return knownDownStairs(view, terrain);
     if (breederLevel && exitTarget !== null) return [exitTarget];
     /* A level marked by breeders takes up or down, whichever is known, since either leaves them behind. Only a character ready for the next depth may descend here. */
     if (breederLevel && returnReason === null && missingPreparation(view, view.player().depth + 1, lastPersona).length === 0) {
@@ -325,6 +370,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     }
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
+    if (refreshReturn(view)) return [{ goal: "descend", criteria: "Return immediately down the connected staircase to finish the depth-preserving refresh.", risk: 0, survival: player.hp }];
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     /* Compute `searching` once for this apply: the filter and the post-filter both read it, and each call
      * costs an assessThreat walk over every awake creature. The view does not change inside apply. */
@@ -342,6 +388,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         if (player.hp < player.maxHp * SEARCH_HP_FRACTION && !leashed(view, player.grid)) return false;
         return true;
       }
+      if (offer.goal === "leave_level" && returningRefresh(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return false;
       if (breederLevel && offer.goal === "leave_level") return checkedRoute(view, exitTargets(view)) !== null;
       if (breederLevel && !(offer.goal === "explore" && search()) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
@@ -402,6 +449,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return { ...plan, step(view, act) {
       observe(view);
       const player = view.player();
+      if (goal === "descend" && refreshReturn(view)) return act.descend();
       if (wide && goal === "explore" || goal === "explore" && searching(view)) return plan.step(view, act);
       if (breederLevel && (goal === "rest" || goal === "descend" || goal !== null && OPTIONAL.has(goal))) return null;
       if (breederLevel && goal !== null && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(goal)) {
@@ -449,7 +497,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         if (route === null) return null;
         const at = player.grid;
         const cell = view.cell(at.x, at.y);
-        if (route.length === 0) return cell !== null && terrain.isUpStair(cell.feat) ? act.ascend() : act.descend();
+        if (route.length === 0) {
+          if (cell !== null && terrain.isUpStair(cell.feat)) {
+            if (returnReason === null && !breederLevel && !view.monsters().some((monster) => monster.visible && !monster.asleep)) refresh = { depth: player.depth, arrived: false };
+            return act.ascend();
+          }
+          return act.descend();
+        }
         const next = route[0];
         const dir = next === undefined ? undefined : DIRECTIONS.find((direction) => at.x + direction.dx === next.x && at.y + direction.dy === next.y);
         return dir === undefined ? null : act.move(dir.key);
@@ -463,20 +517,37 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const at = view.player().grid;
     const search = !wide && searching(view);
     if (!wide && !search && (expired || returnReason !== null || departure.finished(view))) return null;
-    const allowed = (grid: Loc) => wide || search || leashed(view, grid);
+    const allowed = (grid: Loc) => !blockedObstacles.has(key(grid)) && (wide || search || leashed(view, grid));
     const dark = (from: Loc, insideLeash = true) => DIRECTIONS.map((dir) => ({ x: from.x + dir.dx, y: from.y + dir.dy })).find((grid) => {
       const cell = view.cell(grid.x, grid.y);
       return cell !== null && !cell.known && !blockedDark.has(key(grid)) && (!insideLeash || allowed(grid)) && !gazeReach(view, grid);
     });
-    const goals = frontiers(view, terrain).filter((grid) => allowed(grid) && !gazeReach(view, grid) &&
+    const goals = [...frontiers(view, terrain), ...obstacleFrontiers(view)].filter((grid) => allowed(grid) && !gazeReach(view, grid) &&
       dark(grid, key(grid) === key(at)) !== undefined);
     if (goals.some((grid) => key(grid) === key(at))) return dark(at) ?? null;
     /* A phase or retreat can leave the character outside the leash. The return
      * route must cross that ground to reach a frontier inside it. */
     const returning = !allowed(at);
-    const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && (returning || allowed(grid)) });
-    const direction = stepDown(field, at, (grid) => isWalkable(view, terrain, grid) && !gazeReach(view, grid) && (returning || allowed(grid)));
+    const field = flowFrom({ goals, canEnter: (grid) => (isRoutable(view, terrain, grid) || diggableObstacle(view, grid)) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) && (returning || allowed(grid)) });
+    const direction = stepDown(field, at, (grid) => (isWalkable(view, terrain, grid) || diggableObstacle(view, grid) && !view.monsters().some((monster) => monster.visible && key(monster.grid) === key(grid))) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) && (returning || allowed(grid)));
     return direction === null ? null : { x: at.x + direction.dx, y: at.y + direction.dy };
+  }
+
+  function diggableObstacle(view: AgentView, grid: Loc): boolean {
+    const cell = view.cell(grid.x, grid.y);
+    return cell?.known === true && (jammed.has(key(grid)) || terrain.isJammedDoor?.(cell.feat) === true ||
+      (terrain.isRubble?.(cell.feat) ?? (terrain.isDiggable?.(cell.feat) === true && (cell.featCode === undefined || /RUBBLE/i.test(cell.featCode)))));
+  }
+
+  function obstacleFrontiers(view: AgentView): Loc[] {
+    const bounds = view.mapBounds();
+    const goals: Loc[] = [];
+    for (let y = 0; y < bounds.height; y += 1) {
+      for (let x = 0; x < bounds.width; x += 1) {
+        if (diggableObstacle(view, { x, y })) goals.push({ x, y });
+      }
+    }
+    return goals;
   }
 
   function explore(ctx: SquireContext, wide = widened): AgentCommand | null {
@@ -500,7 +571,14 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (next === null) return null;
     const direction = DIRECTIONS.find((dir) => at.x + dir.dx === next.x && at.y + dir.dy === next.y)!;
     if (ctx.view.cell(next.x, next.y)?.known === false) darkStep = { from: at, to: next, turn: ctx.view.turn() };
-    return isClosedDoor(ctx.view, terrain, next) ? ctx.act.open(direction.key) : ctx.act.move(direction.key);
+    if (isClosedDoor(ctx.view, terrain, next) || diggableObstacle(ctx.view, next)) {
+      const code = diggableObstacle(ctx.view, next) ? "tunnel" : "open";
+      obstacleAttempts.set(key(next), (obstacleAttempts.get(key(next)) ?? 0) + 1);
+      obstacle = { grid: next, turn: ctx.view.turn(), code };
+      /* Stubborn obstacles must not consume the rest of this level's budget. */
+      return ctx.act[code](direction.key);
+    }
+    return ctx.act.move(direction.key);
   }
 
   function blocked(view: AgentView): string | null {
@@ -524,5 +602,5 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return terrain.isUpStair(view.cell(end.x, end.y)?.feat ?? -1) ? "up" : "down";
   }
 
-  return { apply, guarded, explore, canExplore: (view: AgentView, wide = widened) => explorationStep(view, wide) !== null, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, preparation: missingPreparation, exitFailure: () => routeFailure };
+  return { apply, guarded, explore, canExplore: (view: AgentView, wide = widened) => explorationStep(view, wide) !== null, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, refreshReturn, preparation: missingPreparation, exitFailure: () => routeFailure };
 }
