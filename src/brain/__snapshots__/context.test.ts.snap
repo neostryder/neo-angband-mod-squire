@@ -38,7 +38,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "gaps": "The character is prepared for dungeon level 3 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 21 in two (a quarter to half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
@@ -330,7 +330,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 4 (shallow); deepest reached 1 (shallow).",
   "creatures": "cave spider: an easy kill, 3 steps away (close)",
-  "gaps": "For dungeon level 5 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
+  "gaps": "For dungeon level 5 (shallow) the character still lacks: one usable Word of Recall.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",

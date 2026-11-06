@@ -2,9 +2,39 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, clearShot, incomingDamage, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
+import { assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
+
+describe("breeder damage evidence", () => {
+  it("uses observed one-point blows rather than the unknown-attack ceiling", () => {
+    const w = world({ map: ["######", "#.@..#", "######"], player: { hp: 60, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, race: "giant white louse", level: 1, raceFlags: ["MULTIPLY"] }] });
+    const m = w.view.monsters()[0]!;
+    const seen = new Map([[m.race, 1]]);
+    expect(breederBlow(w.view, m, seen)).toBe(1);
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain, { observedDamage: seen }).damage).toBe(1);
+    const unknown = incomingDamage(w.view, w.at(), 1, w.terrain).damage;
+    expect(unknown).toBe(7);
+    w.setPlayer({ hp: 20, maxHp: 20 });
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain).damage).toBe(3);
+  });
+
+  it.each(["poison", "acid", "paralyse", "confuse"])("retains danger for a breeder whose recall shows %s", (effect) => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 3, y: 1 }, race: "worm mass", level: 1, raceFlags: ["MULTIPLY"] }], monsterRecall: () => `It can touch to ${effect} (1d1).` });
+    expect(breederBlow(w.view, w.view.monsters()[0]!, new Map([["worm mass", 1]]))).toBeNull();
+  });
+
+  it("does not cap a higher level breeder, a unique or a creature with magic", () => {
+    for (const monster of [
+      { level: 3, raceFlags: ["MULTIPLY"], spellFlags: [] },
+      { level: 1, raceFlags: ["MULTIPLY", "UNIQUE"], spellFlags: [] },
+      { level: 1, raceFlags: ["MULTIPLY"], spellFlags: ["HOLD"] },
+    ]) {
+      const w = world({ map: MAP, monsters: [{ grid: { x: 3, y: 1 }, ...monster, race: "worm mass" }], monsterRecall: () => "It can bite to hurt (1d1)." });
+      expect(breederBlow(w.view, w.view.monsters()[0]!)).toBeNull();
+    }
+  });
+});
 
 const MAP = ["#########", "#.@.....#", "#########"];
 /* The views here are the harness's, which never check an input token. */

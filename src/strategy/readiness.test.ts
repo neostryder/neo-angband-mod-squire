@@ -2,10 +2,51 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
-import { basketWants, descentGaps, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin } from "./readiness.js";
-import { archetype } from "../persona/persona.js";
+import { basketWants, descentGaps, descentWait, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin } from "./readiness.js";
+import { archetype, defaultPersona } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
+
+describe("descent pace", () => {
+  it.each([
+    [2, 29, 19, 3, 3, 3], [3, 38, 27, 4, 4, 3], [4, 38, 27, 5, 5, 4],
+    [5, 60, 36, 6, 15, 4], [6, 60, 40, 6, 15, 5], [7, 60, 44, 7, 15, 6],
+    [8, 60, 48, 8, 15, 6], [9, 60, 52, 9, 15, 7], [10, 60, 56, 10, 15, 7],
+  ])("keeps the default HP floor and relaxes only the level gate for DL%i", (depth, warriorHp, mageHp, warriorLevel, mageLevel, pacedLevel) => {
+    const persona = defaultPersona();
+    for (const [cls, hp, normal] of [["Warrior", warriorHp, warriorLevel], ["Mage", mageHp, mageLevel]] as const) {
+      const w = suppliedWorld({ map: ROOM, player: { cls, depth: depth - 1, level: pacedLevel, maxLevel: pacedLevel, hp, maxHp: hp, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["5 Flasks of Oil", "a Scroll of Word of Recall", "3 Potions of Cure Critical Wounds", "2 Scrolls of Teleportation"] });
+      const wait = descentWait(persona);
+      expect(missingPreparation(w.view, depth, persona, wait)).toEqual([]);
+      const before = missingPreparation(w.view, depth, persona, wait - 0.01).filter((gap) => gap.kind === "level");
+      expect(before.map((gap) => gap.reason)).toEqual(normal > pacedLevel ? [`maximum character level ${String(normal)}`] : []);
+      w.setPlayer({ hp: hp - 1, maxHp: hp - 1 });
+      expect(descentGaps(w.view, depth, persona, wait).hard.map((gap) => gap.kind)).toContain("hp");
+      w.setPlayer({ hp, maxHp: hp, maxLevel: pacedLevel - 1 });
+      expect(descentGaps(w.view, depth, persona, wait).hard.map((gap) => gap.kind)).toContain("level");
+    }
+  });
+
+  it("uses ambition to shorten the wait without changing the HP floor", () => {
+    expect(descentWait(archetype("diver"))).toBeLessThan(descentWait(archetype("coward")));
+    expect(descentWait(defaultPersona())).toBeCloseTo(1.45);
+  });
+
+  it.each(["hurt", "poison", "cut", "escapes", "ranged"])("keeps the Mage's normal gate when it lacks %s readiness", (gap) => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", depth: 5, level: 5, maxLevel: 5, hp: 50, maxHp: 50 }, pack: ["5 Flasks of Oil", "a Scroll of Word of Recall"] });
+    if (gap === "hurt") w.setPlayer({ hp: 49 });
+    if (gap === "poison") w.setPlayer({ status: { poisoned: 1 } });
+    if (gap === "cut") w.setPlayer({ status: { cut: 1 } });
+    if (gap === "escapes") w.setPack(["5 Flasks of Oil", "3 Potions of Cure Light Wounds", "5 Rations of Food", "a Scroll of Word of Recall"]);
+    if (gap === "ranged") w.setPack(["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "a Scroll of Word of Recall"]);
+    expect(missingPreparation(w.view, 6, null, 30).map((need) => need.reason)).toContain("maximum character level 15");
+  });
+
+  it("keeps level 2 characters out of DL2 even after a long wait", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 2, maxLevel: 2, hp: 60, maxHp: 60 } });
+    expect(descentGaps(w.view, 2, null, 30, true).hard.map((gap) => gap.reason)).toContain("maximum character level 3");
+  });
+});
 
 describe("prepared depths", () => {
   it("lowers the early readiness bar during an XP drought and retains a survival minimum", () => {
@@ -70,9 +111,9 @@ describe("prepared depths", () => {
   it.each([
     ["Warrior", 60, 6], ["Blackguard", 60, 6], ["Rogue", 60, 10],
     ["Priest", 60, 15], ["Druid", 60, 15], ["Paladin", 60, 6],
-    ["Ranger", 60, 6], ["Mage", 80, 15], ["Necromancer", 80, 15],
+    ["Ranger", 60, 6], ["Mage", 36, 15], ["Necromancer", 36, 15],
   ] as const)("uses the dungeon depth 5 class floor for %s", (cls, maxHp, maxLevel) => {
-    const w = suppliedWorld({ map: ROOM, player: { cls, depth: 4, maxLevel, maxHp, hp: maxHp }, pack: ["a Scroll of Word of Recall"] });
+    const w = suppliedWorld({ map: ROOM, player: { cls, depth: 4, maxLevel, maxHp, hp: maxHp }, pack: ["a Scroll of Word of Recall", "5 Flasks of Oil"] });
     expect(missingPreparation(w.view, 5)).toEqual([]);
     w.setPlayer({ maxHp: maxHp - 1 });
     expect(missingPreparation(w.view, 5).map((need) => need.kind)).toContain("hp");

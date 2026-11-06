@@ -3970,8 +3970,59 @@ describe("lab stall regressions", () => {
   });
 });
 
+describe("lab descent and breeder decisions", () => {
+  it.each([1, 2, 3, 4])("takes the first prepared down staircase on DL%i", (depth) => {
+    const w = suppliedWorld({ map: ["##########", "#<@....>,#", "##########"], player: { cls: "Warrior", depth, maxDepth: depth, level: 4, maxLevel: 4 }, pack: ["a Scroll of Word of Recall"] });
+    const q = reflexed(planner(w, true).p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+    expect(q.reflex).toContain("first prepared down staircase");
+    expect(q.plan.step(w.view, w.act)?.code).toBe("walk");
+  });
+
+  it("takes a caster's first staircase with oil and keeps an unarmed caster behind its HP floor", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@....>,#", "##########"], player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 20, maxHp: 20 }, pack: ["5 Flasks of Oil"] });
+    expect(reflexed(planner(w, true).p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "descend" });
+    w.setPack(["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    expect(offered(planner(w, true).p.ask(w.view))).not.toContain("descend");
+  });
+
+  it("relaxes a timed level gate and descends without another readiness answer", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ["##########", "#<@....>,#", "##########"], player: { cls: "Warrior", depth: 5, maxDepth: 5, level: 5, maxLevel: 5 }, pack: ["a Scroll of Word of Recall"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => time });
+    expect(offered(p.ask(w.view))).not.toContain("descend");
+    time += 120000;
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+    w.moveTo({ x: 7, y: 1 });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+    w.setPlayer({ hp: 59 });
+    expect(q.plan.step(w.view, w.act)).toBeNull();
+  });
+
+  it.each([false, true])("saves cures and caps a louse escape answer with observed damage %s", (observed) => {
+    const w = suppliedWorld({ map: ["########", "#<@....#", "########"], player: { depth: 3, level: 6, hp: 60, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, race: "giant white louse", level: 1, raceFlags: ["MULTIPLY"] }], monsterRecall: () => observed ? "It breeds explosively." : "It can bite to hurt (1d1). It breeds explosively." });
+    const { p, logged } = planner(w);
+    p.ask(w.view);
+    w.advance(10);
+    w.setPlayer({ hp: 59 });
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("fight");
+    expect(offered(q)).not.toContain("heal");
+    expect(String(q.request.state["incoming"])).toContain("Up to 1 HP damage");
+    const answer = { ...pick("fight"), escape: { type: "noul" as const, p: 0.85 } };
+    const chosen = p.choose(answer, q.context, w.view);
+    expect(q.context.pack?.gate?.p).toBeLessThan(0.1);
+    expect(logged.some((line) => line.includes("escape estimate capped"))).toBe(true);
+    if (!("plan" in chosen)) throw new Error("expected a fight");
+    expect(chosen.plan.step(w.view, w.act)?.code).not.toBe("quaff");
+    w.setPlayer({ hp: 3, status: { poisoned: 4 } });
+    expect(offered(p.ask(w.view))).toContain("heal");
+  });
+});
+
 describe("lab route and poison interruptions", () => {
-  it("interrupts a checked breeder stair walk when the exit becomes unsafe", () => {
+  it("keeps a checked breeder stair walk past distant breeders and stops for a blocked step", () => {
     const worms = [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, race: "white worm mass", raceFlags: ["MULTIPLY"] }));
     const w = suppliedWorld({ map: ["##########", "#<.@....,#", "##########"], player: { depth: 1, level: 4, hp: 45, maxHp: 45 }, monsters: worms });
     const { p } = planner(w);
@@ -3985,7 +4036,10 @@ describe("lab route and poison interruptions", () => {
     w.moveTo({ x: 2, y: 1 });
     w.advance(10);
     w.setMonsters(worms);
-    expect(p.trigger(w.view, chosen.plan)).toContain("checked staircase route is no longer safe");
+    expect(p.trigger(w.view, chosen.plan)).toBeNull();
+    expect(chosen.plan.step(w.view, w.act)).toMatchObject({ code: "walk", dir: 4 });
+    w.setMonsters([...worms, { grid: { x: 1, y: 1 }, race: "soldier", level: 10 }]);
+    expect(p.trigger(w.view, chosen.plan)).toContain("no unblocked known route reaches the staircase");
     expect(w.view.player().depth).toBe(1);
   });
 

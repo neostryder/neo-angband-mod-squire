@@ -18,6 +18,45 @@ function goals(w: ReturnType<typeof world>, journey = createJourney(w.terrain), 
   return journey.apply(base, w.view, null, new Set(), recalling).map((offer) => offer.goal);
 }
 
+describe("journey descent clock", () => {
+  it("starts at first descent, survives refresh trips and resets only on a depth gain or new character", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ROOM, player: { depth: 0 } });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    expect(journey.depthMinutes(w.view)).toBe(0);
+    time = 600000;
+    w.setPlayer({ depth: 1 });
+    expect(journey.depthMinutes(w.view)).toBe(0);
+    time += 120000;
+    expect(journey.depthMinutes(w.view)).toBe(2);
+    w.setPlayer({ depth: 0 });
+    w.advance(10);
+    journey.depthMinutes(w.view);
+    w.setPlayer({ depth: 1 });
+    expect(journey.depthMinutes(w.view)).toBe(2);
+    w.setPlayer({ depth: 2 });
+    expect(journey.depthMinutes(w.view)).toBe(0);
+    time += 120000;
+    expect(journey.depthMinutes(w.view)).toBe(2);
+    const fresh = suppliedWorld({ map: ROOM, player: { depth: 1 } });
+    expect(journey.depthMinutes(fresh.view)).toBe(0);
+  });
+
+  it("logs a relaxed gate once while repeated decisions leave the clock unchanged", () => {
+    let time = 0;
+    const logged: string[] = [];
+    const w = suppliedWorld({ map: ROOM, player: { depth: 5, level: 5, maxLevel: 5 }, pack: ["a Scroll of Word of Recall"] });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time, (line) => logged.push(line));
+    expect(goals(w, journey)).not.toContain("descend");
+    time += 120000;
+    expect(goals(w, journey)).toContain("descend");
+    expect(goals(w, journey)).toContain("descend");
+    expect(logged).toHaveLength(1);
+    expect(logged[0]).toContain("2.0 minutes without a depth gain");
+    expect(logged[0]).toContain("full HP, class HP floor and escape reserves met");
+  });
+});
+
 describe("journey offer and execution guards", () => {
   it("routes the weak Blackguard refresh up instead of taking a nearer down staircase", () => {
     const w = suppliedWorld({ map: ["##########", "#<....@>.#", "##########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21 } });
@@ -69,6 +108,29 @@ describe("journey offer and execution guards", () => {
     expect(journey.blocked(w.view) ?? "").not.toContain("needs town");
   });
   const breeders = [5, 6, 7].map((x, index) => ({ grid: { x, y: 1 }, race: index === 2 ? "giant white mouse" : "white worm mass", raceFlags: ["MULTIPLY"] }));
+
+  it("follows a breeder exit to the stairs across repeated decisions with the breeders still visible", () => {
+    const w = suppliedWorld({ map: ["#############", "#<....@.....#", "#############"], player: { level: 4 }, monsters: [9, 10, 11].map((x) => ({ grid: { x, y: 1 }, raceFlags: ["MULTIPLY"] })) });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("leave_level", "explore"))).toContain("leave_level");
+    const plan = journey.guarded("leave_level", { label: "leave", step: () => null });
+    for (let x = 6; x > 1; x -= 1) {
+      expect(journey.exitWay(w.view)).toBe("up");
+      expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+      w.moveTo({ x: x - 1, y: 1 });
+      w.advance(10);
+      expect(goals(w, journey, false, offers("leave_level", "explore"))).toContain("leave_level");
+    }
+    expect(plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it("offers only breeder exits that its command guard can execute", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 4, hp: 45, maxHp: 45 }, monsters: [...breeders, { grid: { x: 1, y: 1 }, race: "soldier", level: 10 }] });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("leave_level", "explore"))).not.toContain("leave_level");
+    expect(journey.exitWay(w.view)).toBeNull();
+    expect(journey.exitFailure()).toContain("blocked");
+  });
 
   it("keeps the young Mage's aggregate breeder exit after sight and mana change", () => {
     const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { cls: "Mage", level: 2, hp: 16, maxHp: 16, sp: 0, maxSp: 4 }, monsters: breeders });
@@ -248,14 +310,17 @@ describe("journey offer and execution guards", () => {
     expect(out.map((offer) => offer.goal)).toEqual(expect.arrayContaining(["descend", "leave_level"]));
   });
 
-  it("lets a breeder exit go down only when the character is ready for the next depth", () => {
+  it("keeps its chosen breeder staircase until arrival even when readiness changes", () => {
     const w = suppliedWorld({ map: ["###########", "#<.....@.>#", "###########"], player: { depth: 2, maxDepth: 2, level: 2, maxLevel: 2, hp: 26, maxHp: 26 }, monsters: breeders });
     const journey = createJourney(w.terrain);
     expect(journey.breederExit(w.view)).toBe(true);
     w.setMonsters([]);
     expect(journey.exitWay(w.view)).toBe("up");
     w.setPlayer({ level: 6, maxLevel: 6, hp: 60, maxHp: 60 });
-    expect(journey.exitWay(w.view)).toBe("down");
+    expect(journey.exitWay(w.view)).toBe("up");
+    w.moveTo({ x: 1, y: 1 });
+    const plan = journey.guarded("leave_level", { label: "leave", step: () => null });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "ascend" });
   });
 
   it("forgets a chosen trip home once the character stands in town", () => {
