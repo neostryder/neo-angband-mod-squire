@@ -22,7 +22,7 @@ import type { SquireCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createTravelWatch, createWatcher, type TravelMode, type TravelWatch, type Watcher } from "../disturb.js";
 import { DIRECTIONS, directionToward, key, neighbours, steps, type Loc } from "../grid.js";
-import { frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownCount, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
+import { besideParalysingGazer, paralysingGazer, frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownCount, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import { flowFrom, stepAway } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
 import { awakeInSight, inSight, pickTarget } from "../threat.js";
@@ -441,6 +441,7 @@ export interface GoalPlannerOptions {
 /** A plan that owns a watcher, so `trigger` can ask it. */
 interface WatchedPlan extends Plan {
   readonly watcher: Watcher;
+  readonly checkedExit?: boolean;
 }
 
 /** Travel that runs without asking the model: which interrupts apply, and where it is heading. */
@@ -567,8 +568,8 @@ function neverMoves(view: AgentView, monster: MonsterView): boolean {
  * best known case, and every player learns its name before its memory.
  */
 function disables(s: Situation, monster: MonsterView): boolean {
-  if (s.disablers.has(monster.race)) return true;
   if (s.view.player().objectFlags.includes("FREE_ACT")) return false;
+  if (s.disablers.has(monster.race)) return true;
   return /\bfloating eye\b/i.test(monster.race) || /\bparaly[sz]/i.test(s.view.monsterRecall?.(monster.raceIndex)?.text ?? "");
 }
 
@@ -984,6 +985,27 @@ function pinned(s: Situation): boolean {
   return s.awake.some((m) => steps(player.grid, m.grid) <= 1 && m.speed >= player.speed && !neverMoves(s.view, m) && !disables(s, m));
 }
 
+function disablingStep(s: Situation, terrain: Terrain): Loc | null {
+  const player = s.view.player();
+  if (player.objectFlags.includes("FREE_ACT")) return null;
+  const adjacent = s.view.monsters().filter((monster) => monster.visible && steps(monster.grid, player.grid) <= 1 && (paralysingGazer(s.view, monster) || disables(s, monster)));
+  if (adjacent.length === 0) return null;
+  return neighbours(player.grid).filter((grid) => isWalkable(s.view, terrain, grid) && !isClosedDoor(s.view, terrain, grid) && !s.view.cell(grid.x, grid.y)?.trap && adjacent.every((monster) => steps(monster.grid, grid) > 1))
+    .sort((a, b) => creatureDamageFor(s, a, terrain) - creatureDamageFor(s, b, terrain))[0] ?? null;
+}
+
+function poisonStep(s: Situation, terrain: Terrain): Loc | null {
+  const view = s.view;
+  const current = creatureDamageFor(s, view.player().grid, terrain);
+  return neighbours(view.player().grid).filter((grid) => isWalkable(view, terrain, grid) && !isClosedDoor(view, terrain, grid) && !view.cell(grid.x, grid.y)?.trap && creatureDamageFor(s, grid, terrain) < current)
+    .sort((a, b) => creatureDamageFor(s, a, terrain) - creatureDamageFor(s, b, terrain))[0] ?? null;
+}
+
+function poisonEmergency(view: AgentView): boolean {
+  const player = view.player();
+  return player.status.poisoned > 0 && player.hp <= player.status.poisoned + Math.max(3, Math.ceil(player.maxHp * 0.1));
+}
+
 function immediateDanger(s: Situation): boolean {
   const incoming = damageFor(s);
   return incoming.damage > 0 || incoming.status > 0;
@@ -1184,6 +1206,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* A level is left once, however many reasons there are to leave it. */
   const exit = leaveStep(s, terrain);
   const addLeave = (criteria: string, _risk: number) => { if (exit !== null && !out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage); };
+  if (disablingStep(s, terrain) !== null) add("step_aside", "Step out of reach of the creature that can paralyse before doing anything else.", exposure(s));
   const nearDeath = s.hpShare < 0.35;
   const unseenLethal = s.unseenDamage > 0 && damageFor(s, at, 2, terrain).damage >= player.hp;
   const fastUnique = inSight(view.monsters()).find((m) => fleeUnique(m, player, persona));
@@ -1568,12 +1591,17 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (cureless && poisonRecovery(view, persona) && !hungry(view) && !standingOnHarm(view, terrain, at) && s.unseenDamage === 0 && s.threats.length === 0) {
     add("wait", "Wait here for the poison to subside; its remaining timer leaves a health reserve and no creature is known nearby.", damageRisk(incoming.damage, player.hp), true);
   }
+  if (poisonEmergency(view)) {
+    if (poisonStep(s, terrain) !== null) add("step_aside", "Walk away from the creatures while poisoned; fighting and changing level cannot treat the poison.", exposure(s));
+    else add("endure", "Hold here while poisoned; resting and changing level cannot treat the poison.", exposure(s));
+  }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
   if (!bleeding && hardContactGroup(s)) {
     const take = offerTakePosition(s, terrain);
     if (take !== null) out.push(take);
   }
   return out.filter((offer) => {
+    if (poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal)) return false;
     if (offer.goal === "leave_level" && hunt) return false;
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
     if (offer.goal === "fight" && weakCaster && out.some((other) => other.goal !== "fight" && (classOf(other.goal) === "attack" || classOf(other.goal) === "escape") && (other.survival ?? 0) > 0)) return false;
@@ -1795,6 +1823,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   const contacts = new Map<number, number>();
   /* Races that stood next to the character while it lost turns. Melee against them is not offered again. */
   const disablers = new Set<string>();
+  const heldTurns = new Map<string, number[]>();
   /* Town grids walked during this visit, so a town already walked end to end is not explored again. */
   const townWalked = new Set<string>();
   function harmlessNow(view: AgentView, monster: MonsterView): boolean {
@@ -2113,6 +2142,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * kill the character before its next action.
    */
   function unsafeStep(goal: Goal, command: AgentCommand, v: AgentView): string | null {
+    if (poisonEmergency(v) && (classOf(goal) === "attack" || goal === "explore")) return "the poison must be treated before fighting or exploring.";
+    if (poisonEmergency(v) && (command.code === "ascend" || command.code === "descend" || command.code === "rest")) return "the poison must be treated before changing level or resting.";
     if (command.code !== "walk" && command.code !== "melee" || command.dir === undefined) return null;
     const p = v.player();
     const dir = DIRECTIONS.find((d) => d.key === command.dir);
@@ -2120,6 +2151,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const to = { x: p.grid.x + dir.dx, y: p.grid.y + dir.dy };
     const s = situationNow(v);
     const there = v.monsters().find((m) => m.visible && m.grid.x === to.x && m.grid.y === to.y);
+    if (besideParalysingGazer(v, to)) return "the next step enters a paralysing gaze's reach.";
     if (there !== undefined && meleeBarred(s, there)) return `the next step would strike the ${there.race}, and a blow at it can leave the character unable to move.`;
     if (standingOnHarm(v, terrain, to) && !standingOnHarm(v, terrain, p.grid)) return "the next step is onto lava or other ground that burns.";
     if (!WALKS.has(goal)) return null;
@@ -2382,6 +2414,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return once("try another safe step", view, (ctx) => {
           const s = situationNow(ctx.view);
           const at = ctx.view.player().grid;
+          const escape = disablingStep(s, terrain) ?? (poisonEmergency(ctx.view) ? poisonStep(s, terrain) : null);
+          if (escape !== null) return ctx.act.move(directionToward(at, escape)!);
           /* Poison and cuts hurt on every square alike, so only creatures count here, as in the offer. */
           const safe = neighbours(at).filter((grid) => isWalkable(ctx.view, terrain, grid) && !standingOnHarm(ctx.view, terrain, grid) && !ctx.view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && creatureDamageFor(s, grid, terrain) < ctx.view.player().hp);
           const next = safe[Math.floor(rng() * safe.length)];
@@ -2678,10 +2712,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           : (() => { const wide = offeredWiden || exploreUnleashed; return stepsPlan("explore", view, (ctx) => journey.explore(ctx, wide)); })(), { mode: "explore" });
       case "leave_level": {
         /* The journey reroutes the walk to its own exit, often the up stairs, so the label names the stairs it will take. */
+        const checkedExit = journey.exitWay(view) !== null;
         const way = journey.exitWay(view) ?? (leaveStep(situationNow(view), terrain)?.down === true ? "down" : null);
         /* With every other choice used up, the readiness gate no longer holds a down staircase back. */
         const stranded = offeredWiden;
-        return stepsPlan(way === "down" ? "take the stairs down" : way === "up" ? "take the stairs up" : "take the nearest stairs", view, (ctx) => {
+        return { ...stepsPlan(way === "down" ? "take the stairs down" : way === "up" ? "take the stairs up" : "take the nearest stairs", view, (ctx) => {
           const here = ctx.view.player();
           if (here.depth !== view.player().depth) return null;
           const cell = ctx.view.cell(here.grid.x, here.grid.y);
@@ -2692,7 +2727,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const dir = directionToward(here.grid, checked.at);
           if (dir === null) return null;
           return isClosedDoor(ctx.view, terrain, checked.at) ? ctx.act.open(dir) : ctx.act.move(dir);
-        });
+        }), checkedExit } as WatchedPlan;
       }
       case "close_door":
         return once("close a door", view, (ctx) => {
@@ -2898,6 +2933,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   /** Repeated stair trips need evidence of hunting before another refresh. */
   function refreshHeld(offer: Offer, s: Situation, view: AgentView, persona: Persona | null): boolean {
+    if (offer.goal === "leave_level" && s.breederExit === true) return false;
     if (offer.goal === "leave_level" && safeHunt(s, persona, terrain)) return true;
     if (offer.goal !== "leave_level" || view.player().depth === 0 || s.awake.length > 0 || s.unseenDamage > 0 ||
       s.hpShare < escapeShare(persona, view.player().level) || view.player().status.afraid > 0 || supplyMargin(view, persona) !== null ||
@@ -2907,6 +2943,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   function reflexFor(offers: readonly Offer[], persona: Persona | null, situation: string, turn: number, passes: ReadonlySet<string>, s: Situation): { readonly goal: Goal; readonly why: string } | null {
     if (options.reflex === false) return null;
+    if (offers.some((offer) => offer.goal === "step_aside") && disablingStep(s, terrain) !== null) return { goal: "step_aside", why: "leave paralysis reach immediately" };
+    if (poisonEmergency(s.view) && offers.some((offer) => offer.goal === "heal")) return { goal: "heal", why: "cure lethal poison immediately" };
+    if (s.breederExit === true && journey.searching(s.view) && s.hpShare >= escapeShare(persona, s.view.player().level)) {
+      if (s.target !== null && steps(s.view.player().grid, s.target.grid) <= 1 && s.target.raceFlags.includes("MULTIPLY") && offers.some((offer) => offer.goal === "fight" && (offer.survival ?? 0) > 0)) return { goal: "fight", why: "clear the breeder blocking the stair search" };
+      if (offers.some((offer) => offer.goal === "explore")) return { goal: "explore", why: "find a staircase away from the breeders" };
+    }
     const incoming = damageFor(s).damage;
     const viable = offers.filter((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0 &&
       !(offer.goal === "retreat" && stairsUnderfoot(s, terrain) && offers.some((other) => other.goal === "leave_level")));
@@ -3039,7 +3081,16 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
       decisionDepth = player.depth;
-      if (newLevel) exploreLoops = 0;
+      if (newLevel) {
+        exploreLoops = 0;
+        heldTurns.clear();
+      }
+      const heldAgain = view.monsters().some((monster) => monster.visible && steps(monster.grid, player.grid) <= 1 && (heldTurns.get(monster.race) ?? []).filter((at) => at <= turn && turn - at <= 20 * turnsPerAction(player.speed, options.speedEnergy)).length >= 3);
+      if ((heldAgain || options.reflex !== false) && disablingStep(s, terrain) !== null) {
+        const why = heldAgain ? "repeated lost turns require a step out of reach" : "leave paralysis reach immediately";
+        const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: [{ goal: "step_aside", criteria: why, risk: exposure(s) }], reflex: why };
+        return { reflex: why, plan: noteStalls("step_aside", build("step_aside", view), view), context, answers: { goal: { type: "choice", choice: "step_aside", confidence: 1, probabilities: { step_aside: 1 } } } };
+      }
       const exploreExhausted = exploreLoops >= EXPLORE_LOOPS_GIVEN_UP;
       const frontierLeft = (v: AgentView): boolean => !exploreExhausted && reachableFrontier(v, terrain);
       const widen = s.hpShare < 0.35 || (s.awake.length > 0 && player.hp <= player.maxHp * cfg.retreatFraction);
@@ -3060,7 +3111,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const focus = options.focus?.() ?? null;
       const usableGoal = (goal: Goal) => (focus === null || focus.has(goal)) && !(descending && goal === "deep_descent") && !stalled.has(goal) && !refused.has(goal) && (sameTurn.get(goal) ?? 0) < SAME_TURN_PLANS;
-      const usable = (offer: Offer) => usableGoal(offer.goal) && !refreshHeld(offer, s, view, persona);
+      const usable = (offer: Offer) => usableGoal(offer.goal) && !refreshHeld(offer, s, view, persona) && !(poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal));
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted, usableGoal("shop"));
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const chosenHome = options.townCall?.() ?? null;
@@ -3381,12 +3432,18 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (lost >= LOST_ACTIONS) {
         const p = view.player();
         const beside = view.monsters().filter((m) => m.visible && !m.asleep && steps(m.grid, p.grid) <= 1);
-        for (const m of beside) disablers.add(m.race);
+        for (const m of beside) {
+          disablers.add(m.race);
+          const recent = (heldTurns.get(m.race) ?? []).filter((turn) => turn <= view.turn() && view.turn() - turn <= 20 * turnsPerAction(p.speed, options.speedEnergy));
+          if (recent[recent.length - 1] !== view.turn()) recent.push(view.turn());
+          heldTurns.set(m.race, recent);
+        }
         const who = beside.length === 0 ? "" : ` beside the ${[...new Set(beside.map((m) => m.race))].join(" and the ")}`;
         const reason = `The character lost about ${String(lost)} turns (${countBand(lost)})${who} without acting, so something held it.`;
         noteOutcome(`${plan.label} stopped: ${reason}`);
         return reason;
       }
+      if (exiting && watched.checkedExit === true && journey.exitWay(view) === null) return "The checked staircase route is no longer safe; the breeder exit still needs a route.";
       const errand = watched.goal ?? null;
       if (errand !== null && ERRANDS.has(errand)) {
         const s = situationNow(view);

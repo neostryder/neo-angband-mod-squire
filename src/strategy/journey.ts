@@ -11,8 +11,9 @@ import { assessThreat } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
+import { travelTo } from "../travel.js";
 import { flowFrom, stepDown, type FlowField } from "../flow.js";
-import { frontiers, hasFloorObject, isRoutable, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
+import { besideParalysingGazer, frontiers, hasFloorObject, isRoutable, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
@@ -372,6 +373,15 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (!wide && !search && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
     const allowed = (grid: Loc) => wide || search || leashed(ctx.view, grid);
     const goals = frontiers(ctx.view, terrain).filter(allowed);
+    if (breederLevel && searching(ctx.view)) {
+      const breeders = ctx.view.monsters().filter((monster) => monster.visible && monster.raceFlags.includes("MULTIPLY"));
+      const away = (grid: Loc) => breeders.some((monster) => steps(monster.grid, grid) <= 1);
+      const safeGoals = goals.filter((grid) => !away(grid));
+      if (safeGoals.length > 0 && !safeGoals.some((grid) => key(grid) === key(ctx.view.player().grid))) {
+        const route = travelTo(ctx, safeGoals, away);
+        if (route.kind === "step") return route.command;
+      }
+    }
     const at = ctx.view.player().grid;
     if (!goals.some((grid) => key(grid) === key(at))) {
       const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && allowed(grid) });
@@ -382,7 +392,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const direction = DIRECTIONS.find((dir) => {
       const next = { x: at.x + dir.dx, y: at.y + dir.dy };
       const cell = ctx.view.cell(next.x, next.y);
-      return cell !== null && !cell.known && allowed(next);
+      return cell !== null && !cell.known && allowed(next) && !besideParalysingGazer(ctx.view, next);
     });
     return direction === undefined ? null : ctx.act.move(direction.key);
   }
@@ -400,6 +410,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
    * journey's exit, or null when the planner's own route stands.
    */
   function exitWay(view: AgentView): "up" | "down" | null {
+    observe(view);
     if (unseenDanger?.(view) || !footOffered && view.monsters().some((monster) => monster.visible && !monster.asleep)) return null;
     const route = checkedRoute(view, exitTargets(view));
     if (route === null) return null;

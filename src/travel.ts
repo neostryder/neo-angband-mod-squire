@@ -14,7 +14,7 @@ import type { SquireContext } from "./context.js";
 import type { Loc } from "./grid.js";
 import { DIRECTIONS, directionToward, key } from "./grid.js";
 import { flowFrom, stepAway, stepDown } from "./flow.js";
-import { cellAt, isClosedDoor, isRoutable, isWalkable } from "./map.js";
+import { besideParalysingGazer, cellAt, isClosedDoor, isRoutable, isWalkable } from "./map.js";
 
 /** What one attempt to travel produced. */
 export type Travel =
@@ -113,7 +113,7 @@ export function strike(ctx: SquireContext, target: Loc): AgentCommand | null {
   const dir = directionToward(at, target);
   if (dir === null) return null;
   if (Math.max(Math.abs(target.x - at.x), Math.abs(target.y - at.y)) !== 1) return null;
-  return ctx.act.melee(dir);
+  return besideParalysingGazer(ctx.view, target) ? null : ctx.act.melee(dir);
 }
 
 /** Whether this grid holds ground the character could stand on. */
@@ -139,7 +139,7 @@ export function stepIntoDark(ctx: SquireContext, from: Loc): AgentCommand | null
   for (const direction of DIRECTIONS) {
     const there: Loc = { x: from.x + direction.dx, y: from.y + direction.dy };
     const cell = cellAt(ctx.view, there);
-    if (cell === null || cell.known) continue;
+    if (cell === null || cell.known || besideParalysingGazer(ctx.view, there)) continue;
     return ctx.act.move(direction.key);
   }
   return null;
