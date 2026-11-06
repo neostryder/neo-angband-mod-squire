@@ -61,6 +61,8 @@ export function reliableEscapeSpell(view: AgentView): boolean {
 }
 
 export function supplies(view: AgentView): Supplies {
+  const inventory = view.inventory();
+  view = { ...view, inventory: () => inventory };
   const player = view.player();
   const light = view.equipment().find((item) => item !== null && item.tval === TV.LIGHT) ?? null;
   const permanent = light !== null && (light.artifact || light.flags.includes("NO_FUEL"));

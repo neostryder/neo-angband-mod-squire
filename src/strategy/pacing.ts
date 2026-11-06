@@ -43,6 +43,7 @@ export function createLevelPacing() {
   let xp = 0;
   let gold = 0;
   let arrival: string | null = null;
+  let levelId: number | undefined;
   let exhausted = false;
   let known = 0;
   let arrivalKnown = 0;
@@ -55,7 +56,9 @@ export function createLevelPacing() {
       const player = view.player();
       const turn = view.turn();
       const feeling = view.messages().find((message) => arrivalFeeling([message])) ?? null;
-      const fresh = depth !== player.depth || turn < lastTurn || feeling !== null && feeling !== arrival;
+      const currentId = view.knownLevel?.()?.levelId;
+      const fresh = depth !== player.depth || currentId !== levelId || turn < lastTurn || feeling !== null && feeling !== arrival;
+      levelId = currentId;
       if (fresh) {
         depth = player.depth;
         entered = turn;

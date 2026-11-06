@@ -22,6 +22,57 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
 describe("corpus progress regressions", () => {
+  it.each(["spell", "oil", "bow", "wand"])("clears the DL1 floating eye from range with a %s before more exploration", (attack) => {
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player: { cls: "Necromancer", depth: 1, level: 3, maxLevel: 3, hp: 19, maxHp: 19, sp: 6, maxSp: 6 },
+      monsters: [{ grid: { x: 5, y: 1 }, race: "floating eye", hp: 11, maxHp: 11, level: 1 }],
+      pack: attack === "oil" ? ["5 Flasks of Oil"] : attack === "wand" ? ["a Wand of Magic Missile (5 charges)"] : [],
+      worn: attack === "bow" ? ["a Short Bow (x2)"] : [], quiver: attack === "bow" ? ["20 Arrows"] : [],
+      ...(attack === "spell" ? { spells: [{ name: "Nether Bolt", sidx: 0, mana: 1, fail: 5 }] } : {}) });
+    const { p } = planner(w, true);
+    const q = reflexed(p.ask(w.view));
+    const goal = attack === "spell" ? "cast_attack" : attack === "oil" ? "throw_oil" : attack === "bow" ? "shoot" : "aim_wand";
+    expect(q.answers["goal"]).toMatchObject({ choice: goal });
+    expect(q.context.offers.map((offer) => offer.goal)).not.toContain("fight");
+    expect(q.context.offers.map((offer) => offer.goal)).not.toContain("retreat");
+    expect(q.plan.step(w.view, w.act)?.code).toBe(attack === "spell" ? "cast" : attack === "oil" ? "throw" : attack === "bow" ? "fire" : "aim");
+    w.setMonsters([]);
+    w.advance(10);
+    expect(offered(p.ask(w.view))).toContain("explore");
+  });
+
+  it("recovers mana outside a fixed hazard's reach when no ranged attack is currently usable", () => {
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 19, maxHp: 19, sp: 0, maxSp: 6 },
+      monsters: [{ grid: { x: 5, y: 1 }, race: "floating eye", level: 1 }], spells: [{ name: "Magic Missile", sidx: 0, mana: 1 }] });
+    const { p } = planner(w, true);
+    const q = p.ask(w.view);
+    expect(offered(q)).toContain("rest");
+    expect(offered(q)).not.toContain("retreat");
+  });
+
+  it.each(["stairs", "Recall"])("clears the town pursuer after %s and explores the arrival frontier", () => {
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player: { depth: 0, hp: 19, maxHp: 19, level: 3, maxLevel: 3 }, monsters: [{ grid: { x: 3, y: 1 }, race: "squint-eyed rogue" }] });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.setPlayer({ depth: 1 });
+    w.setMonsters([]);
+    w.advance(10);
+    const q = p.ask(w.view);
+    expect(offered(q)).toContain("explore");
+    expect(offered(q)).not.toEqual(["leave_level"]);
+  });
+
+  it("clears threat memory when API 2 replaces the floor at the same depth", () => {
+    let levelId = 1;
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 19, maxHp: 20 }, monsters: [{ grid: { x: 3, y: 1 }, race: "soldier" }] });
+    Object.assign(w.view, { knownLevel: () => ({ levelId }) });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.setMonsters([]);
+    levelId = 2;
+    w.advance(10);
+    expect(offered(p.ask(w.view))).toContain("rest");
+  });
+
   it("keeps an overdue depth target in the decision facts while danger blocks a dive", () => {
     let time = 0;
     const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { depth: 1, level: 5, maxLevel: 5, hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 4, y: 1 }, race: "soldier", level: 5 }] });

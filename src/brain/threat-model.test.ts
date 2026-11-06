@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
 import { turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
+import { assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, knownSpellFlags, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 
@@ -153,6 +153,18 @@ describe("threat model", () => {
 });
 
 describe("incoming damage windows", () => {
+  it.each(["floating eye", "grey mold"])("keeps a known stationary %s out of melee range without a learned movement flag", (race) => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 4, y: 1 }, race }], monsterRecall: () => race === "grey mold" ? "It does not deign to chase intruders. It can hit to hurt (1d4)." : "" });
+    expect(incomingDamage(w.view, w.at(), 2, w.terrain)).toMatchObject({ damage: 0, status: 0 });
+    expect(incomingDamage(w.view, { x: 3, y: 1 }, 1, w.terrain).damage).toBeGreaterThan(0);
+  });
+
+  it("uses learned API 2 spell flags without requiring a recall sentence", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"], spellFlags: ["HOLD"], knownSpellFlags: ["HOLD"] }] });
+    expect(knownSpellFlags(w.view, w.view.monsters()[0]!)).toEqual(["HOLD"]);
+    expect(incomingDamage(w.view).status).toBe(150);
+  });
+
   const grip = { grid: { x: 3, y: 1 }, level: 2, speed: 120, race: "Grip, Farmer Maggot's Dog", raceFlags: ["UNIQUE"] };
 
   it("counts two bites in one action and four in two against the recorded dog", () => {

@@ -291,8 +291,23 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
 
   const player = playerView(known.player, floors);
   const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? average(monster)));
+  const recalls = new Map<number, Awaited<ReturnType<NonNullable<AgentView["monsterRecall"]>>>>();
+  const spells = new Map<number, Awaited<ReturnType<NonNullable<AgentView["spellInfo"]>>>>();
+  if (api.view.inspect !== undefined) {
+    await Promise.all([
+      ...[...new Set(monsters.map((monster) => monster.raceIndex))].map(async (race) => {
+        const recall = await valueOf(api.view.inspect.monsterRecall(race));
+        recalls.set(race, writable(recall));
+      }),
+      ...(known.spellbooks ?? []).flatMap((book) => book.spells.filter((spell) => spell.learned && !spell.forgotten).map(async (spell) => {
+        const info = await valueOf(api.view.inspect.spell(spell.sidx));
+        spells.set(spell.sidx, writable(info));
+      })),
+    ]);
+  }
   const width = known.level?.width ?? 0;
   const height = known.level?.height ?? 0;
+  const level = writable(known.level);
   const cells = new Map<number, NonNullable<KnownWorldData["level"]>["cells"][number]>();
   for (const cell of known.level?.cells ?? []) cells.set(cell.y * width + cell.x, cell);
   const passable = (feat: number): boolean => terrain?.[feat]?.flags.has("PASSABLE") ?? false;
@@ -302,6 +317,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
   const equipment = (known.equipment ?? []).map((item) => (item === null ? null : itemView(item)));
   const quiver = (known.quiver ?? []).map(itemView);
   const floorHere = (known.floorHere ?? []).map(itemView);
+  const messages = reads.messages?.drain() ?? [];
 
   const cell = (x: number, y: number): CellView | null => {
     if (x < 0 || y < 0 || x >= width || y >= height) return null;
@@ -334,6 +350,9 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
     monsters: () => monsters.map((m) => writable(m)),
     cell,
     mapBounds: () => ({ width, height }),
+    knownLevel: () => level,
+    monsterRecall: (race) => recalls.get(race) ?? null,
+    spellInfo: (spell) => spells.get(spell) ?? null,
     inventory: () => [...inventory],
     quiver: () => [...quiver],
     equipment: () => [...equipment],
@@ -342,7 +361,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
       return (cells.get(y * width + x)?.remembered.items ?? []).map(itemView);
     },
     target: () => (known.target === null ? null : { midx: known.target.monster ?? 0, grid: { x: known.target.grid.x, y: known.target.grid.y } }),
-    messages: () => reads.messages?.drain() ?? [],
+    messages: () => [...messages],
     stores: () => (known.stores ?? []).map((store): StoreView => ({ ...writable(store), stock: store.stock.map(storeItemView) })),
     spellbooks: () => (known.spellbooks ?? []).map((book) => writable(book)),
     constants: () => ({ ...constants }),

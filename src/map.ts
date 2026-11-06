@@ -55,7 +55,7 @@ export function isRoutable(view: AgentView, terrain: Terrain, at: Loc): boolean 
 }
 
 export function neverMoves(view: AgentView, monster: MonsterView): boolean {
-  return monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
+  return /^floating eye$/i.test(monster.race) || monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
 }
 
 /**

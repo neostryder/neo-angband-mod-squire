@@ -10,6 +10,57 @@ import { createJourney } from "./journey.js";
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
 
+describe("stair reversal guards", () => {
+  it("blocks the arrival stair even when a supply return is the only offer", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1, level: 5, maxLevel: 5 } });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.stairCommand(w.view, w.act.descend())?.code).toBe("descend");
+    w.setPlayer({ depth: 2 });
+    w.moveTo({ x: 1, y: 1 });
+    w.setPack([]);
+    w.advance(10);
+    expect(goals(w, journey, false, offers("leave_level"))).not.toContain("leave_level");
+    expect(journey.guarded("leave_level", { label: "return", step: (_view, act) => act.ascend() }).step(w.view, w.act)).toBeNull();
+    w.advance(10);
+    expect(journey.stairCommand(w.view, w.act.ascend())?.code).toBe("ascend");
+  });
+
+  it("allows a visible attacker to demand an immediate return, then caps reversals even in danger", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1 } });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.stairCommand(w.view, w.act.descend())?.code).toBe("descend");
+    for (let flip = 0; flip < 4; flip += 1) {
+      const depth = flip % 2 === 0 ? 2 : 1;
+      w.setPlayer({ depth });
+      w.moveTo({ x: depth === 2 ? 1 : 6, y: 1 });
+      w.setMonsters([{ grid: { x: depth === 2 ? 2 : 5, y: 1 }, race: "soldier", level: 6 }]);
+      w.advance(10);
+      const command = depth === 2 ? w.act.ascend() : w.act.descend();
+      expect(journey.stairCommand(w.view, command)?.code ?? null).toBe(flip < 3 ? command.code : null);
+    }
+    time = 60001;
+    expect(journey.stairCommand(w.view, w.act.descend())?.code).toBe("descend");
+  });
+
+  it("does not mistake remembered or stationary distant creatures for arrival danger", () => {
+    const w = suppliedWorld({ map: ROOM, monsters: [{ grid: { x: 3, y: 1 }, race: "soldier" }] });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 6, y: 1 });
+    journey.stairCommand(w.view, w.act.descend());
+    w.setPlayer({ depth: 2 });
+    w.moveTo({ x: 1, y: 1 });
+    w.setMonsters([{ grid: { x: 4, y: 1 }, race: "floating eye" }]);
+    w.advance(10);
+    expect(journey.stairCommand(w.view, w.act.ascend())).toBeNull();
+    expect(journey.safeDelay(w.view)).toBe(true);
+    w.setMonsters([]);
+    expect(journey.stairCommand(w.view, w.act.ascend())).toBeNull();
+  });
+});
+
 describe("round 3 progress watchdog", () => {
   const player = { cls: "Warrior", depth: 1, maxDepth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 0 };
   const pack = ["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)"];
@@ -505,7 +556,7 @@ describe("journey descent clock", () => {
     expect(goals(w, journey, false, offers("descend", "explore", "leave_level"))).toEqual(["descend"]);
   });
 
-  it("releases missing reserves despite affordable town stock only after three minutes behind schedule", () => {
+  it("keeps the overdue supply return until a cure and an escape are carried", () => {
     let time = 0;
     const w = world({ map: ROOM, player: { cls: "Warrior", depth: 1, maxDepth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 500 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain, undefined, undefined, () => time);
@@ -514,9 +565,24 @@ describe("journey descent clock", () => {
     w.advance(10);
     expect(journey.dive(w.view).allowed).toBe(false);
     time = 7 * 60000;
+    expect(journey.dive(w.view).take).toBe(false);
+    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "4 Rations of Food", "2 Wooden Torches (5000 turns)"]);
     expect(journey.dive(w.view).take).toBe(true);
     w.moveTo({ x: 6, y: 1 });
     expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)).toEqual({ code: "descend" });
+  });
+
+  it("keeps the ordinary readiness delay when an overdue character is hurt", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ROOM, player: { depth: 3, level: 6, maxLevel: 6, hp: 47, maxHp: 60 } });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.dive(w.view);
+    time = 30 * 60000;
+    w.advance(10);
+    w.setPlayer({ hp: 48 });
+    expect(journey.dive(w.view).due).toBe(false);
+    time += 5000;
+    expect(journey.dive(w.view).due).toBe(true);
   });
 
   it.each(["food", "light", "status", "hp", "level", "caster", "route", "danger"])("keeps the %s survival floor when far behind schedule", (missing) => {
@@ -642,19 +708,20 @@ describe("depth-preserving refreshes", () => {
       w.advance(10);
       w.setPlayer({ depth: 3 });
       w.setMonsters([]);
-      time += 40000;
-      expect(journey.depthMinutes(w.view)).toBeCloseTo((cycle + 1) * 2 / 3);
+      goals(w, journey, false, offers("explore"));
+      time += 60000;
+      expect(journey.depthMinutes(w.view)).toBeCloseTo(cycle + 1);
     }
     w.moveTo({ x: 1, y: 1 });
     expect(goals(w, journey, false, offers("leave_level"))).not.toContain("leave_level");
     expect(journey.guarded("leave_level", { label: "refresh", step: () => null }).step(w.view, w.act)).toBeNull();
     expect(w.view.player().depth).toBe(3);
-    expect(journey.depthMinutes(w.view)).toBe(2);
+    expect(journey.depthMinutes(w.view)).toBe(3);
     w.setPlayer({ depth: 0 });
     time += 60000;
-    expect(journey.depthMinutes(w.view)).toBe(3);
+    expect(journey.depthMinutes(w.view)).toBe(4);
     w.setPlayer({ depth: 3 });
-    expect(journey.depthMinutes(w.view)).toBe(3);
+    expect(journey.depthMinutes(w.view)).toBe(4);
     w.setPlayer({ depth: 4 });
     expect(journey.depthMinutes(w.view)).toBe(0);
   });

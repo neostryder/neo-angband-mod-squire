@@ -4,6 +4,7 @@ import type { Terrain } from "../terrain.js";
 import { shownName } from "../town/needs.js";
 import type { CastableSpell } from "./pack.js";
 import { starvationDamage } from "./pack.js";
+import { neverMoves } from "../map.js";
 
 export const THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"] as const;
 export type ThreatBand = (typeof THREAT_BANDS)[number];
@@ -53,6 +54,7 @@ export const HARMLESS_CONTACTS = 3;
  * Once one is seen the whole set counts: the recall text names spells but not their flags.
  */
 export function knownSpellFlags(view: AgentView, monster: MonsterView): readonly string[] {
+  if ((monster.knownSpellFlags?.length ?? 0) > 0) return monster.knownSpellFlags;
   if (monster.spellFlags.length === 0) return monster.spellFlags;
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   return /\bmay (?:breathe|cast spells)\b|\(\d+\)/i.test(text) ? monster.spellFlags : [];
@@ -276,7 +278,7 @@ function attackPositions(view: AgentView, monster: MonsterView, at: Loc, actions
   for (let head = 0; head < queue.length && head < 4000; head += 1) {
     const here = queue[head]!;
     if (ranged || steps(here.at, at) === 1) positions.set(key(here.at), Math.max(positions.get(key(here.at)) ?? 0, Math.min(actions, available - here.cost)));
-    if (monster.raceFlags.includes("NEVER_MOVE") || here.cost >= available - 1) continue;
+    if (neverMoves(view, monster) || here.cost >= available - 1) continue;
     for (const next of neighbours(here.at)) {
       if (key(next) === key(at) || priorActions === 0 && !monster.raceFlags.some((flag) => flag === "MOVE_BODY" || flag === "KILL_BODY") && monsters.some((m) => m.id !== monster.id && key(m.grid) === key(next))) continue;
       const cell = view.cell(next.x, next.y);
