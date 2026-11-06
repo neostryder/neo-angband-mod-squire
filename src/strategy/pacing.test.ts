@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { world } from "../harness.js";
-import { createLevelPacing, levelBudget, stairLeash } from "./pacing.js";
+import { createLevelPacing, diveSchedule, levelBudget, stairLeash } from "./pacing.js";
+
+describe("overall dive schedule", () => {
+  it.each([[2, 4], [3, 8], [4, 11], [5, 15], [6, 18], [7, 21], [8, 24], [9, 27], [10, 30]])("targets DL%s by minute %s and escalates three minutes later", (depth, minutes) => {
+    expect(diveSchedule(minutes - 0.01, depth - 1).stage).toBe(0);
+    expect(diveSchedule(minutes, depth - 1)).toMatchObject({ stage: 1, next: { depth, minutes } });
+    expect(diveSchedule(minutes + 3, depth - 1).stage).toBe(2);
+    expect(diveSchedule(minutes, depth).stage).toBe(0);
+  });
+
+  it("keeps the first dungeon target in town and stops escalating at DL10", () => {
+    expect(diveSchedule(7, 0).stage).toBe(2);
+    expect(diveSchedule(60, 10)).toMatchObject({ stage: 0, next: null });
+  });
+});
 
 describe("level game-turn budgets", () => {
   it("limits the level 1 Warrior to 500 unproductive game turns instead of 89,000", () => {

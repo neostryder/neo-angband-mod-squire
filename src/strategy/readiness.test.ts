@@ -20,11 +20,13 @@ describe("arrival supply consistency", () => {
   });
 
   it.each(["Warrior", "Necromancer"])("keeps a shallow %s above the DL5 return floors", (cls) => {
-    const w = world({ map: ROOM, player: { cls, classFlags: cls === "Necromancer" ? ["UNLIGHT"] : [], depth: 4, level: 4, maxLevel: 4, hp: 40, maxHp: 40 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)", "2 Potions of Cure Light Wounds"] });
+    const w = world({ map: ROOM, player: { cls, classFlags: cls === "Necromancer" ? ["UNLIGHT"] : [], depth: 4, level: 4, maxLevel: 4, hp: 40, maxHp: 40 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)", "2 Potions of Cure Light Wounds", "a Scroll of Phase Door"] });
     expect(missingPreparation(w.view, 5, null, 0, true)).toEqual([]);
     w.setPlayer({ depth: 5 });
     expect(supplyMargin(w.view)).toBeNull();
     w.setPlayer({ depth: 4 });
+    w.setPack(["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)", "2 Potions of Cure Light Wounds"]);
+    expect(shallowDiveReady(w.view)).toBe(false);
     w.setPack(["5 Flasks of Oil", "3 Rations of Food", "2 Wooden Torches (5000 turns)", "2 Potions of Cure Light Wounds"]);
     expect(missingPreparation(w.view, 5, null, 0, true).length).toBeGreaterThan(0);
     w.setPack(["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)"]);
