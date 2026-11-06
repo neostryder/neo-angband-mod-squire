@@ -43,7 +43,7 @@ export function townsperson(monster: Creature, depth: number): boolean {
 }
 
 export function fastUniqueAtLowLevel(monster: MonsterView, player: PlayerView): boolean {
-  return player.depth > 0 && player.level <= 3 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
+  return player.depth > 0 && player.level <= 4 && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed;
 }
 
 /** Turns spent next to the character without hurting it before a town creature with unseen blows counts as harmless. */

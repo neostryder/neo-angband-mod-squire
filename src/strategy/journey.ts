@@ -106,6 +106,12 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function stairAllowed(view: AgentView, down: boolean): boolean {
     const player = view.player();
     const destination = player.depth + (down ? 1 : -1);
+    /* A tactical exit must not send an untrained character into another lethal fight. */
+    if (down && player.depth > 0 && player.level <= 4) {
+      const checks = shallowDiveChecks(view, lastPersona);
+      const trapped = besideStationaryThreat(view, player.grid) && !knownStairs(view, terrain).some((at) => terrain.isUpStair(view.cell(at.x, at.y)?.feat ?? -1));
+      if (!trapped && (player.maxLevel < checks.levelFloor || player.maxHp < checks.maxHpFloor)) return false;
+    }
     while (flips.length > 0 && now() - flips[0]! >= 60000) flips.shift();
     if (crossed?.from === destination && crossed.to === player.depth && flips.length >= 3) return false;
     if (arrivalStair === null || arrivalStair.depth !== player.depth || arrivalStair.from !== destination ||
