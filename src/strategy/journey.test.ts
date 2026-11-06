@@ -102,7 +102,7 @@ describe("journey descent clock", () => {
     expect(goals(w, journey)).toContain("descend");
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("2.0 minutes without a depth gain");
-    expect(logged[0]).toContain("full HP, preparation gaps: none");
+    expect(logged[0]).toContain("HP 60/60, preparation gaps: none");
   });
 });
 
@@ -1056,4 +1056,14 @@ it("clears an old food return when a shallow diver replenishes the trip supplies
   expect(goals(w, journey, false, offers("descend"))).not.toContain("descend");
   w.setPack(["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"]);
   expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
+});
+
+describe("shallow dive priority", () => {
+  it.each([1, 2, 3, 4])("keeps only descend when a ready DL%i dive has a checked route", (depth) => {
+    const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, hp: 32, maxHp: 40, sp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }], pack: ["2 Rations of Food"] });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "rest", "pick_up", "wear", "shop", "fetch", "wait", "descend"), w.view, null, new Set(), false);
+    expect(out.map((offer) => offer.goal)).toEqual(["descend"]);
+    expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)).toEqual({ code: "descend" });
+  });
 });

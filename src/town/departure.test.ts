@@ -118,3 +118,25 @@ describe("how long an earning trip runs", () => {
     expect(earningTurns(archetype("berserker"))).toBeLessThanOrEqual(EARNING_TURNS_MAX);
   });
 });
+
+it("keeps entered prices after an empty refresh instead of treating the shop as unknown", () => {
+  const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 16 }, worn: ["a Wooden Torch (5000 turns)"], pack: [...PANTRY, "15 Flasks of Oil"], stores: [alchemy] });
+  const departure = createDeparture();
+  w.moveTo({ x: 2, y: 1 });
+  expect(departure.status(w.view, w.terrain, null, new Set([FEAT.ALCHEMY]))).toMatchObject({ earning: true, target: 76 });
+  w.moveTo({ x: 4, y: 1 });
+  departure.observe(w.view, w.terrain);
+  w.advance(10);
+  w.setPlayer({ depth: 1 });
+  departure.observe(w.view, w.terrain);
+  w.advance(10);
+  w.setPlayer({ depth: 0 });
+  expect(departure.status(w.view, w.terrain, null, new Set())).toMatchObject({ earning: true, target: 76 });
+  w.setPlayer({ gold: 18 });
+  expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(false);
+});
+
+it("does not scout an unknown shop when no needed item meets its minimum price", () => {
+  const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+  expect(createDeparture().status(w.view, w.terrain, null, new Set()).earning).toBe(true);
+});

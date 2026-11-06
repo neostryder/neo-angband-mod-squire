@@ -58,8 +58,49 @@ export function neverMoves(view: AgentView, monster: MonsterView): boolean {
   return monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
 }
 
+/**
+ * The grids of visible creatures that never move, and of visible paralysing
+ * gazers, for one snapshot of the game.
+ *
+ * Route floods ask about every grid on the floor. Reading the creature list,
+ * and a creature's recall text, for each of those grids made one decision cost
+ * seconds of main-thread time, so the answer is worked out once per view and
+ * kept against it. A view is a snapshot, so the turn and the character's grid
+ * guard the entry in case a test reuses one object while editing it.
+ */
+interface Hazards {
+  readonly turn: number;
+  readonly at: Loc;
+  readonly freeAct: boolean;
+  readonly stationary: readonly Loc[];
+  readonly gazers: readonly Loc[];
+}
+
+const hazardCache = new WeakMap<object, Hazards>();
+
+function hazardsOf(view: AgentView): Hazards {
+  const turn = view.turn();
+  const player = view.player();
+  const me = player.grid;
+  const freeAct = player.objectFlags.includes("FREE_ACT");
+  const kept = hazardCache.get(view);
+  if (kept !== undefined && kept.turn === turn && kept.at.x === me.x && kept.at.y === me.y && kept.freeAct === freeAct) return kept;
+  const stationary: Loc[] = [];
+  const gazers: Loc[] = [];
+  for (const monster of view.monsters()) {
+    if (!monster.visible) continue;
+    if (neverMoves(view, monster)) stationary.push(monster.grid);
+    if (paralysingGazer(view, monster)) gazers.push(monster.grid);
+  }
+  const fresh: Hazards = { turn, at: { x: me.x, y: me.y }, freeAct, stationary, gazers };
+  hazardCache.set(view, fresh);
+  return fresh;
+}
+
 export function besideStationaryThreat(view: AgentView, at: Loc): boolean {
-  return view.player().depth > 0 && view.player().level <= 5 && view.monsters().some((monster) => monster.visible && neverMoves(view, monster) && steps(monster.grid, at) <= 1);
+  const player = view.player();
+  if (player.depth <= 0 || player.level > 5) return false;
+  return hazardsOf(view).stationary.some((grid) => steps(grid, at) <= 1);
 }
 
 export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {
@@ -67,11 +108,11 @@ export function paralysingGazer(view: AgentView, monster: MonsterView): boolean 
   if (/^floating eye$/i.test(monster.race)) return true;
   const memory = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const paralysis = /\bparaly[sz]\w*/i.test(memory);
-  return paralysis && (/\bgaze\b/i.test(memory) || monster.raceFlags.includes("NEVER_MOVE") || /does not deign to chase intruders/i.test(memory));
+  return paralysis && (/\bgaze\b/i.test(memory) || monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(memory));
 }
 
 export function besideParalysingGazer(view: AgentView, at: Loc): boolean {
-  return view.monsters().some((monster) => monster.visible && steps(monster.grid, at) <= 1 && paralysingGazer(view, monster));
+  return hazardsOf(view).gazers.some((grid) => steps(grid, at) <= 1);
 }
 
 /** Whether the character may actually walk into this grid on this decision. */

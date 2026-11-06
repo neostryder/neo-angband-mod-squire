@@ -412,7 +412,7 @@ describe("shallow dives without gold", () => {
     const w = world({ map: ROOM, player: { cls: "Warrior", depth, level: 1, maxLevel: 1, hp: 36, maxHp: 36 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
     expect(missingPreparation(w.view, depth + 1, null, 0, true)).toEqual([]);
     expect(missingPreparation(w.view, depth + 1, null, 0, false).some((gap) => gap.kind === "level")).toBe(true);
-    w.setPlayer({ hp: 35 });
+    w.setPlayer({ hp: 28 });
     expect(missingPreparation(w.view, depth + 1, null, 30, true).length).toBeGreaterThan(0);
   });
 
@@ -425,7 +425,7 @@ describe("shallow dives without gold", () => {
   });
 
   it.each(["hp", "food", "fuel", "poison", "deep"])("retains the %s limit", (gap) => {
-    const w = world({ map: ROOM, player: { cls: "Mage", depth: gap === "deep" ? 5 : 1, level: 1, maxLevel: 1, hp: gap === "hp" ? 11 : 12, maxHp: gap === "hp" ? 11 : 12, status: { poisoned: gap === "poison" ? 1 : 0 } }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", gap === "food" ? "4 Rations of Food" : "5 Rations of Food", ...(gap === "fuel" ? [] : ["a Wooden Torch (5000 turns)"])] });
+    const w = world({ map: ROOM, player: { cls: "Mage", depth: gap === "deep" ? 5 : 1, level: 1, maxLevel: 1, hp: gap === "hp" ? 11 : 12, maxHp: gap === "hp" ? 11 : 12, status: { poisoned: gap === "poison" ? 1 : 0 } }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", gap === "food" ? "a Ration of Food" : "5 Rations of Food", ...(gap === "fuel" ? [] : ["a Wooden Torch (5000 turns)"])] });
     expect(missingPreparation(w.view, w.view.player().depth + 1, null, 0, true).length).toBeGreaterThan(0);
   });
 });
@@ -435,4 +435,20 @@ it.each([["Warrior", 18], ["Rogue", 16], ["Priest", 15], ["Mage", 12]] as const)
   expect(missingPreparation(w.view, 2, null, 0, true)).toEqual([]);
   w.setPlayer({ hp: hp - 1, maxHp: hp - 1 });
   expect(missingPreparation(w.view, 2, null, 0, true).length).toBeGreaterThan(0);
+});
+
+describe("shallow Necromancer preparation", () => {
+  it.each([1, 2, 3, 4])("accepts UNLIGHT, Nether Bolt, two rations and 80 percent HP on DL%i", (depth) => {
+    const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 1, maxLevel: 1, hp: 32, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0, mana: 1 }], pack: ["2 Rations of Food"] });
+    expect(supplies(w.view)).toMatchObject({ lastingLight: true, workingLight: false, food: 2 });
+    expect(missingPreparation(w.view, depth + 1, null, 0, true)).toEqual([]);
+    expect(missingPreparation(w.view, depth + 1).some((gap) => gap.kind === "light")).toBe(false);
+    w.setPlayer({ hp: 31 });
+    expect(missingPreparation(w.view, depth + 1, null, 0, true).length).toBeGreaterThan(0);
+  });
+
+  it.each(["mana", "food", "hunger", "light"])("retains the %s guard for a shallow caster", (gap) => {
+    const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: gap === "light" ? [] : ["UNLIGHT"], light: 0, depth: 1, level: 1, maxLevel: 1, hp: 20, maxHp: 20, sp: gap === "mana" ? 0 : 1, maxSp: 1, status: { food: gap === "hunger" ? 1 : 5000 } }, spells: [{ name: "Nether Bolt", sidx: 0, mana: 1 }], pack: [gap === "food" ? "a Ration of Food" : "2 Rations of Food"] });
+    expect(missingPreparation(w.view, 2, null, 0, true).length).toBeGreaterThan(0);
+  });
 });
