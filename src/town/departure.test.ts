@@ -15,6 +15,28 @@ const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHom
 ] };
 
 describe("the town survival basket", () => {
+  it("uses only entered shop prices when deciding whether a reserve can be bought", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 16 }, stores: [alchemy] });
+    const departure = createDeparture();
+    departure.observe(w.view, w.terrain);
+    expect(departure.reserveAffordable(w.view)).toBe(true);
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    w.setPlayer({ depth: 1 });
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+    w.setPlayer({ gold: 18 });
+    expect(departure.reserveAffordable(w.view)).toBe(true);
+    w.setPlayer({ gold: 0 });
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+  });
+
+  it("does not promise reserves from an entered shop with no stock", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 100 }, stores: [{ ...alchemy, stock: [] }] });
+    const departure = createDeparture();
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+  });
   it("retries an empty earning trip after the persona delay", () => {
     const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
     const departure = createDeparture();

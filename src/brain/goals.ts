@@ -3123,6 +3123,20 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   let byRules = false;
 
   const planner: Planner<GoalDigest> = {
+    watchdog(view, decision) {
+      const plan = journey.watchdog(flourishView(view), decision);
+      if (plan === null) return null;
+      lastAnswer = null;
+      loops.reset();
+      refused.clear();
+      stalled.clear();
+      sameTurn.clear();
+      exploreLoops = 0;
+      exploreFailures = 0;
+      const why = `${plan.label}: the progress deadline expired.`;
+      const context: GoalDigest = { depth: view.player().depth, newCreatures: 0, offers: [], reflex: why };
+      return { reflex: why, plan, context, answers: {} };
+    },
     rules(view, reason, stuck = false) {
       if (stuck) {
         lastAnswer = null;
@@ -3279,7 +3293,6 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           if (offers.length === 0 && stairsUnderfoot(s, terrain) && usable(stairsOut)) offers.push(stairsOut);
           if (offers.length === 0 && s.unseenDamage > 0 && player.status.afraid === 0 && usableGoal("swing_unseen")) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
           if (offers.length === 0 && quietArrival) return { handBack: "No safe step, checked staircase or usable escape remains on arrival." };
-          if (offers.length === 0 && waitCapped) return { handBack: "No safe step, checked staircase or usable escape remains after three idle waits." };
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
         decisionMemory.rememberWidenedExplore(view, offered, offers);

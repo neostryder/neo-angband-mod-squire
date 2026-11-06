@@ -1349,6 +1349,7 @@ function createBrain(deps) {
   let breakLoop = false;
   let progressGauge = null;
   let progressAt = deps.now();
+  let decisionPending = true;
   function useRules(reason) {
     if (rulesReason === null) deps.log(`${reason} Squire plays by its own rules, choosing from its current offers.`);
     rulesReason = reason;
@@ -1396,6 +1397,7 @@ function createBrain(deps) {
     return null;
   }
   function startAsking(view) {
+    decisionPending = true;
     const capped = deps.rulesOnly === true ? null : tally.overCap(backend, deps.now());
     if (capped !== null) useRules(capped.message);
     const own = deps.rulesOnly === true || capped !== null || rulesReason !== null && deps.now() < retryAt || breakLoop;
@@ -1518,6 +1520,32 @@ function createBrain(deps) {
   const controller = (view, act) => {
     if (view.player?.().dead === true || view.player?.().winner === true) return state.kind === "stopped" ? null : stopWith(view.player().dead ? "The character has died." : "The character has won.", view);
     if (state.kind === "stopped") return null;
+    const recovery = planner.watchdog?.(view, decisionPending || state.kind === "waiting" && deps.now() >= state.until) ?? null;
+    decisionPending = false;
+    if (recovery !== null) {
+      if (state.kind === "running") {
+        state.plan.end?.(view);
+        deps.onPlanEnd?.({ stop: "interrupted", reason: recovery.reflex, commands: state.run.commands, refused: state.run.refused, hpBefore: state.run.hpBefore, hpAfter: deps.gauge?.(view).hp ?? null });
+      }
+      sent += 1;
+      landed = null;
+      emptyDecisions = 0;
+      emptyLabels.clear();
+      breakLoop = false;
+      progressAt = deps.now();
+      state = { kind: "running", plan: recovery.plan, run: newRun(view) };
+      deps.log(recovery.reflex);
+      deps.onDecision?.({ token: deps.token(), backend: backend.label, request: { state: {}, questions: {} }, context: recovery.context, answers: recovery.answers, usage: { inputTokens: 0, outputTokens: 0, estimated: false }, model: null, latencyMs: 0, outcome: recovery.plan.label, reflex: recovery.reflex });
+      runningStatus(recovery.plan);
+      const command = recovery.plan.step(view, act);
+      if (command !== null) {
+        state.run.commands += 1;
+        state.run.issuedAt = deps.gauge?.(view).turn ?? null;
+        state.run.issuedCode = command.code;
+        state.run.issuedDepth = deps.gauge?.(view).depth ?? null;
+      }
+      return command;
+    }
     const current2 = deps.gauge?.(view);
     if (current2 !== void 0) {
       if (progressGauge === null || current2.turn !== progressGauge.turn || current2.depth !== progressGauge.depth) progressAt = deps.now();
@@ -4901,6 +4929,12 @@ function createDeparture() {
   }
   return {
     status,
+    reserveAffordable(view) {
+      const gold = view.player().gold;
+      if (gold < PRICE_FLOOR.phase) return false;
+      const stores = [...shelves2.values()].filter((store) => store.featName === "Alchemy Shop");
+      return stores.length === 0 || stores.some((store) => store.stock.some((item) => item.number > 0 && item.price !== void 0 && item.price > 0 && item.price <= gold && /Cure (Light|Serious|Critical) Wounds|Phase Door|Teleport/i.test(item.name ?? "")));
+    },
     end() {
       earning = null;
     },
@@ -5774,6 +5808,172 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
   let explorationGoal = null;
   const abandonedFrontiers = /* @__PURE__ */ new Set();
   let diveSince = null;
+  const quietRefreshes = /* @__PURE__ */ new Map();
+  let stalledAt = now();
+  let stalledDecisions = 0;
+  let watchdogTurn = -1;
+  let watchdogDepth = -1;
+  let turnAt = now();
+  let turnDecisions = 0;
+  let bestDepth = -1;
+  let bestXp = 0;
+  let bestGold = 0;
+  const bestKnown = /* @__PURE__ */ new Map();
+  const bestItems = /* @__PURE__ */ new Map();
+  let recoveryAt = -Infinity;
+  let recoveryDecision = -Infinity;
+  let recoveryStage = 0;
+  let recoveryAttempts = 0;
+  let reserveSince = null;
+  let reserveDecisions = 0;
+  const refusedStairs = /* @__PURE__ */ new Map();
+  const triedFlavours = /* @__PURE__ */ new Set();
+  let stairAttempt = null;
+  function reserveExpired(view) {
+    return view.player().depth > 0 && view.player().depth < 10 && reserveSince !== null && (now() - reserveSince >= 6e4 || reserveDecisions >= 120);
+  }
+  function recoveryHealthy(view, full2 = false) {
+    const player = view.player();
+    const checks = shallowDiveChecks(view, lastPersona);
+    return player.depth < 10 && player.hp >= player.maxHp * (full2 ? 1 : 0.8) && checks.statusReady && checks.casterAttack && player.maxLevel >= checks.levelFloor && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry && !standingOnHarm(view, terrain, player.grid);
+  }
+  function recoverySafe(view) {
+    observe(view);
+    const player = view.player();
+    if (standingOnHarm(view, terrain, player.grid) || unseenDanger?.(view) || view.turn() <= unseenUntil || [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].some((value) => value > 0)) return false;
+    const damage = incomingDamage(view, player.grid, 2, terrain, { observedDamage });
+    return damage.status === 0 && damage.damage < player.hp * 0.25;
+  }
+  function watchdog(view, decision2) {
+    const player = view.player();
+    const turn = view.turn();
+    if (stairAttempt !== null) {
+      if (turn === stairAttempt.turn && player.depth === stairAttempt.depth && key(player.grid) === stairAttempt.from) refusedStairs.set(stairAttempt.target, { turn, time: now() });
+      stairAttempt = null;
+    }
+    if (turn < watchdogTurn) {
+      bestDepth = -1;
+      bestXp = 0;
+      bestGold = 0;
+      bestKnown.clear();
+      bestItems.clear();
+      quietRefreshes.clear();
+      reserveSince = null;
+      reserveDecisions = 0;
+      refusedStairs.clear();
+      triedFlavours.clear();
+    }
+    const changed = turn !== watchdogTurn || player.depth !== watchdogDepth;
+    let progress = bestDepth < 0 || player.depth > bestDepth;
+    if (changed) {
+      turnAt = now();
+      turnDecisions = 0;
+    }
+    if (changed || decision2) {
+      const bounds = view.mapBounds();
+      let known = 0;
+      for (let y = 0; y < bounds.height; y += 1) {
+        for (let x = 0; x < bounds.width; x += 1) if (view.cell(x, y)?.known === true) known += 1;
+      }
+      const previous = bestKnown.get(player.depth) ?? 0;
+      if (known >= previous + 8) progress = true;
+      if (!bestKnown.has(player.depth) || known >= previous + 8) bestKnown.set(player.depth, known);
+      const counts = /* @__PURE__ */ new Map();
+      for (const item of view.inventory()) {
+        const name = (shownName2(item) ?? "").replace(/^\d+\s+|^an?\s+/i, "");
+        counts.set(name, (counts.get(name) ?? 0) + item.number);
+      }
+      for (const [name, count2] of counts) {
+        if (count2 > (bestItems.get(name) ?? 0)) progress = true;
+        bestItems.set(name, Math.max(count2, bestItems.get(name) ?? 0));
+      }
+      progress ||= player.exp > bestXp || player.gold > bestGold;
+      bestXp = Math.max(bestXp, player.exp);
+      bestGold = Math.max(bestGold, player.gold);
+      bestDepth = Math.max(bestDepth, player.depth);
+    }
+    watchdogTurn = turn;
+    watchdogDepth = player.depth;
+    if (progress) {
+      stalledAt = now();
+      stalledDecisions = 0;
+      turnAt = now();
+      turnDecisions = 0;
+      recoveryStage = 0;
+    }
+    if (decision2) {
+      stalledDecisions += 1;
+      turnDecisions += 1;
+      reserveDecisions += 1;
+    }
+    const elapsed = now() - stalledAt;
+    const stage = Math.max(elapsed >= 9e4 || stalledDecisions >= 180 ? 4 : elapsed >= 75e3 || stalledDecisions >= 150 ? 3 : elapsed >= 6e4 || stalledDecisions >= 120 ? 2 : elapsed >= 45e3 || stalledDecisions >= 90 ? 1 : 0, recoveryStage);
+    const frozen = turnDecisions >= 6 || now() - turnAt >= 1e4;
+    if (stage === 0 && !frozen || stage <= recoveryStage && now() - recoveryAt < 5e3 && stalledDecisions - recoveryDecision < 12) return null;
+    recoveryAt = now();
+    recoveryDecision = stalledDecisions;
+    recoveryAttempts += 1;
+    recoveryStage = stage;
+    if (stage === 1 && !frozen) return { label: "watchdog: re-plan", step: () => null };
+    const startDepth = player.depth;
+    let commands = 0;
+    const started = now();
+    return { label: `watchdog: recover at stage ${String(stage)}`, step(current2, act) {
+      if (current2.player().depth !== startDepth || commands >= 24 || now() - started >= 8e3) return null;
+      commands += 1;
+      if (stage >= 2 && recoveryHealthy(current2, true) && recoverySafe(current2) && !recallActive) {
+        const command = recoveryStair(current2, act, knownDownStairs(current2, terrain));
+        if (command !== null) return command;
+      }
+      if (stage >= 3 && current2.player().hp >= current2.player().maxHp * 0.8 && recoverySafe(current2) && !recallActive) {
+        const stock = supplies(current2);
+        const townReady = current2.player().depth === 0 && current2.player().hp === current2.player().maxHp && stock.food >= 1 && (stock.workingLight || stock.lastingLight);
+        const stairs = knownStairs(current2, terrain).filter((grid) => terrain.isUpStair(current2.cell(grid.x, grid.y)?.feat ?? -1) || recoveryHealthy(current2, true) || townReady);
+        const command = recoveryStair(current2, act, stairs);
+        if (command !== null) return command;
+      }
+      if (stage >= 4 && recoverySafe(current2)) {
+        const scroll = canRead(current2) ? unknownFlavours(current2, "scroll").find((item2) => !triedFlavours.has(`${String(item2.handle)}:${item2.name}`)) : void 0;
+        const potion = unknownFlavours(current2, "potion").find((item2) => !triedFlavours.has(`${String(item2.handle)}:${item2.name}`));
+        const item = scroll ?? potion;
+        if (item !== void 0) {
+          triedFlavours.add(`${String(item.handle)}:${item.name}`);
+          return scroll !== void 0 ? act.read(item.handle) : act.quaff(item.handle);
+        }
+      }
+      if (stage >= 2 && current2.player().hp >= current2.player().maxHp * 0.8 && current2.player().hp < current2.player().maxHp && safeDelay(current2)) return act.rest(10);
+      if (stage >= 1 && safeDelay(current2) && current2.player().hp >= current2.player().maxHp * 0.8) {
+        const command = explore({ view: current2, act }, true);
+        if (command !== null) return command;
+      }
+      if (commands > 1) return null;
+      const directions = DIRECTIONS.filter((dir) => {
+        const grid = { x: current2.player().grid.x + dir.dx, y: current2.player().grid.y + dir.dy };
+        return isWalkable(current2, terrain, grid) && !standingOnHarm(current2, terrain, grid) && !gazeReach(current2, grid) && !current2.monsters().some((monster) => monster.visible && steps(monster.grid, grid) <= 1);
+      });
+      const direction = directions[recoveryAttempts % Math.max(1, directions.length)];
+      return direction === void 0 ? act.hold() : act.move(direction.key);
+    } };
+  }
+  function recoveryStair(view, act, goals) {
+    const available = goals.filter((grid) => {
+      const refusal = refusedStairs.get(`${String(view.player().depth)}:${key(grid)}`);
+      return refusal === void 0 || now() - refusal.time >= 2e4 || view.turn() - refusal.turn >= 20;
+    });
+    const route = checkedRoute(view, available, true);
+    if (route === null) return null;
+    const at = view.player().grid;
+    const target = route.at(-1) ?? at;
+    stairAttempt = { turn: view.turn(), depth: view.player().depth, from: key(at), target: `${String(view.player().depth)}:${key(target)}` };
+    if (route.length === 0) {
+      if (terrain.isUpStair(view.cell(at.x, at.y)?.feat ?? -1)) return act.ascend();
+      if (view.player().depth === 0) departure.begin(view, null, lastPersona);
+      return act.descend();
+    }
+    const next = route[0];
+    const direction = DIRECTIONS.find((dir) => at.x + dir.dx === next.x && at.y + dir.dy === next.y);
+    return direction === void 0 ? null : act.move(direction.key);
+  }
   function depthMinutes(view) {
     const player = view.player();
     if (view.turn() < clockTurn) {
@@ -5843,6 +6043,13 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
   function observe(view) {
     const player = view.player();
     const turn = view.turn();
+    const stockNow = supplies(view);
+    const canBuyReserve = departure.reserveAffordable(view);
+    const reserveMissing = stockNow.cures + stockNow.phase + stockNow.escapes < 2 || player.depth >= 4 && (stockNow.cures < 1 || stockNow.phase + stockNow.escapes < 1);
+    if (turn < lastTurn || !reserveMissing || canBuyReserve) {
+      reserveSince = null;
+      reserveDecisions = 0;
+    } else reserveSince ??= now();
     depthMinutes(view);
     const state = pacing2.observe(view, terrain);
     if (state.fresh || state.known > explorationKnown) {
@@ -5855,7 +6062,10 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       diveSince = null;
     }
     explorationKnown = state.known;
-    if (turn < lastTurn) refresh = null;
+    if (turn < lastTurn) {
+      refresh = null;
+      quietRefreshes.clear();
+    }
     if (refresh !== null && player.depth !== (refresh.arrived ? refresh.depth - 1 : refresh.depth)) {
       if (!refresh.arrived && player.depth === refresh.depth - 1) refresh.arrived = true;
       else refresh = null;
@@ -5914,6 +6124,11 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       returnReason = null;
       chosenReturn = false;
     }
+    if (reserveExpired(view) && recoveryHealthy(view, true) && ["healing", "Phase Door", "healing and Phase Door", "the earning trip's limit or return route"].includes(returnReason ?? "")) {
+      returnReason = null;
+      chosenReturn = false;
+      departure.end();
+    }
     for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered3.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
     for (const [id, entry] of remembered3) if (!live.has(id) || entry.until < turn) remembered3.delete(id);
@@ -5925,8 +6140,8 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       departure.end();
     }
     if (player.depth > 0) {
-      if (!departure.active()) returnReason ??= returnMargin(view);
-      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight || upStairs(view).length > 0 && checkedRoute(view, upStairs(view)) === null) returnReason ??= "the earning trip's limit or return route";
+      if (!departure.active() && !(reserveExpired(view) && recoveryHealthy(view, true))) returnReason ??= returnMargin(view);
+      else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight) returnReason ??= "the earning trip's limit or return route";
     }
     expired = state.expired;
     anchor = state.anchor;
@@ -5951,8 +6166,9 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     const player = view.player();
     const gaps = descentGaps2(view, player.depth + 1, persona);
     const stock = supplies(view);
+    const expiredReserve = reserveExpired(view) && recoveryHealthy(view, true);
     const reserves = player.depth >= 10 || (stock.cures + stock.phase + stock.escapes >= 2 || player.depth < 5 && stairEscape(view) && stock.cures >= 1) && (player.depth < 5 || stock.cures >= 1 && stock.phase + stock.escapes >= 1);
-    const allowed = player.depth > 0 && !player.dead && !recalling && returnReason === null && !departure.active() && !breederLevel && reserves && tripLight(view) && gaps.hard.length === 0;
+    const allowed = player.depth > 0 && !player.dead && !recalling && returnReason === null && !departure.active() && !breederLevel && (expiredReserve || reserves && tripLight(view) && gaps.hard.length === 0);
     const route = allowed ? checkedRoute(view, knownDownStairs(view, terrain)) : null;
     const ready = route !== null && !standingOnHarm(view, terrain, player.grid) && !(unseenDanger?.(view) ?? view.turn() <= unseenUntil) && !view.monsters().some((monster) => monster.visible && !monster.asleep) && ![...remembered3.values()].some((entry) => entry.until >= view.turn()) && player.hp >= player.maxHp * 0.8 && [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0);
     if (!ready) diveSince = null;
@@ -5960,13 +6176,13 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     const ambition = Math.max(0, Math.min(100, persona?.sliders.ambition ?? 70));
     const delay = 15e3 * (1 - ambition / 100);
     const due = ready && diveSince !== null && (now() - diveSince.time >= delay || view.turn() - diveSince.turn >= 100);
-    const take = ready && player.depth < 10 && (shallowDiveReady(view, player.depth + 1, persona) || immediateDive && gaps.soft.length === 0 || due);
+    const take = ready && player.depth < 10 && (expiredReserve || shallowDiveReady(view, player.depth + 1, persona) || immediateDive && gaps.soft.length === 0 || due);
     return { allowed, take, route, due };
   }
   function gazeReach(view, grid) {
     return besideStationaryThreat(view, grid) || besideParalysingGazer(view, grid) || !view.player().objectFlags.includes("FREE_ACT") && [...gazers.values()].some((monster) => steps(grid, monster.grid) <= 1);
   }
-  function checkedRoute(view, goals) {
+  function checkedRoute(view, goals, recovering = false) {
     const player = view.player();
     routeFailure = null;
     const fail = (why) => {
@@ -5989,7 +6205,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     }
     if (field.distance(here) !== 0) return fail("the staircase is beyond the checked route limit");
     if (!breederLevel && view.monsters().some((monster) => monster.visible && monster.asleep && route.some((grid) => steps(grid, monster.grid) <= (monster.raceFlags.includes("MULTIPLY") ? 10 : 2)))) return fail("the route would wake a nearby creature");
-    if (breederLevel) {
+    if (breederLevel || recovering) {
       const next = route[0];
       const danger2 = incomingDamage(view, next, 2, terrain, { monsters: threats, observedDamage });
       if (danger2.status > 0 || danger2.damage >= player.hp * 0.25) return fail(`creatures near the next route square threaten ${String(danger2.damage)} HP or a disabling effect`);
@@ -6112,6 +6328,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
         return true;
       }
       if (offer.goal === "leave_level" && returningRefresh(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return false;
+      if (offer.goal === "leave_level" && !home && !breederLevel && !view.monsters().some((monster) => monster.visible && !monster.asleep) && (quietRefreshes.get(player.depth) ?? 0) >= 3) return false;
       if (breederLevel && offer.goal === "leave_level") return checkedRoute(view, exitTargets(view)) !== null;
       if (breederLevel && !(offer.goal === "explore" && search()) && (OPTIONAL.has(offer.goal) || offer.goal === "rest" || offer.goal === "descend")) return false;
       if (breederLevel && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand"].includes(offer.goal) && (target === null || steps(target.grid, player.grid) > 1)) return false;
@@ -6124,7 +6341,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null && searchFor() !== "stay";
       if (offer.goal === "explore" && search()) return true;
       if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
-      if (offer.goal === "explore" && player.depth > 0) return frontiers(view, terrain).some((grid) => leashed(view, grid));
+      if (offer.goal === "explore" && player.depth > 0) return explorationStep(view, false) !== null;
       if (offer.goal === "fetch") {
         const loot = floorTarget(view, terrain, false, lastPersona);
         return loot !== null && leashed(view, loot.at);
@@ -6140,7 +6357,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || search());
       if (search()) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
       if (!walkable && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: `Read Word of Recall to return to town while waiting is safe. ${reason}`, risk: 0.02 });
-      if (checkedRoute(view, exitTargets(view)) !== null) {
+      if ((home || (quietRefreshes.get(player.depth) ?? 0) < 3) && checkedRoute(view, exitTargets(view)) !== null) {
         footOffered = true;
         out = out.filter((offer) => offer.goal !== "leave_level");
         out.push({ goal: "leave_level", criteria: home ? `Take the checked route to the up stairs and continue toward town. ${reason}` : `Take a checked staircase to a fresh or safer level. ${reason}`, risk: 0.02, survival: player.hp });
@@ -6230,7 +6447,11 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
         const cell2 = view.cell(at.x, at.y);
         if (route.length === 0) {
           if (cell2 !== null && terrain.isUpStair(cell2.feat)) {
-            if (returnReason === null && !breederLevel && !view.monsters().some((monster) => monster.visible && !monster.asleep)) refresh = { depth: player.depth, arrived: false };
+            if (returnReason === null && !breederLevel && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
+              if ((quietRefreshes.get(player.depth) ?? 0) >= 3) return null;
+              quietRefreshes.set(player.depth, (quietRefreshes.get(player.depth) ?? 0) + 1);
+              refresh = { depth: player.depth, arrived: false };
+            }
             return act.ascend();
           }
           return act.descend();
@@ -6374,7 +6595,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     const end = route.length === 0 ? view.player().grid : route[route.length - 1];
     return terrain.isUpStair(view.cell(end.x, end.y)?.feat ?? -1) ? "up" : "down";
   }
-  return { apply, guarded, explore, canExplore: (view, wide = widened) => explorationStep(view, wide) !== null, safeDelay, checkedRoute, leashed, blocked: blocked2, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, refreshReturn, dive, preparation: missingPreparation2, exitFailure: () => routeFailure };
+  return { apply, guarded, explore, watchdog, canExplore: (view, wide = widened) => explorationStep(view, wide) !== null, safeDelay, checkedRoute, leashed, blocked: blocked2, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, refreshReturn, dive, preparation: missingPreparation2, exitFailure: () => routeFailure };
 }
 
 // src/brain/manual.ts
@@ -9554,6 +9775,20 @@ function createGoalPlanner(options) {
   }
   let byRules = false;
   const planner = {
+    watchdog(view, decision2) {
+      const plan = journey.watchdog(flourishView(view), decision2);
+      if (plan === null) return null;
+      lastAnswer = null;
+      loops.reset();
+      refused.clear();
+      stalled.clear();
+      sameTurn.clear();
+      exploreLoops = 0;
+      exploreFailures = 0;
+      const why = `${plan.label}: the progress deadline expired.`;
+      const context2 = { depth: view.player().depth, newCreatures: 0, offers: [], reflex: why };
+      return { reflex: why, plan, context: context2, answers: {} };
+    },
     rules(view, reason, stuck = false) {
       if (stuck) {
         lastAnswer = null;
@@ -9701,7 +9936,6 @@ function createGoalPlanner(options) {
           if (offers.length === 0 && stairsUnderfoot(s, terrain) && usable(stairsOut)) offers.push(stairsOut);
           if (offers.length === 0 && s.unseenDamage > 0 && player.status.afraid === 0 && usableGoal("swing_unseen")) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
           if (offers.length === 0 && quietArrival) return { handBack: "No safe step, checked staircase or usable escape remains on arrival." };
-          if (offers.length === 0 && waitCapped) return { handBack: "No safe step, checked staircase or usable escape remains after three idle waits." };
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
         decisionMemory.rememberWidenedExplore(view, offered, offers);

@@ -22,6 +22,20 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
 describe("corpus progress regressions", () => {
+  it.each([false, true])("escapes a reserve deadlock through the controller with reflexes %s", (reflex) => {
+    let time = 0;
+    const w = world({ map: ["########", "#<@...>#", "########"], player: { cls: "Warrior", depth: 1, maxDepth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 0 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex, now: () => time });
+    const brain = createBrain({ backend: JEV, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send: () => new Promise(() => {}), token: () => ({ epoch: 1, revision: 1 }), now: () => time, log: () => {}, status: () => {}, gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }) });
+    brain.controller(w.view, w.act);
+    time = 60000;
+    w.advance(10);
+    expect(brain.controller(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 6, y: 1 });
+    w.advance(10);
+    expect(brain.controller(w.view, w.act)).toEqual({ code: "descend" });
+  });
+
   it.each([false, true])("never widens into completed town exploration with reflexes %s", (reflex) => {
     const w = world({ map: ["########", "#@..>.,#", "########"], player: { depth: 0, gold: 0, maxDepth: 0 }, pack: [], worn: [] });
     const { p } = planner(w, reflex);
@@ -3957,7 +3971,7 @@ describe("lab stall regressions", () => {
     expect(item?.name).toContain(descent ? "Deep Descent" : "Phase Door");
   });
 
-  it("stops issuing idle holds after three healthy waits when no move or escape exists", () => {
+  it("keeps a turn-consuming fallback after three healthy waits when no move or escape exists", () => {
     const w = suppliedWorld({ map: ["###", "#@#", "###"], player: stalledPlayer });
     w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
     const { p } = planner(w);
@@ -3967,7 +3981,8 @@ describe("lab stall regressions", () => {
       w.advance(10);
       expect(wait.step(w.view, w.act)).toBeNull();
     }
-    expect(p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("three idle waits") });
+    const fallback = execute(w, p, "endure");
+    expect(fallback.step(w.view, w.act)).toEqual({ code: "hold" });
   });
 
   it("does not replace a refused wait with random swings when there is no unseen attacker", () => {

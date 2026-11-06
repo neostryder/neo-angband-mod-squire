@@ -117,6 +117,13 @@ export function createDeparture() {
 
   return {
     status,
+    reserveAffordable(view: AgentView): boolean {
+      const gold = view.player().gold;
+      if (gold < PRICE_FLOOR.phase) return false;
+      const stores = [...shelves.values()].filter((store) => store.featName === "Alchemy Shop");
+      return stores.length === 0 || stores.some((store) => store.stock.some((item) => item.number > 0 &&
+        item.price !== undefined && item.price > 0 && item.price <= gold && /Cure (Light|Serious|Critical) Wounds|Phase Door|Teleport/i.test((item as { name?: string }).name ?? "")));
+    },
     end(): void { earning = null; },
     begin(view: AgentView, target: number | null, persona: Persona | null = null): void {
       /* A goal already met would end the trip on arrival; the soak's Rogue, with
