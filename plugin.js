@@ -3293,6 +3293,9 @@ function tripLight(view) {
   const stock = supplies(view);
   return stock.lastingLight || stock.workingLight && stock.fuel >= 1;
 }
+function restRestoresMana(cls) {
+  return cls !== "Blackguard";
+}
 function classFloor(cls, depth2) {
   if (depth2 < 5) {
     if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
@@ -7453,7 +7456,7 @@ function manaSpend(mana, sp) {
   return { cost: 0.5, costNote: `${String(mana)} of ${String(sp)} mana (${shareBand(mana, sp)})` };
 }
 var FREE = { cost: 0, costNote: "nothing" };
-function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = [], flourishes = emptyFlourishes(), storeMemory, homeStock, exploreExhausted = false) {
+function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = [], flourishes = emptyFlourishes(), storeMemory, homeStock, exploreExhausted = false, shopAvailable = true) {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
@@ -7504,9 +7507,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     const low = needs.filter((n) => n.kind !== "recall" && n.have < (n.kind === "healing" ? 2 : n.kind === "phase" ? 1 : n.hungry ? 1 : 0));
     add3("recall_town", `Read Word of Recall to return to town and restock. The character is low on ${low.map((n) => n.name).join(", ")}.`, townRisk);
   }
+  const shops = player.depth === 0 ? neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory, homeStock) : [];
+  const shopOffered = shopAvailable && shops.length > 0;
   if (player.depth === 0) {
-    const shops = neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory, homeStock);
-    if (shops.length > 0) {
+    if (shopOffered) {
       const missing = needs.filter((n) => n.have < n.want).map((n) => n.name);
       add3("shop", missing.length > 0 ? `Visit the shops for ${missing.join(", ")}.` : `Visit the ${shops[0].name} to inspect its stock.`, townRisk);
     } else if (!recallActive && recall !== null && player.maxDepth > 1) {
@@ -7686,7 +7690,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add3("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
-  if (!bleeding && s.awake.length === 0 && recovery && (hurt2 || player.sp < player.maxSp)) {
+  if (!bleeding && s.awake.length === 0 && recovery && (hurt2 || player.sp < player.maxSp && restRestoresMana(player.cls))) {
     add3("rest", "Rest until hit points and mana recover.", 0.01, recallActive);
   }
   if (hungry(view) && s.pack.food[0] !== void 0) {
@@ -7750,8 +7754,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     add3("explore", s.unseenDamage > 0 ? "Keep exploring toward unexplored ground despite the recent unexplained hits. Small hits can be endured, but an empty visible list does not prove safety." : "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
   if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend && /* In town, the stairs are the way down whenever recall cannot be: no scroll,
-   * or no depth yet to return to. Shopping comes first while there is gold. */
-  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && (player.gold <= 0 || neededEntrances(view, terrain, persona, visited, aims, flourishes, storeMemory, homeStock).length === 0))) {
+   * or no depth yet to return to. Shopping comes first while it is offered. */
+  (player.depth > 0 || (recall === null || player.maxDepth <= 1) && !shopOffered)) {
     add3("descend", "Walk to a known down staircase and take it to the next, more dangerous level.", exposure(s) + (1 - s.hpShare) * 0.3);
   }
   tag("leave_level", 1, FREE);
@@ -8907,8 +8911,9 @@ function createGoalPlanner(options) {
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
       const focus = options.focus?.() ?? null;
-      const usable = (offer) => (focus === null || focus.has(offer.goal)) && !(descending && offer.goal === "deep_descent") && !stalled.has(offer.goal) && !refused.has(offer.goal) && (sameTurn.get(offer.goal) ?? 0) < SAME_TURN_PLANS;
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted);
+      const usableGoal = (goal2) => (focus === null || focus.has(goal2)) && !(descending && goal2 === "deep_descent") && !stalled.has(goal2) && !refused.has(goal2) && (sameTurn.get(goal2) ?? 0) < SAME_TURN_PLANS;
+      const usable = (offer) => usableGoal(offer.goal);
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted, usableGoal("shop"));
       const steered = options.strategy === void 0 ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal2, criteria2, risk) => ({ goal: goal2, criteria: criteria2, risk }));
       const chosenHome = options.townCall?.() ?? null;
       const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
@@ -8921,7 +8926,7 @@ function createGoalPlanner(options) {
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         const reason = journey.blocked(view) ?? nothingToDo(view, tried);
         offeredWiden = true;
-        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims, [], emptyFlourishes(), void 0, void 0, exploreExhausted);
+        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims, [], emptyFlourishes(), void 0, void 0, exploreExhausted, usableGoal("shop"));
         if (frontierLeft(view) && !wider.some((o) => o.goal === "explore") && !walksIntoDeath(s, terrain, "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
         if (player.depth === 0 && cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend") && !walksIntoDeath(s, terrain, "descend")) wider.push({ goal: "descend", criteria: "Walk to the stairs and earn experience and gold on dungeon level 1.", risk: exposure(s) });
         offers = journey.apply(wider, view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
@@ -10537,11 +10542,11 @@ function awake(view) {
 }
 function hurt(view) {
   const player = view.player();
-  return player.hp < player.maxHp || player.maxSp > 0 && player.sp < player.maxSp;
+  return player.hp < player.maxHp || player.sp < player.maxSp && restRestoresMana(player.cls);
 }
 function full(view) {
   const player = view.player();
-  return player.hp >= player.maxHp && (player.maxSp === 0 || player.sp >= player.maxSp);
+  return player.hp >= player.maxHp && (!restRestoresMana(player.cls) || player.sp >= player.maxSp);
 }
 function unknownInPack(view) {
   return view.inventory().some((item) => /\{\?\?\}/.test(shownName2(item) ?? ""));
