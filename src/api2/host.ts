@@ -12,9 +12,10 @@
  * player last saw it" at once.
  */
 
-import type { Api2CombatEvent, Api2CreateCharacter, Api2CommandEvent, Api2Driver, Api2InputState, Api2RunEndEvent, JsonValue, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { Api2CombatEvent, Api2CreateCharacter, Api2CommandEvent, Api2Driver, Api2InputState, Api2HealEvent, Api2RunEndEvent, JsonValue, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import type { AgentView, ModNet, RunReport } from "@rpgm-tools/neo-angband-core";
 import { viewWorld, watchMessages, type MessageFeed } from "../host-adapter-api2.js";
+import { createEncounterCapture, type EncounterFrame } from "../journal.js";
 import { netFromApi2 } from "./net.js";
 
 type Panels = NonNullable<NonNullable<ModApi2["presentation"]>["panels"]>;
@@ -55,6 +56,8 @@ export interface Api2Host {
   readonly viewNow: () => AgentView | null;
   /** Read the game now. Null while the game has no character to show. */
   readonly readWorld: () => Promise<AgentView | null>;
+  readonly encounterFrames: () => readonly EncounterFrame[];
+  readonly recordCommandResult?: (code: string, ok: boolean, turnAtSubmit: number) => void;
 }
 
 export interface Bridge {
@@ -86,6 +89,7 @@ export function createBridge(mod: ModApi2): Bridge {
   let autoplayed = false;
   let world: AgentView | null = null;
   let feed: MessageFeed | null = null;
+  const capture = createEncounterCapture();
   const stops: (() => Promise<void>)[] = [];
 
   const kept = <T,>(call: Promise<{ readonly ok: boolean } & ({ readonly ok: true; readonly value: T } | object)>, onValue: (value: T) => void): Promise<void> =>
@@ -95,9 +99,9 @@ export function createBridge(mod: ModApi2): Bridge {
     void slot.set((value ?? null) as JsonValue | null).then((result) => { if (!result.ok) log(`Squire could not keep ${what}.`); }, () => log(`Squire could not keep ${what}.`));
   };
 
-  const subscribe = <K extends "combat-outcome" | "player-command" | "run-end" | "driver-changed">(
+  const subscribe = <K extends "combat-outcome" | "player-command" | "heal" | "run-end" | "driver-changed">(
     name: K,
-    listener: (payload: K extends "combat-outcome" ? Api2CombatEvent : K extends "player-command" ? Api2CommandEvent : K extends "run-end" ? Api2RunEndEvent : Api2Driver) => void,
+    listener: (payload: K extends "combat-outcome" ? Api2CombatEvent : K extends "player-command" ? Api2CommandEvent : K extends "heal" ? Api2HealEvent : K extends "run-end" ? Api2RunEndEvent : Api2Driver) => void,
   ): void => {
     const call = mod.events.on(name, listener as never);
     void call.then((result) => {
@@ -113,7 +117,7 @@ export function createBridge(mod: ModApi2): Bridge {
   };
 
   const readWorld = async (): Promise<AgentView | null> => {
-    const read = await viewWorld(mod, feed === null ? {} : { messages: feed });
+    const read = await viewWorld(mod, { ...(feed === null ? {} : { messages: feed }), capture: (frame, prepared) => capture.frame(frame, key, prepared) });
     if (read !== null) world = read;
     return read;
   };
@@ -148,10 +152,11 @@ export function createBridge(mod: ModApi2): Bridge {
       on: ((name: "combat-outcome" | "player-command", listener: (payload: never) => void) => subscribe(name, listener as never)) as Api2Host["events"]["on"],
     },
     viewNow: () => world,
+    encounterFrames: () => capture.frames(),
+    recordCommandResult: (code, ok, turnAtSubmit) => capture.event({ kind: "result", value: { code, ok, turnAtSubmit } }),
     readWorld: async () => {
-      const read = await readWorld();
-      void refreshCharacter();
-      return read;
+      await refreshCharacter();
+      return readWorld();
     },
   };
 
@@ -167,6 +172,10 @@ export function createBridge(mod: ModApi2): Bridge {
       feed = await watchMessages(mod);
       stops.push(() => feed?.stop() ?? Promise.resolve());
       subscribe("driver-changed", (event) => { driver = event; });
+      subscribe("player-command", (value) => capture.event({ kind: "command", value }));
+      subscribe("combat-outcome", (value) => capture.event({ kind: "combat", value }));
+      subscribe("heal", (value) => capture.event({ kind: "heal", value }));
+      subscribe("run-end", (value) => capture.event({ kind: "boundary", value: { report: value.report !== null } }));
       await readWorld();
     },
     readWorld: host.readWorld,

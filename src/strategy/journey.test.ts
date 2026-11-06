@@ -166,7 +166,7 @@ describe("round 3 progress watchdog", () => {
     const journey = createJourney(w.terrain, undefined, undefined, () => time);
     journey.watchdog(w.view, true);
     journey.apply(offers("descend"), w.view, null, new Set(), false);
-    expect(journey.checkedRoute(w.view, [{ x: 8, y: 1 }])).toBeNull();
+    expect(journey.checkedRoute(w.view, [{ x: 8, y: 1 }])).toHaveLength(6);
     time = 60000;
     w.advance(10);
     expect(journey.watchdog(w.view, true)?.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
@@ -1272,12 +1272,16 @@ describe("journey offer and execution guards", () => {
     expect(goals(w, journey, true)).toContain("wait");
   });
 
-  it.each(["door", "trap", "enemy"])("rejects a walking return obstructed by a %s", (obstruction) => {
+  it.each(["door", "trap"])("rejects a walking return obstructed by a %s", (obstruction) => {
     const map = obstruction === "door" ? ["########", "#<+@..>#", "########"] : ROOM;
     const w = world({ map, pack: ["a Potion of Cure Light Wounds", ...RESERVES.slice(1)] });
     if (obstruction === "trap") w.setTraps([{ x: 1, y: 1 }]);
-    if (obstruction === "enemy") w.setMonsters([{ grid: { x: 5, y: 1 }, race: "unknown attacker", spellFlags: [] }]);
     expect(goals(w, undefined, false, offers("explore", "descend"))).not.toContain("leave_level");
+  });
+
+  it("accepts a checked stair return before a distant enemy can make contact", () => {
+    const w = world({ map: ROOM, pack: ["a Potion of Cure Light Wounds", ...RESERVES.slice(1)], monsters: [{ grid: { x: 5, y: 1 }, race: "unknown attacker" }] });
+    expect(goals(w, undefined, false, offers("explore", "descend"))).toContain("leave_level");
   });
 
   it("does not create an unsafe fallback wait when pending Recall's combat offers are stalled", () => {

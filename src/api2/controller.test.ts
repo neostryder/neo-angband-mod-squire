@@ -76,6 +76,14 @@ describe("the decision tick", () => {
     expect(r.logged.filter((line) => line === "Squire is playing.")).toHaveLength(1);
   });
 
+  it("captures command acceptance with the turn at submission", async () => {
+    const r = rig();
+    const results: unknown[] = [];
+    const b = { ...bridge("view"), readWorld: async () => ({ turn: () => 42 }), host: { recordCommandResult: (code: string, accepted: boolean, turn: number) => results.push({ code, accepted, turn }) } } as unknown as Bridge;
+    await createTick(b, () => ({ code: "hold" }) as never)(r.mod, input());
+    expect(results).toEqual([{ code: "hold", accepted: true, turn: 42 }]);
+  });
+
   it("submits a target choice ahead of the command", async () => {
     const r = rig();
     const tick = createTick(bridge("view"), ((_view, act) => { act.setTargetMonster(4); return act.fire(2); }) as AgentController);

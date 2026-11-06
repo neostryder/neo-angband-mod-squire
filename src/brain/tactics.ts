@@ -103,10 +103,18 @@ const ESCAPE_CRITERIA: NoulQuestion["criteria"] = {
 /** Under this confidence the option answer is not trusted on its own, on a backend with no floor of its own. */
 export const CONFIDENCE_FLOOR = 0.3;
 
+export function compareForecasts(a: Offer, b: Offer): number {
+  const viable = Number(b.forecast?.viable === true) - Number(a.forecast?.viable === true);
+  if (viable !== 0) return viable;
+  if (a.forecast === undefined || b.forecast === undefined) return 0;
+  if (!a.forecast.viable && !b.forecast.viable) return b.forecast.after - a.forecast.after;
+  return a.forecast.actions - b.forecast.actions || a.forecast.meanLoss - b.forecast.meanLoss;
+}
+
 /** The safest offer of a class: one that leaves hit points under the bound first, then the lowest risk. */
 function safestOf(offers: readonly Offer[], classes: ReadonlySet<ActionClass>): Offer | undefined {
   return offers.filter((o) => classes.has(classOf(o.goal)) && o.gaps === undefined).sort((a, b) =>
-    Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
+    compareForecasts(a, b) || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
 }
 
 /**
@@ -139,6 +147,8 @@ const PRUNABLE: ReadonlySet<ActionClass> = new Set(["attack", "escape", "heal"])
  */
 function dominates(a: Offer, b: Offer, targetAdjacent: boolean): boolean {
   if (classOf(a.goal) !== classOf(b.goal)) return false;
+  if (b.forecast?.viable === true && a.forecast?.viable !== true) return false;
+  if (a.forecast !== undefined && b.forecast !== undefined && (a.forecast.scenarioLoss > b.forecast.scenarioLoss || classOf(a.goal) === "attack" && a.forecast.actions > b.forecast.actions)) return false;
   if (a.progress === undefined || b.progress === undefined || a.cost === undefined || b.cost === undefined) return false;
   if (classOf(a.goal) === "attack" && !targetAdjacent && (a.goal === "fight") !== (b.goal === "fight")) return false;
   const attack = classOf(a.goal) === "attack";

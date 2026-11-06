@@ -7,7 +7,8 @@ import type { Plan } from "../brain/brain.js";
 import { floorTarget } from "../brain/items.js";
 import { canRead, hungry, unknownFlavours } from "../brain/pack.js";
 import { arrivalFeeling, dangerousLevelFeeling } from "../brain/level-feel.js";
-import { assessThreat, incomingDamage } from "../brain/threat-model.js";
+import { forecastWalk, tacticalFrame } from "../brain/forecast.js";
+import { forecastExposure, rememberedCleared, assessThreat, incomingDamage } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
@@ -503,8 +504,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       chosenReturn = false;
       departure.end();
     }
-    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
-    for (const [id, entry] of remembered) if (entry.until < turn) remembered.delete(id);
+    for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster: { ...monster, visible: false }, until: turn + 100 });
+    for (const [id, entry] of remembered) if (!view.apiVersion.startsWith("2.") && entry.until < turn || rememberedCleared(view, entry.monster, entry.until - 100, terrain)) remembered.delete(id);
     if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && previousHp - player.hp > incomingDamage(view, player.grid, 2, terrain, { monsters: [] }).damage && !standingOnHarm(view, terrain, player.grid) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
@@ -534,15 +535,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (standingOnHarm(view, terrain, player.grid)) return false;
     if (player.status.poisoned > 0 && !(recoveringStatus && poisonRecovery(view, lastPersona)) || player.status.cut > 0 || !recoveringStatus && (player.status.blind > 0 || player.status.confused > 0) || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return false;
     if (view.monsters().some((monster) => monster.visible && threatensDelay(view, monster))) return false;
-    return ![...remembered.values()].some((entry) => entry.until >= view.turn() && threatensDelay(view, entry.monster));
+    return ![...remembered.values()].some((entry) => threatensDelay(view, entry.monster, entry.until - 100));
   }
 
-  function threatensDelay(view: AgentView, monster: MonsterView): boolean {
-    if (neverMoves(view, monster) && !monster.raceFlags.includes("MULTIPLY")) {
-      const danger = incomingDamage(view, view.player().grid, 2, terrain, { monsters: [monster], creaturesOnly: true, observedDamage });
-      return danger.damage > 0 || danger.status > 0;
-    }
-    return monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, view.player().grid) <= 10 || !monster.asleep || steps(monster.grid, view.player().grid) <= 8;
+  function threatensDelay(view: AgentView, monster: MonsterView, seen = view.turn()): boolean {
+    if (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, view.player().grid) <= 10) return true;
+    const danger = forecastExposure(view, view.player().grid, 4, terrain, { monsters: [monster], lastSeen: new Map([[monster.id, seen]]), creaturesOnly: true, observedDamage });
+    return danger.upper > 0 || danger.status > 0;
   }
 
   /** The same permission drives offers, interruptions and each stair command. */
@@ -559,7 +558,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       !breederLevel && stairAllowed(view, true) && (expiredReserve || behind || reserves && tripLight(view) && gaps.hard.length === 0);
     const route = allowed ? checkedRoute(view, knownDownStairs(view, terrain)) : null;
     const ready = route !== null && !standingOnHarm(view, terrain, player.grid) && !(unseenDanger?.(view) ?? view.turn() <= unseenUntil) &&
-      !view.monsters().some((monster) => monster.visible && !monster.asleep) && ![...remembered.values()].some((entry) => entry.until >= view.turn()) && player.hp >= player.maxHp * 0.8 &&
+      safeDelay(view) && player.hp >= player.maxHp * 0.8 &&
       [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0);
     if (!ready) diveSince = null;
     else if (diveSince === null || diveSince.depth !== player.depth || view.turn() < diveSince.turn) diveSince = { depth: player.depth, time: now(), turn: view.turn() };
@@ -580,7 +579,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const fail = (why: string): null => { routeFailure = why; return null; };
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return fail("blindness, confusion or an unexplained hit prevents a checked walk");
-    const threats = [...remembered.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
+    const threats = [...remembered.values()].map((entry) => entry.monster);
     const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap && (!breederLevel || !view.monsters().some((monster) => monster.visible && key(monster.grid) === key(grid)));
     const field = flowFrom({ goals, canEnter: enter });
     if (!Number.isFinite(field.distance(player.grid))) return fail("no unblocked known route reaches the staircase");
@@ -599,10 +598,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       const next = route[0]!;
       const danger = incomingDamage(view, next, 2, terrain, { monsters: threats, observedDamage });
       if (danger.status > 0 || danger.damage >= player.hp * 0.25) return fail(`creatures near the next route square threaten ${String(danger.damage)} HP or a disabling effect`);
-    } else if (threats.some((monster) => !neverMoves(view, monster) || route.some((grid) => {
-      const danger = incomingDamage(view, grid, 2, terrain, { monsters: [monster], creaturesOnly: true, observedDamage });
-      return danger.damage > 0 || danger.status > 0;
-    }))) return fail("an awake creature remains on the return route");
+    } else if (threats.length > 0) {
+      const frame = tacticalFrame(view, { terrain, facts: { monsters: threats, observedDamage, lastSeen: new Map([...remembered].map(([id, entry]) => [id, entry.until - 100])) } });
+      const checked = forecastWalk(frame, route.slice(0, 4), route.length <= 4);
+      if (checked.loss.status > 0 || checked.after < Math.max(2, player.maxHp * 0.1)) return fail("the checked route loses its HP reserve or permits a disabling attack");
+    }
     /* Poison and bleeding cost about a hit point a step, so the walk has to end before the hit points do. */
     if ((player.status.poisoned > 0 || player.status.cut > 0) && route.length * (player.status.cut > 100 ? 3 : 1) >= player.hp) return fail("poison or bleeding would exhaust HP before the staircase");
     return route;

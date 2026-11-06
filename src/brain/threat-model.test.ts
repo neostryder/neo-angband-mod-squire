@@ -1,10 +1,104 @@
 import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
-import { turnEnergy } from "@rpgm-tools/neo-angband-core";
+import { adjustDamArmor, hitChance, turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, knownSpellFlags, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
+import { armorDamage, castingMixture, forecastExposure, hitProbability, meleeMoments, assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, knownSpellFlags, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
+
+describe("physical forecast parity", () => {
+  it.each([0, 10, 70, 150, 240, 300])("matches Core hit and armor arithmetic at AC %i", (ac) => {
+    for (const toHit of [0, 9, 40, 120]) {
+      const core = hitChance(toHit, ac);
+      expect(hitProbability(toHit, ac)).toBe(core.numerator / core.denominator);
+    }
+    for (let damage = 1; damage <= 60; damage++) expect(armorDamage(damage, ac)).toBe(adjustDamArmor(damage, ac));
+  });
+
+  it("applies armor to every integer die outcome before averaging", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { ac: 100 }, monsters: [{ grid: { x: 3, y: 1 }, level: 2,
+      knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 4, mBonus: 0 } }], health: "unhurt", averageHp: 10, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    Object.assign(w.view, { blowRules: { effects: new Map([["HURT", 40]]), methods: new Map([["HIT", true]]) } });
+    const m = w.view.monsters()[0]!;
+    const first = meleeMoments(w.view, m)!;
+    expect(first.mean).toBeCloseTo((1 + 2 + 3 + 3) / 4 * hitProbability(46, 100));
+    expect(first.upper).toBe(3);
+    expect(first.variance).toBeGreaterThan(0);
+    w.setPlayer({ ac: 0 });
+    expect(meleeMoments(w.view, m)!.mean).toBeGreaterThan(first.mean);
+  });
+
+  it("keeps a physical elemental component through immunity", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { ac: 100, status: { resFire: 1 } }, monsters: [{ grid: { x: 3, y: 1 }, level: 1,
+      knownCombat: { blows: [{ method: "HIT", effect: "FIRE", damage: { base: 12, dice: 0, sides: 0, mBonus: 0 } }], health: "unhurt", averageHp: null, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    Object.assign(w.view, { blowRules: { effects: new Map([["FIRE", 10]]), methods: new Map([["HIT", true]]) },
+      simulateLoadout: () => ({ before: { stats: { resistElements: ["FIRE"], resists: [3] } } }) as unknown as LoadoutSimulation });
+    expect(meleeMoments(w.view, w.view.monsters()[0]!)!.upper).toBe(adjustDamArmor(12, 150));
+  });
+
+  it("keeps unsupported dice components and absent effect definitions uncertain", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 4, mBonus: 2 } }], health: "unhurt", averageHp: null, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    expect(meleeMoments(w.view, w.view.monsters()[0]!)!.uncertain).toBe(true);
+    expect(forecastExposure(w.view).unknown).toContain("blows");
+  });
+});
+
+describe("casting mixture", () => {
+  it("tries non-innate before innate and spends failed casting turns", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, knownCombat: { blows: [], health: "unhurt", averageHp: null, spellFrequency: { percent: 20, exact: true }, innateFrequency: { percent: 50, exact: true }, status: [] } }] });
+    const mixture = castingMixture(w.view.monsters()[0]!, ["HOLD", "BR_FIRE"], 1);
+    expect(mixture).toMatchObject({ spell: 0.2, innate: 0.4, damageSpell: 0, melee: 0.4 });
+  });
+
+  it("treats rounded and absent frequencies as uncertain rates", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 } }] });
+    expect(castingMixture(w.view.monsters()[0]!, ["HOLD"])).toMatchObject({ spell: 0.1, high: 0.6 });
+    expect(castingMixture(w.view.monsters()[0]!, [])).toMatchObject({ spell: 0, innate: 0, melee: 1 });
+    const monster = { ...w.view.monsters()[0]!, knownCombat: { blows: [], averageHp: null, health: "unhurt" as const, status: [], spellFrequency: { percent: 20, exact: false }, innateFrequency: null } };
+    expect(castingMixture(monster, ["HOLD"])).toMatchObject({ spell: 0.155, high: 0.4 });
+  });
+});
+
+describe("moving exposure forecast", () => {
+  it("charges a remembered pursuer across a corner and keeps background loss separate", () => {
+    const w = world({ map: ["########", "#.@#...#", "#......#", "########"], player: { status: { poisoned: 5 } }, monsters: [{ id: 1, grid: { x: 5, y: 1 }, visible: false, speed: 120 }], monsterRecall: () => "It can bite to hurt (1d4)." });
+    const facts = { monsters: w.view.monsters(), lastSeen: new Map([[1, 0]]), energy: turnEnergy };
+    w.advance(30);
+    const seen = forecastExposure(w.view, w.at(), 2, w.terrain, facts);
+    expect(seen.upper).toBeGreaterThan(2);
+    expect(seen.unknown).toContain("remembered-position");
+    expect(forecastExposure(w.view, w.at(), 2, w.terrain, { ...facts, monsters: [] }).upper).toBe(2);
+  });
+
+  it("retains an unknown-region threat when remembered reach exhausts its budget", () => {
+    const rows = Array.from({ length: 80 }, () => " ".repeat(80));
+    rows[77] = " ".repeat(76) + ".@." + " ";
+    const w = world({ map: rows, monsters: [{ grid: { x: 1, y: 1 }, id: 1, visible: false }], monsterRecall: () => "It can hit to hurt (1d4)." });
+    w.advance(10000);
+    const exposure = forecastExposure(w.view, w.at(), 1, w.terrain, { monsters: w.view.monsters(), lastSeen: new Map([[1, 0]]), energy: turnEnergy });
+    expect(exposure.upper).toBeGreaterThan(0);
+    expect(exposure.unknown).toContain("position-budget");
+  });
+
+  it("keeps the fractional initiative phase in the expected exposure", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, speed: 110 }], monsterRecall: () => "It can hit to hurt (1d1)." });
+    const half = forecastExposure(w.view, w.at(), 0.5, w.terrain, { energy: turnEnergy });
+    expect(half.mean).toBe(0.5);
+    expect(half.upper).toBe(1);
+    w.setMonsters([{ grid: { x: 3, y: 1 }, speed: 120 }]);
+    expect(forecastExposure(w.view, w.at(), 0.5, w.terrain, { energy: turnEnergy }).mean).toBe(1);
+  });
+
+  it("queues corridor attackers and increases exposure over two actions", () => {
+    const w = world({ map: ["########", "#.@....#", "########"], monsters: [{ grid: { x: 3, y: 1 } }, { grid: { x: 4, y: 1 } }], monsterRecall: () => "It can bite to hurt (1d4)." });
+    const one = forecastExposure(w.view, w.at(), 1, w.terrain);
+    const two = forecastExposure(w.view, w.at(), 2, w.terrain);
+    expect(one.upper).toBe(4);
+    expect(two.upper).toBe(8);
+    expect(one.mean).toBeLessThan(one.upper);
+    expect(forecastExposure(w.view, w.at(), 1, w.terrain, { monsters: [] }).upper).toBeLessThanOrEqual(one.upper);
+  });
+});
 
 describe("starvation attribution", () => {
   it.each([[100, 0], [90, 1], [50, 5], [0, 10]])("prices food %i as %i known damage per action", (food, damage) => {

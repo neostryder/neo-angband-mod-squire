@@ -7,8 +7,8 @@
  *
  * Where the known world says less than the API 1 view did, this file fills the gap from what the player can know:
  *
- * - A monster's hit points come from its look-command health band and the average hit points in its race record. The API 1 view gave exact numbers.
- * - A monster's speed is its race speed. Its flags and spells are the ones the player's lore has learned.
+ * - A monster keeps its public health band and learned average HP. Legacy numeric readers use a labeled population estimate when the average is unknown; the fight forecast retains an interval.
+ * - A monster keeps its learned blows, casting frequencies and statuses. Its speed includes the displayed haste or slow category; exact energy and effect durations remain unknown.
  * - A square the character has never seen is not passable, has no feature and holds no trap. The API 1 view read the real map there.
  * - A trap the character has disabled still reads as a trap, because a remembered trap carries no timeout. The API 1 view reads it as no trap.
  * - No square glows, because the known level does not say which squares are lit.
@@ -18,8 +18,9 @@
  * - An item's timeout is the number its name says are charging. A light's fuel is not in the known item, so a torch or lantern reads as out of fuel.
  */
 
-import type { Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStoreItem, KnownWorldData, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
-import type { AgentView, CellView, GameConstants, ItemView, MonsterView, PlayerView, StoreItemView, StoreView } from "@rpgm-tools/neo-angband-core";
+import type { Api2InputState, Api2Subscription, KnownItem, KnownMonster, KnownPlayer, KnownStoreItem, KnownWorldData, LoadoutSimulation as KnownLoadoutSimulation, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { CellView, GameConstants, StoreItemView } from "@rpgm-tools/neo-angband-core";
+import type { AgentView, BlowRules, ItemView, LoadoutSimulation, MonsterView, PlayerView, StoreView } from "./host-adapter.js";
 import { recordFlags, terrainFromRecords, terrainRecords as readTerrainRecords, type Terrain, type TerrainRecord } from "./terrain.js";
 
 /** The parts of API 2 these reads use. */
@@ -43,8 +44,12 @@ function writable<T>(value: T): Writable<T> {
 
 /** The value of a successful call, or null for any failure. */
 async function valueOf<T>(call: Promise<{ readonly ok: true; readonly value: T } | { readonly ok: false }>): Promise<T | null> {
-  const result = await call;
-  return result.ok ? result.value : null;
+  try {
+    const result = await call;
+    return result.ok ? result.value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Messages the game printed since the last decision, collected from the `message` event. */
@@ -90,9 +95,9 @@ export async function contentTerrain(api: Pick<ModApi2, "content">): Promise<Ter
 /** A health band's middle, as a share of full health, inside the band the look command draws. */
 const BAND_SHARE: Readonly<Record<KnownMonster["health"], number>> = { unhurt: 1, somewhat: 0.8, wounded: 0.42, badly: 0.17, almost: 0.05 };
 
-/** Hit points inside the monster's band, out of its race's average. */
+/** Legacy numeric readers need a display estimate; knownCombat retains the public uncertainty. */
 function hitPoints(monster: KnownMonster, average: number | undefined): { hp: number; maxHp: number } {
-  const maxHp = average !== undefined && average > 0 ? average : 100;
+  const maxHp = average !== undefined && average > 0 ? average : 10 + 6 * monster.raceLevel;
   if (monster.health === "unhurt") return { hp: maxHp, maxHp };
   return { hp: Math.min(maxHp - 1, Math.max(1, Math.round(maxHp * BAND_SHARE[monster.health]))), maxHp };
 }
@@ -106,7 +111,8 @@ function monsterView(monster: KnownMonster, average: number | undefined): Monste
     grid: { x: monster.grid.x, y: monster.grid.y },
     visible: monster.visible,
     ...hitPoints(monster, average),
-    speed: monster.raceSpeed,
+    speed: monster.raceSpeed + (has("hasted") ? 10 : 0) - (has("slowed") ? 10 : 0),
+    knownCombat: { blows: writable(monster.blows), spellFrequency: monster.spellFrequency, innateFrequency: monster.innateFrequency, averageHp: monster.averageHp, health: monster.health, status: [...monster.status] },
     asleep: has("asleep"),
     afraid: has("afraid"),
     confused: has("confused"),
@@ -123,16 +129,6 @@ function monsterView(monster: KnownMonster, average: number | undefined): Monste
   if (monster.raceId !== undefined) view.raceId = monster.raceId;
   if (monster.glyph !== undefined) view.glyph = monster.glyph;
   return view;
-}
-
-/** Average hit points by race index, from the monster records. A record whose name differs from the monster's race is not used. */
-async function raceAverages(api: Pick<ModApi2, "content">): Promise<(monster: KnownMonster) => number | undefined> {
-  const records = (await valueOf(api.content.records("monster"))) ?? [];
-  return (monster) => {
-    const record: JsonRecord | undefined = records[monster.raceIndex];
-    const hp = record?.["hit-points"];
-    return record?.["name"] === monster.race && typeof hp === "number" ? hp : undefined;
-  };
 }
 
 /* Constants. */
@@ -270,6 +266,13 @@ function itemView(item: KnownItem): ItemView {
   return { ...rest, timeout: fuel ?? charging };
 }
 
+function simulationView(simulation: KnownLoadoutSimulation, floors: GradeFloors): LoadoutSimulation {
+  const adapt = (loadout: KnownLoadoutSimulation["before"]) => ({ ...writable(loadout), player: playerView(loadout.player, floors),
+    inventory: loadout.inventory.map(itemView), equipment: loadout.equipment.map((item) => item === null ? null : itemView(item)) });
+  return { ...writable(simulation), before: adapt(simulation.before), after: adapt(simulation.after),
+    placements: simulation.placements.map((placement) => ({ ...placement, worn: itemView(placement.worn), displaced: placement.displaced === null ? null : itemView(placement.displaced) })) };
+}
+
 function storeItemView(item: KnownStoreItem): StoreItemView {
   const { index, price } = item;
   return { ...itemView(item), index, ...(price === undefined ? {} : { price }) };
@@ -278,6 +281,15 @@ function storeItemView(item: KnownStoreItem): StoreItemView {
 /** What viewWorld needs besides the API: the message feed, when the mod keeps one. */
 export interface WorldReads {
   readonly messages?: MessageFeed;
+  readonly capture?: (world: KnownWorldData, prepared: PreparedReads) => void;
+}
+
+export interface PreparedReads {
+  readonly items: readonly (readonly [number, ReturnType<NonNullable<AgentView["inspectItem"]>>])[];
+  readonly recalls: readonly (readonly [number, ReturnType<NonNullable<AgentView["monsterRecall"]>>])[];
+  readonly spells: readonly (readonly [number, ReturnType<NonNullable<AgentView["spellInfo"]>>])[];
+  readonly projections: readonly (readonly [string, ReturnType<NonNullable<AgentView["projectionPath"]>>])[];
+  readonly baseline: ReturnType<NonNullable<AgentView["simulateLoadout"]>>;
 }
 
 /**
@@ -286,23 +298,42 @@ export interface WorldReads {
 export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise<AgentView | null> {
   const known: KnownWorldData | null = await valueOf(api.view.world());
   if (known === null || known.player === null) return null;
-  const [terrain, average, constants, floors] = await Promise.all([terrainRecords(api), raceAverages(api), gameConstants(api), gradeFloors(api)]);
+  const [terrain, constants, floors, effects, methods] = await Promise.all([terrainRecords(api), gameConstants(api), gradeFloors(api), valueOf(api.content.records("blow_effects")), valueOf(api.content.records("blow_methods"))]);
+  const blowRules: BlowRules = {
+    effects: new Map((effects ?? []).flatMap((r) => typeof r["name"] === "string" && typeof r["power"] === "number" ? [[r["name"], r["power"]]] : [])),
+    methods: new Map((methods ?? []).flatMap((r) => typeof r["name"] === "string" && typeof r["phys"] === "number" ? [[r["name"], r["phys"] !== 0]] : [])),
+  };
   const trapKinds = (await valueOf(api.content.records("trap"))) ?? [];
 
   const player = playerView(known.player, floors);
-  const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? average(monster)));
+  const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? undefined));
   const recalls = new Map<number, Awaited<ReturnType<NonNullable<AgentView["monsterRecall"]>>>>();
   const spells = new Map<number, Awaited<ReturnType<NonNullable<AgentView["spellInfo"]>>>>();
   if (api.view.inspect !== undefined) {
     await Promise.all([
-      ...[...new Set(monsters.map((monster) => monster.raceIndex))].map(async (race) => {
+      ...(api.view.inspect.monsterRecall === undefined ? [] : [...new Set(monsters.filter((monster) => monster.visible).slice(0, 8).map((monster) => monster.raceIndex))]).map(async (race) => {
         const recall = await valueOf(api.view.inspect.monsterRecall(race));
         recalls.set(race, writable(recall));
       }),
-      ...(known.spellbooks ?? []).flatMap((book) => book.spells.filter((spell) => spell.learned && !spell.forgotten).map(async (spell) => {
+      ...(api.view.inspect.spell === undefined ? [] : (known.spellbooks ?? []).flatMap((book) => book.spells).filter((spell) => spell.learned && !spell.forgotten).slice(0, 16)).map(async (spell) => {
         const info = await valueOf(api.view.inspect.spell(spell.sidx));
         spells.set(spell.sidx, writable(info));
-      })),
+      }),
+    ]);
+  }
+  const items = new Map<number, ReturnType<NonNullable<AgentView["inspectItem"]>>>();
+  const projections = new Map<string, ReturnType<NonNullable<AgentView["projectionPath"]>>>();
+  const blasts = new Map<string, ReturnType<NonNullable<AgentView["blastArea"]>>>();
+  let baseline: ReturnType<NonNullable<AgentView["simulateLoadout"]>> = null;
+  const inspect = api.view.inspect;
+  if (inspect !== undefined) {
+    const carried = [...(known.equipment ?? []).filter((item) => item !== null), ...(known.inventory ?? []), ...(known.quiver ?? [])];
+    const targets = monsters.filter((m) => m.visible).slice(0, 8);
+    await Promise.all([
+      ...(inspect.item === undefined ? [] : carried.slice(0, 24).map(async (item) => { items.set(item.handle, writable(await valueOf(inspect.item(item.handle)))); })),
+      ...(inspect.simulateLoadout === undefined ? [] : [valueOf(inspect.simulateLoadout({})).then((value) => { baseline = value === null ? null : simulationView(value, floors); })]),
+      ...(inspect.projectionPath === undefined ? [] : targets.map(async (m) => { const path = await valueOf(inspect.projectionPath(m.grid)); if (path !== null) projections.set(`${String(m.grid.x)},${String(m.grid.y)}`, writable(path)); })),
+      ...(inspect.blastArea === undefined ? [] : targets.slice(0, 3).map(async (m) => { const area = await valueOf(inspect.blastArea(m.grid, 2, 0)); if (area !== null) blasts.set(`${String(m.grid.x)},${String(m.grid.y)}`, writable(area)); })),
     ]);
   }
   const width = known.level?.width ?? 0;
@@ -345,6 +376,11 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
 
   const view: AgentView = {
     apiVersion: "2.0.0",
+    blowRules,
+    inspectItem: (ref) => typeof ref === "number" ? items.get(ref) ?? null : null,
+    simulateLoadout: (change) => Object.keys(change).length === 0 ? baseline : null,
+    ...(projections.size === 0 ? {} : { projectionPath: (to: { x: number; y: number }) => projections.get(`${String(to.x)},${String(to.y)}`) ?? { token: known.token, grids: [] } }),
+    ...(blasts.size === 0 ? {} : { blastArea: (to: { x: number; y: number }, radius: number, arc = 0) => radius === 2 && arc === 0 ? blasts.get(`${String(to.x)},${String(to.y)}`) ?? { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } : { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } }),
     turn: () => known.turn ?? 0,
     player: () => writable(player),
     monsters: () => monsters.map((m) => writable(m)),
@@ -367,6 +403,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
     constants: () => ({ ...constants }),
     inputToken: () => ({ epoch: known.token.epoch, revision: known.token.revision }),
   };
+  reads.capture?.(known, { items: [...items], recalls: [...recalls], spells: [...spells], projections: [...projections], baseline });
   return view;
 }
 

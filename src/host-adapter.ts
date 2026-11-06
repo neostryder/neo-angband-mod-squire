@@ -7,26 +7,39 @@
  * vocabulary it is written against has one source.
  */
 
-import type { AgentView, InputSnapshot, ModPluginContext } from "@rpgm-tools/neo-angband-core";
+import type { KnownMonster } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { AgentView as CoreAgentView, MonsterView as CoreMonsterView, InputSnapshot, ModPluginContext } from "@rpgm-tools/neo-angband-core";
 import { terrainFromRecords, terrainRecords, type Terrain } from "./terrain.js";
 
 export type {
   AgentActions,
   AgentCommand,
   AgentController,
-  AgentView,
   CellView,
   CommandFacade,
   ItemView,
   KnownFloorItemView,
   LoadoutSimulation,
   LoadoutView,
-  MonsterView,
   PlayerStatusView,
   PlayerView,
   SpellView,
   StoreView,
 } from "@rpgm-tools/neo-angband-core";
+
+export interface MonsterView extends CoreMonsterView {
+  readonly knownCombat?: Pick<KnownMonster, "blows" | "spellFrequency" | "innateFrequency" | "averageHp" | "health" | "status">;
+}
+
+export interface BlowRules {
+  readonly effects: ReadonlyMap<string, number>;
+  readonly methods: ReadonlyMap<string, boolean>;
+}
+
+export interface AgentView extends CoreAgentView {
+  monsters(): MonsterView[];
+  readonly blowRules?: BlowRules;
+}
 
 type CoreNamespace = ModPluginContext["core"];
 

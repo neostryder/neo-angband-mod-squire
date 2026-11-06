@@ -50,13 +50,13 @@ export function lineOfFire(view: AgentView, target: Loc): boolean {
  * the volley is over. The target id is held from the decision, so a different
  * creature wandering into range is not fired at without being weighed.
  */
-export function volleySteps(goal: RangedGoal, targetId: number, spellSidx?: number, safety?: (view: AgentView) => AttackContext): (ctx: SquireContext) => AgentCommand | null {
+export function volleySteps(goal: RangedGoal, targetId: number, spellSidx?: number, safety?: (view: AgentView) => AttackContext, sourceHandle?: number): (ctx: SquireContext) => AgentCommand | null {
   return (ctx) => {
     const view = ctx.view;
     const target = view.monsters().find((monster) => monster.id === targetId && monster.visible);
     if (target === undefined) return null;
     if (!lineOfFire(view, target.grid)) return null;
-    const outcome = attackOptions(view, target, goal, safety?.(view)).find((attack) => spellSidx === undefined || attack.source !== null && "sidx" in attack.source && attack.source.sidx === spellSidx);
+    const outcome = attackOptions(view, target, goal, safety?.(view)).find((attack) => (spellSidx === undefined || attack.source !== null && "sidx" in attack.source && attack.source.sidx === spellSidx) && (sourceHandle === undefined || attack.source !== null && "handle" in attack.source && attack.source.handle === sourceHandle));
     const source = outcome?.source;
     if (source === null || source === undefined) return null;
     if (!ctx.act.setTargetMonster(target.id)) return null;

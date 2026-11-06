@@ -40,12 +40,12 @@ import type {
   CellView,
   GameConstants,
   ItemView,
-  MonsterView,
   PlayerView,
   StoreView,
   SpellbookView,
   TargetView,
 } from "@rpgm-tools/neo-angband-core";
+import type { MonsterView } from "./host-adapter.js";
 import { TV, type InspectResult } from "@rpgm-tools/neo-angband-core";
 import type { Loc } from "./grid.js";
 import { invalidateHazards } from "./map.js";

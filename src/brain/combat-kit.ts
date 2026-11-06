@@ -9,11 +9,11 @@
 
 import type { AgentView, ItemView, MonsterView } from "../host-adapter.js";
 import { shownName } from "../town/needs.js";
-import { bestBallAim, incomingDamage, type ThreatFacts } from "./threat-model.js";
+import { bestBallAim, clearShot, hitProbability, incomingDamage, type ThreatFacts } from "./threat-model.js";
 import { readPack, type PackItem, type CastableSpell } from "./pack.js";
 import { steps } from "../grid.js";
 import type { Terrain } from "../terrain.js";
-import { countBand, failBand, shareBand, targetShare } from "./bands.js";
+import { failBand, targetShare } from "./bands.js";
 
 export interface AttackContext {
   readonly terrain?: Terrain;
@@ -21,6 +21,25 @@ export interface AttackContext {
 }
 
 export type AttackKind = "fight" | "shoot" | "throw_oil" | "aim_wand" | "cast_attack";
+
+export interface HpRange {
+  readonly low: number;
+  readonly mean: number;
+  readonly high: number;
+  readonly exact: boolean;
+  readonly prior: boolean;
+}
+
+/** API 2 health bands constrain a population estimate, never an exact monster maximum. */
+export function targetHp(target: MonsterView): HpRange {
+  const known = target.knownCombat;
+  if (known === undefined) return { low: target.hp, mean: target.hp, high: target.hp, exact: true, prior: false };
+  const average = known.averageHp ?? 10 + 6 * target.level;
+  const [low, high] = { unhurt: [1, 1], somewhat: [0.6, 1], wounded: [0.25, 0.6], badly: [0.1, 0.25], almost: [0, 0.1] }[known.health]!;
+  const spread = known.averageHp === null ? 3.5 : 2.5;
+  return { low: Math.max(1, Math.ceil(average * 0.25 * low!)), mean: Math.max(1, average * (low! + high!) / 2),
+    high: Math.max(1, Math.ceil(average * spread * high!) - (known.health === "unhurt" ? 0 : 1)), exact: false, prior: known.averageHp === null };
+}
 
 export interface AttackOutcome {
   readonly kind: AttackKind;
@@ -32,6 +51,8 @@ export interface AttackOutcome {
   readonly kill: boolean;
   readonly manaReserve: number;
   readonly fuelReserve: number;
+  readonly hpRange?: HpRange;
+  readonly energy?: number;
 }
 
 const ATTACK_ELEMENTS: readonly [RegExp, string][] = [
@@ -91,13 +112,13 @@ export function attackOutcome(view: AgentView, target: MonsterView, kind: Attack
     const weapon = view.equipment().find((item) => item !== null && [6, 7, 8, 9].includes(item.tval));
     if (steps(player.grid, target.grid) <= 1 && player.status.afraid === 0 && weapon !== undefined && weapon !== null) {
       const name = shownName(weapon) ?? "";
-      damage = weaponDamage(name, player.toDam, player.blows / 100);
+      damage = player.blows < 100 ? null : weaponDamage(name, player.toDam, player.blows / 100);
       const dice = /\((\d+)d\d+\)/.exec(name);
       if (dice !== null && player.blows > 0) minimum = Math.max(0, Number(dice[1]) + player.toDam + Number(/\([+-]?\d+,([+-]?\d+)\)/.exec(name)?.[1] ?? 0)) * Math.floor(player.blows / 100);
     }
   } else if (kind === "cast_attack" && source !== null && "sidx" in source) {
     const info = view.spellInfo?.(source.sidx);
-    failure = Math.max(0.05, (info?.failChance ?? source.fail) / 100);
+    failure = Math.max(0, (info?.failChance ?? source.fail) / 100);
     accuracyKnown = true;
     if (info?.canCastNow === false || (info?.mana ?? source.mana) > player.sp) failure = 1;
     damage = describedDamage(text, target);
@@ -129,16 +150,43 @@ export function attackOutcome(view: AgentView, target: MonsterView, kind: Attack
     const element = ATTACK_ELEMENTS.find(([pattern]) => pattern.test(source.name));
     if (element !== undefined && target.raceFlags.includes(`IM_${element[1]}`)) damage = minimum = 0;
   }
+  const item = source !== null && "handle" in source ? view.inspectItem?.(source.handle)?.combat : null;
+  if (kind === "shoot" && item?.damage !== null && item?.damage !== undefined) damage = item.damage.normal;
+  if (kind === "fight") {
+    const weapon = view.equipment().find((w) => w !== null && [6, 7, 8, 9].includes(w.tval));
+    const combat = weapon === null || weapon === undefined ? null : view.inspectItem?.(weapon.handle)?.combat;
+    if (combat?.damage !== null && combat?.damage !== undefined && steps(player.grid, target.grid) <= 1) damage = combat.damage.normal;
+  }
+  if (kind !== "fight" && !clearShot(view, target) && !(kind === "cast_attack" && /ball|orb|cloud|storm/i.test(source?.name ?? ""))) failure = 1;
+  const targetAc = /(?:armor|armour)(?: rating)?(?: of|:)\s*(\d+)/i.exec(view.monsterRecall?.(target.raceIndex)?.text ?? "");
+  if (targetAc !== null && kind !== "cast_attack") {
+    const skill = player.skills[kind === "fight" ? 6 : kind === "shoot" ? 7 : 8];
+    if (skill !== undefined) {
+      const shownHit = (name: string) => Number(/\(([+-]?\d+),[+-]?\d+\)/.exec(name)?.[1] ?? 0);
+      const weapon = view.equipment().find((w) => w !== null && [6, 7, 8, 9].includes(w.tval));
+      const bow = view.equipment().find((w) => w?.tval === 5);
+      const gearHit = kind === "fight" ? shownHit(weapon === null || weapon === undefined ? "" : shownName(weapon) ?? "")
+        : kind === "shoot" ? shownHit(source?.name ?? "") + shownHit(bow === null || bow === undefined ? "" : shownName(bow) ?? "") : shownHit(source?.name ?? "");
+      const chance = kind === "throw_oil" ? Math.trunc(1.5 * skill) + 3 * gearHit - steps(player.grid, target.grid)
+        : skill + 3 * (player.toHit + gearHit) - (kind === "shoot" ? steps(player.grid, target.grid) : 0);
+      failure = Math.max(failure >= 1 ? 1 : 0, 1 - hitProbability(chance, Number(targetAc[1])));
+      accuracyKnown = true;
+    }
+  }
+  const hpRange = targetHp(target);
+  const blowEnergy = Math.max(1, Math.trunc(10000 / Math.max(1, player.blows)));
+  const energy = kind === "shoot" ? Math.max(1, Math.trunc(1000 / Math.max(10, player.shots))) : kind === "fight" && player.blows >= 100 ? Math.floor(100 / blowEnergy) * blowEnergy : 100;
   /* Extra shots improve sustained damage, but one firing command releases only one missile. */
   const killingDamage = kind === "shoot" && damage !== null ? player.shots > 0 ? damage * 10 / player.shots : null : damage;
-  return { kind, source, damage, minimum, failure, accuracyKnown, kill: killingDamage !== null && target.hp > 0 && killingDamage >= target.hp,
+  return { kind, source, damage, minimum, failure, accuracyKnown, hpRange, energy, kill: killingDamage !== null && hpRange.high > 0 && killingDamage >= hpRange.high,
     manaReserve: escapeMana(view), fuelReserve: !player.objectFlags.includes("NO_FUEL") && !player.classFlags.includes("UNLIGHT") && view.equipment().some((item) => item !== null && /\bLantern\b/i.test(shownName(item) ?? "")) ? 1 : 0 };
 }
 
 export function attackAllowed(view: AgentView, target: MonsterView, outcome: AttackOutcome, context: AttackContext = {}): boolean {
   if (outcome.failure >= 1 || outcome.damage === 0) return false;
   const source = outcome.source;
-  const removesDanger = outcome.minimum !== null && target.hp > 0 && outcome.minimum >= target.hp && outcome.failure <= 0.25 &&
+  const hp = targetHp(target);
+  const removesDanger = outcome.minimum !== null && hp.high > 0 && outcome.minimum >= hp.high && outcome.failure <= 0.25 &&
     incomingDamage(view, view.player().grid, 1, context.terrain, { ...context.facts, monsters: (context.facts?.monsters ?? view.monsters().filter((monster) => monster.visible)).filter((monster) => monster.id !== target.id) }).damage < view.player().hp;
   if (removesDanger) return true;
   if (outcome.kind === "cast_attack" && source !== null && "sidx" in source) {
@@ -180,7 +228,26 @@ export function attackDescription(outcome: AttackOutcome, view: AgentView, targe
   const source = outcome.source;
   const spendsMana = outcome.kind === "cast_attack" && source !== null && "sidx" in source && view.player().sp - (view.spellInfo?.(source.sidx)?.mana ?? source.mana) < outcome.manaReserve;
   const spendsFuel = outcome.kind === "throw_oil" && outcome.fuelReserve > 0 && oilCount(view) <= outcome.fuelReserve;
-  return ` ${damage}; ${accuracy}. ${outcome.kill ? `A hit could kill the ${target?.race ?? "target"} now.` : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana (${shareBand(outcome.manaReserve, view.player().maxSp)} of the maximum) and ${String(outcome.fuelReserve)} fuel units (${countBand(outcome.fuelReserve)}).${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
+  return ` ${damage}; ${accuracy}. ${outcome.kill ? `A hit could kill the ${target?.race ?? "target"} now.` : "An immediate kill is not established."} The escape reserve is ${String(outcome.manaReserve)} mana and ${String(outcome.fuelReserve)} fuel units.${spendsMana || spendsFuel ? ` This immediate killing attempt spends the ${spendsMana ? "escape mana" : "fuel"} reserve.` : ""}`;
+}
+
+/** Partial cures cannot promise an unknown API 2 timer has expired. */
+export function healingStatus(view: AgentView, source: PackItem | CastableSpell): ReturnType<AgentView["player"]>["status"] {
+  const status = { ...view.player().status };
+  if (!("handle" in source)) return status;
+  const name = source.name;
+  if (/Cure Light Wounds/i.test(name)) {
+    status.blind = 0;
+    if (!view.apiVersion.startsWith("2.")) {
+      status.cut = Math.max(0, status.cut - 20);
+      status.confused = Math.max(0, status.confused - 20);
+    }
+  } else if (/Cure Serious Wounds/i.test(name)) {
+    status.blind = status.cut = status.confused = 0;
+  } else if (/Cure Critical Wounds|\*?Healing\*?|\bLife\b|Curing/i.test(name)) {
+    status.blind = status.cut = status.confused = status.poisoned = status.stun = 0;
+  }
+  return status;
 }
 
 /** One usable object or spell, with how the game consumes it. */

@@ -70,6 +70,7 @@ export function createTick(bridge: Bridge, decide: AgentController): Tick {
     /* A store is open and the decision is a walk or a rest, which the game refuses until the store is left. */
     const code = (command as { code: string }).code;
     const sent = await mod.act.submit(token, input.phase === "store" && !STORE_CODES.has(code) ? intentOf({ code: "shop-exit" } as AgentCommand) : intentOf(command));
+    bridge.host?.recordCommandResult?.(input.phase === "store" && !STORE_CODES.has(code) ? "shop-exit" : code, sent.ok, view.turn());
     if (sent.ok) {
       refusals = 0;
       return;
