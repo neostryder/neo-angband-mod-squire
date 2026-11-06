@@ -138,7 +138,7 @@ describe("paralysing gaze routes", () => {
     { race: "known gazer", memory: "It can gaze to paralyze.", flags: [] },
     { race: "rooted watcher", memory: "It can touch to paralyse.", flags: ["NEVER_MOVE"] },
   ])("blocks adjacency from known paralysis for $race", ({ race, memory, flags }) => {
-    const w = world({ map, monsters: [{ grid: { x: 5, y: 1 }, race, raceFlags: flags }], monsterRecall: () => memory });
+    const w = world({ map, player: { level: 6 }, monsters: [{ grid: { x: 5, y: 1 }, race, raceFlags: flags }], monsterRecall: () => memory });
     expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(false);
     expect(isWalkable(w.view, w.terrain, { x: 6, y: 1 })).toBe(false);
     expect(frontiers(w.view, w.terrain)).not.toContainEqual({ x: 6, y: 1 });
@@ -147,7 +147,7 @@ describe("paralysing gaze routes", () => {
   });
 
   it("does not classify a radiation eye as paralysing by name", () => {
-    const w = world({ map, monsters: [{ grid: { x: 5, y: 1 }, race: "radiation eye", raceFlags: ["NEVER_MOVE"] }] });
+    const w = world({ map, player: { level: 6 }, monsters: [{ grid: { x: 5, y: 1 }, race: "radiation eye", raceFlags: ["NEVER_MOVE"] }] });
     expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(true);
   });
 });

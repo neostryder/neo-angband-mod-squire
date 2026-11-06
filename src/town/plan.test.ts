@@ -504,3 +504,44 @@ describe("refused sales", () => {
     expect(neededEntrances(w.view, terrain, greedy).map((entry) => entry.name)).toEqual(["Magic Shop"]);
   });
 });
+
+describe("unreachable town shops", () => {
+  it("walks visible passable streets that are not remembered and reaches alchemy", () => {
+    const w = world({ map: ["#######", "#>@..A#", "#######"], player: { depth: 0, gold: 100 }, pack: [] });
+    const view: AgentView = { ...w.view, cell: (x, y) => {
+      const cell = w.view.cell(x, y);
+      return cell !== null && y === 1 && x === 3 ? { ...cell, known: false, inView: true } : cell;
+    } };
+    const visited = new Set<number>();
+    const plan = townTripPlan(w.terrain, null, visited);
+    expect(plan.step(view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    expect(plan.step(view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 4, y: 1 });
+    expect(plan.step(view, w.act)).toEqual({ code: "walk", dir: 6 });
+    expect(visited.has(FEAT.ALCHEMY)).toBe(false);
+  });
+
+  it("abandons a refused checked step without retrying it", () => {
+    const w = world({ map: ["#######", "#>@..A#", "#######"], player: { depth: 0, gold: 100 }, pack: [] });
+    const view: AgentView = { ...w.view, cell: (x, y) => {
+      const cell = w.view.cell(x, y);
+      return cell !== null && y === 1 && x === 3 ? { ...cell, known: false, inView: true } : cell;
+    } };
+    const visited = new Set<number>();
+    const plan = townTripPlan(w.terrain, null, visited);
+    expect(plan.step(view, w.act)?.code).toBe("walk");
+    expect(plan.step(view, w.act)).toBeNull();
+    expect(visited.has(FEAT.ALCHEMY)).toBe(true);
+    expect(plan.step(view, w.act)).toBeNull();
+  });
+
+  it("skips a disconnected alchemy shop and continues to the general store", () => {
+    const w = world({ map: ["#########", "#>@.G#A##", "#########"], player: { depth: 0, gold: 100 }, pack: [] });
+    const visited = new Set<number>();
+    const plan = townTripPlan(w.terrain, null, visited);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "hold" });
+    expect(visited.has(FEAT.ALCHEMY)).toBe(true);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+});

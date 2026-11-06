@@ -4,7 +4,9 @@ import type { AgentView, ItemView } from "../host-adapter.js";
 import type { Plan } from "../brain/brain.js";
 import { readPack } from "../brain/pack.js";
 import { PACK_LIMIT } from "../brain/items.js";
-import type { Loc } from "../grid.js";
+import { key, type Loc } from "../grid.js";
+import { flowFrom, stepDown } from "../flow.js";
+import { frontiers, isWalkable } from "../map.js";
 import { newProgress } from "../progress.js";
 import { defaultCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
@@ -103,11 +105,17 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
   const waited = new Map<number, number>();
   /* A buy, sale or withdrawal that left the pack and the gold untouched. */
   let pending: { feat: number; snapshot: string } | null = null;
+  const searched = new Set<string>();
+  const refusedSteps = new Set<string>();
+  let lastWalk: { from: string; to: string } | null = null;
+  let searchSteps = 0;
   return {
     label: "shop for supplies",
     step(view, act) {
       if (view.player().depth !== 0) return null;
       const at = view.player().grid;
+      if (lastWalk !== null && key(at) === lastWalk.from) refusedSteps.add(lastWalk.to);
+      lastWalk = null;
       const cell = view.cell(at.x, at.y);
       const current = strategy?.();
       const currentAims = current?.aims ?? aims;
@@ -234,6 +242,26 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         waited.delete(next.feat);
         return travel.command;
       }
+      if (travel.kind === "unreachable" && searchSteps < 100) {
+        /* Mapped shop doors can be disconnected from the streets remembered after a respawn. */
+        const enter = (grid: Loc) => {
+          const square = view.cell(grid.x, grid.y);
+          return square !== null && (square.known || square.inView) && square.passable && !square.trap &&
+            !terrain.isHarmful(square.feat) && !occupied(grid) && !refusedSteps.has(key(grid));
+        };
+        const direct = flowFrom({ goals: [next], canEnter: enter });
+        const candidates = frontiers(view, terrain).filter((grid) => !searched.has(`${String(next.feat)}:${key(grid)}`) && enter(grid));
+        searched.add(`${String(next.feat)}:${key(at)}`);
+        const field = Number.isFinite(direct.distance(at)) ? direct : flowFrom({ goals: candidates.filter((grid) => key(grid) !== key(at)), canEnter: enter });
+        const direction = stepDown(field, at, (grid) => enter(grid) && (isWalkable(view, terrain, grid) || view.cell(grid.x, grid.y)?.inView === true));
+        if (direction !== null) {
+          const to = { x: at.x + direction.dx, y: at.y + direction.dy };
+          lastWalk = { from: key(at), to: key(to) };
+          searchSteps += 1;
+          log(`shop: checking a passable route toward the ${next.name}`);
+          return act.move(direction.key);
+        }
+      }
       /* A townsperson in the only way through usually moves on within a few
        * turns, so the trip waits for it; one that stays, as Farmer Maggot can
        * when he follows the character, crosses that shop off for this visit. */
@@ -247,7 +275,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       }
       visited.add(next.feat);
       log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "still blocked, so it is skipped this visit"}`);
-      return null;
+      return neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory, homeMemory.current()).length > 0 ? act.hold() : null;
     },
   };
 }

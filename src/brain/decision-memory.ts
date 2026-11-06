@@ -73,7 +73,7 @@ function snapshot(view: AgentView) {
   };
 }
 
-export function createDecisionMemory() {
+export function createDecisionMemory(clock: () => number = Date.now) {
   let entries: RememberedDecision[] = [];
   let pending: RememberedDecision | null = null;
   let previous: ReturnType<typeof snapshot> | null = null;
@@ -83,7 +83,8 @@ export function createDecisionMemory() {
   let idleDecisions = 0;
   const experienceTurns = new Map<number, number>();
   let hunting = 0;
-  let refresh: { turn: number; hunting: number } | null = null;
+  let enteredAt = 0;
+  let refresh: { turn: number; hunting: number; at: number } | null = null;
   const cooling = new Map<Goal, { until: number; evidence: number }>();
 
   function reset(): void {
@@ -104,6 +105,7 @@ export function createDecisionMemory() {
     const now = snapshot(view);
     if (previous !== null && now.turn < previous.turn) reset();
     if (previous === null) progressTurn = now.turn;
+    if (previous === null || now.depth !== previous.depth) enteredAt = clock();
     const progress: DecisionProgress = previous === null ? emptyProgress() : {
       depth: Math.max(0, now.deepest - deepest),
       experience: Math.max(0, now.exp - previous.exp),
@@ -159,12 +161,12 @@ export function createDecisionMemory() {
     reset,
     canRefresh(view: AgentView, persona: Persona | null): boolean {
       observe(view);
-      return refresh === null || hunting > refresh.hunting && view.turn() - refresh.turn >= stuckThresholds(persona).cooldown;
+      return clock() - enteredAt >= 180000 && (refresh === null || clock() - refresh.at >= 180000 && hunting > refresh.hunting && view.turn() - refresh.turn >= stuckThresholds(persona).cooldown);
     },
     begin(goal: Goal, view: AgentView): void {
       finish(view);
       const player = view.player();
-      if (goal === "leave_level") refresh = { turn: view.turn(), hunting };
+      if (goal === "leave_level") refresh = { turn: view.turn(), hunting, at: clock() };
       pending = { goal, depth: player.depth, turn: view.turn(), region: `${String(Math.floor(player.grid.x / REGION_SIZE))},${String(Math.floor(player.grid.y / REGION_SIZE))}`, hpBefore: player.hp, hpAfter: player.hp, progress: emptyProgress() };
     },
     kill(view: AgentView): void {

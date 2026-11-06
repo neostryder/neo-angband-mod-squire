@@ -50,7 +50,16 @@ export function isClosedDoor(view: AgentView, terrain: Terrain, at: Loc): boolea
  * itself finished while standing in front of the way on.
  */
 export function isRoutable(view: AgentView, terrain: Terrain, at: Loc): boolean {
-  return (isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at)) && !besideParalysingGazer(view, at);
+  return (isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at)) && !besideParalysingGazer(view, at) &&
+    (!besideStationaryThreat(view, at) || steps(view.player().grid, at) === 0);
+}
+
+export function neverMoves(view: AgentView, monster: MonsterView): boolean {
+  return monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
+}
+
+export function besideStationaryThreat(view: AgentView, at: Loc): boolean {
+  return view.player().depth > 0 && view.player().level <= 5 && view.monsters().some((monster) => monster.visible && neverMoves(view, monster) && steps(monster.grid, at) <= 1);
 }
 
 export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {
@@ -111,7 +120,7 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
-      if (besideParalysingGazer(view, at)) continue;
+      if (besideParalysingGazer(view, at) || besideStationaryThreat(view, at)) continue;
       if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);
