@@ -2632,8 +2632,8 @@ describe("early experience and recovery", () => {
     expect(q.answers["goal"]).toMatchObject({ choice: expect.stringMatching(/^(leave_level|retreat|phase)$/) });
   });
 
-  it("cures poison before exploring even above the recovery line", () => {
-    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { depth: 1, level: 3, hp: 28, maxHp: 30, status: { poisoned: 5 } } });
+  it.each([0, 1])("cures poison before travel even above the recovery line on depth %i", (depth) => {
+    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { depth, level: 3, hp: 28, maxHp: 30, status: { poisoned: 5 } } });
     const q = reflexed(planner(w, true).p.ask(w.view));
     expect(q.answers["goal"]).toMatchObject({ choice: "heal" });
     expect(q.plan.step(w.view, w.act)?.code).toBe("quaff");
@@ -2660,6 +2660,69 @@ describe("early experience and recovery", () => {
   const sleeper = { id: 1, grid: { x: 5, y: 1 }, race: "giant white centipede", level: 1, hp: 2, maxHp: 2, asleep: true };
   const weakMage = { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 };
   const lore = () => "It can bite to hurt (1d1).";
+
+  it("keeps pursuing an awake weak target across decisions on an explored-out DL1", () => {
+    const w = suppliedWorld({ map: ["###########", "#<@......>#", "###########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 15, maxHp: 15 }, monsters: [{ ...sleeper, grid: { x: 8, y: 1 }, asleep: false }], monsterRecall: lore });
+    const p = planner(w, true).p;
+    for (let x = 2; x <= 7; x += 1) {
+      const q = reflexed(p.ask(w.view));
+      expect(q.answers["goal"]).toMatchObject({ choice: "fight" });
+      expect(offered(q)).not.toContain("leave_level");
+      expect(q.plan.step(w.view, w.act)).toEqual({ code: x < 7 ? "walk" : "melee", dir: 6 });
+      if (x < 7) w.moveTo({ x: x + 1, y: 1 });
+      w.advance(10);
+      expect(p.trigger(w.view, q.plan)).toBeNull();
+    }
+    w.setPlayer({ hp: 14 });
+    const hurt = reflexed(p.ask(w.view));
+    expect(hurt.answers["goal"]).toMatchObject({ choice: "fight" });
+    expect(hurt.plan.step(w.view, w.act)).toEqual({ code: "melee", dir: 6 });
+    w.setMonsters([]);
+    w.advance(10);
+    expect(hurt.plan.step(w.view, w.act)).toBeNull();
+    expect(offered(p.ask(w.view))).toContain("leave_level");
+  });
+
+  it("continues approaching its chosen sleeper when the target wakes", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....>#", "##########"], player: { ...weakMage, cls: "Rogue", hp: 15, maxHp: 15 }, monsters: [{ ...sleeper, grid: { x: 6, y: 1 } }], monsterRecall: lore });
+    const p = planner(w, true).p;
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "fight" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 3, y: 1 });
+    w.setMonsters([{ ...sleeper, grid: { x: 6, y: 1 }, asleep: false }]);
+    w.advance(10);
+    expect(p.trigger(w.view, q.plan)).toBeNull();
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps a reachable hunt available after a futile fight and explore cycle", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....>#", "##########"], player: { ...weakMage, cls: "Rogue", hp: 15, maxHp: 15 }, monsters: [{ ...sleeper, grid: { x: 6, y: 1 }, asleep: false }], monsterRecall: lore });
+    const memory = createDecisionMemory();
+    for (let i = 0; i < stuckThresholds(null).futile; i += 1) {
+      for (const goal of ["fight", "explore"] as const) {
+        memory.begin(goal, w.view);
+        w.advance(10);
+        memory.finish(w.view);
+      }
+    }
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, decisionMemory: memory });
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "fight" });
+    expect(offered(q)).not.toContain("leave_level");
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("abandons a committed hunt when health crosses the escape line", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....>#", "##########"], player: { ...weakMage, cls: "Rogue", hp: 15, maxHp: 15 }, monsters: [{ ...sleeper, grid: { x: 6, y: 1 }, asleep: false }], monsterRecall: lore });
+    const p = planner(w, true).p;
+    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "fight" });
+    w.setPlayer({ hp: 5 });
+    w.advance(10);
+    const q = reflexed(p.ask(w.view));
+    expect(q.reflex).toBe("below the persona's recovery line");
+    expect(q.answers["goal"]).not.toMatchObject({ choice: "fight" });
+  });
 
   it("throws oil at a visible weak sleeper for a 12-HP Mage before exploring", () => {
     const w = suppliedWorld({ map: CORRIDOR, player: weakMage, pack: ["5 Flasks of Oil"], monsters: [sleeper], monsterRecall: lore });

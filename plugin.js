@@ -5773,6 +5773,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false) {
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth, lastPersona).length === 0;
+      if (offer.goal === "descend" && player.depth === 0 && player.status.poisoned > 0) return false;
       if (offer.goal === "descend") return !recalling && (tripLight(view) || player.depth === 0 && town.earning) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && descentGaps(view, player.depth + 1, lastPersona).hard.length === 0);
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null && searchFor() !== "stay";
       if (offer.goal === "explore" && search()) return true;
@@ -5832,6 +5833,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false) {
       if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth, lastPersona).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
+        if (player.depth === 0 && player.status.poisoned > 0) return null;
         if (!(tripLight(view) || player.depth === 0 && town.earning) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1, lastPersona).hard.length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target, lastPersona);
       }
@@ -7511,6 +7513,11 @@ function manaSpend(mana, sp) {
   return { cost: 0.5, costNote: `${String(mana)} of ${String(sp)} mana (${shareBand(mana, sp)})` };
 }
 var FREE = { cost: 0, costNote: "nothing" };
+function safeHunt(s, persona, terrain) {
+  const player = s.view.player();
+  const target = s.target;
+  return target !== null && player.depth > 0 && (player.hp === player.maxHp || s.hunting === target.id && s.hpShare > escapeShare(persona, player.level)) && player.status.afraid === 0 && player.status.blind === 0 && player.status.confused === 0 && player.status.poisoned === 0 && player.status.cut === 0 && steps(player.grid, target.grid) <= Math.ceil(AUTOFIGHT_REACH * drive(persona)) && canReach(s.view, terrain, target.grid) && target.level <= player.level * (1 + drive(persona)) && !meleeBarred(s, target) && !target.raceFlags.some((flag) => flag === "UNIQUE" || flag === "MULTIPLY") && s.awake.every((monster) => monster.id === target.id) && s.unseenDamage === 0 && s.threats.every((monster) => monster.id === target.id || !monster.raceFlags.includes("MULTIPLY") && assessThreat(monster, player, s.awake, s.view, s.dreaded, terrain, s.speedEnergy).band <= 1) && assessThreat(target, player, s.awake, s.view, s.dreaded, terrain, s.speedEnergy).band <= 1 && damageFor(s).damage <= player.hp * (1 - escapeShare(persona, player.level)) && missingPreparation(s.view, player.depth + 1, persona).some((gap) => gap.kind === "level" || gap.kind === "hp");
+}
 function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ new Set(), triedStudies = /* @__PURE__ */ new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling = null, aims = [], feelings = [], flourishes = emptyFlourishes(), storeMemory, homeStock, exploreExhausted = false, shopAvailable = true) {
   const view = s.view;
   const player = view.player();
@@ -7519,6 +7526,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const out = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
+  const hunt = safeHunt(s, persona, terrain);
   const weakCaster = player.depth > 0 && ["Mage", "Necromancer", "Priest", "Druid"].includes(player.cls) && player.maxHp < Math.ceil(28 * (1 + 0.3 * (drive(null) - drive(persona))));
   const tieBreakKind = persona?.toggles.favouredWeapons === true ? flourishes.favouredKind : null;
   const add3 = (goal, criteria, risk, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp012(risk), survival, ...routine ? { routine: true } : {}, ...uncertain ? { uncertain: true } : {} });
@@ -7576,7 +7584,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (s.target !== null && (!s.target.asleep || s.hpShare >= escapeShare(persona, player.level))) {
     const adjacent2 = steps(at, s.target.grid) <= 1;
     const errand = townErrand(persona, player.depth, player.level) && !harmlessKind(s.target, view);
-    const walkUp = !adjacent2 && !weakCaster && !errand && fastUnique?.id !== s.target.id && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    const walkUp = !adjacent2 && !weakCaster && !errand && fastUnique?.id !== s.target.id && (!s.stationary.has(s.target.id) || hunt && !neverMoves(view, s.target)) && canReach(view, terrain, s.target.grid);
     if ((adjacent2 || walkUp) && player.status.afraid === 0 && melee !== void 0 && !meleeBarred(s, s.target)) {
       const away = steps(at, s.target.grid);
       const touch = hurtsOnTouch(view, s.target);
@@ -7825,6 +7833,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (take !== null) out.push(take);
   }
   return out.filter((offer) => {
+    if (offer.goal === "leave_level" && hunt) return false;
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
     if (offer.goal === "fight" && weakCaster && out.some((other) => other.goal !== "fight" && (classOf(other.goal) === "attack" || classOf(other.goal) === "escape") && (other.survival ?? 0) > 0)) return false;
     if (walksIntoDeath(s, terrain, offer.goal)) return false;
@@ -7955,6 +7964,7 @@ function createGoalPlanner(options) {
   const rememberedThreats = /* @__PURE__ */ new Map();
   let observed = null;
   let unseenHit = null;
+  let hunting = null;
   const hurtBy = /* @__PURE__ */ new Set();
   const contacts = /* @__PURE__ */ new Map();
   const disablers = /* @__PURE__ */ new Set();
@@ -8000,7 +8010,8 @@ function createGoalPlanner(options) {
     if (player.depth !== 0) townWalked.clear();
     else if (observe) townWalked.add(key(player.grid));
     const situation = situationOf(view, dreadedNow(), stationaryNow(view, update2), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy, (monster) => harmlessNow(view, monster), disablers);
-    return { ...situation, ...unseenHit === null ? {} : { unseenHit }, ...player.depth === 0 ? { townWalked } : {}, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
+    if (hunting !== null && (hunting.depth !== player.depth || situation.target?.id !== hunting.id || situation.target.race !== hunting.race)) hunting = null;
+    return { ...situation, ...hunting === null ? {} : { hunting: hunting.id }, ...unseenHit === null ? {} : { unseenHit }, ...player.depth === 0 ? { townWalked } : {}, breederExit: journey.breederExit(view), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   const stalled = /* @__PURE__ */ new Map();
   const sameTurn = /* @__PURE__ */ new Map();
@@ -8064,6 +8075,7 @@ function createGoalPlanner(options) {
     const travel = route === void 0 ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
     plan = journey.guarded(goal, plan);
     const chosenOn = gearOf(view);
+    const fightTarget = goal === "fight" ? situationNow(view).target?.id : void 0;
     if (goal !== null) {
       loops.chose(goal, view, nearDistance(goal, view));
       decisionMemory.begin(goal, view);
@@ -8167,7 +8179,7 @@ function createGoalPlanner(options) {
       if (health >= 0 && health < was.health) return `hit points fell to ${String(p.hp)} of ${String(p.maxHp)} (${healthBand(p.hp, p.maxHp)}).`;
       const landed = DANGER_STATUS.filter((name) => p.status[name] > 0 && !was.status.includes(name));
       if (landed.length > 0) return `the character is now ${landed.join(" and ")}.`;
-      const woke = v.monsters().find((m) => m.visible && !m.asleep && m.id !== was.struck && !was.awake.has(m.id) && !harmlessNow(v, m));
+      const woke = v.monsters().find((m) => m.visible && !m.asleep && m.id !== was.struck && m.id !== fightTarget && !was.awake.has(m.id) && !harmlessNow(v, m));
       if (woke !== void 0) return `the ${woke.race} is awake and in view.`;
       return null;
     };
@@ -8869,6 +8881,7 @@ function createGoalPlanner(options) {
     return held2;
   }
   function refreshHeld(offer, s, view, persona) {
+    if (offer.goal === "leave_level" && safeHunt(s, persona, terrain)) return true;
     if (offer.goal !== "leave_level" || view.player().depth === 0 || s.awake.length > 0 || s.unseenDamage > 0 || s.hpShare < escapeShare(persona, view.player().level) || view.player().status.afraid > 0 || supplyMargin(view, persona) !== null || badFeeling !== null && !lootOnlyFeeling(badFeeling)) return false;
     return s.target !== null || reachableFrontier(view, terrain) || !decisionMemory.canRefresh(view, persona);
   }
@@ -8892,10 +8905,13 @@ function createGoalPlanner(options) {
     if ((player.status.blind > 0 || player.status.poisoned > 0 || player.status.cut > 0) && offers.some((offer) => offer.goal === "heal" && (offer.survival ?? 0) > 0)) return { goal: "heal", why: "cure the condition before travel" };
     const target = s.target;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
-    const hunt = target !== null && player.depth > 0 && player.hp === player.maxHp && steps(player.grid, target.grid) <= Math.ceil(AUTOFIGHT_REACH * drive(persona)) && target.level <= player.level * (1 + drive(persona)) && !meleeBarred(s, target) && !target.raceFlags.some((flag) => flag === "UNIQUE" || flag === "MULTIPLY") && s.awake.every((monster) => monster.id === target.id) && s.unseenDamage === 0 && s.threats.every((monster) => monster.id === target.id || !monster.raceFlags.includes("MULTIPLY") && assessThreat(monster, player, s.awake, s.view, s.dreaded, terrain, s.speedEnergy).band <= 1) && assessThreat(target, player, s.awake, s.view, s.dreaded, terrain, s.speedEnergy).band <= 1 && missingPreparation(s.view, player.depth + 1, persona).some((gap) => gap.kind === "level" || gap.kind === "hp");
+    const hunt = safeHunt(s, persona, terrain);
     if (hunt) {
       const attack = offers.filter((offer) => classOf(offer.goal) === "attack" && offer.risk <= ceiling && (offer.survival ?? 0) > 0 && incoming <= player.hp * (1 - escapeShare(persona, player.level))).sort((a, b) => a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
-      if (attack !== void 0) return { goal: attack.goal, why: "safe experience in sight" };
+      if (attack !== void 0 && target !== null) {
+        hunting = { id: target.id, race: target.race, depth: player.depth };
+        return { goal: attack.goal, why: "safe experience in sight" };
+      }
     }
     const only = offers.length === 1 ? offers[0] : void 0;
     if (only !== void 0 && only.gaps === void 0) return { goal: only.goal, why: "the only option" };
@@ -8981,6 +8997,7 @@ function createGoalPlanner(options) {
       noteSeen(view);
       noteFeeling(view);
       const s = situationNow(view, true);
+      if (!safeHunt(s, persona, terrain)) hunting = null;
       const turn = view.turn();
       for (const [goal2, at] of stalled) if (at !== turn) stalled.delete(goal2);
       const here = whereNow(view);
@@ -9135,8 +9152,8 @@ function createGoalPlanner(options) {
         persona === null ? null : [riskCeiling(persona), persona.quirks.deathwish.on],
         flourishLines(flourishesNow(), persona)
       ]);
-      const quick = reflexFor(decisionMemory.withhold(offers, view, persona), persona, situation, turn, passes, s);
-      const reflex = quick !== null && loop !== null && quick.goal === loop.tactic ? null : quick;
+      const quick = reflexFor(safeHunt(s, persona, terrain) ? offers : decisionMemory.withhold(offers, view, persona), persona, situation, turn, passes, s);
+      const reflex = quick !== null && loop !== null && quick.goal === loop.tactic && quick.why !== "safe experience in sight" ? null : quick;
       if (reflex !== null) {
         log(`goal: ${reflex.goal}, without asking (${reflex.why})`);
         options.orders?.decided(reflex.goal, view);
