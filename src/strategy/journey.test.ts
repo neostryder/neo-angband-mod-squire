@@ -11,6 +11,25 @@ const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
 
 describe("stair reversal guards", () => {
+  it.each([1, 2])("blocks tactical DL2 commands at character level %i even beside an attacker", (level) => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1, level, maxLevel: level, hp: 13, maxHp: 13 },
+      monsters: [{ grid: { x: 5, y: 1 }, race: "Grip, Farmer Maggot's Dog", speed: 120, raceFlags: ["UNIQUE"] }] });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.stairCommand(w.view, w.act.descend())).toBeNull();
+    w.moveTo({ x: 1, y: 1 });
+    expect(journey.stairCommand(w.view, w.act.ascend())?.code).toBe("ascend");
+  });
+
+  it("keeps tactical descent behind the early maximum-HP floor", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 8, maxHp: 8 } });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.stairCommand(w.view, w.act.descend())).toBeNull();
+    w.setPlayer({ hp: 20, maxHp: 20 });
+    expect(journey.stairCommand(w.view, w.act.descend())?.code).toBe("descend");
+  });
+
   it("blocks the arrival stair even when a supply return is the only offer", () => {
     const w = suppliedWorld({ map: ROOM, player: { depth: 1, level: 5, maxLevel: 5 } });
     const journey = createJourney(w.terrain);
