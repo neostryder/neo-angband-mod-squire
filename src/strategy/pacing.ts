@@ -31,7 +31,7 @@ export function createLevelPacing() {
   const held = new Map<string, number>();
 
   return {
-    observe(view: AgentView, terrain?: Terrain): { readonly expired: boolean; readonly review: boolean; readonly fresh: boolean; readonly anchor: Loc } {
+    observe(view: AgentView, terrain?: Terrain): { readonly expired: boolean; readonly review: boolean; readonly fresh: boolean; readonly anchor: Loc; readonly known: number } {
       const player = view.player();
       const turn = view.turn();
       const feeling = view.messages().find((message) => arrivalFeeling([message])) ?? null;
@@ -81,7 +81,7 @@ export function createLevelPacing() {
       const expired = player.depth > 0 && (exhausted || turn - useful >= budget || turn - entered >= 4 * budget);
       const review = expired && !exhausted;
       exhausted = expired;
-      return { expired, review, fresh, anchor };
+      return { expired, review, fresh, anchor, known };
     },
   };
 }

@@ -14,6 +14,11 @@ import type { CombatUse } from "./combat-kit.js";
 /** The food counter's upper edge for the Hungry grade: grade 15 times food_value 100 (player_timed.txt). */
 export const HUNGRY_BELOW = 1500;
 
+/** Hunger damage is public status information, so it must not create an unseen attacker. */
+export function starvationDamage(view: AgentView): number {
+  return Math.max(0, Math.trunc((100 - view.player().status.food) / 10));
+}
+
 /** One item Squire can use, with how strong it is within its kind. */
 export interface PackItem {
   readonly handle: number;

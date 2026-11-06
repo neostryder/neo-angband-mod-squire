@@ -45,6 +45,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -111,6 +112,7 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -167,6 +169,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -225,6 +228,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -282,6 +286,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -346,6 +351,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -401,6 +407,7 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -456,6 +463,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -510,6 +518,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -565,6 +574,7 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 10,
     "turnsWithoutExperience": 10,
@@ -623,6 +633,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
@@ -674,6 +685,7 @@ exports[`decision context > compiles town with a full pack into layers and the s
   "stuck": {
     "cooling": [],
     "decisionsSinceProgress": 0,
+    "recent": [],
     "repeated": [],
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,

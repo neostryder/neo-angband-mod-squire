@@ -3,6 +3,7 @@ import { key, neighbours, steps, type Loc } from "../grid.js";
 import type { Terrain } from "../terrain.js";
 import { shownName } from "../town/needs.js";
 import type { CastableSpell } from "./pack.js";
+import { starvationDamage } from "./pack.js";
 
 export const THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"] as const;
 export type ThreatBand = (typeof THREAT_BANDS)[number];
@@ -302,7 +303,7 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
   const monsters = facts.monsters ?? view.monsters().filter((m) => m.visible);
   const occupied = new Map<string, number>();
   const ticks = Math.ceil(actions * 10 / energyBounds(player.speed, facts.energy).low);
-  const statusDamage = facts.creaturesOnly === true ? 0 : ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0));
+  const statusDamage = facts.creaturesOnly === true ? 0 : ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0) + starvationDamage(view));
   const unseen = facts.unseenHit === undefined ? facts.unseenDamage ?? 0 : unseenDamageAt(facts.unseenHit, at, view.turn());
   let damage = unseen * actions + statusDamage;
   let status = 0;

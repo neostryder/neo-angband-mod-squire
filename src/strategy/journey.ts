@@ -31,6 +31,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   const pacing = createLevelPacing();
   const departure = createDeparture();
   let returnReason: string | null = null;
+  let returnStock: ReturnType<typeof supplies> | null = null;
+  let returnDepth = -1;
   /* Set when the persona chose the trip home; the margin did not force it. */
   let chosenReturn = false;
   let previousHp: number | null = null;
@@ -63,6 +65,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   const jammed = new Set<string>();
   let obstacle: { grid: Loc; turn: number; code: string } | null = null;
   let darkStep: { from: Loc; to: Loc; turn: number } | null = null;
+  const exploredFrom = new Map<string, { surroundings: string; visits: number }>();
+  let explorationAt: { turn: number; grid: string } | null = null;
+  let explorationKnown = 0;
+  let explorationGoal: Loc | null = null;
+  const abandonedFrontiers = new Set<string>();
 
   function depthMinutes(view: AgentView): number {
     const player = view.player();
@@ -137,6 +144,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const turn = view.turn();
     depthMinutes(view);
     const state = pacing.observe(view, terrain);
+    if (state.fresh || state.known > explorationKnown) {
+      exploredFrom.clear();
+      abandonedFrontiers.clear();
+      explorationAt = null;
+    }
+    if (state.fresh) explorationGoal = null;
+    explorationKnown = state.known;
     if (turn < lastTurn) refresh = null;
     if (refresh !== null && player.depth !== (refresh.arrived ? refresh.depth - 1 : refresh.depth)) {
       if (!refresh.arrived && player.depth === refresh.depth - 1) refresh.arrived = true;
@@ -152,6 +166,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       obstacle = null;
       gazers.clear();
       darkStep = null;
+      exploredFrom.clear();
+      explorationAt = null;
       if (turn < lastTurn) {
         returnReason = null;
         chosenReturn = false;
@@ -191,21 +207,27 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       returnReason = null;
       chosenReturn = false;
     }
-    if ((chosenReturn || returnReason === "healing and Phase Door") && returnMargin(view) === null) {
+    const stock = returnReason === null ? null : supplies(view);
+    const replenished = stock !== null && returnStock !== null && (
+      returnReason === "food" && stock.food > returnStock.food ||
+      returnReason === "healing" && stock.cures > returnStock.cures ||
+      returnReason === "Phase Door" && stock.phase > returnStock.phase ||
+      returnReason === "long escapes" && stock.escapes > returnStock.escapes ||
+      returnReason === "healing and Phase Door" && (stock.cures > returnStock.cures || stock.phase > returnStock.phase) ||
+      returnReason === "light and fuel" && (stock.fuel > returnStock.fuel || stock.workingLight && !returnStock.workingLight || stock.lastingLight && !returnStock.lastingLight));
+    if ((chosenReturn || replenished || returnReason === "healing and Phase Door" && player.depth === returnDepth) && returnMargin(view) === null) {
       returnReason = null;
       chosenReturn = false;
     }
     for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
     for (const [id, entry] of remembered) if (!live.has(id) || entry.until < turn) remembered.delete(id);
-    if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && !standingOnHarm(view, terrain, player.grid) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
+    if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && previousHp - player.hp > incomingDamage(view, player.grid, 2, terrain, { monsters: [] }).damage && !standingOnHarm(view, terrain, player.grid) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
     departure.observe(view, terrain);
     if (shallowDiveReady(view, player.depth + 1, lastPersona)) {
       departure.end();
-      returnReason = null;
-      chosenReturn = false;
     }
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= returnMargin(view);
@@ -215,6 +237,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     }
     expired = state.expired;
     anchor = state.anchor;
+    if (returnReason === null) {
+      returnStock = null;
+      returnDepth = -1;
+    } else if (returnStock === null) {
+      returnStock = supplies(view);
+      returnDepth = player.depth;
+    }
   }
 
   function safeDelay(view: AgentView, recoveringStatus = false): boolean {
@@ -394,7 +423,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
     if (refreshReturn(view)) return [{ goal: "descend", criteria: "Return immediately down the connected staircase to finish the depth-preserving refresh.", risk: 0, survival: player.hp }];
-    if (!recalling && !breederLevel && shallowDiveReady(view, player.depth + 1, persona) && offers.some((offer) => offer.goal === "descend") && checkedRoute(view, knownDownStairs(view, terrain)) !== null) {
+    if (!recalling && !home && !breederLevel && shallowDiveReady(view, player.depth + 1, persona) && offers.some((offer) => offer.goal === "descend") && checkedRoute(view, knownDownStairs(view, terrain)) !== null) {
       return offers.filter((offer) => offer.goal === "descend");
     }
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
@@ -497,6 +526,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth, lastPersona).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
+        if (returnReason !== null) return null;
         if (player.depth === 0 && player.status.poisoned > 0) return null;
         if (!(tripLight(view) || player.depth === 0 && town.earning) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1, lastPersona).hard.length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target, lastPersona);
@@ -560,15 +590,45 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       const cell = view.cell(grid.x, grid.y);
       return cell !== null && !cell.known && !blockedDark.has(key(grid)) && (!insideLeash || allowed(grid)) && !gazeReach(view, grid);
     });
-    const goals = [...frontiers(view, terrain), ...obstacleFrontiers(view)].filter((grid) => allowed(grid) && !gazeReach(view, grid) &&
+    const goals = [...frontiers(view, terrain), ...obstacleFrontiers(view)].filter((grid) => allowed(grid) && !gazeReach(view, grid) && !abandonedFrontiers.has(key(grid)) && !exhaustedFrontier(view, grid) &&
       dark(grid, key(grid) === key(at)) !== undefined);
-    if (goals.some((grid) => key(grid) === key(at))) return dark(at) ?? null;
+    if (goals.some((grid) => key(grid) === key(at))) {
+      explorationGoal = at;
+      return dark(at) ?? null;
+    }
     /* A phase or retreat can leave the character outside the leash. The return
      * route must cross that ground to reach a frontier inside it. */
     const returning = !allowed(at);
-    const field = flowFrom({ goals, canEnter: (grid) => (isRoutable(view, terrain, grid) || diggableObstacle(view, grid)) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) && (returning || allowed(grid)) });
+    if (!goals.some((grid) => explorationGoal !== null && key(grid) === key(explorationGoal))) explorationGoal = null;
+    const enter = (grid: Loc) => (isRoutable(view, terrain, grid) || diggableObstacle(view, grid)) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) && (returning || allowed(grid));
+    let field = flowFrom({ goals: explorationGoal === null ? goals : [explorationGoal], canEnter: enter });
+    if (explorationGoal !== null && !Number.isFinite(field.distance(at))) {
+      explorationGoal = null;
+      field = flowFrom({ goals, canEnter: enter });
+    }
+    if (explorationGoal === null && Number.isFinite(field.distance(at))) {
+      let target = at;
+      for (let distance = field.distance(at); distance > 0; distance -= 1) {
+        const next = stepDown(field, target, () => true);
+        if (next === null) break;
+        target = { x: target.x + next.dx, y: target.y + next.dy };
+      }
+      explorationGoal = target;
+    }
     const direction = stepDown(field, at, (grid) => (isWalkable(view, terrain, grid) || diggableObstacle(view, grid) && !view.monsters().some((monster) => monster.visible && key(monster.grid) === key(grid))) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) && (returning || allowed(grid)));
     return direction === null ? null : { x: at.x + direction.dx, y: at.y + direction.dy };
+  }
+
+  function surroundings(view: AgentView, grid: Loc): string {
+    return [grid, ...DIRECTIONS.map((dir) => ({ x: grid.x + dir.dx, y: grid.y + dir.dy }))].map((at) => {
+      const cell = view.cell(at.x, at.y);
+      return cell?.known === true ? String(cell.feat) : "?";
+    }).join(",");
+  }
+
+  function exhaustedFrontier(view: AgentView, grid: Loc): boolean {
+    const visit = exploredFrom.get(key(grid));
+    return visit !== undefined && visit.visits >= 3 && visit.surroundings === surroundings(view, grid);
   }
 
   function diggableObstacle(view: AgentView, grid: Loc): boolean {
@@ -605,6 +665,24 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
     }
     const at = ctx.view.player().grid;
+    const turn = ctx.view.turn();
+    const workingObstacle = DIRECTIONS.some((dir) => {
+      const grid = { x: at.x + dir.dx, y: at.y + dir.dy };
+      const attempts = obstacleAttempts.get(key(grid)) ?? 0;
+      return attempts > 0 && attempts < 3 && (isClosedDoor(ctx.view, terrain, grid) || diggableObstacle(ctx.view, grid));
+    });
+    if (!workingObstacle && (explorationAt === null || explorationAt.turn !== turn || explorationAt.grid !== key(at))) {
+      /* Reaching the same frontier without learning its surroundings must not restart an endless walk. */
+      const seen = surroundings(ctx.view, at);
+      const visit = exploredFrom.get(key(at));
+      exploredFrom.set(key(at), { surroundings: seen, visits: visit?.surroundings === seen ? visit.visits + 1 : 1 });
+      explorationAt = { turn, grid: key(at) };
+      if (exhaustedFrontier(ctx.view, at) && explorationGoal !== null && key(explorationGoal) !== key(at)) {
+        abandonedFrontiers.add(key(explorationGoal));
+        explorationGoal = null;
+        exploredFrom.clear();
+      }
+    }
     const next = explorationStep(ctx.view, wide);
     if (next === null) return null;
     const direction = DIRECTIONS.find((dir) => at.x + dir.dx === next.x && at.y + dir.dy === next.y)!;

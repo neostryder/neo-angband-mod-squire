@@ -10,6 +10,61 @@ import { createJourney } from "./journey.js";
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
 
+describe("corpus journey regressions", () => {
+  it("keeps its exploration frontier when another becomes closer between commands", () => {
+    const w = suppliedWorld({ map: ["###########", "#,....@..,#", "###########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 4, y: 1 });
+    w.advance(10);
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps a supply return through a shallower early-dive level", () => {
+    const w = world({ map: ROOM, player: { cls: "Warrior", depth: 4, maxDepth: 4, hp: 60, maxHp: 60 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "2 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 1, y: 1 });
+    expect(goals(w, journey, false, offers("leave_level"))).toEqual(["leave_level"]);
+    expect(journey.guarded("leave_level", { label: "return", step: () => null }).step(w.view, w.act)).toEqual({ code: "ascend" });
+    w.advance(10);
+    w.setPlayer({ depth: 3 });
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.refreshReturn(w.view)).toBe(false);
+    expect(goals(w, journey, false, offers("descend", "leave_level", "explore"))).not.toContain("descend");
+    expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+    expect(journey.blocked(w.view)).toContain("needs town for food");
+  });
+
+  it("exhausts a repeatedly visited frontier across plans and reopens it when terrain changes", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@.,,#", "########"] });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 4, y: 1 });
+    for (let visit = 0; visit < 2; visit += 1) {
+      const ctx = { view: w.view, act: w.act, progress: newProgress(1) } as Parameters<typeof journey.explore>[0];
+      expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 6 });
+      w.advance(10);
+    }
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true)).toBeNull();
+    expect(journey.canExplore(w.view, true)).toBe(false);
+    w.reveal({ x: 5, y: 1 });
+    expect(journey.canExplore(w.view, true)).toBe(true);
+    w.setPlayer({ depth: 2 });
+    expect(journey.canExplore(w.view, true)).toBe(true);
+  });
+
+  it("keeps transit through an exhausted frontier available for a checked stair route", () => {
+    const w = suppliedWorld({ map: ["#########", "#<.@.,.>#", "#########"] });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 4, y: 1 });
+    for (let visit = 0; visit < 3; visit += 1) {
+      journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true);
+      w.advance(10);
+    }
+    expect(journey.checkedRoute(w.view, [{ x: 1, y: 1 }])).not.toBeNull();
+  });
+});
+
 function offers(...goals: Goal[]): Offer[] {
   return goals.map((goal) => ({ goal, criteria: goal, risk: 0.02 }));
 }
@@ -1060,7 +1115,7 @@ it("clears an old food return when a shallow diver replenishes the trip supplies
 
 describe("shallow dive priority", () => {
   it.each([1, 2, 3, 4])("keeps only descend when a ready DL%i dive has a checked route", (depth) => {
-    const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, hp: 32, maxHp: 40, sp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }], pack: ["2 Rations of Food"] });
+    const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, hp: 32, maxHp: 40, sp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }], pack: depth === 4 ? ["4 Rations of Food", "a Potion of Cure Light Wounds"] : ["2 Rations of Food"] });
     const journey = createJourney(w.terrain);
     const out = journey.apply(offers("explore", "rest", "pick_up", "wear", "shop", "fetch", "wait", "descend"), w.view, null, new Set(), false);
     expect(out.map((offer) => offer.goal)).toEqual(["descend"]);

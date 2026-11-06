@@ -170,6 +170,7 @@ export function shallowDiveChecks(view: AgentView, persona: Persona | null = nul
     food: stock.food,
     hungry: hungry(view),
     statusReady: earlyDescentReady(view, 0, 0.8),
+    arrivalSupplies: player.depth < 4 || stock.food >= 4 && stock.cures >= 1 && (stock.lastingLight || stock.fuel >= 2),
   };
 }
 
@@ -177,7 +178,7 @@ export function shallowDiveReady(view: AgentView, depth = view.player().depth + 
   const player = view.player();
   if (player.depth < 1 || player.depth > 4 || depth !== player.depth + 1) return false;
   const checks = shallowDiveChecks(view, persona);
-  return checks.ranged && checks.statusReady && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry;
+  return checks.ranged && checks.statusReady && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry && checks.arrivalSupplies;
 }
 
 /** The actual destination is checked even when the command starts in town. */
@@ -340,8 +341,8 @@ export function supplyMargin(view: AgentView, persona: Persona | null = null): s
     const reserve = Math.max(1, Math.ceil(2 * (1 - drive(persona))));
     return stock.cures < reserve && stock.phase < reserve ? "healing and Phase Door" : null;
   }
-  if (stock.cures < (player.depth >= 10 ? 4 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (player.depth >= 6 && stock.phase < 2) return "Phase Door";
-  if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
+  if (stock.cures < (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
+  if (player.depth >= 6 && stock.phase < 1) return "Phase Door";
+  if (player.depth >= 10 && stock.escapes < 2) return "long escapes";
   return null;
 }

@@ -6,6 +6,16 @@ import { assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, know
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 
+describe("starvation attribution", () => {
+  it.each([[100, 0], [90, 1], [50, 5], [0, 10]])("prices food %i as %i known damage per action", (food, damage) => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { status: { food } } });
+    expect(incomingDamage(w.view).damage).toBe(damage);
+    expect(incomingDamage(w.view, w.at(), 2).damage).toBe(2 * damage);
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain, { creaturesOnly: true }).damage).toBe(0);
+    expect(incomingDamage(w.view).uncertainty).toBe(0);
+  });
+});
+
 describe("breeder damage evidence", () => {
   it("uses observed one-point blows rather than the unknown-attack ceiling", () => {
     const w = world({ map: ["######", "#.@..#", "######"], player: { hp: 60, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, race: "giant white louse", level: 1, raceFlags: ["MULTIPLY"] }] });
