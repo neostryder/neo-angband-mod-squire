@@ -47,6 +47,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "take_position",
     ],
@@ -112,6 +113,7 @@ exports[`decision context > compiles a cautious persona with lessons into layers
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "descend",
     ],
@@ -167,6 +169,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "step_aside",
     ],
@@ -210,7 +213,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
 {
   "character": "Level 5 (novice) Human Mage, on dungeon level 2 (shallow); deepest reached 1 (shallow).",
   "creatures": "kobold: an easy kill, 4 steps away (near)",
-  "gaps": "For dungeon level 3 (shallow) the character still lacks: maximum character level 11.",
+  "gaps": "The character is prepared for dungeon level 3 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -224,9 +227,11 @@ exports[`decision context > compiles a mage with spells and mana into layers and
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
       "cast_attack",
+      "descend",
     ],
   },
 }
@@ -279,6 +284,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
       "descend",
@@ -343,6 +349,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
       "descend",
@@ -397,6 +404,7 @@ exports[`decision context > compiles a sleeping monster into layers and the same
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
       "descend",
@@ -451,6 +459,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "descend",
     ],
@@ -504,6 +513,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
       "retreat",
@@ -559,6 +569,7 @@ exports[`decision context > compiles an unseen attacker into layers and the same
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 10,
+    "turnsWithoutExperience": 10,
     "untried": [
       "heal",
       "leave_level",
@@ -605,7 +616,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 3 (shallow); deepest reached 1 (shallow).",
   "creatures": "Grip, Farmer Maggot's Dog: a fair fight, 2 steps away (close)",
-  "gaps": "For dungeon level 4 (shallow) the character still lacks: 50 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
+  "gaps": "For dungeon level 4 (shallow) the character still lacks: working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
   "ground": "Safe ground.",
   "health": "near death: 6 of 30 hit points",
   "incoming": "Up to 1 HP damage in one action (under a quarter of current HP) and 16 in two (enough to kill). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -617,6 +628,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "fight",
     ],
@@ -667,6 +679,7 @@ exports[`decision context > compiles town with a full pack into layers and the s
     "decisionsSinceProgress": 0,
     "repeated": [],
     "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
     "untried": [
       "descend",
     ],

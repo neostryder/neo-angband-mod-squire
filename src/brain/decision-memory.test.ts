@@ -22,6 +22,34 @@ function offer(goal: Goal): Offer {
 }
 
 describe("decision memory", () => {
+  it("keeps an XP drought through healing and revisits, and clears it on XP", () => {
+    const { w, memory } = rig();
+    w.setPlayer({ hp: 59 });
+    memory.observe(w.view);
+    w.advance(500);
+    w.setPlayer({ hp: 60 });
+    expect(memory.facts(w.view, null).turnsWithoutExperience).toBe(500);
+    w.setPlayer({ depth: 0 });
+    memory.observe(w.view);
+    w.setPlayer({ depth: 1 });
+    expect(memory.facts(w.view, null).turnsWithoutExperience).toBe(500);
+    w.setPlayer({ exp: w.view.player().exp + 1 });
+    expect(memory.facts(w.view, null).turnsWithoutExperience).toBe(0);
+  });
+
+  it("requires hunting and the persona cooldown between refresh attempts", () => {
+    const { w, memory, decide } = rig();
+    expect(memory.canRefresh(w.view, null)).toBe(true);
+    decide("leave_level");
+    w.advance(stuckThresholds(null).cooldown);
+    expect(memory.canRefresh(w.view, null)).toBe(false);
+    w.setPlayer({ exp: w.view.player().exp + 1 });
+    expect(memory.canRefresh(w.view, null)).toBe(true);
+    decide("leave_level");
+    w.setPlayer({ exp: w.view.player().exp + 1 });
+    expect(memory.canRefresh(w.view, null)).toBe(false);
+  });
+
   it("keeps a bounded record with depth, game turn, coarse position and hit points", () => {
     const { w, memory, decide } = rig();
     for (let i = 0; i < DECISION_MEMORY_SIZE + 1; i++) decide("step_aside");
@@ -67,7 +95,7 @@ describe("decision memory", () => {
     const count = stuckThresholds(null).repeat;
     for (let i = 0; i < count; i++) decide("step_aside");
     expect(memory.facts(w.view, null, ["step_aside", "explore"])).toEqual({
-      repeated: [{ cycle: ["step_aside"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10, untried: ["explore"], cooling: [],
+      repeated: [{ cycle: ["step_aside"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10, turnsWithoutExperience: count * 10, untried: ["explore"], cooling: [],
     });
   });
 

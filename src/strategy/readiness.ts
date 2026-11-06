@@ -90,8 +90,8 @@ export function supplies(view: AgentView): Supplies {
 }
 
 /**
- * A planned trip down (a descent or a dungeon Recall) never starts without a lasting light, or a
- * working light and one spare unit of fuel, whatever the persona or a widened choice allows.
+ * A prepared trip down requires lasting light or working light with spare fuel.
+ * The departure guard also permits a bounded earning trip with enough current fuel.
  * Escapes are not trips: a staircase taken to survive is never held back by it.
  */
 export function tripLight(view: AgentView): boolean {
@@ -119,10 +119,10 @@ function classFloor(cls: string, depth: number, persona: Persona | null): readon
     return [Math.ceil(hp * (1 + drive(null) - drive(persona))), 2];
   }
   if (depth < 5) {
-    if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
-    if (cls === "Rogue") return [50, 8];
-    if (["Priest", "Druid"].includes(cls)) return [40, 9];
-    return [60, 11];
+    const martial = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls);
+    const hp = martial ? 30 : cls === "Rogue" ? 26 : 22;
+    const scale = 1 + drive(null) - drive(persona);
+    return [Math.ceil(hp * scale), Math.max(depth, Math.ceil((martial ? 3 : 4) * scale))];
   }
   if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
   if (cls === "Rogue") return [60, 10];
@@ -207,10 +207,14 @@ export function descentGaps(view: AgentView, depth: number, persona: Persona | n
 
 /**
  * How sure the model must be that the character is ready before it goes down with soft gaps.
- * 0.52 for the default persona; a driven persona accepts less, a cautious one asks more.
+ * Early stagnation lowers the bar while the survival checks still apply.
  */
-export function readinessThreshold(persona: Persona | null): number {
-  return Math.min(0.85, Math.max(0.3, 0.8 - 0.6 * drive(persona)));
+export function readinessThreshold(persona: Persona | null, depth = 5, turnsWithoutExperience = 0): number {
+  const urgency = drive(persona);
+  const base = Math.min(0.85, Math.max(0.3, 0.8 - 0.6 * urgency));
+  if (depth >= 5) return base;
+  const minimum = 0.2 + 0.1 * (1 - urgency);
+  return Math.max(minimum, base - 0.1 * urgency - turnsWithoutExperience / (2000 * (2 - urgency)));
 }
 
 /** One sentence on what the next level down still asks for, for the purpose layer. */
@@ -218,8 +222,10 @@ export function gapFacts(view: AgentView, persona: Persona | null = null): strin
   const depth = view.player().depth + 1;
   const gaps = missingPreparation(view, depth, persona);
   if (depth <= 1) return undefined;
-  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)} (${depthBand(depth)}).`;
-  return `For dungeon level ${String(depth)} (${depthBand(depth)}) the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;
+  const phase = persona !== null && depth < 6 && supplies(view).phase === 0
+    ? ` Optional escape warning: this persona wants ${String(Math.max(1, Math.ceil(persona.sliders.escapes / 50)))} Phase Door scrolls, but carries none.` : "";
+  if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)} (${depthBand(depth)}).${phase}`;
+  return `For dungeon level ${String(depth)} (${depthBand(depth)}) the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.${phase}`;
 }
 
 /**
@@ -271,7 +277,7 @@ export function supplyMargin(view: AgentView): string | null {
   if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
   if (player.depth <= 2) return null;
   if (stock.cures < (player.depth >= 10 ? 4 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (stock.phase < (player.depth >= 6 ? 2 : 1)) return "Phase Door";
+  if (player.depth >= 6 && stock.phase < 2) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";
   return null;
 }

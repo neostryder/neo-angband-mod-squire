@@ -8,6 +8,22 @@ import { archetype } from "../persona/persona.js";
 const ROOM = ["#####", "#<@>#", "#####"];
 
 describe("prepared depths", () => {
+  it("lowers the early readiness bar during an XP drought and retains a survival minimum", () => {
+    const bold = archetype("berserker");
+    const cautious = archetype("coward");
+    expect(readinessThreshold(null, 2, 500)).toBeLessThan(readinessThreshold(null, 2));
+    expect(readinessThreshold(bold, 2, 100000)).toBeGreaterThanOrEqual(0.2);
+    expect(readinessThreshold(cautious, 2, 100000)).toBeGreaterThan(readinessThreshold(bold, 2, 100000));
+    expect(readinessThreshold(null, 5, 100000)).toBe(readinessThreshold(null, 5));
+  });
+
+  it("scales depth 3 class floors with drive and admits a healthy level 4 Rogue", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Rogue", depth: 2, level: 4, maxLevel: 4, hp: 65, maxHp: 65 } });
+    expect(missingPreparation(w.view, 3)).toEqual([]);
+    expect(missingPreparation(w.view, 3, archetype("berserker"))).toEqual([]);
+    expect(missingPreparation(w.view, 3, archetype("coward")).some((gap) => gap.kind === "level")).toBe(true);
+  });
+
   it.each([2, 3])("keeps a level floor for the level 1 Warrior at depth %i", (depth) => {
     const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", level: 1, maxLevel: 1, hp: 20, maxHp: 20 } });
     expect(missingPreparation(w.view, depth).map((need) => need.kind)).toEqual(depth === 2 ? ["level"] : ["level", "hp"]);
@@ -39,9 +55,9 @@ describe("prepared depths", () => {
   });
 
   it.each([
-    ["Warrior", 50, 4], ["Blackguard", 50, 4], ["Rogue", 50, 8],
-    ["Priest", 40, 9], ["Druid", 40, 9], ["Paladin", 50, 4],
-    ["Ranger", 50, 4], ["Mage", 60, 11], ["Necromancer", 60, 11],
+    ["Warrior", 30, 3], ["Blackguard", 30, 3], ["Rogue", 26, 4],
+    ["Priest", 22, 4], ["Druid", 22, 4], ["Paladin", 30, 3],
+    ["Ranger", 30, 3], ["Mage", 22, 4], ["Necromancer", 22, 4],
   ] as const)("uses the depth 3 class floor for %s", (cls, maxHp, maxLevel) => {
     const w = suppliedWorld({ map: ROOM, player: { cls, level: 1, maxLevel, maxHp, hp: maxHp } });
     expect(missingPreparation(w.view, 3)).toEqual([]);
@@ -258,7 +274,7 @@ describe("supply evidence and margins", () => {
     w.setPack([...(cures > 0 ? [`${String(cures)} Potions of Cure Light Wounds`] : []), `${String(phase + 1)} Scrolls of Phase Door`, ...rest]);
     expect(supplyMargin(w.view)).toBe("healing");
     w.setPack([`${String(cures + 1)} Potions of Cure Light Wounds`, ...(phase > 0 ? [`${String(phase)} Scrolls of Phase Door`] : []), ...rest]);
-    expect(supplyMargin(w.view)).toBe("Phase Door");
+    expect(supplyMargin(w.view)).toBe(depth < 6 ? null : "Phase Door");
   });
 });
 

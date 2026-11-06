@@ -47,6 +47,7 @@ export interface StuckFacts {
   readonly repeated: readonly StuckSignal[];
   readonly decisionsSinceProgress: number;
   readonly turnsSinceProgress: number;
+  readonly turnsWithoutExperience: number;
   readonly untried: readonly Goal[];
   readonly cooling: readonly { readonly goal: Goal; readonly until: number }[];
 }
@@ -80,6 +81,9 @@ export function createDecisionMemory() {
   const known = new Map<number, number>();
   let progressTurn = 0;
   let idleDecisions = 0;
+  const experienceTurns = new Map<number, number>();
+  let hunting = 0;
+  let refresh: { turn: number; hunting: number } | null = null;
   const cooling = new Map<Goal, { until: number; evidence: number }>();
 
   function reset(): void {
@@ -91,6 +95,9 @@ export function createDecisionMemory() {
     progressTurn = 0;
     idleDecisions = 0;
     cooling.clear();
+    experienceTurns.clear();
+    hunting = 0;
+    refresh = null;
   }
 
   function observe(view: AgentView): void {
@@ -107,6 +114,8 @@ export function createDecisionMemory() {
       recovery: Math.max(0, now.hp - previous.hp) + Math.max(0, now.sp - previous.sp),
       damage: now.depth !== previous.depth ? 0 : [...now.foes].reduce((sum, [id, hp]) => sum + Math.max(0, (previous!.foes.get(id) ?? hp) - hp), 0),
     };
+    if (!experienceTurns.has(now.depth) || progress.experience > 0) experienceTurns.set(now.depth, now.turn);
+    if (progress.experience > 0 || progress.damage > 0) hunting += 1;
     deepest = Math.max(deepest, now.deepest);
     known.set(now.depth, Math.max(known.get(now.depth) ?? 0, now.cells));
     previous = now;
@@ -148,15 +157,22 @@ export function createDecisionMemory() {
     observe,
     finish,
     reset,
+    canRefresh(view: AgentView, persona: Persona | null): boolean {
+      observe(view);
+      return refresh === null || hunting > refresh.hunting && view.turn() - refresh.turn >= stuckThresholds(persona).cooldown;
+    },
     begin(goal: Goal, view: AgentView): void {
       finish(view);
       const player = view.player();
+      if (goal === "leave_level") refresh = { turn: view.turn(), hunting };
       pending = { goal, depth: player.depth, turn: view.turn(), region: `${String(Math.floor(player.grid.x / REGION_SIZE))},${String(Math.floor(player.grid.y / REGION_SIZE))}`, hpBefore: player.hp, hpAfter: player.hp, progress: emptyProgress() };
     },
     kill(view: AgentView): void {
       observe(view);
       if (pending !== null) pending = { ...pending, progress: { ...pending.progress, kills: pending.progress.kills + 1 } };
       progressTurn = view.turn();
+      experienceTurns.set(view.player().depth, view.turn());
+      hunting += 1;
       idleDecisions = 0;
       cooling.clear();
     },
@@ -167,6 +183,7 @@ export function createDecisionMemory() {
       observe(view);
       return {
         repeated: signals(persona), decisionsSinceProgress: idleDecisions, turnsSinceProgress: Math.max(0, view.turn() - progressTurn),
+        turnsWithoutExperience: Math.max(0, view.turn() - (experienceTurns.get(view.player().depth) ?? view.turn())),
         untried: candidates.filter((goal) => idleDecisions === 0 || !entries.slice(-idleDecisions).some((entry) => entry.goal === goal)),
         cooling: [...cooling].filter(([, hold]) => hold.until > view.turn()).map(([goal, hold]) => ({ goal, until: hold.until })),
       };
