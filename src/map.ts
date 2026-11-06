@@ -70,21 +70,28 @@ export function neverMoves(view: AgentView, monster: MonsterView): boolean {
  */
 interface Hazards {
   readonly turn: number;
-  readonly at: Loc;
-  readonly freeAct: boolean;
+  readonly epoch: number;
+  readonly shallowWeak: boolean;
   readonly stationary: readonly Loc[];
   readonly gazers: readonly Loc[];
 }
 
 const hazardCache = new WeakMap<object, Hazards>();
+let hazardEpoch = 0;
+
+/**
+ * Forget every kept hazard answer. A real view never changes, so this is for a
+ * test world that edits the one view object in place.
+ */
+export function invalidateHazards(): void {
+  hazardEpoch++;
+}
 
 function hazardsOf(view: AgentView): Hazards {
   const turn = view.turn();
-  const player = view.player();
-  const me = player.grid;
-  const freeAct = player.objectFlags.includes("FREE_ACT");
   const kept = hazardCache.get(view);
-  if (kept !== undefined && kept.turn === turn && kept.at.x === me.x && kept.at.y === me.y && kept.freeAct === freeAct) return kept;
+  if (kept !== undefined && kept.turn === turn && kept.epoch === hazardEpoch) return kept;
+  const player = view.player();
   const stationary: Loc[] = [];
   const gazers: Loc[] = [];
   for (const monster of view.monsters()) {
@@ -92,15 +99,14 @@ function hazardsOf(view: AgentView): Hazards {
     if (neverMoves(view, monster)) stationary.push(monster.grid);
     if (paralysingGazer(view, monster)) gazers.push(monster.grid);
   }
-  const fresh: Hazards = { turn, at: { x: me.x, y: me.y }, freeAct, stationary, gazers };
+  const fresh: Hazards = { turn, epoch: hazardEpoch, shallowWeak: player.depth > 0 && player.level <= 5, stationary, gazers };
   hazardCache.set(view, fresh);
   return fresh;
 }
 
 export function besideStationaryThreat(view: AgentView, at: Loc): boolean {
-  const player = view.player();
-  if (player.depth <= 0 || player.level > 5) return false;
-  return hazardsOf(view).stationary.some((grid) => steps(grid, at) <= 1);
+  const hazards = hazardsOf(view);
+  return hazards.shallowWeak && hazards.stationary.some((grid) => steps(grid, at) <= 1);
 }
 
 export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {

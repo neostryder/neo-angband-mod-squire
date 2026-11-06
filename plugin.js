@@ -246,13 +246,12 @@ function neverMoves(view, monster) {
   return monster.raceFlags.includes("NEVER_MOVE") || /\bdoes not deign to chase intruders\b/i.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "");
 }
 var hazardCache = /* @__PURE__ */ new WeakMap();
+var hazardEpoch = 0;
 function hazardsOf(view) {
   const turn = view.turn();
-  const player = view.player();
-  const me = player.grid;
-  const freeAct = player.objectFlags.includes("FREE_ACT");
   const kept = hazardCache.get(view);
-  if (kept !== void 0 && kept.turn === turn && kept.at.x === me.x && kept.at.y === me.y && kept.freeAct === freeAct) return kept;
+  if (kept !== void 0 && kept.turn === turn && kept.epoch === hazardEpoch) return kept;
+  const player = view.player();
   const stationary = [];
   const gazers = [];
   for (const monster of view.monsters()) {
@@ -260,14 +259,13 @@ function hazardsOf(view) {
     if (neverMoves(view, monster)) stationary.push(monster.grid);
     if (paralysingGazer(view, monster)) gazers.push(monster.grid);
   }
-  const fresh = { turn, at: { x: me.x, y: me.y }, freeAct, stationary, gazers };
+  const fresh = { turn, epoch: hazardEpoch, shallowWeak: player.depth > 0 && player.level <= 5, stationary, gazers };
   hazardCache.set(view, fresh);
   return fresh;
 }
 function besideStationaryThreat(view, at) {
-  const player = view.player();
-  if (player.depth <= 0 || player.level > 5) return false;
-  return hazardsOf(view).stationary.some((grid) => steps(grid, at) <= 1);
+  const hazards = hazardsOf(view);
+  return hazards.shallowWeak && hazards.stationary.some((grid) => steps(grid, at) <= 1);
 }
 function paralysingGazer(view, monster) {
   if (view.player().objectFlags.includes("FREE_ACT")) return false;
