@@ -60,4 +60,17 @@ describe("level game-turn budgets", () => {
     expect(stairLeash(20)).toBe(Infinity);
     expect(levelBudget(30)).toBe(10000);
   });
+
+  it("counts exploration from arrival separately from cells already known and resets on a new visit", () => {
+    const w = world({ map: ["########", "#<@..,,#", "########"], player: { depth: 1 } });
+    const pacing = createLevelPacing();
+    expect(pacing.observe(w.view)).toMatchObject({ turns: 0, explored: 0 });
+    w.advance(100);
+    w.reveal({ x: 5, y: 1 });
+    expect(pacing.observe(w.view)).toMatchObject({ turns: 100, explored: 1 });
+    w.setPlayer({ depth: 2 });
+    expect(pacing.observe(w.view)).toMatchObject({ turns: 0, explored: 0 });
+    w.reveal({ x: 6, y: 1 });
+    expect(pacing.observe(w.view)).toMatchObject({ turns: 0, explored: 1 });
+  });
 });

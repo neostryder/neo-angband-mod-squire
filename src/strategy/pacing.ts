@@ -26,12 +26,13 @@ export function createLevelPacing() {
   let arrival: string | null = null;
   let exhausted = false;
   let known = 0;
+  let arrivalKnown = 0;
   let anchor: Loc = { x: 0, y: 0 };
   const reached = new Set<string>();
   const held = new Map<string, number>();
 
   return {
-    observe(view: AgentView, terrain?: Terrain): { readonly expired: boolean; readonly review: boolean; readonly fresh: boolean; readonly anchor: Loc; readonly known: number } {
+    observe(view: AgentView, terrain?: Terrain): { readonly expired: boolean; readonly review: boolean; readonly fresh: boolean; readonly anchor: Loc; readonly known: number; readonly turns: number; readonly explored: number } {
       const player = view.player();
       const turn = view.turn();
       const feeling = view.messages().find((message) => arrivalFeeling([message])) ?? null;
@@ -58,6 +59,7 @@ export function createLevelPacing() {
       }
       if (!fresh && seen > known) progress = true;
       known = Math.max(known, seen);
+      if (fresh) arrivalKnown = known;
       xp = Math.max(xp, player.exp);
       gold = Math.max(gold, player.gold);
       const counts = new Map<string, number>();
@@ -81,7 +83,7 @@ export function createLevelPacing() {
       const expired = player.depth > 0 && (exhausted || turn - useful >= budget || turn - entered >= 4 * budget);
       const review = expired && !exhausted;
       exhausted = expired;
-      return { expired, review, fresh, anchor, known };
+      return { expired, review, fresh, anchor, known, turns: turn - entered, explored: known - arrivalKnown };
     },
   };
 }
