@@ -1924,7 +1924,7 @@ describe("soak findings", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
-  it.each([false, true])("bounds repeated Blackguard exploration with no known up staircase and low supplies %s", (low) => {
+  it.each([false, true])("bounds repeated Blackguard exploration only for a supply return with low supplies %s", (low) => {
     const w = suppliedWorld({ map: ["############", "#.@.....,,,#", "############"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
     if (low) w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)"]);
     const logged: string[] = [];
@@ -1940,10 +1940,11 @@ describe("soak findings", () => {
     const q = asked(p.ask(w.view));
     const choice = p.choose(pick("explore"), q.context, w.view);
     if (!("plan" in choice)) throw new Error("expected the final exploration attempt");
-    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    expect(choice.plan.step(w.view, w.act)).toEqual(low ? null : { code: "walk", dir: 6 });
     w.advance(10);
     const next = p.ask(w.view);
-    if (!("handBack" in next)) expect(offered(next)).not.toContain("explore");
+    if (low && !("handBack" in next)) expect(offered(next)).not.toContain("explore");
+    if (!low) expect(offered(next)).toContain("explore");
   });
 
   it("offers the level 3 Blackguard a ready descent with an early restock choice and no frontier", () => {

@@ -198,14 +198,173 @@ describe("round 3 progress watchdog", () => {
     expect(journey.blocked(w.view)).not.toContain("needs town");
   });
 
-  it("rejects a leashed exploration offer whose next probe cannot pass the leash", () => {
+  it("searches beyond a leashed frontier when its next probe cannot pass the leash", () => {
     const row = `#<>${".".repeat(10)}@,#`;
     const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { ...player, level: 1 }, pack: ["5 Flasks of Oil"] });
     const journey = createJourney(w.terrain);
-    expect(journey.canExplore(w.view, false)).toBe(false);
-    expect(journey.apply(offers("explore"), w.view, null, new Set(), false)).toEqual([]);
+    expect(journey.canExplore(w.view, false)).toBe(true);
+    expect(journey.apply(offers("explore", "leave_level"), w.view, null, new Set(), false).map((offer) => offer.goal)).toEqual(["explore"]);
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], false)).toEqual({ code: "walk", dir: 6 });
     expect(journey.apply(offers("explore"), w.view, null, new Set(), false, true).map((offer) => offer.goal)).toEqual(["explore"]);
-    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true)?.code).toBe("walk");
+  });
+});
+
+describe("round 4 unfinished level exploration", () => {
+  const player = { cls: "Warrior", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 38, maxHp: 38, gold: 0 };
+
+  it.each(["turns", "time", "terrain"])("grows the stair leash with %s without a character level gain", (gain) => {
+    let time = 0;
+    const row = `#<@${".".repeat(50)}${",".repeat(50)}#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 14, y: 1 })).toBe(false);
+    if (gain === "turns") w.advance(100);
+    if (gain === "time") time = 5000;
+    if (gain === "terrain") for (let x = 53; x < 93; x += 1) w.reveal({ x, y: 1 });
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 16, y: 1 })).toBe(true);
+    expect(w.view.player().level).toBe(1);
+    w.setPlayer({ hp: 12 });
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 14, y: 1 })).toBe(false);
+  });
+
+  it("grows the three-step arrival leash when no up staircase is known and resets it on arrival", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ["############", "#>@.......,#", "############"], player });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 6, y: 1 })).toBe(false);
+    time = 5000;
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 8, y: 1 })).toBe(true);
+    w.setPlayer({ depth: 2 });
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 6, y: 1 })).toBe(false);
+  });
+
+  it.each(["poisoned", "cut", "blind", "confused", "afraid", "stun"])("keeps the initial leash with %s after the radius would grow", (status) => {
+    let time = 0;
+    const row = `#<@${".".repeat(30)},#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    goals(w, journey, false, offers("rest"));
+    time = 30000;
+    w.setPlayer({ status: { [status]: 5 } });
+    goals(w, journey, false, offers("rest"));
+    expect(journey.leashed(w.view, { x: 14, y: 1 })).toBe(false);
+  });
+
+  it("explores an unfinished level after its budget expires and cancels a pending quiet refresh", () => {
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player });
+    const journey = createJourney(w.terrain);
+    goals(w, journey, false, offers("rest"));
+    const stale = journey.guarded("leave_level", { label: "leave", step: (_view, act) => act.ascend() });
+    w.advance(2000);
+    expect(goals(w, journey, false, offers("explore", "leave_level"))).toEqual(["explore"]);
+    expect(stale.step(w.view, w.act)).toBeNull();
+    const plan = journey.guarded("explore", { label: "explore", step: (view, act) => journey.explore({ view, act } as Parameters<typeof journey.explore>[0]) });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps an exit from an unfinished level with a dangerous feeling after the message disappears", () => {
+    const row = `#<@${".".repeat(30)},#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player, messages: ["You feel anxious about this place."] });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("leave_level", "explore"))).toContain("leave_level");
+    const plan = journey.guarded("leave_level", { label: "leave", step: () => null });
+    w.setMessages([]);
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(10);
+    expect(plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+    w.setPlayer({ depth: 2 });
+    w.advance(10);
+    expect(goals(w, journey, false, offers("leave_level", "explore"))).not.toContain("leave_level");
+  });
+
+  it("walks past the initial boundary to discover a down staircase without bypassing the training floor", () => {
+    const row = `#<${".".repeat(11)}@,,,,>#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player });
+    const stair = row.indexOf(">");
+    const view: AgentView = { ...w.view, cell: (x, y) => {
+      const cell = w.view.cell(x, y);
+      return cell?.feat === FEAT.DOWN_STAIR && Math.abs(w.view.player().grid.x - x) > 1 ? { ...cell, known: false, feat: FEAT.FLOOR, passable: true } : cell;
+    } };
+    const journey = createJourney(w.terrain);
+    const available = () => journey.apply(offers("explore", "descend", "leave_level"), view, null, new Set(), false).map((offer) => offer.goal);
+    while (w.view.player().grid.x < stair - 1) {
+      expect(available()).toContain("explore");
+      expect(available()).not.toContain("leave_level");
+      const plan = journey.guarded("explore", { label: "explore", step: (current, act) => journey.explore({ view: current, act } as Parameters<typeof journey.explore>[0]) });
+      expect(plan.step(view, w.act)).toEqual({ code: "walk", dir: 6 });
+      const next = { x: w.view.player().grid.x + 1, y: 1 };
+      w.moveTo(next);
+      w.reveal(next);
+      w.advance(10);
+    }
+    expect(view.cell(stair, 1)?.known).toBe(true);
+    expect(available()).not.toContain("descend");
+    w.setPlayer({ level: 3, maxLevel: 3 });
+    expect(available()).toEqual(["descend"]);
+    w.moveTo({ x: stair, y: 1 });
+    expect(journey.guarded("descend", { label: "down", step: (_current, act) => act.descend() }).step(view, w.act)).toEqual({ code: "descend" });
+  });
+
+  it.each([75000, 90000])("explores before a watchdog refresh or unknown consumable at %s ms", (deadline) => {
+    let time = 0;
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player, pack: ["a Blue Potion"] });
+    w.moveTo({ x: 1, y: 1 });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.watchdog(w.view, true);
+    time = deadline;
+    w.advance(10);
+    expect(journey.watchdog(w.view, true)?.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("renews the watchdog for new exploration on a smaller fresh visit without crediting the stair reversal", () => {
+    let time = 0;
+    const row = `#<@${".".repeat(20)}${",".repeat(20)}#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player });
+    let small = false;
+    const view: AgentView = { ...w.view, cell: (x, y) => {
+      const cell = w.view.cell(x, y);
+      return small && cell !== null && x >= 10 && x < 23 ? { ...cell, known: false } : cell;
+    } };
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.watchdog(view, true);
+    w.setPlayer({ depth: 0 });
+    w.advance(10);
+    time = 30000;
+    journey.watchdog(view, true);
+    small = true;
+    w.setPlayer({ depth: 1 });
+    w.advance(10);
+    time = 40000;
+    expect(journey.watchdog(view, true)).toBeNull();
+    time = 45000;
+    w.advance(10);
+    expect(journey.watchdog(view, true)?.label).toBe("watchdog: re-plan");
+    for (let x = 23; x < 31; x += 1) w.reveal({ x, y: 1 });
+    time = 50000;
+    w.advance(10);
+    expect(journey.watchdog(view, true)).toBeNull();
+    time = 80000;
+    w.advance(10);
+    expect(journey.watchdog(view, true)).toBeNull();
+  });
+
+  it("ends watchdog recovery without a blind move or hold when combat becomes unsafe", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ROOM, player: { ...player, level: 5, maxLevel: 5 } });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.watchdog(w.view, true);
+    time = 60000;
+    w.advance(10);
+    const plan = journey.watchdog(w.view, true);
+    expect(plan).not.toBeNull();
+    w.setMonsters([{ grid: { x: 3, y: 1 }, race: "ancient multi-hued dragon", level: 40 }]);
+    expect(plan?.step(w.view, w.act)).toBeNull();
   });
 });
 
