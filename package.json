@@ -34,7 +34,7 @@
   "devDependencies": {
     "@rpgm-tools/neo-angband-core": "1.21.1",
     "@rpgm-tools/neo-angband-mod-sdk": "1.21.1",
-    "@types/node": "^22.20.1",
+    "@types/node": "^26.6.6",
     "esbuild": "^0.28.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.10"
