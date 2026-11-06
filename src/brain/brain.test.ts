@@ -725,3 +725,22 @@ describe("the hand-back epoch", () => {
     expect(r.brain.state()).toBe("idle");
   });
 });
+
+describe("plan completion hooks", () => {
+  it.each(["finished", "trigger", "timeout", "idle", "drop"])("ends the plan once on %s", async (stop) => {
+    const ended = vi.fn();
+    let fired = false;
+    const r = rig({ planner: planner(() => ({ ...walks(stop === "finished" ? 1 : 100), end: ended }), () => fired ? "stop" : null), results: [answered(), answered()], gauge: () => ({ turn: 1, hp: 60, depth: 1 }) });
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    if (stop === "drop") r.brain.drop("stop");
+    else {
+      if (stop === "trigger") fired = true;
+      if (stop === "timeout") r.advance(60000);
+      if (stop === "idle") r.advance(30000);
+      r.tick();
+    }
+    expect(ended).toHaveBeenCalledTimes(1);
+  });
+});

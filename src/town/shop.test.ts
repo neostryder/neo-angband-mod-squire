@@ -35,8 +35,8 @@ describe("shop choices", () => {
       ware("a Scroll of Word of Recall", 2, 40, 4),
     ]);
     const list = shoppingList(needs, store, 65, null);
-    expect(list.map((item) => item.kind)).toEqual(["healing", "phase", "healing", "phase"]);
-    expect(list[0]).toMatchObject({ kind: "healing", index: 0, quantity: 1 });
+    expect(list.map((item) => item.kind)).toEqual(["healing", "phase"]);
+    expect(list[0]).toMatchObject({ kind: "healing", index: 0, quantity: 2 });
     expect(list.reduce((sum, item) => sum + item.quantity * (store.stock[item.index]?.price ?? 0), 0)).toBeLessThanOrEqual(65);
     const saver = defaultPersona();
     saver.sliders.savings = 100;
@@ -56,7 +56,7 @@ describe("shop choices", () => {
     const needs = supplyNeeds(w.view, readPack(w.view), null);
     expect(needs.find((n) => n.kind === "healing")?.want).toBe(6);
     const list = shoppingList(needs, store, 65, null);
-    expect(list.map((item) => item.kind)).toEqual(["healing", "phase", "healing"]);
+    expect(list.map((item) => item.kind)).toEqual(["healing", "phase"]);
     expect(list.reduce((sum, item) => sum + item.quantity * store.stock[item.index]!.price!, 0)).toBe(58);
   });
 
@@ -67,7 +67,7 @@ describe("shop choices", () => {
     ];
     const store = alchemy([ware("a Potion of Cure Light Wounds", 0, 20, 1), ware("a Potion of Cure Light Wounds", 1, 20, 1), ware("a Scroll of Phase Door", 2, 18, 1)]);
     const list = shoppingList(needs, store, 100, null);
-    expect(list.map((item) => item.index)).toEqual([0, 2, 1]);
+    expect(list.map((item) => item.index)).toEqual([0, 1, 2]);
     expect(shoppingList(needs, store, 37, null).map((item) => item.kind)).toEqual(["healing"]);
     expect(shoppingList(needs, store, 38, null).map((item) => item.kind)).toEqual(["healing", "phase"]);
   });
@@ -252,4 +252,13 @@ describe("each store's buy list, as in the game's store.txt", () => {
     expect(saleFits(TV.SWORD, "Black Market")).toBe(true);
     expect(saleFits(26, "Home")).toBe(false);
   });
+});
+
+it("counts starter oil toward lantern fuel without buying beyond fifteen flasks", () => {
+  const needs: SupplyNeed[] = [
+    { kind: "oil", name: "Flask of Oil", want: 15, have: 0 },
+    { kind: "light", name: "Flask of Oil", want: 2, have: 0 },
+  ];
+  const store: StoreView = { ...alchemy([ware("40 Flasks of Oil", 0, 3, 40)]), featName: "General Store" };
+  expect(shoppingList(needs, store, 100, null)).toEqual([{ index: 0, quantity: 15, kind: "oil", name: "40 Flasks of Oil" }]);
 });

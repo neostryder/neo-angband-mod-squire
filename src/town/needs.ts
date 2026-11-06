@@ -76,7 +76,7 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
   const healing = Math.max(2, scale(healingBase, consumables, 2) + Math.max(0, Math.round((healAt - 50) / 25)));
   const spareFuel = darkLesson && persona?.toggles.darkLessons === true;
   /* Lantern fuel shares the oil stack, so the spare must exceed its usual target. */
-  const lightTarget = Math.max(scale(2, consumables, 2), spareFuel && lantern && level < 20 ? scale(10, consumables, 1) : 0) + (spareFuel ? 1 : 0);
+  const lightTarget = Math.max(scale(2, consumables, 2), spareFuel && lantern && level < 20 ? 15 : 0) + (spareFuel ? 1 : 0);
   /* Near the surface the stairs are close, and a recall scroll costs most of a
    * new character's gold, which healing potions need more. */
   const recall = destination >= RECALL_FROM_DEPTH ? scale(1, escapes, 1) : 0;
@@ -85,7 +85,7 @@ export function supplyNeeds(view: AgentView, pack: Pack, persona: Persona | null
     make("phase", scale(5, escapes, 2)),
     ...(destination >= 10 ? [make("escape", destination > 25 ? 6 : 2)] : []),
     make("recall", recall),
-    ...(level < 20 ? [make("oil", scale(10, consumables, 1))] : []),
+    ...(level < 20 ? [make("oil", 15)] : []),
     make("food", scale(5, consumables, 5), { hungry: hungry(view) }),
     ...(!view.player().objectFlags.includes("NO_FUEL") && !view.player().classFlags.includes("UNLIGHT") ? [make("light", lightTarget)] : []),
     ...(pack.launcher && launcher !== null ? [make("ammo", scale(40, consumables, 1))] : []),

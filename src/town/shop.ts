@@ -30,6 +30,8 @@ export interface Sale {
 
 export type { SupplyKind } from "./needs.js";
 
+export const STARTER_TARGETS = { oil: 15, healing: 2, phase: 2, food: 5 } as const;
+
 const PRIORITY: readonly SupplyKind[] = ["healing", "phase", "food", "light", "escape", "recall", "oil", "ammo"];
 
 /** Fixed stock categories in Angband 4.2 store.txt. */
@@ -49,22 +51,23 @@ export function shoppingList(needs: readonly SupplyNeed[], store: StoreView, gol
   const out: Purchase[] = [];
   const starterBought = new Map<SupplyKind, number>();
   const stockBought = new Map<number, number>();
-  /* Alternating small purchases leaves gold for both kinds when a full stack would consume it. */
-  for (const target of [1, 2]) {
-    for (const kind of ["healing", "phase", "food", "light", "oil"] as const) {
-      const need = needs.find((entry) => entry.kind === kind);
-      const already = starterBought.get(kind) ?? 0;
-      if (need === undefined || need.have + already >= Math.min(target, need.want) || !storesFor(kind).includes(store.featName)) continue;
+  for (const kind of ["oil", "healing", "phase", "food", "light"] as const) {
+    const need = needs.find((entry) => entry.kind === kind);
+    const target = Math.min(kind === "light" ? 2 : STARTER_TARGETS[kind], need?.want ?? 0);
+    if (need === undefined || !storesFor(kind).includes(store.featName)) continue;
+    const sharedFuel = kind === "light" && need.name === "Flask of Oil" ? starterBought.get("oil") ?? 0 : 0;
+    while (need.have + sharedFuel + (starterBought.get(kind) ?? 0) < target) {
       const ware = store.stock.find((item) => {
         const name = shownName(item);
         return name !== null && matchesSupplyName(name, need.name) && item.number > (stockBought.get(item.index) ?? 0) &&
           item.price !== undefined && item.price > 0 && item.price <= left;
       });
-      if (ware === undefined || ware.price === undefined) continue;
-      out.push({ index: ware.index, quantity: 1, kind, name: shownName(ware) ?? need.name });
-      left -= ware.price;
-      starterBought.set(kind, already + 1);
-      stockBought.set(ware.index, (stockBought.get(ware.index) ?? 0) + 1);
+      if (ware === undefined || ware.price === undefined) break;
+      const quantity = Math.min(target - need.have - sharedFuel - (starterBought.get(kind) ?? 0), ware.number - (stockBought.get(ware.index) ?? 0), Math.floor(left / ware.price));
+      out.push({ index: ware.index, quantity, kind, name: shownName(ware) ?? need.name });
+      left -= ware.price * quantity;
+      starterBought.set(kind, (starterBought.get(kind) ?? 0) + quantity);
+      stockBought.set(ware.index, (stockBought.get(ware.index) ?? 0) + quantity);
     }
   }
   if (out.length > 0) return out;

@@ -32,10 +32,10 @@ export function basketNeeds(view: AgentView, needs: readonly SupplyNeed[], perso
   if (missingEssentials(view, persona).length === 0) return [...needs];
   const stock = supplies(view);
   const wants = basketWants(persona);
-  return needs.filter((need) => (["healing", "phase", "food", "light"].includes(need.kind) || need.kind === "oil" && view.player().maxSp > 0 && stock.food >= wants.food && (stock.workingLight || stock.lastingLight))).map((need) => ({
+  return needs.filter((need) => (["healing", "phase", "food", "light"].includes(need.kind) || need.kind === "oil")).map((need) => ({
     ...need,
     have: need.kind === "healing" ? stock.cures : need.kind === "phase" ? stock.phase : need.have,
-    want: need.kind === "oil" ? Math.max(1, Math.ceil((persona?.sliders.consumables ?? 50) / 25)) : wants[need.kind as keyof typeof wants],
+    want: need.kind === "oil" ? 15 : need.kind === "food" ? 5 : wants[need.kind as keyof typeof wants],
   }));
 }
 
@@ -107,6 +107,7 @@ export function createDeparture() {
 
   return {
     status,
+    end(): void { earning = null; },
     begin(view: AgentView, target: number | null, persona: Persona | null = null): void {
       /* A goal already met would end the trip on arrival; the soak's Rogue, with
        * 2 gold, climbed straight back 161 times. The turn limit still ends it. */

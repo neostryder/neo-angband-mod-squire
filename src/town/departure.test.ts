@@ -28,14 +28,14 @@ describe("the town survival basket", () => {
     expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(true);
   });
 
-  it("keeps a small oil basket for a caster after food and working light", () => {
+  it("keeps fifteen oil flasks in the starter basket", () => {
     const w = world({ map: ["@"], player: { maxSp: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
     const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
-    expect(basket.find((need) => need.kind === "oil")?.want).toBe(2);
+    expect(basket.find((need) => need.kind === "oil")?.want).toBe(15);
   });
 
   it("does not leave when an entered shop still sells an affordable missing essential", () => {
-    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY, stores: [alchemy] });
+    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: [...PANTRY, "15 Flasks of Oil"], stores: [alchemy] });
     w.moveTo({ x: 2, y: 1 });
     const departure = createDeparture();
     expect(departure.status(w.view, w.terrain, null, new Set([FEAT.ALCHEMY]))).toMatchObject({ ready: false, earning: false });
@@ -99,14 +99,14 @@ describe("the town survival basket", () => {
     ] };
     const persona = defaultPersona();
     persona.sliders.savings = 100;
-    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["food", "light", "oil", "light"]);
+    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["oil"]);
   });
 
   it("holds optional stock across stores while food or fuel is missing", () => {
     const w = world({ map: ["@"], player: { depth: 0 }, pack: ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door"] });
     const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
     expect(shoppingList(basket, alchemy, 100, null)).toEqual([]);
-    expect(basket.map((need) => need.kind)).not.toContain("oil");
+    expect(basket.find((need) => need.kind === "oil")?.want).toBe(15);
   });
 });
 

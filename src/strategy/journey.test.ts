@@ -990,3 +990,70 @@ describe("fresh early training", () => {
     expect(logs[0]).toContain("3.0 minutes without a depth gain");
   });
 });
+
+describe("shallow stair searches", () => {
+  it("promotes an expired earning trip and searches beyond the leash without potions", () => {
+    const row = `#<@${".".repeat(30)},#`;
+    const wall = "#".repeat(row.length);
+    const w = world({ map: [wall, row, wall], player: { cls: "Mage", depth: 0, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
+    expect(journey.guarded("descend", { label: "dive", step: (_view, act) => act.descend() }).step(w.view, w.act)?.code).toBe("descend");
+    w.setPlayer({ depth: 1 });
+    w.advance(2000);
+    goals(w, journey, false, offers("explore"));
+    w.setPack(["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"]);
+    expect(goals(w, journey, false, offers("explore"))).toEqual(["explore"]);
+    expect(journey.searchingNow(w.view)).toBe(true);
+    expect(journey.canExplore(w.view)).toBe(true);
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0])).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("takes a seen stair without an earning-trip return or preparation veto and logs the descent", () => {
+    const logs: string[] = [];
+    const w = world({ map: ROOM, player: { cls: "Mage", depth: 0, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain, undefined, undefined, undefined, (line) => logs.push(line));
+    goals(w, journey, false, offers("descend"));
+    journey.guarded("descend", { label: "dive", step: (_view, act) => act.descend() }).step(w.view, w.act);
+    w.setPlayer({ depth: 1 });
+    w.advance(2000);
+    goals(w, journey, false, offers("explore"));
+    w.setPack(["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"]);
+    expect(goals(w, journey, false, offers("descend", "leave_level"))).toContain("descend");
+    expect(journey.guarded("descend", { label: "dive", step: (_view, act) => act.descend() }).step(w.view, w.act)).toEqual({ code: "descend" });
+    expect(logs.some((line) => line.includes("descent gate relaxed for DL2: taking seen >"))).toBe(true);
+  });
+
+  it("reports explored cells, reachable frontiers, stairs, distance and leash after exploration", () => {
+    const logs: string[] = [];
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"] });
+    const journey = createJourney(w.terrain, undefined, undefined, undefined, (line) => logs.push(line));
+    goals(w, journey, false, offers("explore"));
+    const plan = journey.guarded("explore", { label: "explore", step: () => null }, w.view);
+    plan.end?.();
+    expect(logs.at(-1)).toBe("explore ended: explored cells 23, reachable frontiers 1, known > 1, nearest unexplored frontier 3, stair leash limited false.");
+  });
+
+  it("reports an empty reachable frontier and a leash that excluded known reachable ground", () => {
+    const logs: string[] = [];
+    const row = `#<@${".".repeat(30)},#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, wall], player: { depth: 5, level: 1, hp: 20, maxHp: 60 } });
+    const journey = createJourney(w.terrain, undefined, undefined, undefined, (line) => logs.push(line));
+    const plan = journey.guarded("explore", { label: "explore", step: () => null });
+    plan.step(w.view, w.act);
+    plan.end?.();
+    expect(logs.at(-1)).toContain("stair leash limited true");
+    const empty = suppliedWorld({ map: ROOM });
+    journey.guarded("explore", { label: "explore", step: () => null }, empty.view).end?.();
+    expect(logs.at(-1)).toContain("reachable frontiers 0, known > 1, nearest unexplored frontier none");
+  });
+});
+
+it("clears an old food return when a shallow diver replenishes the trip supplies", () => {
+  const w = world({ map: ROOM, player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "a Wooden Torch (5000 turns)"] });
+  const journey = createJourney(w.terrain);
+  expect(goals(w, journey, false, offers("descend"))).not.toContain("descend");
+  w.setPack(["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"]);
+  expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
+});

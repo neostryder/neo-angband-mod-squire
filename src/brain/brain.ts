@@ -46,6 +46,7 @@ export interface Plan {
   readonly label: string;
   /** The next command, or null when the plan is finished and a new decision is due. */
   step(view: AgentView, act: AgentActions): AgentCommand | null;
+  end?(view?: AgentView): void;
 }
 
 /** What a planner decides with. */
@@ -265,6 +266,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       deps.status("trying another move", message);
       return null;
     }
+    if (state.kind === "running") state.plan.end?.(view);
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
@@ -423,6 +425,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       if (progressGauge === null || current.turn !== progressGauge.turn || current.depth !== progressGauge.depth) progressAt = deps.now();
       progressGauge = current;
       if ((state.kind === "running" || state.kind === "idle") && deps.now() - progressAt >= MAX_PLAN_IDLE_MS) {
+        if (state.kind === "running") state.plan.end?.(view);
         if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: current.hp });
         progressAt = deps.now();
         breakLoop = true;
@@ -478,6 +481,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       } else {
         deps.log(`${plan.label}: ${reason}`);
       }
+      plan.end?.(view);
       deps.onPlanEnd?.({
         stop: reason === null ? "finished" : "interrupted",
         reason,
@@ -515,6 +519,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     drop(reason) {
       if (state.kind === "stopped") return;
       if (state.kind === "running") {
+        state.plan.end?.();
         deps.onPlanEnd?.({ stop: "interrupted", reason, commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: null });
         deps.log(`${state.plan.label}: ${reason}`);
       }

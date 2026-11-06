@@ -19,7 +19,7 @@ import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createLevelPacing, stairLeash } from "./pacing.js";
-import { descentGaps as gapsAt, missingPreparation as preparationAt, descentWait, poisonRecovery, supplies, supplyMargin, tripLight } from "./readiness.js";
+import { descentGaps as gapsAt, missingPreparation as preparationAt, descentWait, poisonRecovery, supplies, supplyMargin, tripLight, shallowDiveReady } from "./readiness.js";
 import { stepsBand, turnsBand } from "../brain/bands.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
@@ -94,7 +94,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const minutes = depthMinutes(view);
     const gaps = preparationAt(view, depth, persona, minutes, firstStair(view), stairEscape(view));
     const normal = preparationAt(view, depth, persona);
-    const changes = normal.filter((gap) => ["level", "hp", "healing"].includes(gap.kind) && !gaps.some((current) => current.kind === gap.kind && current.reason === gap.reason))
+    const changes = normal.filter((gap) => !gaps.some((current) => current.kind === gap.kind && current.reason === gap.reason))
       .map((gap) => `${gap.reason} -> ${gaps.find((current) => current.kind === gap.kind)?.reason ?? `${gap.kind} floor met`}`);
     const id = `${String(depth)}:${changes.join(";")}`;
     if (changes.length > 0 && !relaxed.has(id)) {
@@ -124,6 +124,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   function returnMargin(view: AgentView): string | null {
+    if (shallowDiveReady(view, view.player().depth + 1, lastPersona)) return null;
     const margin = supplyMargin(view, lastPersona);
     const depth = view.player().depth;
     if (margin === "healing and Phase Door" && depth >= 1 && depth <= 3 && depthMinutes(view) >= descentWait(lastPersona) &&
@@ -201,6 +202,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     previousHp = player.hp;
     lastTurn = turn;
     departure.observe(view, terrain);
+    if (shallowDiveReady(view, player.depth + 1, lastPersona)) {
+      departure.end();
+      returnReason = null;
+      chosenReturn = false;
+    }
     if (player.depth > 0) {
       if (!departure.active()) returnReason ??= returnMargin(view);
       /* A widened trip can start with no rations and too little gold to buy one,
@@ -296,7 +302,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
      * a fight is already close, and the watcher only reacts once a blow lands. */
     const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
     const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, undefined, terrain).band >= 2);
-    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1, lastPersona).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
+    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && (shallowDiveReady(view, depth + 1, lastPersona) || missingPreparation(view, depth + 1, lastPersona).length === 0) && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
     return stayingOn(view, dangerous, front) ? "stay" : null;
   }
 
@@ -459,11 +465,21 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return out;
   }
 
-  function guarded(goal: Goal | null, plan: Plan): Plan {
+  function guarded(goal: Goal | null, plan: Plan, initialView?: AgentView): Plan {
     const foot = goal === "leave_level" && footOffered;
     const recalling = recallActive;
     const wide = widened;
-    return { ...plan, step(view, act) {
+    let latest: AgentView | null = initialView ?? null;
+    let leashLimited = false;
+    return { ...plan, end(view) {
+      latest = view ?? latest;
+      plan.end?.(view);
+      if (goal === "explore" && latest !== null) explorationReport(latest, leashLimited);
+    }, step(view, act) {
+      latest = view;
+      if (goal === "explore" && !wide && !searchingNow(view)) {
+        leashLimited ||= frontiers(view, terrain).some((grid) => !leashed(view, grid));
+      }
       observe(view);
       const player = view.player();
       if (goal === "descend" && refreshReturn(view)) return act.descend();
@@ -525,7 +541,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         const dir = next === undefined ? undefined : DIRECTIONS.find((direction) => at.x + direction.dx === next.x && at.y + direction.dy === next.y);
         return dir === undefined ? null : act.move(dir.key);
       }
-      return plan.step(view, act);
+      const command = plan.step(view, act);
+      if (goal === "descend" && command?.code === "descend" && shallowDiveReady(view, player.depth + 1, lastPersona)) log(`descent gate relaxed for DL${String(player.depth + 1)}: taking seen > with full HP, ranged attack, food and light; cure potions, Phase Door and character level waived.`);
+      return command;
     } };
   }
 
@@ -596,6 +614,17 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       return ctx.act[code](direction.key);
     }
     return ctx.act.move(direction.key);
+  }
+
+  function explorationReport(view: AgentView, leashLimited: boolean): void {
+    observe(view);
+    const bounds = view.mapBounds();
+    let explored = 0;
+    for (let y = 0; y < bounds.height; y += 1) for (let x = 0; x < bounds.width; x += 1) if (view.cell(x, y)?.known === true) explored += 1;
+    const field = flowFrom({ goals: [view.player().grid], canEnter: (grid) => (isRoutable(view, terrain, grid) || diggableObstacle(view, grid)) && !blockedObstacles.has(key(grid)) && !gazeReach(view, grid) });
+    const reachable = [...frontiers(view, terrain), ...obstacleFrontiers(view)].filter((grid) => Number.isFinite(field.distance(grid)));
+    const distance = Math.min(...reachable.map((grid) => field.distance(grid)));
+    log(`explore ended: explored cells ${String(explored)}, reachable frontiers ${String(reachable.length)}, known > ${String(knownDownStairs(view, terrain).length)}, nearest unexplored frontier ${Number.isFinite(distance) ? String(distance) : "none"}, stair leash limited ${String(leashLimited)}.`);
   }
 
   function blocked(view: AgentView): string | null {

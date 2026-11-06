@@ -17,7 +17,7 @@ import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores, unaimedUpgradePurchase } from "./aims-shop.js";
 import { PRICE_FLOOR, shownName, supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
-import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor } from "./shop.js";
+import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor, STARTER_TARGETS } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
 import { stockConfidence, type StoreMemory } from "./memory.js";
 import { createHomeMemory, type HomeStock } from "./home.js";
@@ -80,7 +80,11 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
       : sales.some((sale) => saleFits(sale.tval, entrance.name));
     return buying || aiming || exploring || selling;
   }).sort((a, b) => {
-    const rank = (shop: ShopEntrance): number => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : shop.name === "Black Market" ? 3 : 2;
+    const rank = (shop: ShopEntrance): number => {
+      if (shop.name === "Home") return -1;
+      const starter = Object.entries(STARTER_TARGETS).findIndex(([kind, target]) => needs.some((need) => need.kind === kind && need.have < Math.min(need.want, target) && gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(shop.name)));
+      return starter >= 0 ? starter : shop.name === "Alchemy Shop" ? 4 : shop.name === "General Store" ? 5 : shop.name === "Black Market" ? 7 : 6;
+    };
     return rank(a) - rank(b);
   });
 }
@@ -121,7 +125,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       const currentAims = current?.aims ?? aims;
       const homeNow = homeMemory.current();
       const first = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory, homeNow)[0];
-      const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
+      const suppliesFirst = (first?.name === "Alchemy Shop" || first?.name === "General Store") && first.feat !== cell?.feat;
       /* A command that moved no item and no gold will not start working on a later step. */
       const unchanged = pending !== null && cell !== null && pending.feat === cell.feat && pending.snapshot === packSnapshot(view);
       pending = null;
@@ -131,12 +135,12 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         return act.shopExit();
       }
       /* Leaving a shop the trip has already finished would be a second exit on the same square. */
-      if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat) && !leftShopForSupplies) {
+      if (suppliesFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
         return act.shopExit();
       }
-      if (!alchemyFirst) leftShopForSupplies = false;
-      if (!alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
+      if (!suppliesFirst) leftShopForSupplies = false;
+      if (!suppliesFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
         /* stores() exposes the whole town; touch only the matching store's stock. */
         const found = view.stores().find((entry) => entry.feat === cell.feat);
         /* The engine names a store by its terrain code (STORE_ALCHEMY); the
@@ -193,15 +197,12 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         }
         const order = purchaseOrder?.() ?? null;
         const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona);
-        const oil = needs.find((need) => need.kind === "oil");
-        /* Early ranged damage needs gold left after the alchemy visit. */
-        const oilReserve = store.featName === "Alchemy Shop" && view.player().maxSp > 0 && oil !== undefined
-          ? Math.max(0, Math.min(oil.want, Math.max(1, Math.ceil((persona?.sliders.consumables ?? 50) / 25))) - oil.have) * PRICE_FLOOR.oil : 0;
-        const list = shoppingList(needs, store, Math.max(0, view.player().gold - oilReserve), persona, order);
+        const starterPending = Object.entries(STARTER_TARGETS).some(([kind, target]) => needs.some((need) => need.kind === kind && need.have < Math.min(need.want, target)));
+        const list = shoppingList(needs, store, view.player().gold, persona, order);
         const purchase = list[0];
         /* With the supplies settled, the gold on hand can fund the top aim, unless the persona chose to keep it. */
         const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
-        const aimed = missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
+        const aimed = starterPending || missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         const gearFirst = aimed !== null && order !== null && purchase !== undefined && order.includes("gear") && order.indexOf("gear") < (order.includes(purchase.kind) ? order.indexOf(purchase.kind) : order.length);
         if (purchase !== undefined && !gearFirst) {
           /* One shelf can fill every unit this list already afforded, instead of one command per unit. */
@@ -217,7 +218,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         /* An aim that no aim requested: the gear comparison still knows what is
          * a clear swap, and the gold on hand can fund it, unless the persona
          * ranked saving the gold above gear for this visit. */
-        if (!saving && missingEssentials(view, persona).length === 0) {
+        if (!starterPending && !saving && missingEssentials(view, persona).length === 0) {
           const upgrade = unaimedUpgradePurchase(store, view.player().gold, view);
           if (upgrade !== null && !boughtFor.has(upgrade.aim)) {
             boughtFor.add(upgrade.aim);

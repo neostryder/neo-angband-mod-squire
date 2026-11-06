@@ -75,6 +75,7 @@ function snapshot(view: AgentView) {
 
 export function createDecisionMemory(clock: () => number = Date.now) {
   let entries: RememberedDecision[] = [];
+  let widenedExplore: { depth: number; goal: Goal; left: number } | null = null;
   let pending: RememberedDecision | null = null;
   let previous: ReturnType<typeof snapshot> | null = null;
   let deepest = 0;
@@ -89,6 +90,7 @@ export function createDecisionMemory(clock: () => number = Date.now) {
 
   function reset(): void {
     entries = [];
+    widenedExplore = null;
     pending = null;
     previous = null;
     deepest = 0;
@@ -104,6 +106,7 @@ export function createDecisionMemory(clock: () => number = Date.now) {
   function observe(view: AgentView): void {
     const now = snapshot(view);
     if (previous !== null && now.turn < previous.turn) reset();
+    if (widenedExplore !== null && widenedExplore.depth !== now.depth) widenedExplore = null;
     if (previous === null) progressTurn = now.turn;
     if (previous === null || now.depth !== previous.depth) enteredAt = clock();
     const progress: DecisionProgress = previous === null ? emptyProgress() : {
@@ -159,6 +162,18 @@ export function createDecisionMemory(clock: () => number = Date.now) {
     observe,
     finish,
     reset,
+    rememberWidenedExplore(view: AgentView, offered: readonly Offer[], widened: readonly Offer[]): void {
+      observe(view);
+      if (offered.length === 1 && widened.length === 1 && widened[0]?.goal === "explore") widenedExplore = { depth: view.player().depth, goal: offered[0]!.goal, left: 3 };
+    },
+    reuseWidenedExplore(view: AgentView, offered: readonly Offer[]): boolean {
+      observe(view);
+      if (widenedExplore === null) return false;
+      if (offered.length !== 1 || offered[0]?.goal !== widenedExplore.goal) { widenedExplore = null; return false; }
+      widenedExplore.left -= 1;
+      if (widenedExplore.left === 0) widenedExplore = null;
+      return true;
+    },
     canRefresh(view: AgentView, persona: Persona | null): boolean {
       observe(view);
       return clock() - enteredAt >= 180000 && (refresh === null || clock() - refresh.at >= 180000 && hunting > refresh.hunting && view.turn() - refresh.turn >= stuckThresholds(persona).cooldown);
