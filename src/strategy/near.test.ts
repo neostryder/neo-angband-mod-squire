@@ -9,6 +9,15 @@ function facts(viewDepth: number, terrain: NearFacts["terrain"] = null): NearFac
 }
 
 describe("near-term candidates", () => {
+  it.each([
+    ["Blackguard", 40, false],
+    ["Blackguard", 10, true],
+    ["Mage", 40, true],
+  ] as const)("offers rest for a %s with %i hit points only when recovery is possible", (cls, hp, rest) => {
+    const w = world({ map: ROOM, player: { cls, hp, maxHp: 40, sp: 0, maxSp: 3 } });
+    expect(nearCandidates(w.view, facts(1)).some((item) => item.kind === "rest")).toBe(rest);
+  });
+
   it("offers rest while hurt and nothing is awake, and not once a creature wakes", () => {
     const hurt = world({ map: ROOM, player: { hp: 10, maxHp: 40 } });
     expect(nearCandidates(hurt.view, facts(1)).map((item) => item.kind)).toEqual(["rest"]);
@@ -47,6 +56,15 @@ describe("near-term candidates", () => {
 });
 
 describe("a near-term goal ending", () => {
+  it("ends a Blackguard rest when hit points recover without waiting for mana", () => {
+    const w = world({ map: ROOM, player: { cls: "Blackguard", hp: 10, maxHp: 40, sp: 0, maxSp: 3 } });
+    expect(nearEnded("rest", w.view, facts(1))).toBeNull();
+    w.setPlayer({ hp: 40 });
+    expect(nearEnded("rest", w.view, facts(1))?.end).toBe("met");
+    w.setPlayer({ cls: "Mage" });
+    expect(nearEnded("rest", w.view, facts(1))).toBeNull();
+  });
+
   it("meets rest when hit points are full, even after a level change", () => {
     const full = world({ map: ROOM, player: { depth: 4, hp: 40, maxHp: 40 } });
     expect(nearEnded("rest", full.view, facts(2))).toEqual({ end: "met", reason: "hit points and spell points are full" });
