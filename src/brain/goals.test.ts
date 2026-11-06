@@ -1687,7 +1687,7 @@ describe("gear and detection", () => {
   it("offers detection on arrival once and reads the scroll", () => {
     const w = suppliedWorld({ map: CORRIDOR, pack: ["a Scroll of Magic Mapping"] });
     const { p } = planner(w);
-    const q = asked(p.ask(w.view));
+    const q = reflexed(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toContain("detect");
     expect(offered(p.ask(w.view))).not.toContain("detect");
     const choice = p.choose(pick("detect"), q.context, w.view);
@@ -2806,7 +2806,7 @@ describe("early experience and recovery", () => {
   });
 
   it("rests below 80 percent HP, then takes a seen down staircase", () => {
-    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { ...weakMage, hp: 9 }, pack: ["5 Flasks of Oil"] });
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { ...weakMage, level: 3, maxLevel: 3, hp: 9 }, pack: ["5 Flasks of Oil"] });
     const p = planner(w, true).p;
     const q = reflexed(p.ask(w.view));
     expect(offered(q)).toEqual(expect.arrayContaining(["rest", "explore"]));
@@ -2815,7 +2815,6 @@ describe("early experience and recovery", () => {
     w.advance(10);
     expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "rest" });
     w.setPlayer({ hp: 12 });
-    w.setMonsters([sleeper]);
     expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "descend" });
   });
 
@@ -4117,7 +4116,7 @@ describe("lab descent and breeder decisions", () => {
     const w = suppliedWorld({ map: ["##########", "#<@....>,#", "##########"], player: { cls: "Warrior", depth, maxDepth: depth, level: 4, maxLevel: 4 }, pack: ["a Scroll of Word of Recall"] });
     const q = reflexed(planner(w, true).p.ask(w.view));
     expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
-    expect(q.reflex).toContain("first prepared down staircase");
+    expect(q.reflex).toContain("checked down staircase");
     expect(q.plan.step(w.view, w.act)?.code).toBe("walk");
   });
 
@@ -4128,17 +4127,18 @@ describe("lab descent and breeder decisions", () => {
     expect(offered(planner(w, true).p.ask(w.view))).not.toContain("descend");
   });
 
-  it("relaxes a timed level gate and descends without another readiness answer", () => {
+  it("uses the paced floor at a seen stair without waiting for another readiness answer", () => {
     let time = 0;
     const w = suppliedWorld({ map: ["##########", "#<@....>,#", "##########"], player: { cls: "Warrior", depth: 5, maxDepth: 5, level: 5, maxLevel: 5 }, pack: ["a Scroll of Word of Recall"] });
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => time });
-    expect(offered(p.ask(w.view))).not.toContain("descend");
+    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "descend" });
     time += 120000;
     const q = reflexed(p.ask(w.view));
     expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
     w.moveTo({ x: 7, y: 1 });
     expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
-    w.setPlayer({ hp: 59 });
+    w.setPlayer({ hp: 47 });
+    w.setMonsters([{ grid: { x: 6, y: 1 }, race: "cave orc", asleep: false }]);
     expect(q.plan.step(w.view, w.act)).toBeNull();
   });
 
@@ -4268,7 +4268,7 @@ describe("early lab survival", () => {
 
 describe("immediate shallow dives", () => {
   it("interrupts exploration for a seen down staircase and dives before hunting or training", () => {
-    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["2 Potions of Cure Light Wounds", "5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
     const p = planner(w, true).p;
     expect(p.trigger(w.view, { label: "explore", step: () => null })).toContain("down staircase");
     const q = reflexed(p.ask(w.view));
@@ -4304,12 +4304,12 @@ it("keeps exploring when a known shallow down staircase has no remembered route"
 
 describe("shallow dive regressions", () => {
   function necromancer(depth = 1, hp = 32) {
-    return world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 1, maxLevel: 1, hp, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }, { name: "Magic Missile", sidx: 1, learned: false }], pack: ["2 Rations of Food", "Magic for Beginners"] });
+    return world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 4, maxLevel: 4, hp, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }, { name: "Magic Missile", sidx: 1, learned: false }], pack: ["2 Rations of Food", "Magic for Beginners", "2 Potions of Cure Light Wounds"] });
   }
 
   it.each([1, 2, 3, 4])("dives on DL%i before learning a spell with reflexes disabled", (depth) => {
     const w = necromancer(depth);
-    if (depth === 4) w.setPack(["4 Rations of Food", "a Potion of Cure Light Wounds", "Magic for Beginners"]);
+    if (depth === 4) w.setPack(["4 Rations of Food", "2 Potions of Cure Light Wounds", "Magic for Beginners"]);
     const logs: string[] = [];
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex: false, log: (line) => logs.push(line) });
     const q = reflexed(p.ask(w.view));
@@ -4333,7 +4333,7 @@ describe("shallow dive regressions", () => {
     p.ask(w.view);
     let checks = logs.filter((line) => line.startsWith("dive check:"));
     expect(checks).toHaveLength(1);
-    for (const value of ["ranged true", "hp===maxHp false", "hp>=80percent false", "caster attack true", "cures plus escapes 0>=0", "maxHp 40>=12", "tripLight true", "food 2>=2", "hungry false", "stair reachable true", "route checked true"]) expect(checks[0]).toContain(value);
+    for (const value of ["ranged true", "hp===maxHp false", "hp>=80percent false", "caster attack true", "cures plus escapes 2>=2", "maxHp 40>=12", "tripLight true", "food 2>=2", "hungry false", "stair reachable true", "route checked true"]) expect(checks[0]).toContain(value);
     time = 60000;
     p.ask(w.view);
     w.advance(10);
@@ -4398,5 +4398,77 @@ describe("shallow dive regressions", () => {
       "level summary: depth 1, commands 1, minutes 2.0",
       "level summary: depth 2, commands 1, minutes 1.0",
     ]);
+  });
+});
+
+describe("shared early dive policy", () => {
+  it.each([false, true])("does not interrupt exploration for a retained supply return with reflexes %s", (reflex) => {
+    const w = suppliedWorld({ map: ["########", "#.@..>,#", "########"], player: { cls: "Warrior", depth: 10, level: 15, maxLevel: 15, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["5 Flasks of Oil"] });
+    w.setPack(["5 Flasks of Oil", "2 Rations of Food", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "2 Wooden Torches (5000 turns)"]);
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex, log: () => {} });
+    p.ask(w.view);
+    w.setPlayer({ depth: 1 });
+    w.advance(10);
+    expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
+    const next = p.ask(w.view);
+    expect(offered(next)).not.toContain("descend");
+    expect(offered(next)).toContain("explore");
+    const choice = "reflex" in next ? next : "request" in next ? p.choose(pick("explore"), next.context, w.view) : null;
+    expect(choice !== null && "plan" in choice ? choice.plan.step(w.view, w.act)?.code : null).toBe("walk");
+  });
+
+  it.each([false, true])("forces a safe known descent after 15 seconds even with soft gaps and reflexes %s", (reflex) => {
+    let time = 0;
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { cls: "Warrior", depth: 5, maxDepth: 5, level: 7, maxLevel: 7 } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex, log: () => {}, persona: archetype("coward"), now: () => time });
+    expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
+    time = 15001;
+    expect(p.trigger(w.view, { label: "explore", step: () => null })).toContain("down staircase");
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+    expect(q.context.offers).toHaveLength(1);
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 5, y: 1 });
+    w.advance(10);
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+    w.setPlayer({ depth: 6 });
+    expect(q.plan.step(w.view, w.act)).toBeNull();
+  });
+
+  it.each(["Warrior", "Blackguard", "Rogue", "Priest", "Druid", "Paladin", "Ranger", "Mage", "Necromancer"])("takes checked stairs through DL10 for a prepared %s", (cls) => {
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { cls, depth: 1, level: 15, maxLevel: 15, hp: 100, maxHp: 100, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["5 Flasks of Oil", "a Scroll of Word of Recall", "3 Potions of Cure Critical Wounds", "2 Scrolls of Teleportation"] });
+    const persona = defaultPersona();
+    persona.sliders.ambition = 100;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona, reflex: false, log: () => {} });
+    for (let depth = 1; depth < 10; depth += 1) {
+      const q = reflexed(p.ask(w.view));
+      expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+      expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+      w.moveTo({ x: 5, y: 1 });
+      w.advance(10);
+      expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+      w.setPlayer({ depth: depth + 1, maxDepth: depth + 1 });
+      expect(q.plan.step(w.view, w.act)).toBeNull();
+      w.moveTo({ x: 1, y: 1 });
+      w.advance(10);
+    }
+    expect(w.view.player().depth).toBe(10);
+  });
+
+  it("reads Deep Descent when its destination is prepared and no stair is known", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { cls: "Warrior", depth: 1, maxDepth: 1, level: 15, maxLevel: 15 }, pack: ["a Scroll of Deep Descent", "a Scroll of Word of Recall"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex: false, log: () => {} });
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "deep_descent" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "read", args: { handle: 1 } });
+    w.advance(10);
+    expect(offered(p.ask(w.view))).not.toContain("deep_descent");
+  });
+
+  it("keeps exploration running beside an unreachable down staircase", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@..,#>##", "##########"], player: { level: 15, maxLevel: 15 } });
+    const p = planner(w, true).p;
+    expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
+    expect(offered(p.ask(w.view))).not.toContain("descend");
   });
 });

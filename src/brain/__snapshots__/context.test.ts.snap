@@ -276,7 +276,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 6 (shallow); deepest reached 1 (shallow).",
   "creatures": "3 jackal (a few): an easy kill each, the nearest 3 steps away (close), faster than the character",
-  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 7; one usable Word of Recall.",
+  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -508,7 +508,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 5 (shallow); deepest reached 1 (shallow).",
   "creatures": "Bullroarer the Hobbit: deadly, 4 steps away (near), unique, faster than the character",
-  "gaps": "For dungeon level 6 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
+  "gaps": "For dungeon level 6 (shallow) the character still lacks: one usable Word of Recall.",
   "geometry": "Next to the character: north floor, north-east floor, east floor, south-east floor, south floor, south-west floor, west floor, north-west floor. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 5 steps (near) away, 6 turns (a short wait) to reach and take. Choke points: 2 steps (close) north-west (a corridor), 2 turns (soon); 2 steps (close) south-west (a corridor), 2 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
@@ -525,6 +525,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
     "untried": [
       "fight",
       "retreat",
+      "descend",
     ],
   },
 }

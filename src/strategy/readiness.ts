@@ -164,7 +164,8 @@ export function shallowDiveChecks(view: AgentView, persona: Persona | null = nul
     fullHp: player.hp === player.maxHp,
     hpReady: player.hp >= player.maxHp * 0.8,
     casterAttack: !caster || pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0,
-    reserves: stock.cures + escapeItems(view),
+    reserves: stock.cures + stock.phase + stock.escapes,
+    levelFloor: Math.max(3, Math.ceil((player.depth + 1) * 0.6) + 1),
     maxHpFloor: Math.max(12, Math.ceil(classFloor(player.cls, player.depth + 1, persona)[0] * 0.6)),
     tripLight: tripLight(view),
     food: stock.food,
@@ -178,7 +179,7 @@ export function shallowDiveReady(view: AgentView, depth = view.player().depth + 
   const player = view.player();
   if (player.depth < 1 || player.depth > 4 || depth !== player.depth + 1) return false;
   const checks = shallowDiveChecks(view, persona);
-  return checks.ranged && checks.statusReady && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry && checks.arrivalSupplies;
+  return checks.ranged && checks.statusReady && checks.reserves >= 2 && player.maxLevel >= checks.levelFloor && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry && checks.arrivalSupplies;
 }
 
 /** The actual destination is checked even when the command starts in town. */
@@ -199,15 +200,16 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
     stock.cures >= 1 && (stairEscape || stock.phase + stock.escapes >= 1 && canRead(view));
   const hpFloor = timed ? Math.ceil(normalHp * 0.6) : normalHp;
   const normalLevel = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
+  const diving = earlyStair && depth <= 10 && earlyDescentReady(view, 2, 0.8) && stock.cures >= 1 && stock.phase + stock.escapes >= 1 && canRead(view);
   const stocked = stock.phase + stock.escapes >= 2 || earlyStair && depth <= 5;
-  const paced = timed && player.maxHp >= hpFloor || depth <= 10 && earlyDescentReady(view) && stocked && player.maxHp >= hpFloor &&
-    (depthMinutes >= descentWait(persona) || earlyStair && depth <= 5);
+  const paced = timed && player.maxHp >= hpFloor || depth <= 10 && (diving || earlyDescentReady(view) && stocked &&
+    (depthMinutes >= descentWait(persona) || earlyStair && depth <= 5)) && player.maxHp >= hpFloor;
   /* Level 2 apprentices still rule out sending a level 2 character deeper. */
   const levelFloor = paced ? Math.min(normalLevel, Math.max(3, Math.ceil(depth * 0.6) + 1)) : normalLevel;
   need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, depth <= 10 || level < depth || level * 2 < levelFloor);
   need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, depth <= 10 || player.maxHp * 2 < hpFloor);
   need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
-  need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
+  need("food", stock.food >= (diving ? 2 : 5) && !hungry(view), diving ? "two food units and no hunger" : "five food units and no hunger");
   if (depth >= 2 && level < 30) need("healing", stock.cures >= (timed ? 1 : 2), timed ? "one Cure Light, Serious or Critical Wounds potion" : "two Cure Light, Serious or Critical Wounds potions");
   if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
   if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
