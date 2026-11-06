@@ -236,6 +236,35 @@ describe("journey offer and execution guards", () => {
     expect(journey.apply(offers("explore", "wait"), w.view, null, new Set(), false).map((offer) => offer.goal)).toContain("explore");
   });
 
+  it("keeps a stocked level 3 Blackguard free to descend after an early restock choice", () => {
+    const w = suppliedWorld({ map: ["############", "#.@>....,,,#", "############"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "descend", "fight"), w.view, null, new Set(), false, false, "a restock it chose before supplies ran low");
+    expect(out.map((offer) => offer.goal)).toContain("descend");
+    expect(out.map((offer) => offer.goal)).toContain("fight");
+    expect(journey.blocked(w.view)).toBeNull();
+  });
+
+  it.each([1, 6])("searches on foot at depth %i when a supply return has no known up staircase", (depth) => {
+    const w = suppliedWorld({ map: ["############", "#.@>....,,,#", "############"], player: { cls: "Blackguard", depth, maxDepth: depth, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
+    w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)", "a Scroll of Word of Recall"]);
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "descend", "fight"), w.view, null, new Set(), false, false, "a restock it chose before supplies ran low");
+    expect(journey.searching(w.view)).toBe(true);
+    expect(out.map((offer) => offer.goal)).toContain("explore");
+    expect(out.find((offer) => offer.goal === "explore")?.criteria).toContain("up stairs");
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0])).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("searches for a return route when a known up staircase cannot be reached safely", () => {
+    const w = suppliedWorld({ map: ["############", "#<+@....,,,#", "############"] });
+    w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)"]);
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "descend"), w.view, null, new Set(), false);
+    expect(journey.searching(w.view)).toBe(true);
+    expect(out.map((offer) => offer.goal)).toEqual(["explore"]);
+  });
+
   it("stops an optional plan when the third breeder appears", () => {
     const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 2 }, monsters: breeders.slice(0, 2) });
     const journey = createJourney(w.terrain);

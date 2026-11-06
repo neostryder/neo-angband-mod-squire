@@ -80,6 +80,10 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       returnReason = null;
       chosenReturn = false;
     }
+    if (chosenReturn && supplyMargin(view) === null) {
+      returnReason = null;
+      chosenReturn = false;
+    }
     for (const monster of view.monsters()) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster, until: turn + 100 });
     const live = new Set(view.monsters().map((monster) => monster.id));
     for (const [id, entry] of remembered) if (!live.has(id) || entry.until < turn) remembered.delete(id);
@@ -145,7 +149,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   /**
    * Whether the journey must look for its staircase on foot.
    *
-   * An earning trip that can no longer walk a checked route searches for the
+   * A return trip that can no longer walk a checked route searches for the
    * up stairs. A level marked for departure by breeders, or a level whose
    * leashed ground is used up while no down staircase is known, searches for
    * whichever staircase leads on. A Recall scroll read on the first levels
@@ -159,11 +163,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function searchKind(view: AgentView): "exit" | "onward" | "stay" | null {
     const player = view.player();
     const depth = player.depth;
-    if (depth <= 0 || depth >= RECALL_FROM_DEPTH) return null;
+    if (depth <= 0) return null;
     const front = frontiers(view, terrain);
     if (front.length === 0) return null;
+    if (returnReason !== null && checkedRoute(view, upStairs(view)) === null) return "exit";
+    if (depth >= RECALL_FROM_DEPTH) return null;
     if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return "exit";
-    if (upStairs(view).length === 0 && (departure.active() && (expired || departure.finished(view)) || returnReason !== null) && checkedRoute(view, exitTargets(view)) === null) return "exit";
+    if (upStairs(view).length === 0 && departure.active() && (expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return "exit";
     /* Ready to descend, no down staircase known, nothing left to explore inside the
      * leash. A wounded character, or one with a creature rated dangerous or worse in
      * sight, keeps to the leash: straying far from the up stairs costs the most when
@@ -221,7 +227,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     lastPersona = persona;
     observe(view);
     const player = view.player();
-    if (player.depth > 0 && chosen !== null && returnReason === null) {
+    /* An early restock preference must not forbid progress while the pack can last. */
+    if (player.depth > 0 && chosen !== null && returnReason === null && supplyMargin(view) !== null) {
       returnReason = chosen;
       chosenReturn = true;
     }

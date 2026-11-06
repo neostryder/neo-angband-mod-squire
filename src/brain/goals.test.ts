@@ -1745,6 +1745,51 @@ describe("fear, swarms and refused commands", () => {
 });
 
 describe("soak findings", () => {
+  it.each([false, true])("keeps the level 3 Blackguard exploring after loops with no known up staircase and low supplies %s", (low) => {
+    const w = suppliedWorld({ map: ["############", "#.@.....,,,#", "############"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
+    if (low) w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)"]);
+    const logged: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (message) => logged.push(message), reflex: false, townCall: () => "a restock it chose before supplies ran low" });
+    for (let round = 0; round < 16; round += 1) {
+      const q = asked(p.ask(w.view));
+      expect(offered(q)).toContain("explore");
+      const choice = p.choose(pick("explore"), q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected exploration");
+      expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+      w.advance(10);
+    }
+    expect(logged.filter((message) => message.includes("loop detected") && message.includes("explore")).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("offers the level 3 Blackguard a ready descent with an early restock choice and no frontier", () => {
+    const w = suppliedWorld({ map: ["########", "#.@...>#", "########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, townCall: () => "a restock it chose before supplies ran low" });
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    const choice = p.choose(pick("descend"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected descent");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("widens to exploration before waiting for a fight that passed no game time", () => {
+    const row = `#.@${".".repeat(23)},#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { cls: "Blackguard", level: 1, maxLevel: 1, hp: 21, maxHp: 21, sp: 0, maxSp: 4 }, monsters: [{ grid: { x: 5, y: 1 }, race: "giant white mouse", level: 1, asleep: true }] });
+    const { p } = planner(w);
+    const first = asked(p.ask(w.view));
+    expect(offered(first)).toEqual(["fight"]);
+    const fight = p.choose(pick("fight"), first.context, w.view);
+    if (!("plan" in fight)) throw new Error("expected a fight");
+    let command = fight.plan.step(w.view, w.act);
+    for (let step = 0; command !== null && step < 5; step += 1) command = fight.plan.step(w.view, w.act);
+    expect(command).toBeNull();
+    const next = asked(p.ask(w.view));
+    expect(offered(next)).toContain("explore");
+    expect(offered(next)).not.toContain("wait");
+    const choice = p.choose(pick("explore"), next.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected exploration after the stalled fight");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
   it("passes a turn when a frightened character has no usable attack or escape", () => {
     const w = world({ map: ["#####", "#@.##", "#####"], player: { hp: 3, maxHp: 20, status: { afraid: 10 } }, monsters: [{ grid: { x: 2, y: 1 }, level: 30, speed: 140 }] });
     const { p } = planner(w);
