@@ -112,7 +112,7 @@ describe("journey offer and execution guards", () => {
     /* Record shape: a Rogue on level 2, ready for it but not for level 3, with the up stairs out of the leash and leave_level as the only offer. */
     const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
     const wall = "#".repeat(row.length);
-    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 } });
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 3, maxLevel: 3, hp: 38, maxHp: 38 } });
     const persisting = createJourney(w.terrain, undefined, () => true);
     expect(persisting.searching(w.view)).toBe(true);
     const out = persisting.apply(offers("explore", "leave_level", "rest"), w.view, null, new Set(), false);
@@ -127,7 +127,7 @@ describe("journey offer and execution guards", () => {
   it("still climbs from a persistent level when hurt", () => {
     const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
     const wall = "#".repeat(row.length);
-    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 10, maxHp: 38 } });
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 3, maxLevel: 3, hp: 10, maxHp: 38 } });
     const journey = createJourney(w.terrain, undefined, () => true);
     expect(journey.searching(w.view)).toBe(false);
     expect(goals(w, journey, false, offers("explore", "leave_level", "rest"))).toContain("leave_level");
@@ -136,7 +136,7 @@ describe("journey offer and execution guards", () => {
   it("does not stay on level 1, after an unseen hit, when ready to go on, or for ground it cannot reach", () => {
     const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
     const wall = "#".repeat(row.length);
-    const player = { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 };
+    const player = { cls: "Rogue", depth: 2, maxDepth: 2, level: 3, maxLevel: 3, hp: 38, maxHp: 38 };
     const first = suppliedWorld({ map: [wall, row, wall], player: { ...player, depth: 1, maxDepth: 1, level: 1, maxLevel: 1 } });
     expect(createJourney(first.terrain, undefined, () => true).searching(first.view)).toBe(false);
     const hit = suppliedWorld({ map: [wall, row, wall], player });
@@ -155,7 +155,7 @@ describe("journey offer and execution guards", () => {
   it("reads persistent levels from the birth options", () => {
     const row = `#<${".".repeat(27)}@...${",".repeat(5)}#`;
     const wall = "#".repeat(row.length);
-    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 4, maxLevel: 4, hp: 38, maxHp: 38 } });
+    const w = suppliedWorld({ map: [wall, row, wall], player: { cls: "Rogue", depth: 2, maxDepth: 2, level: 3, maxLevel: 3, hp: 38, maxHp: 38 } });
     const ask = (persist: boolean) => {
       const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => undefined, birthOptions: () => [{ name: "birth_levels_persist", value: persist }] });
       const q = planner.ask(w.view);
@@ -239,7 +239,7 @@ describe("journey offer and execution guards", () => {
   });
 
   it("lets a breeder exit go down only when the character is ready for the next depth", () => {
-    const w = suppliedWorld({ map: ["###########", "#<.....@.>#", "###########"], player: { depth: 2, maxDepth: 2, level: 5, maxLevel: 5, hp: 36, maxHp: 36 }, monsters: breeders });
+    const w = suppliedWorld({ map: ["###########", "#<.....@.>#", "###########"], player: { depth: 2, maxDepth: 2, level: 2, maxLevel: 2, hp: 26, maxHp: 26 }, monsters: breeders });
     const journey = createJourney(w.terrain);
     expect(journey.breederExit(w.view)).toBe(true);
     w.setMonsters([]);
@@ -573,12 +573,14 @@ describe("bounded exploration and earning", () => {
     expect(goals(w, journey, false, offers("explore"))).toContain("explore");
   });
 
-  it("never leaves town on a widened choice without spare fuel for the light", () => {
+  it("permits a bounded earning trip with enough current fuel and rejects a dying light", () => {
     const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain);
-    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).not.toContain("descend");
-    expect(journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).toContain("descend");
+    expect(journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act)).toEqual({ code: "descend" });
     expect(journey.guarded(null, { label: "errand", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
+    const dim = world({ map: ["#####", "#@.>#", "#####"], player: { depth: 0, gold: 0 }, pack: ["5 Rations of Food"], worn: ["a Wooden Torch (5 turns)"] });
+    expect(goals(dim, undefined, true, offers("descend"))).not.toContain("descend");
     w.setPack(["5 Rations of Food", "a Wooden Torch (5000 turns)"]);
     expect(journey.apply(offers("descend"), w.view, null, new Set(), false, true).map((o) => o.goal)).toContain("descend");
   });

@@ -15,6 +15,25 @@ const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHom
 ] };
 
 describe("the town survival basket", () => {
+  it("retries an empty earning trip after the persona delay", () => {
+    const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const departure = createDeparture();
+    departure.observe(w.view, w.terrain);
+    departure.begin(w.view, null);
+    w.setPlayer({ depth: 1 });
+    departure.observe(w.view, w.terrain);
+    w.setPlayer({ depth: 0 });
+    expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(false);
+    w.advance(earningTurns(null));
+    expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(true);
+  });
+
+  it("keeps a small oil basket for a caster after food and working light", () => {
+    const w = world({ map: ["@"], player: { maxSp: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
+    expect(basket.find((need) => need.kind === "oil")?.want).toBe(2);
+  });
+
   it("does not leave when an entered shop still sells an affordable missing essential", () => {
     const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY, stores: [alchemy] });
     w.moveTo({ x: 2, y: 1 });

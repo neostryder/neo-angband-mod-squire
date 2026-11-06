@@ -1,6 +1,7 @@
 /** A missing basket can fund a short shallow trip only after local buying is exhausted. */
 
 import type { AgentView, StoreView } from "../host-adapter.js";
+import { TV } from "../gear/compare.js";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
@@ -26,15 +27,15 @@ export function earningTurns(persona: Persona | null): number {
 }
 export const EARNING_LEASH = 6;
 
-/** Optional stock and gear wait until the whole survival basket is present. */
+/** A small oil reserve lets a caster earn the gold for its missing survival basket. */
 export function basketNeeds(view: AgentView, needs: readonly SupplyNeed[], persona: Persona | null = null): SupplyNeed[] {
   if (missingEssentials(view, persona).length === 0) return [...needs];
   const stock = supplies(view);
   const wants = basketWants(persona);
-  return needs.filter((need) => ["healing", "phase", "food", "light"].includes(need.kind)).map((need) => ({
+  return needs.filter((need) => (["healing", "phase", "food", "light"].includes(need.kind) || need.kind === "oil" && view.player().maxSp > 0 && stock.food >= wants.food && (stock.workingLight || stock.lastingLight))).map((need) => ({
     ...need,
     have: need.kind === "healing" ? stock.cures : need.kind === "phase" ? stock.phase : need.have,
-    want: wants[need.kind as keyof typeof wants],
+    want: need.kind === "oil" ? Math.max(1, Math.ceil((persona?.sliders.consumables ?? 50) / 25)) : wants[need.kind as keyof typeof wants],
   }));
 }
 
@@ -44,6 +45,7 @@ export function createDeparture() {
   let lastTurn = -1;
   let earning: { turn: number; gold: number; target: number | null; wide: boolean; limit: number } | null = null;
   let failedAtGold: number | null = null;
+  let failedTurn = -1;
 
   function observe(view: AgentView, terrain: Terrain): void {
     const player = view.player();
@@ -51,11 +53,15 @@ export function createDeparture() {
       shelves.clear();
       earning = null;
       failedAtGold = null;
+      failedTurn = -1;
       previousDepth = -1;
     }
     lastTurn = view.turn();
     if (player.depth === 0 && previousDepth > 0) {
-      if (earning !== null && player.gold <= earning.gold) failedAtGold = player.gold;
+      if (earning !== null && player.gold <= earning.gold) {
+        failedAtGold = player.gold;
+        failedTurn = view.turn();
+      }
       earning = null;
       shelves.clear();
     }
@@ -95,7 +101,7 @@ export function createDeparture() {
       }
     }
     const stock = supplies(view);
-    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
+    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && (stock.fuel >= 1 || view.equipment().some((item) => item !== null && item.tval === TV.LIGHT && item.timeout >= earningTurns(persona)))) && (failedAtGold === null || player.gold > failedAtGold || view.turn() - failedTurn >= earningTurns(persona));
     return { ready: false, earning: canEarn, reason: missing.map((requirement) => requirement.reason).join(", "), target: priced ? total : null };
   }
 

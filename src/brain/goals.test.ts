@@ -21,6 +21,72 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
 describe("decision memory in the planner", () => {
+  it("withholds another quiet refresh until hunting resumes", () => {
+    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 } });
+    const memory = createDecisionMemory();
+    memory.begin("leave_level", w.view);
+    w.advance(stuckThresholds(null).cooldown);
+    memory.finish(w.view);
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    expect(offered(p.ask(w.view))).not.toContain("leave_level");
+  });
+
+  it("allows a healthy early descent by its own rules after an XP drought", () => {
+    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1 } });
+    const memory = createDecisionMemory();
+    memory.observe(w.view);
+    w.advance(stuckThresholds(null).cooldown);
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("descend"), q.context, w.view);
+    expect(q.context.readiness?.p).toBeNull();
+    if (!("plan" in choice)) throw new Error("expected a descent plan");
+    expect(choice.plan.label).toBe("take the stairs down");
+  });
+
+  it("offers a known Phase Door after repeated waits without a route onward", () => {
+    const w = suppliedWorld({ map: ["#####", "#.@.#", "#####"], player: { depth: 2 } });
+    const memory = createDecisionMemory();
+    for (let i = 0; i < stuckThresholds(null).repeat; i++) {
+      memory.begin("wait", w.view);
+      w.advance(10);
+      memory.finish(w.view);
+    }
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("phase");
+    const choice = p.choose(pick("phase"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a phase plan");
+    expect(choice.plan.step(w.view, w.act)?.code).toBe("read");
+  });
+
+  it("cures blindness at full HP with a known Cure Light Wounds potion", () => {
+    const w = suppliedWorld({ map: ["#######", "#<.@..#", "#######"], player: { depth: 2, hp: 72, maxHp: 72, status: { blind: 1 } } });
+    const p = planner(w, true).p;
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "heal" });
+    expect(q.plan.step(w.view, w.act)?.code).toBe("quaff");
+  });
+
+  it("passes a real turn while safely waiting out blindness without a cure", () => {
+    const w = suppliedWorld({ map: ["#####", "#.@.#", "#####"], player: { depth: 2, status: { blind: 1 } } });
+    w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const p = planner(w).p;
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("wait");
+    const choice = p.choose(pick("wait"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a wait plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "hold" });
+  });
+
+  it("keeps a visible weak sleeper available instead of offering a refresh", () => {
+    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12, sp: 2, maxSp: 2 }, pack: ["3 Flasks of Oil"], spells: [{ name: "Magic Missile", sidx: 0, mana: 1 }], monsters: [{ grid: { x: 4, y: 1 }, race: "white mouse", level: 1, asleep: true }] });
+    const q = planner(w).p.ask(w.view);
+    expect(offered(q)).not.toContain("leave_level");
+    expect(offered(q)).toContain("cast_attack");
+    expect(offered(q)).toContain("throw_oil");
+  });
+
   const map = ["##########", "#........#", "#..@.....#", "#........#", "#.......>#", "##########"];
 
   it("records executed choices and their hit point results before the next question", () => {
@@ -2672,7 +2738,7 @@ describe("the readiness answer", () => {
       const planned = planner(w);
       const q = asked(planned.p.ask(w.view));
       planned.p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p } }, q.context, w.view);
-      expect(q.context.readiness).toEqual({ p, threshold: readinessThreshold(null) });
+      expect(q.context.readiness).toEqual({ p, threshold: readinessThreshold(null, spec.player.depth) });
       expect(planned.logged.some((line) => line.startsWith("goal: not ready to go down"))).toBe(!down);
     }
   });
@@ -3660,7 +3726,7 @@ describe("town as an errand for a young character", () => {
 describe("explore that keeps looping on one level", () => {
   const pickExplore = (): Readonly<Record<string, Answer>> => ({ goal: { type: "choice", choice: "explore", confidence: 0.9, probabilities: { explore: 0.9 } } });
 
-  it("stops offering explore after two loops and offers a fresh floor instead", () => {
+  it("keeps reachable exploration after loops instead of refreshing unfinished ground", () => {
     const w = suppliedWorld({ map: ["#######", "#<.@..#", "#.....#", "#...   ", "#######"], player: { cls: "Mage", depth: 1, level: 1, hp: 15, maxHp: 15 } });
     const { p } = planner(w);
     let exploreAfter: string[] | null = null;
@@ -3673,7 +3739,8 @@ describe("explore that keeps looping on one level", () => {
       p.choose(pickExplore(), q.context, w.view);
       w.advance(10);
     }
-    expect(exploreAfter).not.toBeNull();
-    expect(exploreAfter).toContain("leave_level");
+    expect(exploreAfter).toBeNull();
+    expect(offered(p.ask(w.view))).toContain("explore");
+    expect(offered(p.ask(w.view))).not.toContain("leave_level");
   });
 });
