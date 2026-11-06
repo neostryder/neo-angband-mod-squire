@@ -1745,6 +1745,63 @@ describe("fear, swarms and refused commands", () => {
 });
 
 describe("soak findings", () => {
+  it("refreshes a cleared DL1 for a level 1 Blackguard instead of waiting", () => {
+    const w = suppliedWorld({ map: ["#########", "#<...@.>#", "#########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21, sp: 5, maxSp: 8 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    expect(offered(q)).not.toContain("wait");
+    const choice = p.choose(pick("leave_level"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a level refresh");
+    for (let x = 5; x > 1; x -= 1) {
+      expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+      w.moveTo({ x: x - 1, y: 1 });
+      w.advance(10);
+    }
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it("offers a checked refresh beyond the tactical escape search budget", () => {
+    const wall = "#".repeat(102);
+    const map = [wall, `#@${".".repeat(98)}<#`, ...Array.from({ length: 49 }, () => `#${".".repeat(100)}#`), wall];
+    const w = suppliedWorld({ map, player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21 } });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    expect(offered(q)).not.toContain("wait");
+    const choice = p.choose(pick("leave_level"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a checked refresh");
+    expect(choice.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+
+  it.each([false, true])("offers the weak Blackguard town descent with no purchases and missing reserves %s", (missing) => {
+    const w = suppliedWorld({ map: ["#########", "#.@....>#", "#########"], player: { cls: "Blackguard", depth: 0, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21, gold: 0 } });
+    if (missing) w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain("descend");
+    expect(offered(q)).not.toContain("shop");
+    expect(offered(q)).not.toContain("wait");
+    const choice = p.choose(pick("descend"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected town departure");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("keeps hunting a visible sleeper when a cleared floor cannot refresh past it", () => {
+    const w = suppliedWorld({ map: ["##########", "#<.@.....#", "##########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21 }, monsters: [{ grid: { x: 6, y: 1 }, race: "giant white mouse", level: 1, asleep: true }] });
+    const { p } = planner(w);
+    for (let turn = 0; turn < 8; turn += 1) {
+      const q = asked(p.ask(w.view));
+      expect(offered(q)).toContain("fight");
+      expect(offered(q)).not.toContain("wait");
+      w.advance(10);
+    }
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("fight"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected sleeper pursuit");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
   it.each([false, true])("keeps the level 3 Blackguard exploring after loops with no known up staircase and low supplies %s", (low) => {
     const w = suppliedWorld({ map: ["############", "#.@.....,,,#", "############"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
     if (low) w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)"]);

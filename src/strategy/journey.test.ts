@@ -19,6 +19,26 @@ function goals(w: ReturnType<typeof world>, journey = createJourney(w.terrain), 
 }
 
 describe("journey offer and execution guards", () => {
+  it("routes the weak Blackguard refresh up instead of taking a nearer down staircase", () => {
+    const w = suppliedWorld({ map: ["##########", "#<....@>.#", "##########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21 } });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("leave_level"))).toEqual(["leave_level"]);
+    expect(journey.exitWay(w.view)).toBe("up");
+    const plan = journey.guarded("leave_level", { label: "refresh", step: (_view, act) => act.descend() });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    w.moveTo({ x: 1, y: 1 });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it("allows the weak Blackguard to descend from town without a shopping trip", () => {
+    const w = suppliedWorld({ map: ["########", "#.@...>#", "########"], player: { cls: "Blackguard", depth: 0, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21, gold: 0 } });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("descend"))).toEqual(["descend"]);
+    w.moveTo({ x: 6, y: 1 });
+    const plan = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
+    expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
+  });
+
   it("starts another earning trip when wider choices permit an unready town departure", () => {
     const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain);

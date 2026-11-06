@@ -1352,8 +1352,9 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (player.depth > 0 && s.awake.length === 0 && (exploreExhausted || !reachableFrontier(view, terrain)) && !reachableStairs(view, terrain) && reachableAnyStairs(view, terrain)) {
     addLeave("Take the nearest staircase to a new level: nothing unexplored can be reached here and no way down is known.", exposure(s) + 0.02);
   }
-  if (player.depth > 0 && s.awake.length === 0 && (exploreExhausted || !reachableFrontier(view, terrain)) && missingPreparation(view, player.depth + 1).length > 0) {
-    addLeave("The character can earn more experience on a fresh floor by taking the up stairs.", exposure(s) + 0.02);
+  if (player.depth > 0 && !recallActive && s.awake.length === 0 && s.unseenDamage === 0 && (exploreExhausted || !reachableFrontier(view, terrain)) && missingPreparation(view, player.depth + 1).length > 0 && reachableAnyStairs(view, terrain) && !out.some((offer) => offer.goal === "leave_level")) {
+    /* The journey checks quiet stair routes without the tactical escape search's cell budget. */
+    add("leave_level", "Take a checked up staircase to refresh the level and find more creatures for experience.", exposure(s) + 0.02);
   }
   /* Backing off from an easy creature at good health only costs turns, and
    * offering it made a timid persona walk away from every mouse. */
