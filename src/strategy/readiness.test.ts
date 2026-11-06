@@ -7,6 +7,31 @@ import { archetype, defaultPersona } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
 
+describe("arrival supply consistency", () => {
+  it.each(["Warrior", "Blackguard", "Rogue", "Priest", "Druid", "Paladin", "Ranger", "Mage", "Necromancer"])("lets a prepared %s stay on DL6 and DL10", (cls) => {
+    for (const depth of [6, 10]) {
+      const w = suppliedWorld({ map: ROOM, player: { cls, depth: depth - 1, level: 30, maxLevel: 30, hp: 100, maxHp: 100, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["3 Potions of Cure Critical Wounds", "2 Scrolls of Teleportation", "a Scroll of Word of Recall"] });
+      expect(missingPreparation(w.view, depth)).toEqual([]);
+      w.setPlayer({ depth });
+      expect(supplyMargin(w.view)).toBeNull();
+      w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)", "3 Potions of Cure Critical Wounds", "3 Scrolls of Phase Door", "a Scroll of Teleportation"]);
+      expect(supplyMargin(w.view)).toBe(depth === 10 ? "long escapes" : null);
+    }
+  });
+
+  it.each(["Warrior", "Necromancer"])("keeps a shallow %s above the DL5 return floors", (cls) => {
+    const w = world({ map: ROOM, player: { cls, classFlags: cls === "Necromancer" ? ["UNLIGHT"] : [], depth: 4, level: 1, maxLevel: 1, hp: 40, maxHp: 40 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)", "a Potion of Cure Light Wounds"] });
+    expect(missingPreparation(w.view, 5, null, 0, true)).toEqual([]);
+    w.setPlayer({ depth: 5 });
+    expect(supplyMargin(w.view)).toBeNull();
+    w.setPlayer({ depth: 4 });
+    w.setPack(["5 Flasks of Oil", "3 Rations of Food", "2 Wooden Torches (5000 turns)", "a Potion of Cure Light Wounds"]);
+    expect(missingPreparation(w.view, 5, null, 0, true).length).toBeGreaterThan(0);
+    w.setPack(["5 Flasks of Oil", "4 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    expect(missingPreparation(w.view, 5, null, 0, true).length).toBeGreaterThan(0);
+  });
+});
+
 describe("descent pace", () => {
   it.each([
     [2, 29, 19, 3, 3, 3], [3, 38, 27, 4, 4, 3], [4, 38, 27, 5, 5, 4],
@@ -308,7 +333,7 @@ describe("supply evidence and margins", () => {
     expect(supplyMargin(w.view)).toBe("healing and Phase Door");
   });
 
-  it.each([[3, 0, 0], [5, 0, 0], [6, 1, 1], [10, 3, 1]] as const)("starts the return at depth %i with %i cures or %i Phase Doors", (depth, cures, phase) => {
+  it.each([[3, 0, 0], [5, 0, 0], [6, 1, 0], [10, 2, 0]] as const)("starts the return at depth %i with %i cures or %i Phase Doors", (depth, cures, phase) => {
     const rest = ["5 Rations of Food", "3 Wooden Torches (5000 turns)", "4 Scrolls of Teleportation"];
     const w = world({ map: ROOM, player: { depth }, worn: ["a Wooden Torch (5000 turns)"], pack: [`${String(cures + 1)} Potions of Cure Light Wounds`, `${String(phase + 1)} Scrolls of Phase Door`, ...rest] });
     expect(supplyMargin(w.view)).toBeNull();
@@ -408,7 +433,7 @@ describe("timed DL2 to DL4 preparation", () => {
 });
 
 describe("shallow dives without gold", () => {
-  it.each([1, 2, 3, 4])("waives supplies and character level from DL%i only with a seen staircase", (depth) => {
+  it.each([1, 2, 3])("waives supplies and character level from DL%i only with a seen staircase", (depth) => {
     const w = world({ map: ROOM, player: { cls: "Warrior", depth, level: 1, maxLevel: 1, hp: 36, maxHp: 36 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
     expect(missingPreparation(w.view, depth + 1, null, 0, true)).toEqual([]);
     expect(missingPreparation(w.view, depth + 1, null, 0, false).some((gap) => gap.kind === "level")).toBe(true);
@@ -438,7 +463,7 @@ it.each([["Warrior", 18], ["Rogue", 16], ["Priest", 15], ["Mage", 12]] as const)
 });
 
 describe("shallow Necromancer preparation", () => {
-  it.each([1, 2, 3, 4])("accepts UNLIGHT, Nether Bolt, two rations and 80 percent HP on DL%i", (depth) => {
+  it.each([1, 2, 3])("accepts UNLIGHT, Nether Bolt, two rations and 80 percent HP on DL%i", (depth) => {
     const w = world({ map: ROOM, player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 1, maxLevel: 1, hp: 32, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0, mana: 1 }], pack: ["2 Rations of Food"] });
     expect(supplies(w.view)).toMatchObject({ lastingLight: true, workingLight: false, food: 2 });
     expect(missingPreparation(w.view, depth + 1, null, 0, true)).toEqual([]);

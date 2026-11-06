@@ -21,6 +21,36 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
+describe("corpus progress regressions", () => {
+  it.each([false, true])("never widens into completed town exploration with reflexes %s", (reflex) => {
+    const w = world({ map: ["########", "#@..>.,#", "########"], player: { depth: 0, gold: 0, maxDepth: 0 }, pack: [], worn: [] });
+    const { p } = planner(w, reflex);
+    for (let attempt = 0; attempt < 12; attempt += 1) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) break;
+      expect(offered(q)).not.toContain("explore");
+      const choice = "reflex" in q ? q : p.choose(pick(q.context.offers[0]!.goal), q.context, w.view);
+      if (!("plan" in choice)) break;
+      choice.plan.step(w.view, w.act);
+      choice.plan.step(w.view, w.act);
+      w.advance(10);
+    }
+  });
+
+  it("keeps starvation out of unseen-attacker choices and retains a food action", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 40, maxHp: 40, status: { food: 50 } } });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.advance(10);
+    w.setPlayer({ hp: 35 });
+    const q = p.ask(w.view);
+    expect(offered(q)).toContain("eat");
+    expect(offered(q)).not.toContain("swing_unseen");
+    if ("handBack" in q || "reflex" in q) throw new Error("expected a question");
+    expect(String(q.request.state["incoming"])).toContain("uncertainty 0 HP");
+  });
+});
+
 describe("decision memory in the planner", () => {
   it("withholds another quiet refresh until hunting resumes", () => {
     const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 } });
@@ -1880,12 +1910,12 @@ describe("soak findings", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
-  it.each([false, true])("keeps the level 3 Blackguard exploring after loops with no known up staircase and low supplies %s", (low) => {
+  it.each([false, true])("bounds repeated Blackguard exploration with no known up staircase and low supplies %s", (low) => {
     const w = suppliedWorld({ map: ["############", "#.@.....,,,#", "############"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 3, maxLevel: 3, hp: 38, maxHp: 38, sp: 0, maxSp: 4, gold: 71 } });
     if (low) w.setPack(["a Ration of Food", "2 Wooden Torches (5000 turns)"]);
     const logged: string[] = [];
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (message) => logged.push(message), reflex: false, townCall: () => "a restock it chose before supplies ran low" });
-    for (let round = 0; round < 16; round += 1) {
+    for (let round = 0; round < 2; round += 1) {
       const q = asked(p.ask(w.view));
       expect(offered(q)).toContain("explore");
       const choice = p.choose(pick("explore"), q.context, w.view);
@@ -1893,7 +1923,13 @@ describe("soak findings", () => {
       expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
       w.advance(10);
     }
-    expect(logged.filter((message) => message.includes("loop detected") && message.includes("explore")).length).toBeGreaterThanOrEqual(2);
+    const q = asked(p.ask(w.view));
+    const choice = p.choose(pick("explore"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected the final exploration attempt");
+    expect(choice.plan.step(w.view, w.act)).toBeNull();
+    w.advance(10);
+    const next = p.ask(w.view);
+    if (!("handBack" in next)) expect(offered(next)).not.toContain("explore");
   });
 
   it("offers the level 3 Blackguard a ready descent with an early restock choice and no frontier", () => {
@@ -3092,7 +3128,7 @@ describe("tactical pack scenarios", () => {
   it("corridor duel: prunes the oil the free blow beats, asks the gate beside the choice, and lets a low answer fight on", () => {
     const w = duel();
     const q = asked(planner(w).p.ask(w.view));
-    expect(offered(q)).toEqual(["fight", "heal", "phase", "explore"]);
+    expect(offered(q)).toEqual(["fight", "heal", "phase"]);
     expect(q.context.pack).toEqual({ pruned: [{ goal: "throw_oil", by: "fight" }], gate: { low: 0.55, high: 0.78 } });
     expect(Object.keys(q.request.questions)).toEqual(["goal", "escape"]);
     expect(q.request.questions["escape"]).toMatchObject({ type: "noul", instructions: expect.stringMatching(/^The character has \d+ of \d+ hit points \([a-z ]+\) and could take up to \d+ damage \(.+\) before its next action\. Should the character break off what it is doing now and use an escape or a heal before anything else\?$/) });
@@ -3539,7 +3575,7 @@ describe("tactical pack rules", () => {
   });
 
   it("ties each option's purpose to the near-term goal, naming only what differs", () => {
-    const w = fightWorld();
+    const w = suppliedWorld({ map: ["########", "#.@...,#", "#......#", "########"], player: { depth: 3, level: 8, hp: 40, maxHp: 60 }, monsters: ORC, monsterRecall: () => "It can hit to hurt (1d8)." });
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, strategy: () => ({ aims: [], tripAllowed: () => false, nearGoal: "Explore this level.", nearKind: "explore" }) });
     const q = asked(p.ask(w.view));
     const criteria = (q.request.questions["goal"] as ChoiceQuestion).criteria;
@@ -4273,6 +4309,7 @@ describe("shallow dive regressions", () => {
 
   it.each([1, 2, 3, 4])("dives on DL%i before learning a spell with reflexes disabled", (depth) => {
     const w = necromancer(depth);
+    if (depth === 4) w.setPack(["4 Rations of Food", "a Potion of Cure Light Wounds", "Magic for Beginners"]);
     const logs: string[] = [];
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex: false, log: (line) => logs.push(line) });
     const q = reflexed(p.ask(w.view));

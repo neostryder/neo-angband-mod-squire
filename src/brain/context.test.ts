@@ -36,6 +36,22 @@ const SCENARIOS: readonly [string, () => ReturnType<typeof requestFor>][] = [
 ];
 
 describe("decision context", () => {
+  it("keeps the current loop warning when the outcomes layer is shed", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1 } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      const choice = p.choose({ goal: { type: "choice", choice: "step_aside", confidence: 1, probabilities: { step_aside: 1 } } }, { ...q.context, offers: [{ goal: "step_aside", criteria: "step", risk: 0.01 }] }, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+    }
+    const q = p.ask(w.view);
+    if ("handBack" in q || "reflex" in q || q.context.layers === undefined) throw new Error("expected context layers");
+    const stuck = layerOf(q.context.layers, "stuck");
+    expect(stuck["loop"]).toBeDefined();
+    expect(layerOf(fitToBudget(q.context.layers, 1).context, "stuck")["loop"]).toBe(stuck["loop"]);
+  });
+
   /* A change to one of these state snapshots changes what the trained adapters see. */
   it.each(SCENARIOS)("compiles %s into layers and the same state", (_name, make) => {
     const q = make();

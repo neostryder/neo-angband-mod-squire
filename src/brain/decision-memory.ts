@@ -32,6 +32,7 @@ export interface RememberedDecision {
   readonly depth: number;
   readonly turn: number;
   readonly region: string;
+  readonly grid: string;
   readonly hpBefore: number;
   readonly hpAfter: number;
   readonly progress: DecisionProgress;
@@ -50,6 +51,7 @@ export interface StuckFacts {
   readonly turnsWithoutExperience: number;
   readonly untried: readonly Goal[];
   readonly cooling: readonly { readonly goal: Goal; readonly until: number }[];
+  readonly recent: readonly { readonly goal: Goal; readonly depth: number; readonly grid: string }[];
 }
 
 function emptyProgress(): DecisionProgress {
@@ -182,7 +184,7 @@ export function createDecisionMemory(clock: () => number = Date.now) {
       finish(view);
       const player = view.player();
       if (goal === "leave_level") refresh = { turn: view.turn(), hunting, at: clock() };
-      pending = { goal, depth: player.depth, turn: view.turn(), region: `${String(Math.floor(player.grid.x / REGION_SIZE))},${String(Math.floor(player.grid.y / REGION_SIZE))}`, hpBefore: player.hp, hpAfter: player.hp, progress: emptyProgress() };
+      pending = { goal, depth: player.depth, turn: view.turn(), region: `${String(Math.floor(player.grid.x / REGION_SIZE))},${String(Math.floor(player.grid.y / REGION_SIZE))}`, grid: `${String(player.grid.x)},${String(player.grid.y)}`, hpBefore: player.hp, hpAfter: player.hp, progress: emptyProgress() };
     },
     kill(view: AgentView): void {
       observe(view);
@@ -203,6 +205,7 @@ export function createDecisionMemory(clock: () => number = Date.now) {
         turnsWithoutExperience: Math.max(0, view.turn() - (experienceTurns.get(view.player().depth) ?? view.turn())),
         untried: candidates.filter((goal) => idleDecisions === 0 || !entries.slice(-idleDecisions).some((entry) => entry.goal === goal)),
         cooling: [...cooling].filter(([, hold]) => hold.until > view.turn()).map(([goal, hold]) => ({ goal, until: hold.until })),
+        recent: entries.slice(-6).map(({ goal, depth, grid }) => ({ goal, depth, grid })),
       };
     },
     withhold(offers: readonly Offer[], view: AgentView, persona: Persona | null): Offer[] {

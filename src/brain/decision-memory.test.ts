@@ -22,6 +22,22 @@ function offer(goal: Goal): Offer {
 }
 
 describe("decision memory", () => {
+  it("keeps the last six completed goal positions across a depth change", () => {
+    const { w, memory } = rig();
+    for (let i = 0; i < 8; i += 1) {
+      w.moveTo({ x: 1 + i % 2, y: 2 });
+      memory.begin(i % 2 === 0 ? "explore" : "leave_level", w.view);
+      w.advance(10);
+      memory.finish(w.view);
+    }
+    w.setPlayer({ depth: 2 });
+    const recent = memory.facts(w.view, null).recent;
+    expect(recent).toHaveLength(6);
+    expect(recent.slice(-2)).toEqual([{ goal: "explore", depth: 1, grid: "1,2" }, { goal: "leave_level", depth: 1, grid: "2,2" }]);
+    memory.reset();
+    expect(memory.facts(w.view, null).recent).toEqual([]);
+  });
+
   it("keeps an XP drought through healing and revisits, and clears it on XP", () => {
     const { w, memory } = rig();
     w.setPlayer({ hp: 59 });
@@ -101,7 +117,7 @@ describe("decision memory", () => {
     const count = stuckThresholds(null).repeat;
     for (let i = 0; i < count; i++) decide("step_aside");
     expect(memory.facts(w.view, null, ["step_aside", "explore"])).toEqual({
-      repeated: [{ cycle: ["step_aside"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10, turnsWithoutExperience: count * 10, untried: ["explore"], cooling: [],
+      repeated: [{ cycle: ["step_aside"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10, turnsWithoutExperience: count * 10, untried: ["explore"], cooling: [], recent: Array.from({ length: count }, () => ({ goal: "step_aside", depth: 1, grid: "4,2" })),
     });
   });
 
