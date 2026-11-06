@@ -460,7 +460,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
     "untried": [
-      "descend",
+      "step_aside",
     ],
   },
 }
@@ -627,7 +627,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
     "turnsSinceProgress": 0,
     "turnsWithoutExperience": 0,
     "untried": [
-      "fight",
+      "endure",
     ],
   },
 }

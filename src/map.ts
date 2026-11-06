@@ -17,9 +17,9 @@
  * own knowledge are the same thing.
  */
 
-import type { AgentView, CellView } from "./host-adapter.js";
+import type { AgentView, CellView, MonsterView } from "./host-adapter.js";
 import type { Loc } from "./grid.js";
-import { neighbours } from "./grid.js";
+import { neighbours, steps } from "./grid.js";
 import type { Terrain } from "./terrain.js";
 
 /** The cell at a grid, or null when it is off the map. */
@@ -50,7 +50,19 @@ export function isClosedDoor(view: AgentView, terrain: Terrain, at: Loc): boolea
  * itself finished while standing in front of the way on.
  */
 export function isRoutable(view: AgentView, terrain: Terrain, at: Loc): boolean {
-  return isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at);
+  return (isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at)) && !besideParalysingGazer(view, at);
+}
+
+export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {
+  if (view.player().objectFlags.includes("FREE_ACT")) return false;
+  if (/^floating eye$/i.test(monster.race)) return true;
+  const memory = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
+  const paralysis = /\bparaly[sz]\w*/i.test(memory);
+  return paralysis && (/\bgaze\b/i.test(memory) || monster.raceFlags.includes("NEVER_MOVE") || /does not deign to chase intruders/i.test(memory));
+}
+
+export function besideParalysingGazer(view: AgentView, at: Loc): boolean {
+  return view.monsters().some((monster) => monster.visible && steps(monster.grid, at) <= 1 && paralysingGazer(view, monster));
 }
 
 /** Whether the character may actually walk into this grid on this decision. */
@@ -99,6 +111,7 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
+      if (besideParalysingGazer(view, at)) continue;
       if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);
