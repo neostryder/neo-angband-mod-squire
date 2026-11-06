@@ -171,7 +171,7 @@ export function shallowDiveChecks(view: AgentView, persona: Persona | null = nul
     food: stock.food,
     hungry: hungry(view),
     statusReady: earlyDescentReady(view, 0, 0.8),
-    arrivalSupplies: player.depth < 4 || stock.food >= 4 && stock.cures >= 1 && (stock.lastingLight || stock.fuel >= 2),
+    arrivalSupplies: player.depth < 4 || stock.food >= 4 && stock.cures >= 1 && stock.phase + stock.escapes >= 1 && (stock.lastingLight || stock.fuel >= 2),
   };
 }
 

@@ -1877,8 +1877,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       unseenHit = null;
       contacts.clear();
     }
-    const liveIds = new Set(view.monsters().map((m) => m.id));
-    for (const id of rememberedThreats.keys()) if (!liveIds.has(id)) rememberedThreats.delete(id);
+    /* API 2 omits creatures outside perception; absence is not evidence of a kill. */
     if (observe) {
       const visible = view.monsters().filter((m) => m.visible);
       const explains = (grid: Loc, damage: number) => {
@@ -3424,7 +3423,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * creatures and hit points are always sent. */
       const one = damageFor(s, player.grid, 1, terrain);
       const two = damageFor(s, player.grid, 2, terrain);
+      const schedule = journey.schedule(view);
       const compiled = contextOf([
+        ["stuck", "dive_schedule", schedule.stage === 0 || schedule.next === null ? undefined : `After ${schedule.minutes.toFixed(1)} minutes, the target was DL${String(schedule.next.depth)} by minute ${String(schedule.next.minutes)}. ${schedule.stage === 1 ? "Prioritize the next checked down staircase with recovery reserves." : "The target is at least three minutes late; accept missing recovery reserves at full HP when the survival floors hold."}`],
         ["memory", "character", `Level ${String(player.level)} (${levelBand(player.level)}) ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (${depthBand(player.depth)}); deepest reached ${String(player.maxDepth)} (${depthBand(player.maxDepth)}).`],
         ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
         ["memory", "mana", player.maxSp > 0 ? `${manaBand(player.sp, player.maxSp)}: ${String(player.sp)} of ${String(player.maxSp)}` : undefined],

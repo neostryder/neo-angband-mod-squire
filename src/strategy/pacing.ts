@@ -16,6 +16,25 @@ export function stairLeash(level: number): number {
   return level < 20 ? 3 * Math.max(1, level) + 9 : Infinity;
 }
 
+export const DIVE_SCHEDULE = [
+  { depth: 2, minutes: 4 },
+  { depth: 3, minutes: 8 },
+  { depth: 4, minutes: 11 },
+  { depth: 5, minutes: 15 },
+  { depth: 6, minutes: 18 },
+  { depth: 7, minutes: 21 },
+  { depth: 8, minutes: 24 },
+  { depth: 9, minutes: 27 },
+  { depth: 10, minutes: 30 },
+] as const;
+
+/** Small gains and stair visits must not restart the overall depth deadline. */
+export function diveSchedule(minutes: number, depth: number) {
+  const next = DIVE_SCHEDULE.find((step) => step.depth > Math.max(1, depth));
+  const late = next === undefined ? -1 : minutes - next.minutes;
+  return { minutes, next: next ?? null, stage: late < 0 ? 0 : late < 3 ? 1 : 2 };
+}
+
 export function createLevelPacing() {
   let depth = -1;
   let entered = 0;

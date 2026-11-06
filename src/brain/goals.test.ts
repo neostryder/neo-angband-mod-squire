@@ -22,6 +22,19 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
 describe("corpus progress regressions", () => {
+  it("keeps an overdue depth target in the decision facts while danger blocks a dive", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { depth: 1, level: 5, maxLevel: 5, hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 4, y: 1 }, race: "soldier", level: 5 }] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, now: () => time });
+    p.ask(w.view);
+    time = 7 * 60000;
+    w.advance(10);
+    const q = asked(p.ask(w.view));
+    expect(String(q.request.state["dive_schedule"])).toContain("the target was DL2 by minute 4");
+    expect(String(q.request.state["dive_schedule"])).toContain("at least three minutes late");
+    expect(offered(q)).not.toEqual(["descend"]);
+  });
+
   it.each([false, true])("escapes a reserve deadlock through the controller with reflexes %s", (reflex) => {
     let time = 0;
     const w = world({ map: ["########", "#<@...>#", "########"], player: { cls: "Warrior", depth: 1, maxDepth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 0 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
@@ -760,6 +773,19 @@ describe("combat safety action guards", () => {
     expect(offered(p.ask(w.view))).toContain("rest");
   });
 
+  it.each(["blindness", "phase"])("keeps an attacker omitted from the API 2 creature list after %s", (cause) => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 3, y: 1 }, race: "soldier", level: 5 }] });
+    const { p } = planner(w);
+    p.ask(w.view);
+    w.advance(10);
+    w.setMonsters([]);
+    if (cause === "blindness") w.setPlayer({ status: { blind: 5 } });
+    expect(offered(p.ask(w.view))).not.toContain("rest");
+    w.advance(51);
+    w.setPlayer({ status: { blind: 0 } });
+    expect(offered(p.ask(w.view))).toContain("rest");
+  });
+
   it("blocks rest after an unexplained hit and expires the local uncertainty", () => {
     const w = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20 } });
     const { p } = planner(w);
@@ -823,7 +849,7 @@ describe("combat safety action guards", () => {
   });
 
   it("asks again after an HP change within the same health band", () => {
-    const w = world({ map: CORRIDOR, player: { hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 5, y: 1 }, level: 1 }], monsterRecall: () => "It can bite to hurt (1d1, 50%)." });
+    const w = world({ map: ["########", "#.@....#", "# #### #", "########"], player: { hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 5, y: 1 }, level: 1 }], monsterRecall: () => "It can bite to hurt (1d1, 50%)." });
     const { p } = planner(w, true);
     p.choose(pick("fight"), asked(p.ask(w.view)).context, w.view);
     w.setPlayer({ hp: 29 });
@@ -1959,7 +1985,7 @@ describe("soak findings", () => {
 
   it("widens to exploration before waiting for a fight that passed no game time", () => {
     const row = `#.@${".".repeat(23)},#`;
-    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { cls: "Blackguard", level: 1, maxLevel: 1, hp: 21, maxHp: 21, sp: 0, maxSp: 4 }, monsters: [{ grid: { x: 5, y: 1 }, race: "giant white mouse", level: 1, asleep: true }] });
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, `###....${"#".repeat(row.length - 7)}`, "#".repeat(row.length)], player: { cls: "Blackguard", level: 1, maxLevel: 1, hp: 21, maxHp: 21, sp: 0, maxSp: 4 }, monsters: [{ grid: { x: 5, y: 1 }, race: "giant white mouse", level: 1, asleep: true }] });
     const { p } = planner(w);
     const first = asked(p.ask(w.view));
     expect(offered(first)).toEqual(["fight", "explore"]);
@@ -2038,12 +2064,12 @@ describe("soak findings", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 
-  it("drops damage from a creature that disappeared after a fight", () => {
+  it("expires damage memory when a creature stays outside perception after a fight", () => {
     const w = suppliedWorld({ map: ["########", "#.@..>.#", "########"], player: { depth: 0, maxDepth: 0 }, monsters: [{ grid: { x: 3, y: 1 }, race: "singing, happy drunk" }] });
     const { p } = planner(w);
     p.ask(w.view);
     w.setMonsters([]);
-    w.advance(10);
+    w.advance(51);
     const q = asked(p.ask(w.view));
     expect(String(q.request.state["incoming"])).toContain("Up to 0 HP damage in one action (none) and 0 in two (none)");
   });
@@ -3212,7 +3238,7 @@ describe("tactical pack scenarios", () => {
   it("unknown monster: says nothing the character has not learned about it, and gates the escapes like any other fight", () => {
     const w = suppliedWorld({ map: CORRIDOR, player: { depth: 4, level: 6, hp: 35, maxHp: 40 }, monsters: [{ grid: { x: 4, y: 1 }, race: "strange creature", raceIndex: 11, level: 9, hp: 30, maxHp: 30 }] });
     const q = asked(planner(w).p.ask(w.view));
-    expect(offered(q)).toEqual(["fight", "heal", "phase", "retreat", "explore"]);
+    expect(offered(q)).toEqual(["fight", "heal", "phase", "retreat"]);
     expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
     expect(String(q.request.state["creatures"])).not.toMatch(/\bcan\b|\bmay\b/);
     const middle = answer(w, choice({ fight: 0.9, explore: 0.1 }), 0.7);
@@ -4325,7 +4351,7 @@ describe("shallow dive regressions", () => {
 
   it.each([1, 2, 3, 4])("dives on DL%i before learning a spell with reflexes disabled", (depth) => {
     const w = necromancer(depth);
-    if (depth === 4) w.setPack(["4 Rations of Food", "2 Potions of Cure Light Wounds", "Magic for Beginners"]);
+    if (depth === 4) w.setPack(["4 Rations of Food", "2 Potions of Cure Light Wounds", "a Scroll of Phase Door", "Magic for Beginners"]);
     const logs: string[] = [];
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex: false, log: (line) => logs.push(line) });
     const q = reflexed(p.ask(w.view));
