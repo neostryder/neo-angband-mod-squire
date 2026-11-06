@@ -106,6 +106,156 @@ describe("journey descent clock", () => {
   });
 });
 
+describe("depth-preserving refreshes", () => {
+  it("offers up, returns down before combat and preserves depth and the clock through three refreshes", () => {
+    let time = 0;
+    const w = suppliedWorld({ map: ROOM, player: { depth: 3, maxDepth: 3, level: 3, maxLevel: 3 } });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.depthMinutes(w.view);
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      w.moveTo({ x: 1, y: 1 });
+      expect(goals(w, journey, false, offers("leave_level"))).toContain("leave_level");
+      expect(journey.exitWay(w.view)).toBe("up");
+      const up = journey.guarded("leave_level", { label: "refresh", step: () => null });
+      expect(up.step(w.view, w.act)).toEqual({ code: "ascend" });
+      w.advance(10);
+      w.setPlayer({ depth: 2 });
+      w.moveTo({ x: 6, y: 1 });
+      w.setMonsters([{ grid: { x: 5, y: 1 }, race: "kobold" }]);
+      expect(goals(w, journey, false, offers("fight", "explore", "leave_level"))).toEqual(["descend"]);
+      expect(journey.guarded("descend", { label: "return", step: () => null }).step(w.view, w.act)).toEqual({ code: "descend" });
+      w.advance(10);
+      w.setPlayer({ depth: 3 });
+      w.setMonsters([]);
+      time += 40000;
+      expect(journey.depthMinutes(w.view)).toBeCloseTo((cycle + 1) * 2 / 3);
+    }
+    expect(w.view.player().depth).toBe(3);
+    expect(journey.depthMinutes(w.view)).toBe(2);
+    w.setPlayer({ depth: 0 });
+    time += 60000;
+    expect(journey.depthMinutes(w.view)).toBe(3);
+    w.setPlayer({ depth: 3 });
+    expect(journey.depthMinutes(w.view)).toBe(3);
+    w.setPlayer({ depth: 4 });
+    expect(journey.depthMinutes(w.view)).toBe(0);
+  });
+
+  it.each(["hurt", "unprepared", "resupply"])("retains the existing %s retreat rules", (reason) => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 3, maxDepth: 3 } });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 1, y: 1 });
+    goals(w, journey, false, offers("leave_level"));
+    expect(journey.guarded("leave_level", { label: "refresh", step: () => null }).step(w.view, w.act)).toEqual({ code: "ascend" });
+    w.advance(10);
+    w.setPlayer({ depth: 2, ...(reason === "hurt" ? { hp: 59 } : reason === "unprepared" ? { level: 1, maxLevel: 1 } : {}) });
+    if (reason === "resupply") w.setPack([]);
+    w.moveTo({ x: 6, y: 1 });
+    expect(journey.refreshReturn(w.view)).toBe(false);
+  });
+
+  it("does not offer a second refresh ascent when connected stairs are absent", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 3, maxDepth: 3 } });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 1, y: 1 });
+    goals(w, journey, false, offers("leave_level"));
+    journey.guarded("leave_level", { label: "refresh", step: () => null }).step(w.view, w.act);
+    w.advance(10);
+    w.setPlayer({ depth: 2 });
+    w.moveTo({ x: 2, y: 1 });
+    expect(journey.refreshReturn(w.view)).toBe(false);
+    expect(goals(w, journey, false, offers("leave_level", "explore"))).not.toContain("leave_level");
+    expect(journey.exitWay(w.view)).toBe("down");
+  });
+
+  it("makes the planner descend before detection, exploration or a visible opponent", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 3, maxDepth: 3 } });
+    w.moveTo({ x: 1, y: 1 });
+    const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    const q = planner.ask(w.view);
+    if ("handBack" in q) throw new Error(q.handBack);
+    const context = { ...q.context, offers: offers("leave_level") };
+    const choice = planner.choose({ goal: { type: "choice", choice: "leave_level", confidence: 1, probabilities: { leave_level: 1 } } }, context, w.view);
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+    w.advance(10);
+    w.setPlayer({ depth: 2 });
+    w.moveTo({ x: 6, y: 1 });
+    w.setMonsters([{ grid: { x: 5, y: 1 }, race: "kobold" }]);
+    const next = planner.ask(w.view);
+    expect("reflex" in next && next.context.offers.map((offer) => offer.goal)).toEqual(["descend"]);
+    if (!("reflex" in next)) throw new Error("The refresh did not return immediately.");
+    expect(next.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+  });
+});
+
+describe("exploration obstacles", () => {
+  it("approaches rubble from several squares away before tunnelling", () => {
+    const w = suppliedWorld({ map: ["#########", "#<.@..%,#", "#########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 6 });
+    w.moveTo({ x: 5, y: 1 });
+    w.advance(20);
+    expect(journey.explore(ctx, true)).toEqual({ code: "tunnel", dir: 6 });
+  });
+
+  it("tunnels a known jammed door without first trying open", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@+.,#", "########"] });
+    const journey = createJourney({ ...w.terrain, isJammedDoor: (feat) => feat === FEAT.DOOR_CLOSED });
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true)).toEqual({ code: "tunnel", dir: 6 });
+  });
+  it.each(["+", "%"])("blocks a refused %s for the level, explores elsewhere and forgets it on departure", (glyph) => {
+    const w = suppliedWorld({ map: ["########", "#<.@" + glyph + ".,#", "########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    const code = glyph === "+" ? "open" : "tunnel";
+    expect(journey.explore(ctx, true)).toEqual({ code, dir: 6 });
+    expect(journey.explore(ctx, true)).toBeNull();
+    w.setPlayer({ depth: 2 });
+    w.advance(10);
+    expect(journey.explore(ctx, true)).toEqual({ code, dir: 6 });
+  });
+
+  it("retries a locked door with open and stops after three failed batches", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@+.,#", "########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    for (let batch = 0; batch < 3; batch += 1) {
+      expect(journey.explore(ctx, true)).toEqual({ code: "open", dir: 6 });
+      w.advance(100);
+      w.setMessages(["You failed to pick the lock."]);
+    }
+    expect(journey.explore(ctx, true)).toBeNull();
+  });
+
+  it("tunnels a door reported stuck instead of opening it again", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@+.,#", "########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    expect(journey.explore(ctx, true)?.code).toBe("open");
+    w.setMessages(["The door appears to be stuck."]);
+    expect(journey.explore(ctx, true)).toEqual({ code: "tunnel", dir: 6 });
+    expect(journey.explore(ctx, true)).toBeNull();
+  });
+
+  it("opens a diagonal door with its diagonal direction", () => {
+    const w = suppliedWorld({ map: ["#######", "#<.@###", "####+.#", "#####,#", "#######"] });
+    const journey = createJourney(w.terrain);
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true)).toEqual({ code: "open", dir: 3 });
+  });
+
+  it("takes another frontier after a door refuses the command", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@+,##", "###.####", "###.####", "###,####", "########"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    expect(journey.explore(ctx, true)).toEqual({ code: "open", dir: 6 });
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 2 });
+    w.advance(10);
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 2 });
+  });
+});
+
 describe("journey offer and execution guards", () => {
   it("routes the weak Blackguard refresh up instead of taking a nearer down staircase", () => {
     const w = suppliedWorld({ map: ["##########", "#<....@>.#", "##########"], player: { cls: "Blackguard", depth: 1, maxDepth: 1, level: 1, maxLevel: 1, hp: 21, maxHp: 21 } });

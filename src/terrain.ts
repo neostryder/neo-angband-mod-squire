@@ -19,11 +19,13 @@ export interface TerrainFlagIndex {
   readonly DOWNSTAIR: number;
   readonly UPSTAIR: number;
   readonly DOOR_CLOSED: number;
+  readonly DOOR_JAMMED?: number;
   readonly CLOSABLE?: number;
   readonly SHOP: number;
   readonly FIERY: number;
   /** ROCK and PERMANENT, when the host numbers them, tell diggable rubble from a permanent wall. */
   readonly ROCK?: number;
+  readonly WALL?: number;
   readonly PERMANENT?: number;
 }
 
@@ -44,6 +46,7 @@ export interface Terrain {
   isDownStair(feat: number): boolean;
   isUpStair(feat: number): boolean;
   isClosedDoor(feat: number): boolean;
+  isJammedDoor?(feat: number): boolean;
   isOpenDoor?(feat: number): boolean;
   isShopEntrance(feat: number): boolean;
   /** The mapped town shop, without reading any store stock. */
@@ -56,6 +59,8 @@ export interface Terrain {
    * absence as "nothing here can be dug".
    */
   isDiggable?(feat: number): boolean;
+  /** Loose rock can block exploration without inviting a route through a wall. */
+  isRubble?(feat: number): boolean;
   /** How many features were classified. Zero means there were no terrain records. */
   readonly size: number;
 }
@@ -72,17 +77,23 @@ export function readTerrain(
   const down = new Set<number>();
   const up = new Set<number>();
   const closed = new Set<number>();
+  const jammed = new Set<number>();
   const open = new Set<number>();
   const shops = new Set<number>();
   const shopNames = new Map<number, string>();
   const harmful = new Set<number>();
   const diggable = new Set<number>();
+  const rubble = new Set<number>();
 
   for (const feature of features) {
     const has = (flag: number): boolean => flag > 0 && feature.flags.has(flag);
     if (has(tf.DOWNSTAIR)) down.add(feature.fidx);
     if (has(tf.UPSTAIR)) up.add(feature.fidx);
     if (has(tf.DOOR_CLOSED)) closed.add(feature.fidx);
+    if (tf.DOOR_JAMMED !== undefined && has(tf.DOOR_JAMMED)) {
+      closed.add(feature.fidx);
+      jammed.add(feature.fidx);
+    }
     if (tf.CLOSABLE !== undefined && has(tf.CLOSABLE)) open.add(feature.fidx);
     if (has(tf.SHOP)) {
       shops.add(feature.fidx);
@@ -90,7 +101,10 @@ export function readTerrain(
       if (name !== undefined) shopNames.set(feature.fidx, name);
     }
     /* Rubble is rock that is not permanent: the tunnel command can clear it. */
-    if (tf.ROCK !== undefined && has(tf.ROCK) && !(tf.PERMANENT !== undefined && has(tf.PERMANENT))) diggable.add(feature.fidx);
+    if (tf.ROCK !== undefined && has(tf.ROCK) && !(tf.PERMANENT !== undefined && has(tf.PERMANENT))) {
+      diggable.add(feature.fidx);
+      if (tf.WALL !== undefined && !has(tf.WALL)) rubble.add(feature.fidx);
+    }
     /* Harmful is PASSABLE AND FIERY together, deliberately. FIERY alone would
      * take in a wall of fire a mod might add, which is not somewhere an errand
      * could step anyway, and PASSABLE alone is most of the map. What this set
@@ -103,11 +117,13 @@ export function readTerrain(
     isDownStair: (feat) => down.has(feat),
     isUpStair: (feat) => up.has(feat),
     isClosedDoor: (feat) => closed.has(feat),
+    isJammedDoor: (feat) => jammed.has(feat),
     isOpenDoor: (feat) => open.has(feat),
     isShopEntrance: (feat) => shops.has(feat),
     shopName: (feat) => shopNames.get(feat) ?? null,
     isHarmful: (feat) => harmful.has(feat),
     isDiggable: (feat) => diggable.has(feat),
+    isRubble: (feat) => rubble.has(feat),
     size: features.length,
   };
 }
@@ -139,7 +155,7 @@ export function terrainRecords(records: readonly Readonly<Record<string, unknown
 }
 
 /** Flag numbers for readTerrain, which asks a feature about a flag by number. Each number stands for the flag name beside it. */
-const FLAG_NUMBERS = { PASSABLE: 1, DOWNSTAIR: 2, UPSTAIR: 3, DOOR_CLOSED: 4, CLOSABLE: 5, SHOP: 6, FIERY: 7, ROCK: 8, PERMANENT: 9 } as const satisfies TerrainFlagIndex;
+const FLAG_NUMBERS = { PASSABLE: 1, DOWNSTAIR: 2, UPSTAIR: 3, DOOR_CLOSED: 4, CLOSABLE: 5, SHOP: 6, FIERY: 7, ROCK: 8, PERMANENT: 9, DOOR_JAMMED: 10, WALL: 11 } as const satisfies TerrainFlagIndex;
 const FLAG_NAMES: ReadonlyMap<number, string> = new Map(Object.entries(FLAG_NUMBERS).map(([name, n]) => [n, name]));
 
 /** Classify terrain from the records. Null or an empty list gives a Terrain that answers false for every feature. */
