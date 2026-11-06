@@ -39,6 +39,16 @@ describe("journey offer and execution guards", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
   });
 
+  it.each([false, true])("blocks poisoned town departures even with wider choices %s", (widen) => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 0, hp: 20, maxHp: 20, gold: 0 } });
+    const journey = createJourney(w.terrain);
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, widen).map((offer) => offer.goal)).toContain("descend");
+    const plan = journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() });
+    w.setPlayer({ status: { poisoned: 10 } });
+    expect(plan.step(w.view, w.act)).toBeNull();
+    expect(journey.apply(offers("descend"), w.view, null, new Set(), false, widen).map((offer) => offer.goal)).not.toContain("descend");
+  });
+
   it("starts another earning trip when wider choices permit an unready town departure", () => {
     const w = world({ map: ["###########", "#><@.....,#", "###########"], player: { depth: 0, maxDepth: 0, hp: 20, maxHp: 20, gold: 0 }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain);
