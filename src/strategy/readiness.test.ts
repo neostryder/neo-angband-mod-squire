@@ -8,16 +8,34 @@ import { archetype } from "../persona/persona.js";
 const ROOM = ["#####", "#<@>#", "#####"];
 
 describe("prepared depths", () => {
-  it.each([2, 3])("rejects the soak's level 1 Warrior with 20 maximum HP at depth %i", (depth) => {
+  it.each([2, 3])("keeps a level floor for the level 1 Warrior at depth %i", (depth) => {
     const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", level: 1, maxLevel: 1, hp: 20, maxHp: 20 } });
-    expect(missingPreparation(w.view, depth).map((need) => need.kind)).toEqual(expect.arrayContaining(["level", "hp"]));
+    expect(missingPreparation(w.view, depth).map((need) => need.kind)).toEqual(depth === 2 ? ["level"] : ["level", "hp"]);
   });
 
-  it("opens depth 2 at 30 maximum HP, maximum level 2, light and five food units", () => {
-    const w = suppliedWorld({ map: ROOM, player: { level: 2, maxLevel: 2, hp: 10, maxHp: 30, light: 1 } });
+  it("opens depth 2 at the early class floor, maximum level 2, light and five food units", () => {
+    const w = suppliedWorld({ map: ROOM, player: { level: 2, maxLevel: 2, hp: 10, maxHp: 20, light: 1 } });
     expect(missingPreparation(w.view, 2)).toEqual([]);
     w.setPack(["4 Rations of Food"]);
     expect(missingPreparation(w.view, 2).map((need) => need.kind)).toContain("food");
+  });
+
+  it.each([
+    ["Warrior", 20], ["Blackguard", 20], ["Rogue", 16], ["Priest", 14],
+    ["Druid", 14], ["Paladin", 20], ["Ranger", 20], ["Mage", 12], ["Necromancer", 12],
+  ] as const)("opens depth 2 for %s at its attainable early HP floor", (cls, maxHp) => {
+    const w = suppliedWorld({ map: ROOM, player: { cls, level: 2, maxLevel: 2, hp: maxHp, maxHp } });
+    expect(missingPreparation(w.view, 2)).toEqual([]);
+    w.setPlayer({ maxHp: maxHp - 1 });
+    expect(missingPreparation(w.view, 2).map((gap) => gap.kind)).toEqual(["hp"]);
+  });
+
+  it("scales the early HP floor with persona drive while keeping food and light mandatory", () => {
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Mage", level: 2, maxLevel: 2, hp: 12, maxHp: 12 } });
+    expect(missingPreparation(w.view, 2, archetype("berserker"))).toEqual([]);
+    expect(missingPreparation(w.view, 2, archetype("coward")).map((gap) => gap.kind)).toEqual(["hp"]);
+    w.setPack([]);
+    expect(descentGaps(w.view, 2, archetype("berserker")).hard.map((gap) => gap.kind)).toContain("food");
   });
 
   it.each([
@@ -91,9 +109,9 @@ describe("prepared depths", () => {
   });
 
   it("makes the missing HP and supplies an acquisition aim", () => {
-    const w = world({ map: ROOM, player: { level: 1, maxLevel: 1, maxHp: 20 } });
+    const w = world({ map: ROOM, player: { level: 1, maxLevel: 1, maxHp: 18 } });
     const aim = candidateAims(w.view).find((entry) => entry.kind === "preparation");
-    expect(aim?.detail).toContain("30 maximum hit points");
+    expect(aim?.detail).toContain("20 maximum hit points");
     expect(aim?.detail).toContain("five food units");
   });
 
@@ -246,11 +264,11 @@ describe("supply evidence and margins", () => {
 
 describe("descent gaps", () => {
   it("keeps light, food and a severe shortfall out of the persona's hands", () => {
-    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1, hp: 20, maxHp: 20, light: 0 } });
+    const w = suppliedWorld({ map: ROOM, player: { cls: "Warrior", depth: 1, level: 1, maxLevel: 1, hp: 18, maxHp: 18, light: 0 } });
     const gaps = descentGaps(w.view, 2);
     expect(gaps.hard.map((gap) => gap.kind)).toEqual(["light"]);
     expect(gaps.soft.map((gap) => gap.kind)).toEqual(["level", "hp"]);
-    w.setPlayer({ maxHp: 14 });
+    w.setPlayer({ maxHp: 9 });
     expect(descentGaps(w.view, 2).hard.map((gap) => gap.kind)).toEqual(["hp", "light"]);
   });
 

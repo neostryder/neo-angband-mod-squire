@@ -111,7 +111,13 @@ export function restRestoresMana(cls: string): boolean {
 }
 
 /** Unknown classes use the strictest early class floor. */
-function classFloor(cls: string, depth: number): readonly [number, number] {
+function classFloor(cls: string, depth: number, persona: Persona | null): readonly [number, number] {
+  if (depth === 2) {
+    const hp = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls) ? 20
+      : cls === "Rogue" ? 16 : ["Priest", "Druid"].includes(cls) ? 14
+      : ["Mage", "Necromancer"].includes(cls) ? 12 : 20;
+    return [Math.ceil(hp * (1 + drive(null) - drive(persona))), 2];
+  }
   if (depth < 5) {
     if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [50, 4];
     if (cls === "Rogue") return [50, 8];
@@ -125,14 +131,14 @@ function classFloor(cls: string, depth: number): readonly [number, number] {
 }
 
 /** The actual destination is checked even when the command starts in town. */
-export function missingPreparation(view: AgentView, depth: number): Requirement[] {
+export function missingPreparation(view: AgentView, depth: number, persona: Persona | null = null): Requirement[] {
   if (depth <= 1) return [];
   const player = view.player();
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
   const out: Requirement[] = [];
   const need = (kind: Requirement["kind"], enough: boolean, reason: string, severe = false) => { if (!enough) out.push(severe ? { kind, reason, severe } : { kind, reason }); };
-  const [hpFloor, classLevel] = depth >= 3 ? classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth) : [30, 2];
+  const [hpFloor, classLevel] = classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth, persona);
   const caster = ["Mage", "Necromancer"].includes(player.cls);
   const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
   need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, level * 2 < levelFloor);
@@ -193,8 +199,8 @@ const HARD_GAPS: ReadonlySet<Requirement["kind"]> = new Set(["light", "food"]);
  * The preparation a level asks for, split into gaps that always forbid the trip and gaps the
  * model weighs against the persona's readiness threshold.
  */
-export function descentGaps(view: AgentView, depth: number): { readonly hard: Requirement[]; readonly soft: Requirement[] } {
-  const all = missingPreparation(view, depth);
+export function descentGaps(view: AgentView, depth: number, persona: Persona | null = null): { readonly hard: Requirement[]; readonly soft: Requirement[] } {
+  const all = missingPreparation(view, depth, persona);
   const hard = (gap: Requirement) => HARD_GAPS.has(gap.kind) || gap.severe === true;
   return { hard: all.filter(hard), soft: all.filter((gap) => !hard(gap)) };
 }
@@ -208,9 +214,9 @@ export function readinessThreshold(persona: Persona | null): number {
 }
 
 /** One sentence on what the next level down still asks for, for the purpose layer. */
-export function gapFacts(view: AgentView): string | undefined {
+export function gapFacts(view: AgentView, persona: Persona | null = null): string | undefined {
   const depth = view.player().depth + 1;
-  const gaps = missingPreparation(view, depth);
+  const gaps = missingPreparation(view, depth, persona);
   if (depth <= 1) return undefined;
   if (gaps.length === 0) return `The character is prepared for dungeon level ${String(depth)} (${depthBand(depth)}).`;
   return `For dungeon level ${String(depth)} (${depthBand(depth)}) the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.`;

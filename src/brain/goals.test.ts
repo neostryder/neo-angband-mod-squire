@@ -583,10 +583,11 @@ describe("combat safety action guards", () => {
     expect(q.context.offers.find((o) => o.goal === "heal")).toMatchObject({ risk: 1, survival: -14 });
   });
 
-  it("leaves the choice between an adequate cure and a feasible phase with Jev", () => {
+  it("recovers below the health line when a cure and a phase are feasible", () => {
     const w = world({ map: CORRIDOR, player: { hp: 5, maxHp: 15 }, monsters: [grip], monsterRecall: bite, pack: ["a Potion of Cure Light Wounds", "a Scroll of Phase Door"] });
-    const q = asked(planner(w, true).p.ask(w.view));
+    const q = reflexed(planner(w, true).p.ask(w.view));
     expect(offered(q)).toEqual(expect.arrayContaining(["heal", "phase"]));
+    expect(q.answers["goal"]).toMatchObject({ choice: "heal" });
   });
 
   it("forces a reliable inspected healing spell and preserves its failure bound", () => {
@@ -701,10 +702,10 @@ describe("combat safety action guards", () => {
   });
 
   it("asks again after an HP change within the same health band", () => {
-    const w = world({ map: CORRIDOR, player: { hp: 20, maxHp: 40 }, monsters: [{ grid: { x: 5, y: 1 }, level: 1 }], monsterRecall: () => "It can bite to hurt (1d1, 50%)." });
+    const w = world({ map: CORRIDOR, player: { hp: 30, maxHp: 40 }, monsters: [{ grid: { x: 5, y: 1 }, level: 1 }], monsterRecall: () => "It can bite to hurt (1d1, 50%)." });
     const { p } = planner(w, true);
     p.choose(pick("fight"), asked(p.ask(w.view)).context, w.view);
-    w.setPlayer({ hp: 19 });
+    w.setPlayer({ hp: 29 });
     w.advance(10);
     expect(p.ask(w.view)).toHaveProperty("request");
   });
@@ -1040,7 +1041,7 @@ describe("reflexes", () => {
   });
 
   it("keeps the model's answer while the situation stays the same, for a few turns", () => {
-    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20, sp: 0, maxSp: 10 } });
     const { p } = planner(w, true);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.map((o) => o.goal)).toEqual(expect.arrayContaining(["rest", "explore"]));
@@ -1054,10 +1055,10 @@ describe("reflexes", () => {
   });
 
   it("asks again when the situation changes", () => {
-    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20, sp: 0, maxSp: 10 } });
     const { p } = planner(w, true);
     p.choose(pick("rest"), asked(p.ask(w.view)).context, w.view);
-    w.setPlayer({ hp: 3 });
+    w.setPlayer({ status: { confused: 1 } });
     expect("reflex" in p.ask(w.view)).toBe(false);
   });
 });
@@ -1870,7 +1871,7 @@ describe("soak findings", () => {
   });
 
   it("explores past the leash when the only offer is a descent the character is not ready for", () => {
-    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 20, maxHp: 20 } });
+    const w = suppliedWorld({ map: ["#######################", "#<@>.................,#", "#######################"], player: { cls: "Rogue", level: 2, maxLevel: 2, depth: 1, maxDepth: 1, hp: 14, maxHp: 14 } });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(offered(q)).toContain("descend");
@@ -2069,7 +2070,7 @@ describe("soak findings", () => {
   });
 
   it("takes the up stairs from a walked-out Rogue floor despite known down stairs", () => {
-    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 14, maxHp: 14 } });
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 7, maxHp: 7 } });
     const { p } = planner(w);
     const q = asked(p.ask(w.view));
     expect(q.context.offers.find((offer) => offer.goal === "leave_level")?.criteria).toContain("up staircase");
@@ -2084,7 +2085,7 @@ describe("soak findings", () => {
   });
 
   it("never takes blocked down stairs under attack when leaving a level", () => {
-    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 14, maxHp: 14 } });
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: { cls: "Rogue", depth: 1, level: 1, maxLevel: 1, hp: 7, maxHp: 7 } });
     const { p } = planner(w);
     const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected an exit plan");
@@ -2541,6 +2542,111 @@ describe("take_position offer and the rules-only choice", () => {
     const q = reflexed(p.rules!(w.view, "own rules"));
     expect(q.answers["goal"]).toMatchObject({ choice: "take_position" });
     expect(q.plan.step(w.view, w.act)).toMatchObject({ code: "walk" });
+  });
+});
+
+describe("early experience and recovery", () => {
+  const sleeper = { id: 1, grid: { x: 5, y: 1 }, race: "giant white centipede", level: 1, hp: 2, maxHp: 2, asleep: true };
+  const weakMage = { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 };
+  const lore = () => "It can bite to hurt (1d1).";
+
+  it("hunts a visible weak sleeper for a 12-HP Mage before exploring", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: weakMage, monsters: [sleeper], monsterRecall: lore });
+    const q = reflexed(planner(w, true).p.ask(w.view));
+    expect(q.reflex).toBe("safe experience in sight");
+    expect(q.answers["goal"]).toMatchObject({ choice: "fight" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("chooses a weak sleeper past a closer dangerous sleeper", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: weakMage, monsters: [{ ...sleeper, id: 2, grid: { x: 3, y: 1 }, race: "orc", level: 10 }, sleeper], monsterRecall: lore });
+    const q = asked(planner(w).p.ask(w.view));
+    expect(q.context.offers.find((offer) => offer.goal === "fight")?.criteria).toContain("giant white centipede");
+  });
+
+  it("scales the hunting distance with persona drive", () => {
+    const hunts = (boldness: number) => {
+      const w = suppliedWorld({ map: ["################", "#<@...........>#", "################"], player: weakMage, monsters: [{ ...sleeper, grid: { x: 12, y: 1 } }], monsterRecall: lore });
+      const persona = defaultPersona();
+      persona.sliders.boldness = boldness;
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona });
+      const q = p.ask(w.view);
+      return "reflex" in q && q.reflex === "safe experience in sight";
+    };
+    expect(hunts(100)).toBe(true);
+    expect(hunts(0)).toBe(false);
+  });
+
+  it("does not hunt an unseen creature or a dangerous sleeper", () => {
+    for (const monster of [{ ...sleeper, visible: false }, { ...sleeper, level: 10 }, { ...sleeper, raceFlags: ["MULTIPLY"] }]) {
+      const w = suppliedWorld({ map: CORRIDOR, player: weakMage, monsters: [monster], monsterRecall: lore });
+      const q = planner(w, true).p.ask(w.view);
+      expect("reflex" in q ? q.reflex : null).not.toBe("safe experience in sight");
+    }
+  });
+
+  it("rests before travel until full HP, then hunts a weak creature that appears", () => {
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { ...weakMage, hp: 11 } });
+    const p = planner(w, true).p;
+    const q = reflexed(p.ask(w.view));
+    expect(offered(q)).toEqual(expect.arrayContaining(["rest", "descend", "explore"]));
+    expect(q.answers["goal"]).toMatchObject({ choice: "rest" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "rest" });
+    w.advance(10);
+    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "rest" });
+    w.setPlayer({ hp: 12 });
+    w.setMonsters([sleeper]);
+    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "fight" });
+  });
+
+  it("escapes below the persona's health line before fighting an easy creature", () => {
+    const w = world({ map: ["########", "#<@....#", "########"], player: { ...weakMage, hp: 6 }, pack: [], monsters: [{ ...sleeper, grid: { x: 3, y: 1 }, speed: 90, asleep: false }], monsterRecall: lore });
+    const q = reflexed(planner(w, true).p.ask(w.view));
+    expect(q.reflex).toBe("below the persona's recovery line");
+    expect(q.answers["goal"]).toMatchObject({ choice: expect.stringMatching(/^(leave_level|retreat)$/) });
+  });
+
+  it("scales the recovery line with the persona", () => {
+    const recovering = (name: "coward" | "berserker") => {
+      const w = world({ map: ["########", "#<@....#", "########"], player: { ...weakMage, hp: 9 }, monsters: [{ ...sleeper, grid: { x: 4, y: 1 }, speed: 90, asleep: false }], monsterRecall: lore });
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona: archetype(name) });
+      const q = p.ask(w.view);
+      return "reflex" in q && q.reflex === "below the persona's recovery line";
+    };
+    expect(recovering("coward")).toBe(true);
+    expect(recovering("berserker")).toBe(false);
+  });
+
+  it("rests before refreshing a walked-out level", () => {
+    const w = suppliedWorld({ map: ["########", "#<@....#", "########"], player: { ...weakMage, hp: 11 } });
+    const q = reflexed(planner(w, true).p.ask(w.view));
+    expect(offered(q)).toContain("leave_level");
+    expect(q.answers["goal"]).toMatchObject({ choice: "rest" });
+  });
+
+  it("refreshes by checked stairs after a rejected descent instead of taking random steps", () => {
+    const w = suppliedWorld({ map: ["########", "#<@..>.#", "########"], player: weakMage });
+    const p = planner(w).p;
+    const q = asked(p.ask(w.view));
+    const digest = { ...q.context, offers: q.context.offers.filter((offer) => offer.goal === "descend") };
+    const choice = p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p: 0.1 } }, digest, w.view);
+    if (!("plan" in choice)) throw new Error("expected a refresh plan");
+    expect(digest.fallback).toBe("leave_level");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(10);
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it("explores after a rejected descent when no checked refresh is possible", () => {
+    const w = suppliedWorld({ map: ["########", "#.@.>.,#", "########"], player: weakMage });
+    const p = planner(w).p;
+    const q = asked(p.ask(w.view));
+    const digest = { ...q.context, offers: q.context.offers.filter((offer) => offer.goal === "descend") };
+    const choice = p.choose({ ...pick("descend"), ready_to_descend: { type: "noul", p: 0.1 } }, digest, w.view);
+    if (!("plan" in choice)) throw new Error("expected an exploration plan");
+    expect(digest.fallback).toBe("explore");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 });
 
@@ -3439,7 +3545,7 @@ describe("the answer key", () => {
   });
 
   it("is stored with the answered question, from the state as sent and the model that answered", () => {
-    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20, sp: 0, maxSp: 10 } });
     const { p } = planner(w, true);
     const q = asked(p.ask(w.view));
     p.choose(pick("rest"), q.context, w.view, "jev-1.13.0");
@@ -3447,12 +3553,12 @@ describe("the answer key", () => {
   });
 
   it("reuses an answer only while the model that gave it is still the one answering", () => {
-    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const w = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20, sp: 0, maxSp: 10 } });
     const { p } = planner(w, true);
     p.choose(pick("rest"), asked(p.ask(w.view)).context, w.view, "jev-1.13.0");
     w.advance(10);
     expect(reflexed(p.ask(w.view)).reflex).toBe("same situation as the last answer");
-    const other = suppliedWorld({ map: CORRIDOR, player: { hp: 10, maxHp: 20 } });
+    const other = suppliedWorld({ map: CORRIDOR, player: { hp: 20, maxHp: 20, sp: 0, maxSp: 10 } });
     const second = planner(other, true).p;
     const first = asked(second.ask(other.view));
     second.choose(pick("rest"), first.context, other.view, "jev-1.13.0");

@@ -57,7 +57,7 @@ function question(q: ReturnType<ReturnType<typeof createGoalPlanner>["ask"]>): Q
 
 describe("a reused answer and the current orders", () => {
   it("asks again once the order that carried a fight past the ceiling is withdrawn", async () => {
-    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 40 }, monsters: GRIP });
+    const w = world({ map: CORRIDOR, player: { hp: 40, maxHp: 40 }, monsters: GRIP });
     const persona = careful();
     const { orders } = book(persona);
     const given = orders.give("Fight the monsters you meet", "panel", { kind: "order" });
@@ -76,7 +76,7 @@ describe("a reused answer and the current orders", () => {
   });
 
   it("still reuses the answer when nothing about the orders changed", async () => {
-    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 40 }, monsters: GRIP });
+    const w = world({ map: CORRIDOR, player: { hp: 40, maxHp: 40 }, monsters: GRIP });
     const persona = careful();
     const { orders } = book(persona);
     orders.give("Fight the monsters you meet", "panel", { kind: "order" });
