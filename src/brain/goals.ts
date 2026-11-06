@@ -53,7 +53,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { drive, nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
-import { descentWait, earlyDescentReady, gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin, shallowDiveReady, shallowDiveChecks } from "../strategy/readiness.js";
+import { gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin, shallowDiveReady, shallowDiveChecks } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -1793,7 +1793,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
   };
   const observedDamage = new Map<string, number>();
-  const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0, levelsPersist, options.now, log, observedDamage);
+  const journey = createJourney(terrain, (view) => situationNow(view).unseenDamage > 0, levelsPersist, options.now, log, observedDamage, options.reflex !== false);
   const preparationNow = (view: AgentView, depth: number, persona: Persona | null = personaOf()) => journey.preparation(view, depth, persona);
   const personaOption = options.persona;
   const personaOf = typeof personaOption === "function" ? personaOption : () => personaOption ?? null;
@@ -1844,7 +1844,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     if (time - (diveChecksAt.get(player.depth) ?? -Infinity) >= 60000) {
       diveChecksAt.set(player.depth, time);
       const checks = shallowDiveChecks(view, persona);
-      log(`dive check: ranged ${String(checks.ranged)}, hp===maxHp ${String(checks.fullHp)}, hp>=80percent ${String(checks.hpReady)}, caster attack ${String(checks.casterAttack)}, cures plus escapes ${String(checks.reserves)}>=0, maxHp ${String(player.maxHp)}>=${String(checks.maxHpFloor)}, tripLight ${String(checks.tripLight)}, food ${String(checks.food)}>=2, hungry ${String(checks.hungry)}, status ready ${String(checks.statusReady)}, stair reachable ${String(reachableStairs(view, terrain))}, route checked ${String(routeChecked)}, descend enabled ${String(cfg.descend)}, recalling ${String(recalling)}, descend offered ${String(descendOffered)}.`);
+      log(`dive check: ranged ${String(checks.ranged)}, hp===maxHp ${String(checks.fullHp)}, hp>=80percent ${String(checks.hpReady)}, caster attack ${String(checks.casterAttack)}, cures plus escapes ${String(checks.reserves)}>=2, maximum level ${String(player.maxLevel)}>=${String(checks.levelFloor)}, maxHp ${String(player.maxHp)}>=${String(checks.maxHpFloor)}, tripLight ${String(checks.tripLight)}, food ${String(checks.food)}>=2, hungry ${String(checks.hungry)}, status ready ${String(checks.statusReady)}, stair reachable ${String(reachableStairs(view, terrain))}, route checked ${String(routeChecked)}, descend enabled ${String(cfg.descend)}, recalling ${String(recalling)}, descend offered ${String(descendOffered)}.`);
     }
   }
   /* When and where Squire last read Word of Recall, for games whose view does not report a pending recall. */
@@ -1952,6 +1952,14 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * whatever blocked the goal is something the view doesn't show, and it will
    * block it again until something here changes. */
   const refused = new Map<Goal, { readonly where: string; readonly turn: number }>();
+
+  function takeDive(view: AgentView, take = journey.dive(view, personaOf(), recallPending(view.player(), recallRead, view.turn())).take): boolean {
+    const refusal = refused.get("descend");
+    const held = refusal !== undefined && refusal.where === whereNow(view) && view.turn() - refusal.turn <= REFUSAL_HOLD_TURNS;
+    return cfg.descend && options.focus?.()?.has("descend") !== false && !held && stalled.get("descend") !== view.turn() &&
+      (sameTurnAt !== view.turn() || (sameTurn.get("descend") ?? 0) < SAME_TURN_PLANS) && take;
+  }
+
   let exploreFailures = 0;
   let idleWaits = 0;
   let strandedRefresh = false;
@@ -3006,9 +3014,6 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     return s.target !== null || reachableFrontier(view, terrain) || !decisionMemory.canRefresh(view, persona);
   }
 
-  function playerDepthReady(view: AgentView, persona: Persona | null): boolean {
-    return view.player().depth > 0 && view.player().depth < 10 && journey.depthMinutes(view) >= descentWait(persona);
-  }
 
   function reflexFor(offers: readonly Offer[], persona: Persona | null, situation: string, turn: number, passes: ReadonlySet<string>, s: Situation): { readonly goal: Goal; readonly why: string } | null {
     if (options.reflex === false) return null;
@@ -3021,9 +3026,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (offers.some((offer) => offer.goal === "explore")) return { goal: "explore", why: "find a staircase away from the breeders" };
     }
     if (s.breederExit === true && offers.some((offer) => offer.goal === "leave_level") && journey.exitWay(s.view) !== null) return { goal: "leave_level", why: "follow the checked breeder exit" };
-    if (journey.firstStair(s.view) && shallowDiveReady(s.view, s.view.player().depth + 1, persona) && offers.some((offer) => offer.goal === "descend")) return { goal: "descend", why: "take the first down staircase with a ranged attack and trip supplies" };
-    if ((journey.firstStair(s.view) || playerDepthReady(s.view, persona)) && earlyDescentReady(s.view, s.view.player().depth <= 3 && playerDepthReady(s.view, persona) ? 0 : 2) && preparationNow(s.view, s.view.player().depth + 1, persona).length === 0 &&
-      s.view.player().hp === s.view.player().maxHp && offers.some((offer) => offer.goal === "descend")) return { goal: "descend", why: journey.firstStair(s.view) ? "take the first prepared down staircase" : "descend after the ambition wait with HP and supplies ready" };
+    if (takeDive(s.view) && offers.some((offer) => offer.goal === "descend")) return { goal: "descend", why: "take the checked down staircase before optional detours" };
     const incoming = damageFor(s).damage;
     const viable = offers.filter((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0 &&
       !(offer.goal === "retreat" && stairsUnderfoot(s, terrain) && offers.some((other) => other.goal === "leave_level")));
@@ -3210,16 +3213,18 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const chosenHome = options.townCall?.() ?? null;
       const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
       let offers = offered.filter(usable);
-      const downStairs = knownDownStairs(view, terrain);
-      if (player.depth >= 1 && player.depth <= 4 && downStairs.length > 0) {
-        const routeChecked = journey.checkedRoute(view, downStairs) !== null;
-        if (cfg.descend && !recalling && shallowDiveReady(view, player.depth + 1, persona) && routeChecked && offers.some((offer) => offer.goal === "descend")) {
-          const why = "take the first down staircase with a ranged attack and trip supplies";
-          const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: offers.filter((offer) => offer.goal === "descend"), reflex: why };
-          return { reflex: why, plan: noteStalls("descend", build("descend", view), view), context, answers: { goal: { type: "choice", choice: "descend", confidence: 1, probabilities: { descend: 1 } } } };
-        }
-        logDiveCheck(view, persona, routeChecked, offers.some((offer) => offer.goal === "descend"), recalling);
+      const diving = journey.dive(view, persona, recalling);
+      let advance: Goal | null = takeDive(view, diving.take) ? "descend" : null;
+      if (advance === null && cfg.descend && player.depth > 0 && player.depth < 10 && !recalling && !descending && journey.safeDelay(view) && player.hp >= player.maxHp * 0.8) {
+        if (s.pack.descent.length > 0 && usableGoal("deep_descent") && diving.allowed && player.maxDepth + 5 <= 10 && preparationNow(view, player.maxDepth + 5, persona).length === 0) advance = "deep_descent";
+        else if (newLevel && knownDownStairs(view, terrain).length === 0 && usableGoal("detect") && /Magic Mapping/i.test(detectionSource(view)?.name ?? "")) advance = "detect";
       }
+      if (advance !== null) {
+        const why = advance === "descend" ? "take the checked down staircase before optional detours" : advance === "deep_descent" ? "read Deep Descent with the destination preparation met" : "map this level to find the next down staircase";
+        const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: [{ goal: advance, criteria: why, risk: 0.02, survival: player.hp }], reflex: why };
+        return { reflex: why, plan: noteStalls(advance, build(advance, view), view), context, answers: { goal: { type: "choice", choice: advance, confidence: 1, probabilities: { [advance]: 1 } } } };
+      }
+      if (player.depth >= 1 && player.depth <= 4 && knownDownStairs(view, terrain).length > 0) logDiveCheck(view, persona, journey.checkedRoute(view, knownDownStairs(view, terrain)) !== null, offers.some((offer) => offer.goal === "descend"), recalling);
       const reuseExplore = decisionMemory.reuseWidenedExplore(view, offers.length === 0 ? offered : []) &&
         usableGoal("explore") && !walksIntoDeath(s, terrain, "explore") && journey.canExplore(view, true);
       if (reuseExplore) {
@@ -3565,7 +3570,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       observeLevel(view);
       decisionMemory.observe(view);
       situationNow(view, false, true);
-      if (plan.label === "explore" && cfg.descend && reachableStairs(view, terrain) && journey.firstStair(view) && shallowDiveReady(view, view.player().depth + 1, personaOf())) return "A down staircase is known and the shallow dive supplies are ready.";
+      if (["explore", "rest", "fetch"].includes(plan.label) && takeDive(view)) return "A down staircase has a checked route and the dive policy calls for descent.";
       const exiting = journey.breederExit(view);
       /* A search for the missing staircase has to run; interrupting it every step was the loop. */
       if (exiting && !(plan.label === "explore" && journey.searchingNow(view)) && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
