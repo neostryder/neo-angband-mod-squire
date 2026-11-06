@@ -2520,7 +2520,7 @@ var GROUPS = [
   "meta"
 ];
 var PARAMETERS = [
-  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off.", default: 65 },
+  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off, and how soon it challenges repeated decisions.", default: 65 },
   { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
   { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
   { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
@@ -2533,7 +2533,7 @@ var PARAMETERS = [
   { id: "lawchaos", group: "temperament", name: "Law to Chaos", kind: "slider", scale: "lawful to chaotic", description: "How often the character skips its best-rated option, and how quickly it drops a goal for a new one." },
   { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 55 },
   { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
-  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate.", default: 70 },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate and how long futile choices stay out.", default: 70 },
   { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
   { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
   { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },
@@ -6602,6 +6602,153 @@ function createLoopGuard() {
   };
 }
 
+// src/brain/decision-memory.ts
+var DECISION_MEMORY_SIZE = REGION_WINDOW * 2;
+function stuckThresholds(persona) {
+  const boldness = persona?.sliders.boldness ?? 50;
+  const ambition = persona?.sliders.ambition ?? 50;
+  const repeat = REPEAT_RUN + Math.ceil((100 - boldness) / 25);
+  return { repeat, futile: repeat * 2, cooldown: Math.round(FAILED_TURNS * (0.2 + ambition / 125)) };
+}
+function emptyProgress() {
+  return { depth: 0, experience: 0, cells: 0, gold: 0, items: 0, kills: 0, recovery: 0, damage: 0 };
+}
+function madeProgress(progress) {
+  return Object.values(progress).some((value) => value > 0);
+}
+function snapshot(view) {
+  const player = view.player();
+  const bounds = view.mapBounds();
+  let cells = 0;
+  for (let y = 0; y < bounds.height; y++) for (let x = 0; x < bounds.width; x++) if (view.cell(x, y)?.known === true) cells += 1;
+  const items = [...view.inventory(), ...view.quiver?.() ?? [], ...view.equipment().filter((item) => item !== null)];
+  return {
+    turn: view.turn(),
+    depth: player.depth,
+    deepest: Math.max(player.depth, player.maxDepth),
+    exp: player.exp,
+    gold: player.gold,
+    hp: player.hp,
+    sp: player.sp,
+    cells,
+    items: new Map(items.map((item) => [item.handle, item.number])),
+    foes: new Map(view.monsters().filter((monster) => monster.visible).map((monster) => [monster.id, monster.hp]))
+  };
+}
+function createDecisionMemory() {
+  let entries = [];
+  let pending = null;
+  let previous = null;
+  let deepest = 0;
+  const known = /* @__PURE__ */ new Map();
+  let progressTurn = 0;
+  let idleDecisions = 0;
+  const cooling = /* @__PURE__ */ new Map();
+  function reset() {
+    entries = [];
+    pending = null;
+    previous = null;
+    deepest = 0;
+    known.clear();
+    progressTurn = 0;
+    idleDecisions = 0;
+    cooling.clear();
+  }
+  function observe(view) {
+    const now = snapshot(view);
+    if (previous !== null && now.turn < previous.turn) reset();
+    if (previous === null) progressTurn = now.turn;
+    const progress = previous === null ? emptyProgress() : {
+      depth: Math.max(0, now.deepest - deepest),
+      experience: Math.max(0, now.exp - previous.exp),
+      cells: Math.max(0, now.cells - (known.get(now.depth) ?? now.cells)),
+      gold: Math.max(0, now.gold - previous.gold),
+      items: [...now.items].reduce((sum, [handle, count2]) => sum + Math.max(0, count2 - (previous.items.get(handle) ?? 0)), 0),
+      kills: 0,
+      recovery: Math.max(0, now.hp - previous.hp) + Math.max(0, now.sp - previous.sp),
+      damage: now.depth !== previous.depth ? 0 : [...now.foes].reduce((sum, [id, hp]) => sum + Math.max(0, (previous.foes.get(id) ?? hp) - hp), 0)
+    };
+    deepest = Math.max(deepest, now.deepest);
+    known.set(now.depth, Math.max(known.get(now.depth) ?? 0, now.cells));
+    previous = now;
+    if (pending !== null) {
+      const accumulated = { ...pending.progress };
+      for (const key2 of Object.keys(progress)) accumulated[key2] += progress[key2];
+      pending = { ...pending, hpAfter: now.hp, progress: accumulated };
+    }
+    if (madeProgress(progress)) {
+      progressTurn = now.turn;
+      idleDecisions = 0;
+      cooling.clear();
+    }
+  }
+  function finish(view) {
+    observe(view);
+    if (pending === null) return;
+    entries = [...entries, pending].slice(-DECISION_MEMORY_SIZE);
+    idleDecisions = madeProgress(pending.progress) ? 0 : idleDecisions + 1;
+    pending = null;
+  }
+  function signals(persona) {
+    const tail = entries.slice(-idleDecisions);
+    if (idleDecisions === 0) return [];
+    const found = [];
+    for (let size = 1; size <= CYCLE_MAX_GRIDS; size++) {
+      const cycle = tail.slice(-size).map((entry) => entry.goal);
+      if (cycle.length !== size || size > 1 && new Set(cycle).size === 1) continue;
+      let count2 = 0;
+      while ((count2 + 1) * size <= tail.length && cycle.every((goal, index) => tail[tail.length - (count2 + 1) * size + index].goal === goal)) count2 += 1;
+      if (count2 >= stuckThresholds(persona).repeat) found.push({ cycle, repetitions: count2, decisions: count2 * size });
+    }
+    return found;
+  }
+  return {
+    observe,
+    finish,
+    reset,
+    begin(goal, view) {
+      finish(view);
+      const player = view.player();
+      pending = { goal, depth: player.depth, turn: view.turn(), region: `${String(Math.floor(player.grid.x / REGION_SIZE))},${String(Math.floor(player.grid.y / REGION_SIZE))}`, hpBefore: player.hp, hpAfter: player.hp, progress: emptyProgress() };
+    },
+    kill(view) {
+      observe(view);
+      if (pending !== null) pending = { ...pending, progress: { ...pending.progress, kills: pending.progress.kills + 1 } };
+      progressTurn = view.turn();
+      idleDecisions = 0;
+      cooling.clear();
+    },
+    record() {
+      return entries.map((entry) => ({ ...entry, progress: { ...entry.progress } }));
+    },
+    facts(view, persona, candidates = []) {
+      observe(view);
+      return {
+        repeated: signals(persona),
+        decisionsSinceProgress: idleDecisions,
+        turnsSinceProgress: Math.max(0, view.turn() - progressTurn),
+        untried: candidates.filter((goal) => idleDecisions === 0 || !entries.slice(-idleDecisions).some((entry) => entry.goal === goal)),
+        cooling: [...cooling].filter(([, hold]) => hold.until > view.turn()).map(([goal, hold]) => ({ goal, until: hold.until }))
+      };
+    },
+    withhold(offers, view, persona) {
+      finish(view);
+      const thresholds = stuckThresholds(persona);
+      for (const signal of signals(persona)) {
+        if (signal.repetitions < thresholds.futile) continue;
+        for (const goal of signal.cycle) {
+          const hold = cooling.get(goal);
+          const evidence = entries.at(-1)?.turn ?? view.turn();
+          if (hold === void 0 || hold.until <= view.turn() && hold.evidence !== evidence) cooling.set(goal, { until: view.turn() + thresholds.cooldown, evidence });
+        }
+      }
+      const kept = offers.filter((offer) => classOf(offer.goal) === "escape" || offer.routine === true || (cooling.get(offer.goal)?.until ?? 0) <= view.turn());
+      const floor = persona === null ? null : applySafetyFloor(Object.fromEntries(offers.map((offer) => [offer.goal, 1])), Object.fromEntries(offers.map((offer) => [offer.goal, offer.risk])), riskCeiling(persona), persona.quirks.deathwish.on);
+      return kept.length === 0 || floor !== null && !kept.some((offer) => floor.dist[offer.goal] !== void 0) ? [...offers] : kept;
+    }
+  };
+}
+
 // src/brain/geometry.ts
 var HAZARD_REACH = 5;
 var COMPASS = [
@@ -7797,6 +7944,7 @@ function createGoalPlanner(options) {
   let offeredWiden = false;
   let exploreUnleashed = false;
   const loops = createLoopGuard();
+  const decisionMemory = options.decisionMemory ?? createDecisionMemory();
   let loopFound = null;
   let exploreLoops = 0;
   function settleLoop(digest) {
@@ -7852,7 +8000,10 @@ function createGoalPlanner(options) {
     const travel = route === void 0 ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
     plan = journey.guarded(goal, plan);
     const chosenOn = gearOf(view);
-    if (goal !== null) loops.chose(goal, view, nearDistance(goal, view));
+    if (goal !== null) {
+      loops.chose(goal, view, nearDistance(goal, view));
+      decisionMemory.begin(goal, view);
+    }
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -7874,6 +8025,7 @@ function createGoalPlanner(options) {
       options.orders?.carried(goal, v);
     };
     const step = (v, act) => {
+      decisionMemory.observe(v);
       startTurn ??= v.turn();
       settle2(v);
       const proposed = plan.step(v, act);
@@ -8725,6 +8877,7 @@ function createGoalPlanner(options) {
       if (player.depth > 0) visitedShops.clear();
       if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
       settleFallback(view);
+      decisionMemory.finish(view);
       noteSeen(view);
       noteFeeling(view);
       const s = situationNow(view, true);
@@ -8890,6 +9043,9 @@ function createGoalPlanner(options) {
         };
         return decided;
       }
+      offers = decisionMemory.withhold(offers, view, persona);
+      for (const goal2 of Object.keys(criteria)) if (goal2 !== "none_of_these" && !offers.some((offer) => offer.goal === goal2)) delete criteria[goal2];
+      const stuck = decisionMemory.facts(view, persona, offers.map((offer) => offer.goal));
       const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
       const one = damageFor(s, player.grid, 1, terrain);
       const two = damageFor(s, player.grid, 2, terrain);
@@ -8905,6 +9061,7 @@ function createGoalPlanner(options) {
         ["memory", "status", statusOf(view, canRead(view))],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : void 0],
         ...entriesOf("memory", swarmNote(seen)),
+        ["stuck", "stuck", stuck],
         ["outcomes", "last", lastOutcome ?? void 0],
         ["outcomes", "loop", loop === null ? void 0 : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here: ${loop.why}; pick something else unless nothing else can help.`}`],
         ["outcomes", "recent", textOf(ended[0])],
@@ -9041,6 +9198,7 @@ function createGoalPlanner(options) {
       return { plan: noteStalls(offer.goal, build(offer.goal, view), view) };
     },
     trigger(view, plan) {
+      decisionMemory.observe(view);
       situationNow(view, false, true);
       const exiting = journey.breederExit(view);
       if (exiting && !(plan.label === "explore" && journey.searchingNow(view)) && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";
@@ -11012,10 +11170,11 @@ function createStrategy(deps) {
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
   }
-  async function ask3(request2) {
+  async function ask3(request2, view) {
     const backend = deps.backend();
     if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
     if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
+    if (view !== void 0 && deps.stuck !== void 0) request2 = { ...request2, state: { ...request2.state, stuck: deps.stuck(view) } };
     let result;
     try {
       result = await deps.send(request2);
@@ -11069,7 +11228,7 @@ function createStrategy(deps) {
     if (!ranks || args.mine !== generation) return;
     const open = openAims(args.candidates, blocks, args.turn);
     const askAims = open.filter((aim) => aim.kind !== "win").length >= 2;
-    const midSent = args.midTrigger !== null && askAims ? await ask3(midGoalRequest(args.view, open, pursuitsNow())) : null;
+    const midSent = args.midTrigger !== null && askAims ? await ask3(midGoalRequest(args.view, open, pursuitsNow()), args.view) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
     const scored = args.midTrigger === null ? args.candidates : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
@@ -11082,7 +11241,7 @@ function createStrategy(deps) {
       nearReason = "because the mid-term goal changed";
     }
     const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
-    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask3(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask3(nearGoalRequest(args.view, args.nearList, midLabel), args.view) : null;
     if (args.mine !== generation || seq !== latest) return;
     if (args.midTrigger !== null && args.view.player().depth === args.depth) judge2(args.depth, args.judgments);
     if (args.midTrigger !== null) {
@@ -14897,7 +15056,9 @@ function createRuntime(host, options = {}) {
   });
   const nextGoalSeq = goalSeqCounter(layaRows);
   let goalRecorded = Promise.resolve();
+  const decisionMemory = createDecisionMemory();
   const strategy = createStrategy({
+    stuck: (view) => decisionMemory.facts(view, character.persona ?? activePersona(config)),
     backend: () => backendFor(config),
     send: (request2) => self.send(request2),
     tally,
@@ -14968,6 +15129,7 @@ function createRuntime(host, options = {}) {
     },
     character: () => character,
     saveCharacter(next) {
+      if (next.runId !== character.runId) decisionMemory.reset();
       character = next;
       host.characterStore?.set({ format: CHARACTER_FORMAT, schemaVersion: 1, data: next });
     },
@@ -15071,6 +15233,7 @@ function createRuntime(host, options = {}) {
       return own;
     },
     recordKill(race, unique, view) {
+      if (view !== null) decisionMemory.kill(view);
       const persona = character.persona;
       const kills = { ...character.kills, [race]: (character.kills[race] ?? 0) + 1 };
       const run = character.flourishes ?? emptyFlourishes();
@@ -15440,6 +15603,7 @@ function createRuntime(host, options = {}) {
       backend: backendFor(config) ?? JEV,
       rulesOnly: !modelReady,
       planner: createGoalPlanner({
+        decisionMemory,
         cfg,
         terrain,
         speedEnergy: turnEnergy,
@@ -15486,6 +15650,7 @@ function createRuntime(host, options = {}) {
       backend,
       rulesOnly,
       planner: createGoalPlanner({
+        decisionMemory,
         cfg,
         terrain,
         speedEnergy: turnEnergy,

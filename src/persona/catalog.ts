@@ -17,7 +17,7 @@ type Parameter = {
 };
 
 export const PARAMETERS = [
-  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off.", default: 65 },
+  { id: "boldness", group: "temperament", name: "Boldness", kind: "slider", scale: "timid to fearless", description: "How much danger the character accepts before it backs off, and how soon it challenges repeated decisions.", default: 65 },
   { id: "impulsiveness", group: "temperament", name: "Impulsiveness", kind: "slider", scale: "deliberate to rash", description: "How often the character acts on its first instinct." },
   { id: "patience", group: "temperament", name: "Patience", kind: "slider", scale: "restless to patient", description: "Resting fully, waiting in corridors, and reading a level before descending." },
   { id: "composure", group: "temperament", name: "Composure", kind: "slider", scale: "panics to ice-cold", description: "How decisions change at low hit points." },
@@ -30,7 +30,7 @@ export const PARAMETERS = [
   { id: "lawchaos", group: "temperament", name: "Law to Chaos", kind: "slider", scale: "lawful to chaotic", description: "How often the character skips its best-rated option, and how quickly it drops a goal for a new one." },
   { id: "selfpreservation", group: "values", name: "Self-preservation", kind: "slider", scale: "reckless to survival first", description: "Sets the death-risk ceiling unless Death wish is on.", default: 55 },
   { id: "greed", group: "values", name: "Greed", kind: "slider", scale: "indifferent to gold-hungry", description: "Detours for known gold and loot." },
-  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate.", default: 70 },
+  { id: "ambition", group: "values", name: "Ambition", kind: "slider", scale: "content to set on winning", description: "Controls the dive rate and how long futile choices stay out.", default: 70 },
   { id: "honour", group: "values", name: "Honour", kind: "slider", scale: "fights dirty to fights fair", description: "Attacking sleepers and using corridor tactics." },
   { id: "mercy", group: "values", name: "Mercy", kind: "slider", scale: "kills everything to spares the harmless", description: "Whether to attack harmless or fleeing creatures." },
   { id: "glory", group: "values", name: "Renown", kind: "slider", scale: "private to showboat", description: "Weights Chronicle-worthy moves above equally effective safer moves." },

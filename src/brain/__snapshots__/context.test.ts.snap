@@ -25,6 +25,9 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -39,6 +42,15 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "take_position",
+    ],
+  },
   "swarm": "3 giant white mouse (a few) in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.",
 }
 `;
@@ -71,6 +83,9 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -92,6 +107,15 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   },
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "descend",
+    ],
+  },
 }
 `;
 
@@ -120,6 +144,9 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -135,6 +162,15 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "Too dark here to read scrolls or cast spells.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "step_aside",
+    ],
+  },
 }
 `;
 
@@ -164,6 +200,9 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -180,6 +219,16 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "mechanics": "A Mage casts arcane spells with Intelligence.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+      "cast_attack",
+    ],
+  },
 }
 `;
 
@@ -208,6 +257,9 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -222,6 +274,17 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+      "descend",
+      "take_position",
+    ],
+  },
   "swarm": "3 jackal (a few) in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.",
 }
 `;
@@ -252,6 +315,9 @@ exports[`decision context > compiles a persona with a grudge into layers and the
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -272,6 +338,16 @@ exports[`decision context > compiles a persona with a grudge into layers and the
   },
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+      "descend",
+    ],
+  },
 }
 `;
 
@@ -299,6 +375,9 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -313,6 +392,16 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+      "descend",
+    ],
+  },
 }
 `;
 
@@ -340,6 +429,9 @@ exports[`decision context > compiles a stationary floating eye into layers and t
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -354,6 +446,15 @@ exports[`decision context > compiles a stationary floating eye into layers and t
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "descend",
+    ],
+  },
 }
 `;
 
@@ -381,6 +482,9 @@ exports[`decision context > compiles a unique in view into layers and the same s
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -395,6 +499,17 @@ exports[`decision context > compiles a unique in view into layers and the same s
   "incoming": "Up to 0 HP damage in one action (none) and 38 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+      "retreat",
+      "descend",
+    ],
+  },
 }
 `;
 
@@ -422,6 +537,9 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -436,6 +554,20 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "incoming": "Up to 4 HP damage in one action (under a quarter of current HP) and 8 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 4 HP (under a quarter of current HP). These are conservative bounds, not death probabilities.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 10,
+    "untried": [
+      "heal",
+      "leave_level",
+      "swing_unseen",
+      "phase",
+      "retreat",
+      "explore",
+    ],
+  },
 }
 `;
 
@@ -463,6 +595,9 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -477,6 +612,15 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "Poisoned, losing a few hit points each turn.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "fight",
+    ],
+  },
 }
 `;
 
@@ -502,6 +646,9 @@ exports[`decision context > compiles town with a full pack into layers and the s
   "outcomes": [],
   "persona": [],
   "purpose": [],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -515,5 +662,14 @@ exports[`decision context > compiles town with a full pack into layers and the s
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "untried": [
+      "descend",
+    ],
+  },
 }
 `;

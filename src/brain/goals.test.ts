@@ -16,8 +16,47 @@ import { healingAmount } from "./combat-kit.js";
 import { pursuitsFor } from "../strategy/pursuits.js";
 import { createJourney } from "../strategy/journey.js";
 import { readinessThreshold } from "../strategy/readiness.js";
+import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
+
+describe("decision memory in the planner", () => {
+  const map = ["##########", "#........#", "#..@.....#", "#........#", "#.......>#", "##########"];
+
+  it("records executed choices and their hit point results before the next question", () => {
+    const w = suppliedWorld({ map, player: { depth: 1, hp: 20, maxHp: 40 } });
+    const memory = createDecisionMemory();
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.some((offer) => offer.goal === "rest")).toBe(true);
+    const choice = p.choose(pick("rest"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+    w.setPlayer({ hp: 22 });
+    w.advance(10);
+    p.ask(w.view);
+    expect(memory.record()).toHaveLength(1);
+    expect(memory.record()[0]).toMatchObject({ goal: "rest", hpBefore: 20, hpAfter: 22, progress: { recovery: 2 } });
+  });
+
+  it("withholds futile choices from the offers and question criteria until their cooldown expires", () => {
+    const w = suppliedWorld({ map, player: { depth: 1, hp: 20, maxHp: 40 } });
+    const memory = createDecisionMemory();
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    for (let i = 0; i < stuckThresholds(null).futile; i++) {
+      memory.begin("rest", w.view);
+      w.advance(10);
+      memory.finish(w.view);
+    }
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.length).toBeGreaterThan(0);
+    expect(q.context.offers.some((offer) => offer.goal === "rest")).toBe(false);
+    expect((q.request.questions["goal"] as ChoiceQuestion).criteria).not.toHaveProperty("rest");
+    expect(q.request.state["stuck"]).toMatchObject({ cooling: [{ goal: "rest", until: w.view.turn() + stuckThresholds(null).cooldown }] });
+    w.advance(stuckThresholds(null).cooldown);
+    expect(offered(p.ask(w.view))).toContain("rest");
+  });
+});
 
 describe("unseen attackers", () => {
   const map = ["#########", "#<.@...,#", "#########"];

@@ -65,6 +65,7 @@ import { fearedBand, feelingBelief, feelingLog, feelingToward, nudgeGrudges, typ
 import { priceGoal, type GoalGateMode, type RegretRecord } from "./regret.js";
 import { allowedGoals, bandOf, classOf, CONFIDENCE_FLOOR, escapeQuestion, escapeThresholds, lowConfidencePick, pruneDominated, purposeClauses, type PackRecord } from "./tactics.js";
 import { createLoopGuard, type LoopFinding } from "./loops.js";
+import { createDecisionMemory, type DecisionMemory } from "./decision-memory.js";
 import { chokeLine, compass, hazardLine, hazardsNear, neighbourLine, seenBy, sightBreakLine, sightBreaks, stairLine, type SightBreak } from "./geometry.js";
 import { countBand, depthBand, failText, healthBand, levelBand, shareBand, statusDangerBand, stepsBand, stepsText, targetShare, turnsBand } from "./bands.js";
 import { chaosNote, chaosPick, chaosTold, type ChaosMethod, type ChaosRecord } from "./chaos.js";
@@ -380,6 +381,8 @@ const READY_CRITERIA: NoulQuestion["criteria"] = {
 
 export interface GoalPlannerOptions {
   readonly cfg: SquireCfg;
+  /** Shared with goal reviews so every decision reads the same progress record. */
+  readonly decisionMemory?: DecisionMemory;
   /** The ranked aims and town-trip gate. Without it no aim steers anything. */
   readonly strategy?: () => Steering;
   /** Why the persona chose to head home before the supply margin forced it, or null. */
@@ -1815,6 +1818,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /* Whether the explore on offer may walk past the journey's stair leash. */
   let exploreUnleashed = false;
   const loops = createLoopGuard();
+  const decisionMemory = options.decisionMemory ?? createDecisionMemory();
   /* A loop found and not yet answered. The next decision is a re-plan told which tactic failed. */
   let loopFound: LoopFinding | null = null;
   /* Explore loops found on this level. The ground it keeps failing to reach counts as walked out. */
@@ -1909,7 +1913,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const travel = route === undefined ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
     plan = journey.guarded(goal, plan);
     const chosenOn = gearOf(view);
-    if (goal !== null) loops.chose(goal, view, nearDistance(goal, view));
+    if (goal !== null) {
+      loops.chose(goal, view, nearDistance(goal, view));
+      decisionMemory.begin(goal, view);
+    }
     if (goal !== null) {
       if (sameTurnAt !== turn) {
         sameTurnAt = turn;
@@ -1933,6 +1940,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       options.orders?.carried(goal, v);
     };
     const step: Plan["step"] = (v, act) => {
+      decisionMemory.observe(v);
       startTurn ??= v.turn();
       settle(v);
       const proposed = plan.step(v, act);
@@ -2938,6 +2946,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (player.depth > 0) visitedShops.clear();
       if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
       settleFallback(view);
+      decisionMemory.finish(view);
       noteSeen(view);
       noteFeeling(view);
       const s = situationNow(view, true);
@@ -3115,6 +3124,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return decided;
       }
 
+      offers = decisionMemory.withhold(offers, view, persona);
+      for (const goal of Object.keys(criteria)) if (goal !== "none_of_these" && !offers.some((offer) => offer.goal === goal)) delete criteria[goal];
+      const stuck = decisionMemory.facts(view, persona, offers.map((offer) => offer.goal));
       const orderNote = options.orders?.note(view, player.gold, offers) ?? null;
       /* The situation goes first and the rules last. A state over its budget
        * sheds lessons, outcomes, goals, purpose and then the rules, so the
@@ -3133,6 +3145,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         ["memory", "status", statusOf(view, canRead(view))],
         ["memory", "hunger", hungry(view) ? "The character is hungry." : undefined],
         ...entriesOf("memory", swarmNote(seen)),
+        ["stuck", "stuck", stuck],
         ["outcomes", "last", lastOutcome ?? undefined],
         ["outcomes", "loop", loop === null ? undefined : `Squire is going in circles: it ${loop.detail}.${loop.tactic === null ? "" : ` Choosing ${loop.tactic} again has not worked here: ${loop.why}; pick something else unless nothing else can help.`}`],
         ["outcomes", "recent", textOf(ended[0])],
@@ -3264,6 +3277,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     trigger(view, plan) {
+      decisionMemory.observe(view);
       situationNow(view, false, true);
       const exiting = journey.breederExit(view);
       /* A search for the missing staircase has to run; interrupting it every step was the loop. */
