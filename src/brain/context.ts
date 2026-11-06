@@ -107,5 +107,12 @@ export function fitToBudget(context: DecisionContext, budget: number = STATE_TOK
     entries = entries.filter((e) => e.layer !== layer);
     shed.push(layer);
   }
+  if (stateTokens(stateOf({ entries })) > budget && entries.some((entry) => entry.key === "tactical")) {
+    entries = entries.map((entry) => {
+      if (entry.layer !== "persona" || entry.value === null || typeof entry.value !== "object" || !("backstory" in entry.value)) return entry;
+      const { backstory: _backstory, ...traits } = entry.value;
+      return Object.freeze({ ...entry, value: traits });
+    });
+  }
   return { context: entries === context.entries ? context : Object.freeze({ entries: Object.freeze([...entries]) }), shed, over: stateTokens(stateOf({ entries })) > budget };
 }

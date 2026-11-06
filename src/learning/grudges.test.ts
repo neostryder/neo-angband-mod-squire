@@ -231,7 +231,7 @@ describe("in the planner", () => {
   }
 
   it("believes a feared creature more dangerous, offers to leave the level, and logs where the fear comes from", () => {
-    const w = world({ map: CORRIDOR, player: { depth: 2, level: 20, hp: 200, maxHp: 200 }, monsters: [spider] });
+    const w = world({ map: CORRIDOR, player: { depth: 2, level: 20, hp: 200, maxHp: 200 }, pack: ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"], monsters: [spider] });
     const logged: string[] = [];
     const heir = persona({ optimism: 50 }, "Bea");
     const fear: Feeling = { name: "cave spider", unique: false, kind: "fear", intensity: "lasting", count: 3 };

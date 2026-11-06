@@ -4,6 +4,10 @@ import { squareIsDisarmableTrap, TRF, TV, type InputSnapshot, type ItemView, typ
 import { FEAT, world, type World } from "./harness.js";
 import { GAME_TERRAIN } from "./terrain-records.fixture.js";
 import { recordFlags } from "./terrain.js";
+import { clearShot } from "./brain/threat-model.js";
+import { attackOutcome } from "./brain/combat-kit.js";
+import { createGoalPlanner } from "./brain/goals.js";
+import { defaultCfg } from "./settings.js";
 import { HUNGRY_BELOW } from "./brain/pack.js";
 import { contentTerrain as contentTerrain1, viewInput as viewInput1, viewWorld as viewWorld1, type HostReads } from "./host-adapter.js";
 import { contentTerrain, viewInput, viewWorld, watchMessages, type Api2Reads } from "./host-adapter-api2.js";
@@ -426,7 +430,7 @@ describe("viewWorld under API 2", () => {
       const n = b[i];
       if (n === undefined) throw new Error("missing monster");
       expect(n).toMatchObject({ id: m.id, race: m.race, raceIndex: m.raceIndex, grid: m.grid, visible: m.visible, asleep: m.asleep, afraid: m.afraid, confused: m.confused, stunned: m.stunned, level: m.level, unique: m.unique });
-      expect(n.maxHp).toBe(m.maxHp);
+      expect(n.maxHp).toBe(10 + 6 * m.level);
       expect(bandOf(n.hp, n.maxHp)).toBe(bandOf(m.hp, m.maxHp));
       expect(n.raceFlags).toEqual(m.raceFlags.filter((flag) => LEARNED.has(flag)));
     }
@@ -462,6 +466,71 @@ describe("viewWorld under API 2", () => {
     view?.spellInfo?.(0);
     expect(monsterRecall).toHaveBeenCalledTimes(1);
     expect(spell).toHaveBeenCalledTimes(1);
+  });
+
+  it("preserves learned blows, uncertain HP, frequencies and temporary monster statuses", async () => {
+    const w = scene();
+    const original = knownFrom(w);
+    const monster = { ...original.monsters![0]!, health: "wounded" as const, averageHp: null, status: ["hasted", "held"] as const,
+      blows: [{ method: "HIT", effect: "HURT", damage: { base: 1, dice: 2, sides: 4, mBonus: 0 } }],
+      spellFrequency: { percent: 20, exact: false }, innateFrequency: { percent: 10, exact: true } };
+    const api = fakeApi({ world: { ...original, monsters: [monster] }, records: records() }).api;
+    const view = await viewWorld(api);
+    expect(view!.monsters()[0]).toMatchObject({ speed: monster.raceSpeed + 10, maxHp: 10 + 6 * monster.raceLevel, knownCombat: {
+      averageHp: null, health: "wounded", blows: monster.blows, spellFrequency: monster.spellFrequency, innateFrequency: monster.innateFrequency, status: ["hasted", "held"] } });
+  });
+
+  it("prefetches bounded item, baseline and projection reads for synchronous combat readers", async () => {
+    const w = world({ map: ["########", "#.@....#", "########"], pack: ["5 Flasks of Oil"], monsters: [{ grid: { x: 5, y: 1 }, hp: 20, maxHp: 20 }] });
+    const known = knownFrom(w);
+    const api = fakeApi({ world: known, records: records() }).api;
+    const item = vi.fn(async () => ok({ token: known.token, title: "oil", text: "Inflicts an average of 12 damage." }));
+    const loadout = { player: known.player, inventory: known.inventory, equipment: known.equipment, stats: { resistElements: ["FIRE"], resists: [1] } };
+    const baseline = { before: loadout, after: loadout, delta: {}, placements: [], unresolved: [] };
+    const simulateLoadout = vi.fn(async () => ok(baseline));
+    const projectionPath = vi.fn(async () => ok({ token: known.token, grids: [{ x: 3, y: 1 }, { x: 4, y: 1 }] }));
+    Object.assign(api.view, { inspect: { item, simulateLoadout, projectionPath, monsterRecall: async () => ok(null), spell: async () => ok(null) } });
+    let prepared: import("./host-adapter-api2.js").PreparedReads | undefined;
+    const view = (await viewWorld(api, { capture: (_world, reads) => { prepared = reads; } }))!;
+    expect(prepared?.items[0]?.[1]?.text).toContain("12 damage");
+    expect(view.inspectItem?.(1)?.text).toContain("12 damage");
+    expect(view.simulateLoadout?.({})?.before.stats.resists).toEqual([1]);
+    expect(view.simulateLoadout?.({})?.before.player.status.blind).toBe(0);
+    expect(view.simulateLoadout?.({ remove: [1] })).toBeNull();
+    expect(clearShot(view, view.monsters()[0]!)).toBe(false);
+    expect(attackOutcome(view, view.monsters()[0]!, "throw_oil", { handle: 1, name: "oil", power: 1 }).damage).toBe(12);
+    view.inspectItem?.(1);
+    expect(item).toHaveBeenCalledTimes(1);
+    expect(simulateLoadout).toHaveBeenCalledTimes(1);
+    expect(projectionPath).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects an intervening creature on a prefetched missile path", async () => {
+    const w = world({ map: ["########", "#.@....#", "########"], monsters: [{ grid: { x: 5, y: 1 } }, { grid: { x: 4, y: 1 } }] });
+    const known = knownFrom(w);
+    const api = fakeApi({ world: known, records: records() }).api;
+    Object.assign(api.view, { inspect: { monsterRecall: async () => ok(null), spell: async () => ok(null),
+      projectionPath: async (to: { x: number; y: number }) => ok({ token: known.token, grids: [{ x: 3, y: 1 }, { x: 4, y: 1 }, ...(to.x === 5 ? [{ x: 5, y: 1 }] : [])] }) } });
+    const view = (await viewWorld(api))!;
+    expect(clearShot(view, view.monsters()[0]!)).toBe(false);
+    expect(clearShot(view, view.monsters()[1]!)).toBe(true);
+  });
+
+  it("replays a captured public adapter fixture with a fixed clock and answer", async () => {
+    const w = scene();
+    const frames: KnownWorldData[] = [];
+    await viewWorld(fakeApi({ world: knownFrom(w), records: records() }).api, { capture: (frame) => frames.push(structuredClone(frame)) });
+    const decide = async () => {
+      const view = (await viewWorld(fakeApi({ world: frames[0]!, records: records() }).api))!;
+      const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, rng: () => 0.5, now: () => 100 });
+      const q = planner.ask(view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      const goal = q.context.offers[0]!.goal;
+      const choice = planner.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      return { offers: q.context.offers, command: choice.plan.step(view, w.act) };
+    };
+    expect(await decide()).toEqual(await decide());
   });
 
   it("reads the store day from the constants records", async () => {

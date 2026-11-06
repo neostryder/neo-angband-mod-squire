@@ -37,6 +37,7 @@
       "input:intent",
       "input:prompt.reply",
       "event:combat-outcome",
+      "event:heal",
       "event:player-command",
       "ui:panel.mount",
       "saves:manage",

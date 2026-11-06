@@ -6,11 +6,19 @@ Squire runs as a first-party, in-process mod on mod API 2. Its manifest uses sch
 
 Squire's runtime, panel, and decision code were written against synchronous reads, and every API 2 call answers asynchronously with a result. `createBridge` in `src/api2/host.ts` closes that gap. It keeps a copy of each stored value (settings, preferences, the character record, the character key, the birth options, and the autoplayer mark), and `prime()` fills every copy before the mod does any work. A change to preferences or the character record updates the copy at once and writes through to `store.prefs` or `store.character`, and a failed write goes to the mod log.
 
-The world is read fresh for each decision through `viewWorld`, which builds an `AgentView` over one reading of the known world. The bridge keeps the last reading for `viewNow`, so handlers that need the game as the player last saw it can answer without another call. Messages printed between decisions come from the `message` event.
+The world is read fresh for each decision through `viewWorld`, which builds an `AgentView` over one reading of the known world. The bridge keeps the last reading for `viewNow`, so handlers that need the game as the player last saw it can answer without another call. Messages printed between decisions come from the `message` event. The bridge also keeps eight public encounter frames with character and floor keys, monotonic elapsed time, prepared inspection reads and ordered command, combat, healing and submission-result records. A run boundary is retained even when its report is null.
 
 `src/api2/act.ts` keeps the act verbs the decision code is written in (`move`, `quaff`, `cast`, `shopBuy`, `raw`, and the rest) and turns the one command chosen at a decision into a `command` intent. A target choice is recorded as it is made and submitted ahead of the command. `src/api2/net.ts` maps Squire's model-server requests onto `net.request`, turns the `Bearer {secret:jev}` header into `net.credential("jev", "Bearer ")`, and maps the key calls onto `net.credentials`.
 
 `src/host-adapter-api2.ts` holds the known-world reads. `src/host-adapter.ts` now supplies only the shared view types the decision code imports, and the running mod uses none of its API 1 reads.
+
+## Combat reads
+
+The adapter preserves learned structured blows, spell and innate frequencies, health bands, average HP and temporary monster statuses in the local MonsterView contract. It reads general blow effect powers and method properties from content definitions; it never fills missing monster lore from a race record. A missing average HP remains null. Legacy numeric HP readers receive a population estimate, while the fight forecast uses a labeled HP interval.
+
+Each snapshot prepares at most 24 carried or equipped item inspections, eight visible race recalls, 16 learned spell inspections, eight candidate projection paths, three radius-two blast areas and one baseline known-loadout simulation. The synchronous view answers only those prepared reads. An unsupported loadout change returns null, an unprepared projected target has no checked path, and absent item facts retain their name-based fallback. The adapter converts the baseline loadout's player statuses and items into the same view contract as the main snapshot.
+
+Fight, healing and short escape forecasts compare normal-action energy, HP loss estimates, resource limits and an HP reserve. The offers retain the chosen target and source binding, and the decision log retains that binding, its forecast and the estimated size of the complete request. Both backend state caps protect numeric alternatives, remembered pressure and the descent blocker. These are bounded estimates; the current implementation supplies no calibrated death probability or p95 guarantee. SOL-REPORT.md lists the remaining gaps and validation limits.
 
 ## The controller
 
@@ -24,7 +32,7 @@ A refused command is logged on the first refusal and every tenth after that. Aft
 
 The known world says less than the API 1 view did, and `viewWorld` fills the gaps from what the player can know:
 
-- A monster's hit points come from its look-command health band and the average hit points in its race record.
+- A monster's exact HP and maximum HP remain unknown. Its health band constrains a learned average or an explicit population prior; the forecast keeps an interval instead of certifying a kill from the display estimate.
 - A square the character has never seen is impassable, with no feature and no trap.
 - A trap the character has disabled still reads as a trap.
 - No square glows.

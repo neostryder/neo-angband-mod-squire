@@ -8,6 +8,8 @@
  * host directly, so the whole of it runs in tests.
  */
 
+import type { PreparedReads } from "./host-adapter-api2.js";
+import type { Api2CombatEvent, Api2CommandEvent, Api2HealEvent, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
 import type { AgentView, MonsterView } from "./host-adapter.js";
 import type { ChoiceAnswer, ScoreAnswer, SystemOneRequest } from "./brain/systemone.js";
 import type { AskResult } from "./brain/backend.js";
@@ -24,6 +26,44 @@ import { killerOf, recordDeath } from "./learning/grudges.js";
 import { signatureOf, type SituationSignature } from "./learning/signature.js";
 import { chronicleLine, isNotable, notorietyQuestion, notorietyState } from "./report/chronicle.js";
 import { createRunLog, fromJson, type RunEvent, type RunLog } from "./report/events.js";
+
+export type EncounterEvent =
+  | { readonly kind: "command"; readonly value: Api2CommandEvent }
+  | { readonly kind: "combat"; readonly value: Api2CombatEvent }
+  | { readonly kind: "heal"; readonly value: Api2HealEvent }
+  | { readonly kind: "result"; readonly value: { readonly code: string; readonly ok: boolean; readonly turnAtSubmit: number } }
+  | { readonly kind: "boundary"; readonly value: { readonly report: boolean } };
+
+export interface EncounterFrame {
+  readonly character: string | null;
+  readonly floor: string | null;
+  readonly elapsedMs: number;
+  readonly world: KnownWorldData;
+  readonly events: readonly EncounterEvent[];
+  readonly prepared?: PreparedReads;
+}
+
+/** Public frames stay in memory; credentials and request headers never enter this recorder. */
+export function createEncounterCapture(now: () => number = () => performance.now(), limit = 8) {
+  const start = now();
+  const frames: EncounterFrame[] = [];
+  let events: EncounterEvent[] = [];
+  let generation = 0;
+  return {
+    event(event: EncounterEvent): void {
+      events.push(structuredClone(event));
+      if (events.length > 128) events.shift();
+      if (event.kind === "boundary") generation++;
+    },
+    frame(world: KnownWorldData, character: string | null, prepared?: PreparedReads): void {
+      frames.push({ character, floor: world.level === null ? null : `${character ?? "unknown"}:${String(generation)}:${String(world.level.levelId)}`,
+        elapsedMs: Math.max(0, now() - start), world: structuredClone(world), events, ...(prepared === undefined ? {} : { prepared: structuredClone(prepared) }) });
+      events = [];
+      if (frames.length > Math.max(1, limit)) frames.shift();
+    },
+    frames(): readonly EncounterFrame[] { return structuredClone(frames); },
+  };
+}
 
 /** Lessons carried into a decision's state. */
 const LESSONS_PER_DECISION = 3;

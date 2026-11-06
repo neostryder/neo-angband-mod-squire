@@ -36,7 +36,7 @@ describe("round 7 early survival", () => {
     expect(offered(p.ask(w.view))).not.toContain("explore");
     w.setMonsters([]);
     w.setPlayer({ hp: 13 });
-    w.advance(10);
+    w.advance(51);
     expect(offered(p.ask(w.view))).toContain("explore");
   });
 
@@ -131,7 +131,7 @@ describe("corpus progress regressions", () => {
     expect(q.context.offers.map((offer) => offer.goal)).not.toContain("retreat");
     expect(q.plan.step(w.view, w.act)?.code).toBe(attack === "spell" ? "cast" : attack === "oil" ? "throw" : attack === "bow" ? "fire" : "aim");
     w.setMonsters([]);
-    w.advance(10);
+    w.advance(51);
     expect(offered(p.ask(w.view))).toContain("explore");
   });
 
@@ -783,7 +783,7 @@ describe("third soak survival regressions", () => {
     expect(String(q.request.state["creatures"])).toContain("deadly, 4 steps away");
     expect(offered(q)).toContain("leave_level");
     expect(offered(q)).not.toContain("fight");
-    expect(fallback(w).label).toBe("take the nearest stairs");
+    expect(fallback(w).label).toBe("take the stairs up");
     expect(fallback(w).step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
   });
 });
@@ -863,11 +863,12 @@ describe("combat safety action guards", () => {
     expect(q.context.offers.find((o) => o.goal === "heal")).toMatchObject({ risk: 1, survival: -14 });
   });
 
-  it("recovers below the health line when a cure and a phase are feasible", () => {
+  it("compares heal-then-escape with an immediate phase below the health line", () => {
     const w = world({ map: CORRIDOR, player: { hp: 5, maxHp: 15 }, monsters: [grip], monsterRecall: bite, pack: ["a Potion of Cure Light Wounds", "a Scroll of Phase Door"] });
     const q = reflexed(planner(w, true).p.ask(w.view));
     expect(offered(q)).toEqual(expect.arrayContaining(["heal", "phase"]));
-    expect(q.answers["goal"]).toMatchObject({ choice: "heal" });
+    expect(q.answers["goal"]).toMatchObject({ choice: "phase" });
+    expect(q.context.offers.find((offer) => offer.goal === "heal")?.forecast?.actions).toBeGreaterThan(q.context.offers.find((offer) => offer.goal === "phase")!.forecast!.actions);
   });
 
   it("forces a reliable inspected healing spell and preserves its failure bound", () => {
@@ -965,7 +966,7 @@ describe("combat safety action guards", () => {
   });
 
   it("rechecks a stair plan before each walking command", () => {
-    const w = suppliedWorld({ map: ["#######", "#@...>#", "#.....#", "#.....#", "#######"], player: { hp: 20, maxHp: 30 }, monsters: [{ grid: { x: 1, y: 3 }, level: 10, speed: 100 }], messages: ["Omens of death haunt this place."], travelPath: (to) => [to] });
+    const w = suppliedWorld({ map: ["#######", "#@...>#", "#.....#", "#.....#", "#######"], player: { hp: 20, maxHp: 30 }, monsters: [{ grid: { x: 1, y: 3 }, level: 1, speed: 100 }], monsterRecall: () => "It can bite to hurt (1d1).", messages: ["Omens of death haunt this place."], travelPath: (to) => [to] });
     const { p } = planner(w);
     const choice = p.choose(pick("leave_level"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a stair plan");
@@ -1938,7 +1939,7 @@ describe("fear, swarms and refused commands", () => {
   });
 
   it("offers to leave the level once breeders fill the room", () => {
-    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(3) }))).not.toContain("leave_level");
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, pack: ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"], monsters: worms(3) }))).not.toContain("leave_level");
     expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(4) }))).toContain("leave_level");
   });
 
@@ -2968,7 +2969,7 @@ describe("early experience and recovery", () => {
   });
 
   it("chooses a weak sleeper past a closer dangerous sleeper", () => {
-    const w = suppliedWorld({ map: CORRIDOR, player: weakMage, pack: ["5 Flasks of Oil"], monsters: [{ ...sleeper, id: 2, grid: { x: 3, y: 1 }, race: "orc", level: 10 }, sleeper], monsterRecall: lore });
+    const w = suppliedWorld({ map: ["########", "#.@....#", "#......#", "########"], player: weakMage, pack: ["5 Flasks of Oil"], monsters: [{ ...sleeper, id: 2, grid: { x: 3, y: 2 }, race: "orc", level: 10 }, sleeper], monsterRecall: lore });
     const q = asked(planner(w).p.ask(w.view));
     expect(q.context.offers.find((offer) => offer.goal === "throw_oil")?.criteria).toContain("giant white centipede");
   });
@@ -3506,7 +3507,7 @@ describe("tactical pack scenarios", () => {
     expect(offered(q)).toEqual(["throw_oil", "heal", "phase", "teleport_other"]);
     expect(q.context.pack).toEqual({ pruned: [], gate: { low: 0.55, high: 0.78 } });
     expect(byGoal(q.context.offers, "teleport_other")).toMatchObject({ criteria: "Aim a Wand of Teleport Other (2 charges) at Bullroarer the Hobbit to send it far away across the level; it is the only awake creature in sight. It has a 18% chance to fail (usually works); a failed use leaves Bullroarer the Hobbit where it is.", costNote: "a wand charge" });
-    expect(answer(cornered(), choice({ throw_oil: 0.5, teleport_other: 0.3, phase: 0.2 }), 0.2).goal).toBe("throw_oil");
+    expect(answer(cornered(), choice({ throw_oil: 0.5, teleport_other: 0.3, phase: 0.2 }), 0.2).goal).toBe("phase");
     const w = cornered();
     const high = answer(w, choice({ throw_oil: 0.5, teleport_other: 0.3, phase: 0.2 }), 0.9);
     expect(high.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "phase", "teleport_other"] });

@@ -1077,6 +1077,11 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
       ...chaosEntry(record.context.chaos),
       ...(record.context.regret === undefined ? {} : { regret: { ...record.context.regret } }),
       state: record.request.state,
+      ...(record.context.requestTokens === undefined ? {} : { requestTokens: record.context.requestTokens }),
+      ...(() => {
+        const selected = record.context.offers.find((offer) => offer.goal === (record.context.fallback ?? trace?.pick ?? (goal?.type === "choice" ? goal.choice : "")));
+        return { ...(selected?.action === undefined ? {} : { action: selected.action }), ...(selected?.forecast === undefined ? {} : { forecast: selected.forecast }) };
+      })(),
       ...(record.context.stateHash === undefined ? {} : { stateHash: record.context.stateHash }),
       ...(record.context.stateHash === undefined || record.reflex !== undefined ? {} : { answerKey: record.context.answerKey ?? answerKeyOf(record.model, record.context.stateHash) }),
       options: record.context.offers.map((o) => o.goal),
