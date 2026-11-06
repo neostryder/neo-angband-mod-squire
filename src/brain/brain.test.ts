@@ -104,6 +104,48 @@ function rig(options: {
 }
 
 describe("brain", () => {
+  it("runs recovery before a pending answer and discards that answer", async () => {
+    let recover = false;
+    const p = planner(() => walks(2));
+    const choose = vi.spyOn(p, "choose");
+    p.watchdog = () => recover ? { reflex: "watchdog recovery", plan: walks(1), context: null, answers: {} } : null;
+    const r = rig({ planner: p, results: [answered(), answered()] });
+    r.tick();
+    await flush();
+    recover = true;
+    expect(r.tick()).toEqual(WALK);
+    expect(choose).not.toHaveBeenCalled();
+    recover = false;
+    r.tick();
+    expect(r.sent).toHaveLength(2);
+    expect(choose).not.toHaveBeenCalled();
+  });
+
+  it("interrupts a running plan and attempts recovery before its ordinary trigger", async () => {
+    let recover = false;
+    const trigger = vi.fn(() => null);
+    const p = planner(() => walks(10), trigger);
+    p.watchdog = () => recover ? { reflex: "watchdog recovery", plan: walks(1), context: null, answers: {} } : null;
+    const r = rig({ planner: p, results: [answered()] });
+    r.tick();
+    await flush();
+    r.tick();
+    const calls = trigger.mock.calls.length;
+    recover = true;
+    expect(r.tick()).toEqual(WALK);
+    expect(trigger).toHaveBeenCalledTimes(calls);
+    expect(r.ends).toContainEqual(expect.objectContaining({ stop: "interrupted", reason: "watchdog recovery", commands: 1 }));
+  });
+
+  it("reports decisions even when a finished plan starts its successor in the same tick", () => {
+    let decisions = 0;
+    const p = planner(() => walks(1));
+    p.rules = () => ({ reflex: "routine", plan: walks(1), context: null, answers: {} });
+    p.watchdog = (_view, decision) => { if (decision) decisions += 1; return null; };
+    const brain = createBrain({ backend: JEV, planner: p, rulesOnly: true, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send: () => { throw new Error("unexpected request"); }, token: () => null, now: () => 0, log: () => {}, status: () => {} });
+    for (let tick = 0; tick < 20; tick += 1) brain.controller(view, act);
+    expect(decisions).toBe(11);
+  });
   it("leaves victory with the host and issues no further command", () => {
     const r = rig({ planner: planner(() => walks(1)), results: [], view: { player: () => ({ dead: false, winner: true }) } as AgentView });
     expect(r.tick()).toBeNull();
