@@ -250,3 +250,34 @@ describe("quiet refresh pacing", () => {
     expect(memory.canRefresh(w.view, null)).toBe(false);
   });
 });
+
+describe("remembered widened exploration", () => {
+  it("reuses a filtered singleton for three decisions and then expires", () => {
+    const { w, memory } = rig();
+    memory.rememberWidenedExplore(w.view, [offer("leave_level")], [offer("explore")]);
+    for (let i = 0; i < 3; i += 1) {
+      w.advance(10);
+      expect(memory.reuseWidenedExplore(w.view, [offer("leave_level")])).toBe(true);
+    }
+    expect(memory.reuseWidenedExplore(w.view, [offer("leave_level")])).toBe(false);
+  });
+
+  it.each(["level", "goal", "choices", "reset", "rewind"])("invalidates the remembered choice after %s changes", (change) => {
+    const { w, memory } = rig();
+    w.advance(20);
+    memory.rememberWidenedExplore(w.view, [offer("leave_level")], [offer("explore")]);
+    if (change === "level") w.setPlayer({ depth: 2 });
+    if (change === "reset") memory.reset();
+    if (change === "rewind") w.advance(-10);
+    const offers = change === "goal" ? [offer("rest")] : change === "choices" ? [offer("leave_level"), offer("fight")] : [offer("leave_level")];
+    expect(memory.reuseWidenedExplore(w.view, offers)).toBe(false);
+  });
+
+  it("does not cache multiple offers or a widened alternative to explore", () => {
+    const { w, memory } = rig();
+    memory.rememberWidenedExplore(w.view, [offer("leave_level"), offer("wait")], [offer("explore")]);
+    expect(memory.reuseWidenedExplore(w.view, [offer("leave_level")])).toBe(false);
+    memory.rememberWidenedExplore(w.view, [offer("leave_level")], [offer("explore"), offer("wait")]);
+    expect(memory.reuseWidenedExplore(w.view, [offer("leave_level")])).toBe(false);
+  });
+});

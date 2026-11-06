@@ -106,7 +106,7 @@ function commandText(command: AgentCommand): string {
 }
 
 describe("town trip", () => {
-  it("leaves gold for oil while a starting Mage buys cures and Phase Door", () => {
+  it("buys fifteen oil flasks before spending the remaining gold on cures", () => {
     const ware = (name: string, index: number, price: number, number: number): StoreItemView => ({ ...itemNamed(name, 0), index, price, number } as StoreItemView);
     const stores: StoreView[] = [
       { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [ware("a Potion of Cure Light Wounds", 0, 20, 20), ware("a Scroll of Phase Door", 1, 15, 20)] },
@@ -123,36 +123,37 @@ describe("town trip", () => {
     }
     const kit = readPack(w.view);
     expect(kit.heal).toHaveLength(1);
-    expect(kit.phase).toHaveLength(1);
+    expect(kit.phase).toHaveLength(0);
     expect(kit.oil).toHaveLength(1);
-    expect(w.view.inventory().find((item) => item.name?.includes("Flasks of Oil"))?.number).toBe(2);
-    expect(gold).toBe(0);
+    expect(w.view.inventory().find((item) => item.name?.includes("Flasks of Oil"))?.number).toBe(15);
+    expect(gold).toBe(11);
   });
 
-  it("leaves the general store to buy survival supplies before oil or gear", () => {
+  it("buys oil, two cures, two Phase Doors and five food units before gear or savings", () => {
+    const ware = (name: string, index: number, price: number): StoreItemView => ({ ...itemNamed(name, 0), index, price, number: 40 } as StoreItemView);
     const stores: StoreView[] = [
-      { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [
-        { ...itemNamed("a Potion of Cure Light Wounds", 0), index: 0, price: 20, number: 10 },
-        { ...itemNamed("a Scroll of Phase Door", 0), index: 1, price: 18, number: 10 },
-      ] },
-      { feat: FEAT.GENERAL, featName: "STORE_GENERAL", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [
-        { ...itemNamed("a Flask of Oil", 0), index: 0, price: 3, number: 10 },
-      ] },
+      { feat: FEAT.ALCHEMY, featName: "STORE_ALCHEMY", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [ware("a Potion of Cure Light Wounds", 0, 20), ware("a Scroll of Phase Door", 1, 18)] },
+      { feat: FEAT.GENERAL, featName: "STORE_GENERAL", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [ware("a Flask of Oil", 0, 3), ware("a Ration of Food", 1, 3)] },
     ];
-    const w = world({ map: ["######", "#G@.A#", "######"], player: { cls: "Warrior", level: 1, depth: 0, gold: 65 }, pack: ["a Ration of Food", "a Wooden Torch"], stores });
-    const plan = townTripPlan(w.terrain, null);
-    w.moveTo({ x: 1, y: 1 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
-    w.moveTo({ x: 4, y: 1 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 2 } });
-    w.setPack(["2 Potions of Cure Light Wounds", "a Ration of Food", "a Wooden Torch"]);
-    w.setPlayer({ gold: 25 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 1, quantity: 1 } });
-    w.setPack(["2 Potions of Cure Light Wounds", "a Scroll of Phase Door", "a Ration of Food", "a Wooden Torch"]);
-    w.setPlayer({ gold: 7 });
-    expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
-    expect(w.issued.filter((command) => command.code === "shop-buy")).toHaveLength(2);
+    const pantry = ["a Wooden Torch (5000 turns)"];
+    const w = world({ map: ["#######", "#G@..A#", "#######"], player: { cls: "Warrior", level: 1, depth: 0, gold: 136 }, pack: pantry, worn: ["a Wooden Torch (5000 turns)"], stores });
+    const persona = defaultPersona();
+    persona.sliders.savings = 100;
+    const plan = townTripPlan(w.terrain, persona, new Set(), () => {}, [], undefined, undefined, () => ["gear", "save", "food", "phase", "healing", "oil"]);
+    const purchases: string[] = [];
+    let pack = pantry;
+    let gold = 136;
+    for (let step = 0; step < 70; step += 1) {
+      const command = plan.step(w.view, w.act);
+      if (command === null) break;
+      if (command.code === "shop-buy") {
+        const store = stores.find((entry) => entry.feat === w.view.cell(w.at().x, w.at().y)?.feat)!;
+        purchases.push(`${String(command.args?.["quantity"])} ${store.stock.find((item) => item.index === command.args?.["index"])!.name}`);
+      }
+      ({ pack, gold } = applyTownCommand(w, pack, gold, stores));
+    }
+    expect(purchases).toEqual(["15 a Flask of Oil", "2 a Potion of Cure Light Wounds", "2 a Scroll of Phase Door", "5 a Ration of Food"]);
+    expect(gold).toBe(0);
   });
 
   it("names no shop for a need the purse cannot buy even one of", () => {
@@ -188,7 +189,7 @@ describe("town trip", () => {
       { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHome: false, owner: { name: "Mauser", purse: 10000 }, stock: [] },
       { feat: FEAT.GENERAL, featName: "General Store", isHome: false, owner: { name: "Bilbo", purse: 5000 }, stock: [] },
     ];
-    const w = world({ map: ["#####", "#@AG#", "#####"], player: { depth: 0 }, stores });
+    const w = world({ map: ["#####", "#@GA#", "#####"], player: { depth: 0 }, stores });
     const plan = townTripPlan(w.terrain, null);
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 2, y: 1 });
@@ -203,7 +204,7 @@ describe("town trip", () => {
     const stock = [{ ...itemNamed("Leather Armour [8,+0]", 0), index: 0, price: 100, number: 1 }] as StoreItemView[];
     const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
     const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
-    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, maxDepth: 5, gold: 200 }, stores: [store] });
+    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, maxDepth: 5, gold: 200 }, pack: ["15 Flasks of Oil"], stores: [store] });
     expect(neededEntrances(w.view, w.terrain, null, new Set(), [aim]).map((entry) => entry.name)).toEqual(["Armoury"]);
     const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
@@ -218,12 +219,12 @@ describe("town trip", () => {
     ] as StoreItemView[];
     const store: StoreView = { feat: FEAT.ARMOUR, featName: "Armoury", isHome: false, owner: { name: "Toby", purse: 10000 }, stock };
     const aim: Aim = { kind: "armour", label: "armour for empty slots", detail: "Buy armour for the bare slots.", how: "save", price: 100, depth: null };
-    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, gold: 200 }, stores: [store] });
+    const w = suppliedWorld({ map: ["#####", "#@.U#", "#####"], player: { depth: 0, gold: 200 }, pack: ["15 Flasks of Oil"], stores: [store] });
     const plan = townTripPlan(w.terrain, null, new Set(), () => {}, [aim]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
     w.moveTo({ x: 3, y: 1 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-buy", args: { index: 0, quantity: 1 } });
-    w.setPack(["Leather Cloak [1,+0]", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"]);
+    w.setPack(["Leather Cloak [1,+0]", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches", "15 Flasks of Oil"]);
     expect(plan.step(w.view, w.act)).toEqual({ code: "shop-exit" });
   });
 
@@ -302,15 +303,15 @@ describe("a first town trip's commands", () => {
     }
     const carried = pack.filter((line) => line !== "");
     expect({ count: commands.length, gold, carried, commands }).toEqual({
-      count: 19,
-      gold: 2,
+      count: 22,
+      gold: 1,
       carried: [
-        "2 Wooden Torches (5000 turns)",
+        "a Wooden Torch (5000 turns)",
         "a Cloak",
+        "15 Flasks of Oil",
         "2 Potions of Cure Light Wounds",
-        "2 Scrolls of Phase Door",
-        "5 Rations of Food",
-        "5 Flasks of Oil",
+        "a Scroll of Phase Door",
+        "2 Rations of Food",
       ],
       commands: [
         "walk:6",
@@ -319,18 +320,21 @@ describe("a first town trip's commands", () => {
         "shop-exit",
         "walk:6",
         "walk:6",
-        "shop-buy {\"index\":0,\"quantity\":2}",
-        "shop-buy {\"index\":1,\"quantity\":2}",
         "shop-exit",
         "walk:6",
         "walk:6",
         "shop-sell {\"handle\":3,\"quantity\":1}",
         "shop-sell {\"handle\":4,\"quantity\":1}",
+        "shop-buy {\"index\":2,\"quantity\":15}",
+        "shop-exit",
+        "walk:4",
+        "walk:4",
         "shop-buy {\"index\":0,\"quantity\":2}",
         "shop-buy {\"index\":1,\"quantity\":1}",
-        "shop-buy {\"index\":2,\"quantity\":2}",
-        "shop-buy {\"index\":0,\"quantity\":3}",
-        "shop-buy {\"index\":2,\"quantity\":3}",
+        "shop-exit",
+        "walk:6",
+        "walk:6",
+        "shop-buy {\"index\":0,\"quantity\":2}",
         "shop-exit",
       ],
     });
@@ -537,7 +541,7 @@ describe("unreachable town shops", () => {
   });
 
   it("skips a disconnected alchemy shop and continues to the general store", () => {
-    const w = world({ map: ["#########", "#>@.G#A##", "#########"], player: { depth: 0, gold: 100 }, pack: [] });
+    const w = world({ map: ["#########", "#>@.G#A##", "#########"], player: { depth: 0, gold: 100 }, pack: ["15 Flasks of Oil"] });
     const visited = new Set<number>();
     const plan = townTripPlan(w.terrain, null, visited);
     expect(plan.step(w.view, w.act)).toEqual({ code: "hold" });

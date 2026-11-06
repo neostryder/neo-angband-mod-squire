@@ -2769,7 +2769,7 @@ describe("early experience and recovery", () => {
     }
   });
 
-  it("rests before travel until full HP, then hunts a weak creature that appears", () => {
+  it("rests before travel until full HP, then takes a seen down staircase", () => {
     const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { ...weakMage, hp: 11 }, pack: ["5 Flasks of Oil"] });
     const p = planner(w, true).p;
     const q = reflexed(p.ask(w.view));
@@ -2780,7 +2780,7 @@ describe("early experience and recovery", () => {
     expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "rest" });
     w.setPlayer({ hp: 12 });
     w.setMonsters([sleeper]);
-    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "throw_oil" });
+    expect(reflexed(p.ask(w.view)).answers["goal"]).toMatchObject({ choice: "descend" });
   });
 
   it("escapes below the persona's health line before fighting an easy creature", () => {
@@ -4228,4 +4228,40 @@ describe("early lab survival", () => {
     expect(q.answers["goal"]).toMatchObject({ choice: "leave_level" });
     expect(q.plan.step(w.view, w.act)).toEqual({ code: "ascend" });
   });
+});
+
+describe("immediate shallow dives", () => {
+  it("interrupts exploration for a seen down staircase and dives before hunting or training", () => {
+    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+    const p = planner(w, true).p;
+    expect(p.trigger(w.view, { label: "explore", step: () => null })).toContain("down staircase");
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+    w.moveTo({ x: 5, y: 1 });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
+  });
+
+  it("skips repeated widening for three singleton explore decisions and checks normal offers again", () => {
+    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 0, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+    const logs: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (line) => logs.push(line), reflex: true });
+    reflexed(p.ask(w.view)).plan.step(w.view, w.act);
+    w.setPlayer({ depth: 1 });
+    w.setPack(["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    p.ask(w.view);
+    w.advance(2000);
+    for (let i = 0; i < 5; i += 1) {
+      const next = p.ask(w.view);
+      expect(offered(next)).toEqual(["explore"]);
+      if ("request" in next) p.choose(pick("explore"), next.context, w.view);
+      w.advance(10);
+    }
+    expect(logs.filter((line) => line.includes("nothing to offer"))).toHaveLength(2);
+    expect(logs.filter((line) => line.includes("widens its choices"))).toHaveLength(2);
+  });
+});
+
+it("keeps exploring when a known shallow down staircase has no remembered route", () => {
+  const w = world({ map: ["##########", "#<@..,#>##", "##########"], player: { cls: "Mage", depth: 1, level: 1, maxLevel: 1, hp: 12, maxHp: 12 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+  expect(planner(w, true).p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
 });

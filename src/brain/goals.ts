@@ -53,7 +53,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { drive, nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
-import { descentWait, earlyDescentReady, gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin } from "../strategy/readiness.js";
+import { descentWait, earlyDescentReady, gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin, shallowDiveReady } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -1996,7 +1996,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const route = (plan as Plan & { travel?: TravelRoute }).travel;
     /* Safe travel never asks the model; it runs until one of the fixed travel interrupts fires. */
     const travel = route === undefined ? null : createTravelWatch(view, { ...route, terrain, harmless: (m, v) => routineMonster(v, m) || seenOnLevel.get(m.id) === m.race });
-    plan = journey.guarded(goal, plan);
+    plan = journey.guarded(goal, plan, view);
     const chosenOn = gearOf(view);
     const fightTarget = goal === "fight" ? situationNow(view).target?.id : undefined;
     if (goal !== null) {
@@ -2988,6 +2988,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (offers.some((offer) => offer.goal === "explore")) return { goal: "explore", why: "find a staircase away from the breeders" };
     }
     if (s.breederExit === true && offers.some((offer) => offer.goal === "leave_level") && journey.exitWay(s.view) !== null) return { goal: "leave_level", why: "follow the checked breeder exit" };
+    if (journey.firstStair(s.view) && shallowDiveReady(s.view, s.view.player().depth + 1, persona) && offers.some((offer) => offer.goal === "descend")) return { goal: "descend", why: "take the first down staircase with a ranged attack and trip supplies" };
     if ((journey.firstStair(s.view) || playerDepthReady(s.view, persona)) && earlyDescentReady(s.view, s.view.player().depth <= 3 && playerDepthReady(s.view, persona) ? 0 : 2) && preparationNow(s.view, s.view.player().depth + 1, persona).length === 0 &&
       s.view.player().hp === s.view.player().maxHp && offers.some((offer) => offer.goal === "descend")) return { goal: "descend", why: journey.firstStair(s.view) ? "take the first prepared down staircase" : "descend after the ambition wait with HP and supplies ready" };
     const incoming = damageFor(s).damage;
@@ -3170,6 +3171,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const chosenHome = options.townCall?.() ?? null;
       const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
       let offers = offered.filter(usable);
+      const reuseExplore = decisionMemory.reuseWidenedExplore(view, offers.length === 0 ? offered : []) &&
+        usableGoal("explore") && !walksIntoDeath(s, terrain, "explore") && journey.canExplore(view, true);
+      if (reuseExplore) {
+        offeredWiden = true;
+        offers = journey.apply([{ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 }], view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
+      }
       if (offers.length === 0) {
         const tried = offered.map((o) => o.goal);
         log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
@@ -3219,6 +3226,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           if (offers.length === 0 && waitCapped) return { handBack: "No safe step, checked staircase or usable escape remains after three idle waits." };
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
+        decisionMemory.rememberWidenedExplore(view, offered, offers);
         log(`goal: Squire widens its choices. ${reason}`);
       }
       /* Here the only offer is a trip down the character isn't ready for, and
@@ -3505,6 +3513,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     trigger(view, plan) {
       decisionMemory.observe(view);
       situationNow(view, false, true);
+      if (plan.label === "explore" && cfg.descend && reachableStairs(view, terrain) && journey.firstStair(view) && shallowDiveReady(view, view.player().depth + 1, personaOf())) return "A down staircase is known and the shallow dive supplies are ready.";
       const exiting = journey.breederExit(view);
       /* A search for the missing staircase has to run; interrupting it every step was the loop. */
       if (exiting && !(plan.label === "explore" && journey.searchingNow(view)) && ["explore", "rest", "fetch"].includes(plan.label)) return "Three awake breeders marked this level for departure.";

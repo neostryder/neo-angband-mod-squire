@@ -154,9 +154,19 @@ export function earlyDescentReady(view: AgentView, reserves = 2): boolean {
     supplies(view).cures + escapeItems(view) >= reserves;
 }
 
+export function shallowDiveReady(view: AgentView, depth = view.player().depth + 1, persona: Persona | null = null): boolean {
+  const player = view.player();
+  if (player.depth < 1 || player.depth > 4 || depth !== player.depth + 1) return false;
+  const pack = readPack(view);
+  const oil = namedCount(view, /\bFlasks? of Oil\b/i);
+  const ranged = oil >= 5 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
+  return ranged && earlyDescentReady(view, 0) && player.maxHp >= Math.max(12, Math.ceil(classFloor(player.cls, depth, persona)[0] * 0.6)) &&
+    tripLight(view) && supplies(view).food >= 5 && !hungry(view);
+}
+
 /** The actual destination is checked even when the command starts in town. */
 export function missingPreparation(view: AgentView, depth: number, persona: Persona | null = null, depthMinutes = 0, earlyStair = false, stairEscape = false): Requirement[] {
-  if (depth <= 1) return [];
+  if (depth <= 1 || earlyStair && shallowDiveReady(view, depth, persona)) return [];
   const player = view.player();
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
