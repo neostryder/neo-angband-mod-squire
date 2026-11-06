@@ -56,7 +56,7 @@ describe("journey offer and execution guards", () => {
     w.setPlayer({ depth: 1, maxDepth: 1 });
     w.moveTo({ x: 2, y: 1 });
     expect(journey.apply(offers("explore"), w.view, null, new Set(), false).map((o) => o.goal)).toContain("explore");
-    expect(journey.blocked(w.view)).not.toContain("needs town");
+    expect(journey.blocked(w.view) ?? "").not.toContain("needs town");
   });
   const breeders = [5, 6, 7].map((x, index) => ({ grid: { x, y: 1 }, race: index === 2 ? "giant white mouse" : "white worm mass", raceFlags: ["MULTIPLY"] }));
 
@@ -322,7 +322,7 @@ describe("journey offer and execution guards", () => {
     /* A small shortfall is the readiness answer's to weigh; under half the floor the guard stops it. */
     w.setPlayer({ maxHp: 20 });
     expect(plan.step(w.view, w.act)).toEqual({ code: "descend" });
-    w.setPlayer({ maxHp: 14 });
+    w.setPlayer({ maxHp: 9 });
     expect(plan.step(w.view, w.act)).toBeNull();
   });
 
@@ -431,14 +431,14 @@ describe("bounded exploration and earning", () => {
     expect(available.map((offer) => offer.goal)).toContain("leave_level");
     expect(available.map((offer) => offer.goal)).not.toContain("explore");
     const descend = available.find((offer) => offer.goal === "descend");
-    expect(descend?.gaps).toEqual(["maximum character level 2", "30 maximum hit points"]);
-    expect(descend?.criteria).toContain("The next level still asks for maximum character level 2; 30 maximum hit points.");
+    expect(descend?.gaps).toEqual(["maximum character level 2"]);
+    expect(descend?.criteria).toContain("The next level still asks for maximum character level 2.");
   });
 
   it("never offers a descent without light, without food or far below the level floor", () => {
     const base = { map: ROOM, player: { level: 2, maxLevel: 2, hp: 30, maxHp: 30 } };
     expect(goals(suppliedWorld(base))).toContain("descend");
-    expect(goals(suppliedWorld({ ...base, player: { ...base.player, maxHp: 14, hp: 14 } }))).not.toContain("descend");
+    expect(goals(suppliedWorld({ ...base, player: { ...base.player, maxHp: 9, hp: 9 } }))).not.toContain("descend");
     expect(goals(suppliedWorld({ ...base, player: { ...base.player, status: { food: 100 } } }))).not.toContain("descend");
   });
 

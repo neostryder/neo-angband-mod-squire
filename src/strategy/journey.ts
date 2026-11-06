@@ -176,7 +176,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
      * a fight is already close, and the watcher only reacts once a blow lands. */
     const awake = view.monsters().filter((monster) => monster.visible && !monster.asleep);
     const dangerous = awake.some((monster) => assessThreat(monster, player, awake, view, undefined, terrain).band >= 2);
-    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
+    if (!departure.active() && returnReason === null && knownDownStairs(view, terrain).length === 0 && missingPreparation(view, depth + 1, lastPersona).length === 0 && player.hp >= player.maxHp * SEARCH_HP_FRACTION && !dangerous && !front.some((grid) => leashed(view, grid))) return "onward";
     return stayingOn(view, dangerous, front) ? "stay" : null;
   }
 
@@ -184,7 +184,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function stayingOn(view: AgentView, dangerous: boolean, front: readonly Loc[]): boolean {
     const player = view.player();
     if (!levelsPersist() || player.depth < 2 || breederLevel || departure.active() || returnReason !== null || expired || unseenDanger?.(view)) return false;
-    if (missingPreparation(view, player.depth).length > 0 || missingPreparation(view, player.depth + 1).length === 0) return false;
+    if (missingPreparation(view, player.depth, lastPersona).length > 0 || missingPreparation(view, player.depth + 1, lastPersona).length === 0) return false;
     if (player.hp < player.maxHp * SEARCH_HP_FRACTION || dangerous || front.some((grid) => leashed(view, grid))) return false;
     /* Ground the character cannot walk to would leave it with no climb and nothing to explore. */
     const field = flowFrom({ goals: [...front], canEnter: (grid) => isRoutable(view, terrain, grid) });
@@ -215,8 +215,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
 
   function exitTargets(view: AgentView): Loc[] {
     /* A level marked by breeders takes up or down, whichever is known, since either leaves them behind. Only a character ready for the next depth may descend here. */
-    if (breederLevel && returnReason === null && missingPreparation(view, view.player().depth + 1).length === 0) return knownStairs(view, terrain);
-    if (returnReason !== null || missingPreparation(view, view.player().depth + 1).length > 0) return upStairs(view);
+    if (breederLevel && returnReason === null && missingPreparation(view, view.player().depth + 1, lastPersona).length === 0) return knownStairs(view, terrain);
+    if (returnReason !== null || missingPreparation(view, view.player().depth + 1, lastPersona).length > 0) return upStairs(view);
     return knownStairs(view, terrain);
   }
 
@@ -256,8 +256,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (offer.goal === "wait" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "rest" && recalling && !safeDelay(view)) return false;
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
-      if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth).length === 0;
-      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && descentGaps(view, player.depth + 1).hard.length === 0);
+      if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view) && missingPreparation(view, player.maxDepth, lastPersona).length === 0;
+      if (offer.goal === "descend") return !recalling && tripLight(view) && (player.depth === 0 ? town.ready || town.earning || widen : !home && !departure.active() && descentGaps(view, player.depth + 1, lastPersona).hard.length === 0);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !view.monsters().some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null && searchFor() !== "stay";
       if (offer.goal === "explore" && search()) return true;
@@ -271,7 +271,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       return true;
     });
     /* Soft gaps leave the descent to the model's readiness answer; the goal planner holds it back below the persona's threshold. */
-    const soft = player.depth > 0 ? descentGaps(view, player.depth + 1).soft.map((gap) => gap.reason) : [];
+    const soft = player.depth > 0 ? descentGaps(view, player.depth + 1, lastPersona).soft.map((gap) => gap.reason) : [];
     if (soft.length > 0) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `${offer.criteria} The next level still asks for ${soft.join("; ")}.`, gaps: soft } : offer);
     if (player.depth === 0 && !town.ready) out = out.map((offer) => offer.goal === "descend" ? { ...offer, criteria: `Earn gold on dungeon level 1 for the missing ${town.reason}. The trip lasts at most ${String(EARNING_TURNS)} game turns (${turnsBand(EARNING_TURNS)}) and stays within ${String(earningLeash(view))} path steps (${stepsBand(earningLeash(view))}) of the up stairs.` } : offer);
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
@@ -296,7 +296,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `${why} ${offer.criteria}` } : offer);
     }
     if (!footOffered && !view.monsters().some((monster) => monster.visible && !monster.asleep)) {
-      const missing = missingPreparation(view, player.depth + 1)[0];
+      const missing = missingPreparation(view, player.depth + 1, lastPersona)[0];
       if (missing !== undefined) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
     }
     return out;
@@ -317,17 +317,17 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
       if (goal === "wait" && !safeDelay(view)) return null;
       if (goal === "rest" && recalling && !safeDelay(view)) return null;
-      if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth).length > 0)) return null;
+      if (goal === "recall_dungeon" && (!town.ready || !tripLight(view) || missingPreparation(view, player.maxDepth, lastPersona).length > 0)) return null;
       if (goal === "recall_town" && !safeDelay(view) && player.hp >= player.maxHp * 0.35 && !view.monsters().some((monster) => monster.visible && monster.raceFlags.includes("UNIQUE") && monster.speed > player.speed && player.level <= 3)) return null;
       if (goal === "descend") {
-        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1).hard.length > 0) return null;
+        if (!tripLight(view) || player.depth === 0 && !town.ready && !town.earning && !wide || player.depth > 0 && descentGaps(view, player.depth + 1, lastPersona).hard.length > 0) return null;
         if (player.depth === 0 && (town.earning || wide && !town.ready) && !departure.active()) departure.begin(view, town.target, lastPersona);
       }
       if (goal === null) {
         /* A rejected judgment cannot let the errand ladder bypass the guards. */
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && tripLight(view) && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1).length === 0) ? command : null;
+        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && tripLight(view) && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1, lastPersona).length === 0) ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === undefined ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };
@@ -389,7 +389,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (breederLevel) return "Squire must leave this breeder level, but it has no checked exit or safe Recall wait.";
     if (view.player().depth === 0 && !town.ready) return `Squire cannot leave town ready: it still needs ${town.reason}, and no bounded earning trip is safe.`;
     if (returnReason !== null) return `Squire needs town for ${returnReason}, but it has no checked return or safe Recall wait.`;
-    const missing = missingPreparation(view, view.player().depth + 1)[0];
+    const missing = missingPreparation(view, view.player().depth + 1, lastPersona)[0];
     return missing === undefined ? null : `Squire cannot descend yet: it needs ${missing.reason}.`;
   }
 

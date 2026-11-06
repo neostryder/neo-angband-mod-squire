@@ -210,7 +210,7 @@ export function candidateAims(view: AgentView, memories: readonly StoreMemory[] 
   const worn = view.equipment().flatMap((item) => (item === null ? [] : [item]));
   const target = Math.max(1, Math.round(depthTarget(player.level, player.maxHp) * paceFactor(persona)));
   const next = Math.max(2, player.depth + 1, player.depth === 0 ? player.maxDepth : 0);
-  const missing = missingPreparation(view, next);
+  const missing = missingPreparation(view, next, persona);
   const preparation: Aim | null = missing.length === 0 ? null : {
     kind: "preparation",
     label: "prepare for descent",
