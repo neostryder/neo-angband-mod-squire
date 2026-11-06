@@ -1922,6 +1922,9 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
    * whatever blocked the goal is something the view doesn't show, and it will
    * block it again until something here changes. */
   const refused = new Map<Goal, { readonly where: string; readonly turn: number }>();
+  let exploreFailures = 0;
+  let idleWaits = 0;
+  let strandedRefresh = false;
 
   /* The model's last answer, the situation it answered and its key. It is
    * reused only for the same situation, from the model that answered most
@@ -2012,6 +2015,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const codes: string[] = [];
     let startTurn: number | null = null;
     let credited = false;
+    let explorationFailed = false;
+    const failedExplore = (): void => {
+      if (goal === "explore" && !explorationFailed) {
+        explorationFailed = true;
+        exploreFailures += 1;
+      }
+    };
     let lastSingle: { turn: number; depth: number } | null = null;
     let expected: Expected | null = null;
     let danger: DangerMark | null = null;
@@ -2020,6 +2030,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     const settle = (v: AgentView): void => {
       if (credited || goal === null || issued === 0 || startTurn === null || v.turn() === startTurn) return;
       credited = true;
+      if (goal === "explore") exploreFailures = 0;
       options.orders?.carried(goal, v);
     };
     const step: Plan["step"] = (v, act) => {
@@ -2042,6 +2053,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return null;
       }
       if (command !== null) {
+        idleWaits = goal === "wait" || goal === "endure" ? idleWaits + 1 : 0;
         issued += 1;
         codes.push(command.code);
         loops.command(command, v);
@@ -2052,6 +2064,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
        * issued no command, or the game refused every one it issued (a spell
        * while confused, a blocked step). Asking again this turn would repeat it. */
       else if (issued === 0 || v.turn() === startTurn) {
+        failedExplore();
         if (goal !== null) stalled.set(goal, v.turn());
         if (goal !== null && issued > 0) {
           refused.set(goal, { where: whereNow(v), turn: v.turn() });
@@ -2090,6 +2103,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (p.dead || p.depth !== was.depth) return null;
       if (v.turn() === was.turn) {
         if (TIMELESS.has(was.code)) return null;
+        failedExplore();
         if (goal !== null) stalled.set(goal, v.turn());
         const why = goal === null ? null : refusalOf(goal, v);
         if (goal !== null && v.turn() === startTurn) refused.set(goal, { where: whereNow(v), turn: v.turn() });
@@ -2949,6 +2963,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
 
   /** Repeated stair trips need evidence of hunting before another refresh. */
   function refreshHeld(offer: Offer, s: Situation, view: AgentView, persona: Persona | null): boolean {
+    if (offer.goal === "leave_level" && strandedRefresh) return false;
     if (offer.goal === "leave_level" && s.breederExit === true) return false;
     if (offer.goal === "leave_level" && safeHunt(s, persona, terrain)) return true;
     if (offer.goal !== "leave_level" || view.player().depth === 0 || s.awake.length > 0 || s.unseenDamage > 0 ||
@@ -3106,8 +3121,11 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       decisionDepth = player.depth;
       if (newLevel) {
         exploreLoops = 0;
+        exploreFailures = 0;
+        idleWaits = 0;
         heldTurns.clear();
       }
+      strandedRefresh = false;
       const heldAgain = view.monsters().some((monster) => monster.visible && steps(monster.grid, player.grid) <= 1 && (heldTurns.get(monster.race) ?? []).filter((at) => at <= turn && turn - at <= 20 * turnsPerAction(player.speed, options.speedEnergy)).length >= 3);
       if ((heldAgain || options.reflex !== false) && disablingStep(s, terrain) !== null) {
         const why = heldAgain ? "repeated lost turns require a step out of reach" : "leave paralysis reach immediately";
@@ -3132,8 +3150,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const saving = savingFor(view);
       const aims = options.strategy?.().aims ?? [];
       const descending = descentRead !== null && descentRead.depth === player.depth && turn - descentRead.turn >= 0 && turn - descentRead.turn <= DEEP_DESCENT_WAIT_TURNS;
+      const healthyIdle = s.hpShare >= escapeShare(persona, player.level) &&
+        (!restRestoresMana(player.cls) || player.sp >= player.maxSp) &&
+        [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0) && !hungry(view) && !recalling && !descending;
+      const waitCapped = healthyIdle && idleWaits >= 3;
       const focus = options.focus?.() ?? null;
-      const usableGoal = (goal: Goal) => (focus === null || focus.has(goal)) && !(descending && goal === "deep_descent") && !stalled.has(goal) && !refused.has(goal) && (sameTurn.get(goal) ?? 0) < SAME_TURN_PLANS;
+      const usableGoal = (goal: Goal) => (focus === null || focus.has(goal)) && !(waitCapped && (goal === "wait" || goal === "endure")) && !(descending && goal === "deep_descent") && !stalled.has(goal) && !refused.has(goal) && (sameTurn.get(goal) ?? 0) < SAME_TURN_PLANS;
       const usable = (offer: Offer) => usableGoal(offer.goal) && !refreshHeld(offer, s, view, persona) && !(poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal));
       const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted, usableGoal("shop"));
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
@@ -3151,6 +3173,25 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         if (cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend") && !walksIntoDeath(s, terrain, "descend")) wider.push({ goal: "descend", criteria: "Walk to the down stairs to earn experience and gold.", risk: exposure(s) });
         if (!recalling && s.target === null && !reachableFrontier(view, terrain) && decisionMemory.canRefresh(view, persona) && s.awake.length === 0 && s.unseenDamage === 0 && player.depth > 0 && preparationNow(view, player.depth + 1, persona).length > 0 && !wider.some((offer) => offer.goal === "leave_level")) wider.push({ goal: "leave_level", criteria: "Refresh the level by a checked up staircase to find more experience.", risk: 0.02, survival: player.hp });
         offers = journey.apply(wider, view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
+        if (offers.every((offer) => offer.goal === "wait") && (exploreFailures >= 2 || waitCapped)) {
+          /* A stale refusal must not hide a different plain step or a checked
+           * staircase while the character spends turns standing still. */
+          if ((focus === null || focus.has("explore")) && s.hpShare >= SEARCH_HP_FRACTION && !poisonEmergency(view) && !walksIntoDeath(s, terrain, "explore") && journey.canExplore(view, true)) {
+            refused.delete("explore");
+            stalled.delete("explore");
+            sameTurn.delete("explore");
+            offers = [{ goal: "explore", criteria: "Take a plain step toward the nearest reachable unexplored frontier after exploration failed.", risk: exposure(s) + 0.02 }];
+          } else {
+            const stairs = knownStairs(view, terrain).filter((grid) => terrain.isUpStair(view.cell(grid.x, grid.y)?.feat ?? -1) || preparationNow(view, player.depth + 1, persona).length === 0);
+            if (player.depth > 0 && usableGoal("leave_level") && journey.checkedRoute(view, stairs) !== null) {
+              strandedRefresh = true;
+              offers = [{ goal: "leave_level", criteria: "Take a checked staircase to leave the position where exploration failed.", risk: 0.02, survival: player.hp }];
+            } else if (canRead(view) && s.awake.length === 0 && s.unseenDamage === 0) {
+              if (s.pack.descent.length > 0 && usableGoal("deep_descent") && player.hp >= player.maxHp * (1 - drive(persona) / 2)) offers = [{ goal: "deep_descent", criteria: "Read Deep Descent to leave the position where exploration failed.", risk: 0.2, survival: player.hp }];
+              else if (s.pack.phase.length > 0 && usableGoal("phase")) offers = [{ goal: "phase", criteria: "Read Phase Door to find another route after exploration failed.", risk: 0.05, survival: player.hp }];
+            }
+          }
+        }
         const idle = decisionMemory.facts(view, persona);
         if (offers.length === 0 && idle.decisionsSinceProgress >= stuckThresholds(persona).repeat && canRead(view) && s.awake.length === 0 && s.unseenDamage === 0) {
           if (s.pack.phase.length > 0 && usableGoal("phase")) offers.push({ goal: "phase", criteria: "Read Phase Door to leave this exhausted position and look for a route onward.", risk: 0.05 + 0.1 * (1 - drive(persona)), survival: player.hp });
@@ -3162,11 +3203,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         }
         if (offers.length === 0) {
           if (neighbours(player.grid).some((grid) => isWalkable(view, terrain, grid) && !standingOnHarm(view, terrain, grid) && !view.monsters().some((m) => m.visible && steps(m.grid, grid) <= 1) && creatureDamageFor(s, grid, terrain) < player.hp)) offers.push({ goal: "step_aside", criteria: "Walk one step onto safe ground away from visible creatures.", risk: exposure(s) });
-          if (safeRecovery(s, terrain)) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
+          if (safeRecovery(s, terrain) && usableGoal("wait")) offers.push({ goal: "wait", criteria: "Wait a turn for the situation to change.", risk: 0.02 });
           /* A creature that never moves can seal the only way out of a dead end where a connecting staircase put the character. The stairs underfoot are the way out. */
           const stairsOut: Offer = { goal: "leave_level", criteria: "Take the staircase underfoot: nothing else can be done from here, and staying gains nothing.", risk: exposure(s) };
           if (offers.length === 0 && stairsUnderfoot(s, terrain) && usable(stairsOut)) offers.push(stairsOut);
-          if (offers.length === 0 && player.status.afraid === 0) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
+          if (offers.length === 0 && s.unseenDamage > 0 && player.status.afraid === 0 && usableGoal("swing_unseen")) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
+          if (offers.length === 0 && waitCapped) return { handBack: "No safe step, checked staircase or usable escape remains after three idle waits." };
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
         log(`goal: Squire widens its choices. ${reason}`);
