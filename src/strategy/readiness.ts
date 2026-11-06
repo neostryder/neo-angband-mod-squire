@@ -144,24 +144,40 @@ export function descentWait(persona: Persona | null): number {
   return 2.5 - 1.5 * Math.max(0, Math.min(1, (persona?.sliders.ambition ?? 50) / 100));
 }
 
-export function earlyDescentReady(view: AgentView, reserves = 2): boolean {
+export function earlyDescentReady(view: AgentView, reserves = 2, hpFraction = 1): boolean {
   const player = view.player();
   const pack = readPack(view);
   const caster = ["Mage", "Necromancer"].includes(player.cls);
-  return player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 &&
+  return player.hp >= player.maxHp * hpFraction && player.status.poisoned === 0 && player.status.cut === 0 &&
     player.status.blind === 0 && player.status.confused === 0 && player.status.afraid === 0 &&
     (!caster || pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0) &&
     supplies(view).cures + escapeItems(view) >= reserves;
 }
 
+export function shallowDiveChecks(view: AgentView, persona: Persona | null = null) {
+  const player = view.player();
+  const pack = readPack(view);
+  const stock = supplies(view);
+  const caster = ["Mage", "Necromancer"].includes(player.cls);
+  return {
+    ranged: namedCount(view, /\bFlasks? of Oil\b/i) >= 5 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0,
+    fullHp: player.hp === player.maxHp,
+    hpReady: player.hp >= player.maxHp * 0.8,
+    casterAttack: !caster || pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0,
+    reserves: stock.cures + escapeItems(view),
+    maxHpFloor: Math.max(12, Math.ceil(classFloor(player.cls, player.depth + 1, persona)[0] * 0.6)),
+    tripLight: tripLight(view),
+    food: stock.food,
+    hungry: hungry(view),
+    statusReady: earlyDescentReady(view, 0, 0.8),
+  };
+}
+
 export function shallowDiveReady(view: AgentView, depth = view.player().depth + 1, persona: Persona | null = null): boolean {
   const player = view.player();
   if (player.depth < 1 || player.depth > 4 || depth !== player.depth + 1) return false;
-  const pack = readPack(view);
-  const oil = namedCount(view, /\bFlasks? of Oil\b/i);
-  const ranged = oil >= 5 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
-  return ranged && earlyDescentReady(view, 0) && player.maxHp >= Math.max(12, Math.ceil(classFloor(player.cls, depth, persona)[0] * 0.6)) &&
-    tripLight(view) && supplies(view).food >= 5 && !hungry(view);
+  const checks = shallowDiveChecks(view, persona);
+  return checks.ranged && checks.statusReady && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry;
 }
 
 /** The actual destination is checked even when the command starts in town. */

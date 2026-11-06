@@ -549,3 +549,19 @@ describe("unreachable town shops", () => {
     expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
   });
 });
+
+it("skips a remembered shop below its cheapest needed item and revisits when gold covers it", () => {
+  const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 16 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+  const memory = [{ feat: FEAT.ALCHEMY, name: "Alchemy Shop", owner: null, turn: w.view.turn(), lifetime: 10000, stock: [
+    { name: "a Potion of Cure Light Wounds", tval: 0, price: 20, count: 8 },
+    { name: "a Scroll of Phase Door", tval: 0, price: 18, count: 8 },
+  ] }];
+  expect(neededEntrances(w.view, w.terrain, null, new Set(), [], emptyFlourishes(), memory)).toEqual([]);
+  w.setPlayer({ gold: 18 });
+  expect(neededEntrances(w.view, w.terrain, null, new Set(), [], emptyFlourishes(), memory).map((entry) => entry.feat)).toEqual([FEAT.ALCHEMY]);
+});
+
+it("skips unknown shops when the purse cannot buy a needed item", () => {
+  const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
+  expect(neededEntrances(w.view, w.terrain, null, new Set(), [], emptyFlourishes(), [])).toEqual([]);
+});

@@ -99,7 +99,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const id = `${String(depth)}:${changes.join(";")}`;
     if (changes.length > 0 && !relaxed.has(id)) {
       relaxed.add(id);
-      log(`descent gate relaxed for DL${String(depth)}: ${changes.join("; ")}; ${minutes.toFixed(1)} minutes without a depth gain, ambition ${String(persona?.sliders.ambition ?? 50)}, full HP, preparation gaps: ${gaps.map((gap) => gap.reason).join("; ") || "none"}.`);
+      log(`descent gate relaxed for DL${String(depth)}: ${changes.join("; ")}; ${minutes.toFixed(1)} minutes without a depth gain, ambition ${String(persona?.sliders.ambition ?? 50)}, HP ${String(view.player().hp)}/${String(view.player().maxHp)}, preparation gaps: ${gaps.map((gap) => gap.reason).join("; ") || "none"}.`);
     }
     return gaps;
   }
@@ -394,6 +394,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
     const home = returnReason !== null;
     if (refreshReturn(view)) return [{ goal: "descend", criteria: "Return immediately down the connected staircase to finish the depth-preserving refresh.", risk: 0, survival: player.hp }];
+    if (!recalling && !breederLevel && shallowDiveReady(view, player.depth + 1, persona) && offers.some((offer) => offer.goal === "descend") && checkedRoute(view, knownDownStairs(view, terrain)) !== null) {
+      return offers.filter((offer) => offer.goal === "descend");
+    }
     const target = pickTarget(view.monsters(), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     /* Compute `searching` once for this apply: the filter and the post-filter both read it, and each call
      * costs an assessThreat walk over every awake creature. The view does not change inside apply. */
@@ -542,7 +545,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         return dir === undefined ? null : act.move(dir.key);
       }
       const command = plan.step(view, act);
-      if (goal === "descend" && command?.code === "descend" && shallowDiveReady(view, player.depth + 1, lastPersona)) log(`descent gate relaxed for DL${String(player.depth + 1)}: taking seen > with full HP, ranged attack, food and light; cure potions, Phase Door and character level waived.`);
+      if (goal === "descend" && command?.code === "descend" && shallowDiveReady(view, player.depth + 1, lastPersona)) log(`descent gate relaxed for DL${String(player.depth + 1)}: taking seen > with at least 80 percent HP, ranged attack, food and light; cure potions, Phase Door and character level waived.`);
       return command;
     } };
   }

@@ -6,7 +6,7 @@ import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { basketWants, missingEssentials, supplies } from "../strategy/readiness.js";
-import { matchesSupplyName, supplyNeeds, type SupplyNeed } from "./needs.js";
+import { matchesSupplyName, PRICE_FLOOR, supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shopEntrances } from "./plan.js";
 import { storesFor } from "./shop.js";
 
@@ -46,6 +46,8 @@ export function createDeparture() {
   let earning: { turn: number; gold: number; target: number | null; wide: boolean; limit: number } | null = null;
   let failedAtGold: number | null = null;
   let failedTurn = -1;
+  let townPack = "";
+  let townGold = 0;
 
   function observe(view: AgentView, terrain: Terrain): void {
     const player = view.player();
@@ -55,6 +57,8 @@ export function createDeparture() {
       failedAtGold = null;
       failedTurn = -1;
       previousDepth = -1;
+      townPack = "";
+      townGold = 0;
     }
     lastTurn = view.turn();
     if (player.depth === 0 && previousDepth > 0) {
@@ -63,7 +67,13 @@ export function createDeparture() {
         failedTurn = view.turn();
       }
       earning = null;
-      shelves.clear();
+      /* An empty refresh cannot fund a purchase that was already too expensive. */
+      const pack = JSON.stringify(view.inventory().map((item) => [item.handle, item.number]));
+      if (pack !== townPack || player.gold > townGold) shelves.clear();
+    }
+    if (player.depth === 0) {
+      townPack = JSON.stringify(view.inventory().map((item) => [item.handle, item.number]));
+      townGold = player.gold;
     }
     /* The trip's clock starts on level 1. A descent begun in town can be
      * interrupted by townspeople for hundreds of turns, and the soak's Priest
@@ -87,7 +97,7 @@ export function createDeparture() {
     if (missing.length === 0) return { ready: true, earning: false, reason: "", target: null };
     const needs = basketNeeds(view, supplyNeeds(view, readPack(view), persona), persona).filter((need) => need.have < need.want);
     const shops = shopEntrances(view, terrain);
-    const unknown = player.gold > 0 && shops.some((shop) => !visited.has(shop.feat) && needs.some((need) => storesFor(need.kind).includes(shop.name)));
+    const unknown = shops.some((shop) => !visited.has(shop.feat) && !shelves.has(shop.feat) && needs.some((need) => need.have < need.want && player.gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(shop.name)));
     let total = 0;
     let priced = true;
     let affordable = false;

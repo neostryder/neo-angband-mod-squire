@@ -15,7 +15,7 @@ import type { Persona } from "../persona/persona.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores, unaimedUpgradePurchase } from "./aims-shop.js";
-import { PRICE_FLOOR, shownName, supplyNeeds } from "./needs.js";
+import { matchesSupplyName, PRICE_FLOOR, shownName, supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
 import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor, STARTER_TARGETS } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
@@ -60,6 +60,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
   const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson), persona);
   const sales = sellList(pack, view, persona, trophyHandles(flourishes, view, persona), flourishes.darkLesson);
   const gold = view.player().gold;
+  const ready = missingEssentials(view, persona).length === 0;
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
     if (entrance.name === "Home") {
@@ -71,9 +72,14 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
       const spares = homeSpares(view, persona, flourishes.darkLesson).length > 0;
       return covers || spares || !home.entered;
     }
-    const buying = needs.some((need) => need.have < need.want && PRICE_FLOOR[need.kind] <= gold && storesFor(need.kind).includes(entrance.name));
+    const memory = memories?.find((entry) => entry.feat === entrance.feat && stockConfidence(entry, view.turn()) > 0);
+    const buying = needs.some((need) => {
+      if (need.have >= need.want || !storesFor(need.kind).includes(entrance.name)) return false;
+      const prices = memory?.stock.filter((item) => item.count > 0 && matchesSupplyName(item.name, need.name)).map((item) => item.price);
+      return (prices === undefined ? PRICE_FLOOR[need.kind] : Math.min(...prices)) <= gold;
+    });
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === undefined ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
-    const exploring = memories !== undefined && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
+    const exploring = memories !== undefined && memory === undefined && (ready || needs.some((need) => need.have < need.want && gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(entrance.name)));
     /* The Black Market buys anything, so it is a trip only for what no other store takes. */
     const selling = entrance.name === "Black Market"
       ? sales.some((sale) => !SPECIALISTS.some((shop) => saleFits(sale.tval, shop)))

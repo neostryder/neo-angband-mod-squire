@@ -53,7 +53,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { drive, nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
-import { descentWait, earlyDescentReady, gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin, shallowDiveReady } from "../strategy/readiness.js";
+import { descentWait, earlyDescentReady, gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin, shallowDiveReady, shallowDiveChecks } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -1187,11 +1187,12 @@ function safeHunt(s: Situation, persona: Persona | null, terrain: Terrain): bool
     missingPreparation(s.view, player.depth + 1, persona, s.depthMinutes, s.earlyStair, stairsUnderfoot(s, terrain)).some((gap) => gap.kind === "level" || gap.kind === "hp");
 }
 
-export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes(), storeMemory?: readonly StoreMemory[], homeStock?: HomeStock, exploreExhausted = false, shopAvailable = true): Offer[] {
+export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, persona: Persona | null = null, visited: ReadonlySet<number> = new Set(), triedStudies: ReadonlySet<string> = new Set(), newLevel = false, recallActive = false, widen = false, saving = false, rememberedFeeling: string | null = null, aims: readonly Aim[] = [], feelings: readonly Feeling[] = [], flourishes: Flourishes = emptyFlourishes(), storeMemory?: readonly StoreMemory[], homeStock?: HomeStock, exploreExhausted = false, shopAvailable = true, quietArrival = false): Offer[] {
   const view = s.view;
   const player = view.player();
   const at = player.grid;
   const hurt = player.hp < player.maxHp;
+  const shallowDive = shallowDiveReady(view, player.depth + 1, persona);
   const out: Offer[] = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
@@ -1497,7 +1498,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
             : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
-  if (!bleeding && s.awake.length === 0 && recovery && (hurt || (player.sp < player.maxSp && restRestoresMana(player.cls)))) {
+  if (!quietArrival && !bleeding && s.awake.length === 0 && recovery && (hurt || (player.sp < player.maxSp && restRestoresMana(player.cls)))) {
     /* Resting passes the turns a pending recall needs as well as waiting does, and heals besides. */
     add("rest", "Rest until hit points and restorable mana recover.", 0.01, recallActive);
   }
@@ -1582,7 +1583,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if ((!unlit || townNeedsStairs) && !learnFirst && !bleeding && !townStairsReached && (!exploreExhausted && reachableFrontier(view, terrain) || townNeedsStairs && townUnwalked(s, terrain))) {
     add("explore", s.unseenDamage > 0 ? "Keep exploring toward unexplored ground despite the recent unexplained hits. Small hits can be endured, but an empty visible list does not prove safety." : "Walk toward the nearest unexplored ground on this level.", exposure(s) + 0.02);
   }
-  if ((!unlit || player.depth === 0) && !learnFirst && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
+  if ((shallowDive || (!unlit || player.depth === 0) && !learnFirst) && !bleeding && reachableStairs(view, terrain) && cfg.descend &&
     /* In town, the stairs are the way down whenever recall cannot be: no scroll,
      * or no depth yet to return to. Shopping comes first while it is offered. */
     (player.depth > 0 || ((recall === null || player.maxDepth <= 1) && !shopOffered))) {
@@ -1817,6 +1818,34 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /* Studies already tried, as "level:spell", so a study the game refused is not repeated. */
   const triedStudies = new Set<string>();
   let decisionDepth: number | null = null;
+  let descentFrom: number | null = null;
+  const diveChecksAt = new Map<number, number>();
+  const widenedReasons = new Set<string>();
+  let levelSummary: { depth: number; turn: number; at: number; commands: number } | null = null;
+
+  function observeLevel(view: AgentView): void {
+    const depth = view.player().depth;
+    const time = (options.now ?? Date.now)();
+    if (levelSummary !== null && (levelSummary.depth !== depth || view.turn() < levelSummary.turn)) {
+      if (view.turn() >= levelSummary.turn && levelSummary.depth > 0) log(`level summary: depth ${String(levelSummary.depth)}, commands ${String(levelSummary.commands)}, minutes ${(Math.max(0, time - levelSummary.at) / 60000).toFixed(1)}`);
+      if (view.turn() < levelSummary.turn) diveChecksAt.clear();
+      widenedReasons.clear();
+      levelSummary = null;
+    }
+    levelSummary ??= { depth, turn: view.turn(), at: time, commands: 0 };
+    levelSummary.turn = view.turn();
+  }
+
+  function logDiveCheck(view: AgentView, persona: Persona | null, routeChecked: boolean, descendOffered: boolean, recalling: boolean): void {
+    const player = view.player();
+    if (player.depth < 1 || player.depth > 4 || knownDownStairs(view, terrain).length === 0) return;
+    const time = (options.now ?? Date.now)();
+    if (time - (diveChecksAt.get(player.depth) ?? -Infinity) >= 60000) {
+      diveChecksAt.set(player.depth, time);
+      const checks = shallowDiveChecks(view, persona);
+      log(`dive check: ranged ${String(checks.ranged)}, hp===maxHp ${String(checks.fullHp)}, hp>=80percent ${String(checks.hpReady)}, caster attack ${String(checks.casterAttack)}, cures plus escapes ${String(checks.reserves)}>=0, maxHp ${String(player.maxHp)}>=${String(checks.maxHpFloor)}, tripLight ${String(checks.tripLight)}, food ${String(checks.food)}>=2, hungry ${String(checks.hungry)}, status ready ${String(checks.statusReady)}, stair reachable ${String(reachableStairs(view, terrain))}, route checked ${String(routeChecked)}, descend enabled ${String(cfg.descend)}, recalling ${String(recalling)}, descend offered ${String(descendOffered)}.`);
+    }
+  }
   /* When and where Squire last read Word of Recall, for games whose view does not report a pending recall. */
   let recallRead: RecallRead | null = null;
   let descentRead: RecallRead | null = null;
@@ -2034,6 +2063,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       options.orders?.carried(goal, v);
     };
     const step: Plan["step"] = (v, act) => {
+      observeLevel(v);
       decisionMemory.observe(v);
       startTurn ??= v.turn();
       settle(v);
@@ -2055,6 +2085,8 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       if (command !== null) {
         idleWaits = goal === "wait" || goal === "endure" ? idleWaits + 1 : 0;
         issued += 1;
+        if (levelSummary !== null) levelSummary.commands += 1;
+        if (command.code === "descend") descentFrom = v.player().depth;
         codes.push(command.code);
         loops.command(command, v);
         expected = expectationOf(command, v);
@@ -3109,6 +3141,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       view = flourishView(view);
       const persona = personaOf();
       const player = view.player();
+      observeLevel(view);
       if (player.depth > 0) visitedShops.clear();
       if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };
       if (journey.refreshReturn(view)) {
@@ -3127,6 +3160,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const here = whereNow(view);
       for (const [goal, r] of refused) if (r.where !== here || turn - r.turn > REFUSAL_HOLD_TURNS) refused.delete(goal);
       const newLevel = decisionDepth !== player.depth;
+      const descended = newLevel && descentFrom !== null && player.depth > descentFrom;
+      const quietArrival = descended && player.hp > player.maxHp * 0.7 && !view.monsters().some((monster) => monster.visible) &&
+        [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0);
+      if (newLevel) descentFrom = null;
       decisionDepth = player.depth;
       if (newLevel) {
         exploreLoops = 0;
@@ -3138,6 +3175,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       const heldAgain = view.monsters().some((monster) => monster.visible && steps(monster.grid, player.grid) <= 1 && (heldTurns.get(monster.race) ?? []).filter((at) => at <= turn && turn - at <= 20 * turnsPerAction(player.speed, options.speedEnergy)).length >= 3);
       if ((heldAgain || options.reflex !== false) && disablingStep(s, terrain) !== null) {
         const why = heldAgain ? "repeated lost turns require a step out of reach" : "leave the creature's reach immediately";
+        logDiveCheck(view, persona, journey.checkedRoute(view, knownDownStairs(view, terrain)) !== null, false, recallPending(player, recallRead, turn));
         const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: [{ goal: "step_aside", criteria: why, risk: exposure(s) }], reflex: why };
         return { reflex: why, plan: noteStalls("step_aside", build("step_aside", view), view), context, answers: { goal: { type: "choice", choice: "step_aside", confidence: 1, probabilities: { step_aside: 1 } } } };
       }
@@ -3164,13 +3202,23 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0) && !hungry(view) && !recalling && !descending;
       const waitCapped = healthyIdle && idleWaits >= 3;
       const focus = options.focus?.() ?? null;
-      const usableGoal = (goal: Goal) => (focus === null || focus.has(goal)) && !(waitCapped && (goal === "wait" || goal === "endure")) && !(descending && goal === "deep_descent") && !stalled.has(goal) && !refused.has(goal) && (sameTurn.get(goal) ?? 0) < SAME_TURN_PLANS;
+      const usableGoal = (goal: Goal) => (focus === null || focus.has(goal)) && !((waitCapped || quietArrival && !recalling) && (goal === "wait" || goal === "endure")) && !(descending && goal === "deep_descent") && !stalled.has(goal) && !refused.has(goal) && (sameTurn.get(goal) ?? 0) < SAME_TURN_PLANS;
       const usable = (offer: Offer) => usableGoal(offer.goal) && !refreshHeld(offer, s, view, persona) && !(poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal));
-      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted, usableGoal("shop"));
+      const base = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, widen, saving, badFeeling, aims, persona === null ? [] : grudgesNow(), flourishesNow(), options.strategy?.().storeMemory, options.strategy?.().homeStock, exploreExhausted, usableGoal("shop"), quietArrival);
       const steered = options.strategy === undefined ? base : steerOffers(base, view, options.strategy(), { recallActive: recalling, tripRisk: Math.max(0.02, exposure(s)) }, (goal, criteria, risk) => ({ goal, criteria, risk }));
       const chosenHome = options.townCall?.() ?? null;
       const offered = journey.apply(steered, view, persona, visitedShops, recalling, false, chosenHome);
       let offers = offered.filter(usable);
+      const downStairs = knownDownStairs(view, terrain);
+      if (player.depth >= 1 && player.depth <= 4 && downStairs.length > 0) {
+        const routeChecked = journey.checkedRoute(view, downStairs) !== null;
+        if (cfg.descend && !recalling && shallowDiveReady(view, player.depth + 1, persona) && routeChecked && offers.some((offer) => offer.goal === "descend")) {
+          const why = "take the first down staircase with a ranged attack and trip supplies";
+          const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: offers.filter((offer) => offer.goal === "descend"), reflex: why };
+          return { reflex: why, plan: noteStalls("descend", build("descend", view), view), context, answers: { goal: { type: "choice", choice: "descend", confidence: 1, probabilities: { descend: 1 } } } };
+        }
+        logDiveCheck(view, persona, routeChecked, offers.some((offer) => offer.goal === "descend"), recalling);
+      }
       const reuseExplore = decisionMemory.reuseWidenedExplore(view, offers.length === 0 ? offered : []) &&
         usableGoal("explore") && !walksIntoDeath(s, terrain, "explore") && journey.canExplore(view, true);
       if (reuseExplore) {
@@ -3179,10 +3227,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       }
       if (offers.length === 0) {
         const tried = offered.map((o) => o.goal);
-        log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         const reason = journey.blocked(view) ?? nothingToDo(view, tried);
+        const tellWiden = !widenedReasons.has(reason);
+        widenedReasons.add(reason);
+        if (tellWiden) log(`goal: nothing to offer (light ${String(player.light)}, blind ${String(player.status.blind)}, confused ${String(player.status.confused)}, offered: ${tried.join(", ") || "none"}, stalled: ${[...stalled.keys()].join(", ") || "none"}, refused: ${[...refused.keys()].join(", ") || "none"})`);
         offeredWiden = true;
-        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims, [], emptyFlourishes(), undefined, undefined, exploreExhausted, usableGoal("shop"));
+        const wider = offersFor(s, cfg, terrain, persona, visitedShops, triedStudies, newLevel, recalling, true, saving, badFeeling, aims, [], emptyFlourishes(), undefined, undefined, exploreExhausted, usableGoal("shop"), quietArrival);
         /* A loop does not exhaust unknown ground when no other goal can make progress. */
         if (reachableFrontier(view, terrain) && !wider.some((o) => o.goal === "explore") && !walksIntoDeath(s, terrain, "explore")) wider.push({ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 });
         if (cfg.descend && reachableStairs(view, terrain) && !wider.some((o) => o.goal === "descend") && !walksIntoDeath(s, terrain, "descend")) wider.push({ goal: "descend", criteria: "Walk to the down stairs to earn experience and gold.", risk: exposure(s) });
@@ -3223,11 +3273,12 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
           const stairsOut: Offer = { goal: "leave_level", criteria: "Take the staircase underfoot: nothing else can be done from here, and staying gains nothing.", risk: exposure(s) };
           if (offers.length === 0 && stairsUnderfoot(s, terrain) && usable(stairsOut)) offers.push(stairsOut);
           if (offers.length === 0 && s.unseenDamage > 0 && player.status.afraid === 0 && usableGoal("swing_unseen")) offers.push({ goal: "swing_unseen", criteria: "Swing around the character while looking for a way out.", risk: exposure(s) });
+          if (offers.length === 0 && quietArrival) return { handBack: "No safe step, checked staircase or usable escape remains on arrival." };
           if (offers.length === 0 && waitCapped) return { handBack: "No safe step, checked staircase or usable escape remains after three idle waits." };
           if (offers.length === 0) offers.push({ goal: "endure", criteria: "Wait one turn for fear or another condition to pass. No checked escape or usable attack remains; another hit could kill the character.", risk: exposure(s), survival: player.hp - damageFor(s).damage, uncertain: true });
         }
         decisionMemory.rememberWidenedExplore(view, offered, offers);
-        log(`goal: Squire widens its choices. ${reason}`);
+        if (tellWiden) log(`goal: Squire widens its choices. ${reason}`);
       }
       /* Here the only offer is a trip down the character isn't ready for, and
        * everything inside the leash is explored. Walking past the leash is how
@@ -3511,6 +3562,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     },
 
     trigger(view, plan) {
+      observeLevel(view);
       decisionMemory.observe(view);
       situationNow(view, false, true);
       if (plan.label === "explore" && cfg.descend && reachableStairs(view, terrain) && journey.firstStair(view) && shallowDiveReady(view, view.player().depth + 1, personaOf())) return "A down staircase is known and the shallow dive supplies are ready.";
