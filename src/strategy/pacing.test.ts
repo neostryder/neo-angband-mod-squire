@@ -17,6 +17,19 @@ describe("overall dive schedule", () => {
 });
 
 describe("level game-turn budgets", () => {
+  it("resets the visit when API 2 replaces a floor at the same depth", () => {
+    let levelId = 1;
+    const w = world({ map: ["#####", "#<@>#", "#####"], player: { level: 1 } });
+    Object.assign(w.view, { knownLevel: () => ({ levelId }) });
+    const pacing = createLevelPacing();
+    pacing.observe(w.view);
+    w.advance(500);
+    expect(pacing.observe(w.view).expired).toBe(true);
+    levelId = 2;
+    expect(pacing.observe(w.view)).toMatchObject({ fresh: true, expired: false, turns: 0 });
+    expect(pacing.observe(w.view).fresh).toBe(false);
+  });
+
   it("limits the level 1 Warrior to 500 unproductive game turns instead of 89,000", () => {
     const w = world({ map: ["#####", "#<@>#", "#####"], player: { level: 1, maxLevel: 1 } });
     const pacing = createLevelPacing();

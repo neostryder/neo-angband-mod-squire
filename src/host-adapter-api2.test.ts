@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStore, KnownTarget, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
 import { squareIsDisarmableTrap, TRF, TV, type InputSnapshot, type ItemView, type PlayerView, type StoreView, type TargetView } from "@rpgm-tools/neo-angband-core";
 import { FEAT, world, type World } from "./harness.js";
@@ -432,7 +432,7 @@ describe("viewWorld under API 2", () => {
     }
   });
 
-  it("drains the messages the game printed since the last decision", async () => {
+  it("keeps the decision's message batch for every reader and drains it before the next snapshot", async () => {
     const w = scene();
     const fake = fakeApi({ world: knownFrom(w), records: records() });
     const feed = await watchMessages(fake.api);
@@ -440,10 +440,28 @@ describe("viewWorld under API 2", () => {
     fake.emit("The jackal dies.");
     const two = await viewWorld(fake.api, { messages: feed });
     expect(two?.messages()).toEqual(["You hit the jackal.", "The jackal dies."]);
-    expect(two?.messages()).toEqual([]);
+    expect(two?.messages()).toEqual(["You hit the jackal.", "The jackal dies."]);
+    expect((await viewWorld(fake.api, { messages: feed }))?.messages()).toEqual([]);
     await feed.stop();
     expect(fake.listening()).toBe(0);
     expect(await viewWorld(fake.api).then((v) => v?.messages())).toEqual([]);
+  });
+
+  it("keeps level identity and the public monster and spell inspections in the decision snapshot", async () => {
+    const w = world({ map: ["########", "#.@....#", "########"], monsters: [{ grid: { x: 5, y: 1 }, race: "floating eye" }], spells: [{ name: "Magic Missile", sidx: 0, mana: 1 }] });
+    const known = knownFrom(w);
+    const fake = fakeApi({ world: known, records: records() });
+    const monsterRecall = vi.fn(async () => ({ ok: true as const, value: { token: known.token, title: "floating eye", text: "It does not deign to chase intruders. It can gaze to paralyze." } }));
+    const spell = vi.fn(async () => ({ ok: true as const, value: { token: known.token, name: "Magic Missile", description: "Inflicts an average of 7.5 damage.", level: 1, mana: 1, failChance: 5, canCastNow: true } }));
+    Object.assign(fake.api.view, { inspect: { monsterRecall, spell } });
+    const view = await viewWorld(fake.api);
+    expect(view?.knownLevel?.()?.levelId).toBe(known.level?.levelId);
+    expect(view?.monsterRecall?.(10)?.text).toContain("does not deign to chase intruders");
+    expect(view?.spellInfo?.(0)).toMatchObject({ mana: 1, failChance: 5, canCastNow: true });
+    view?.monsterRecall?.(10);
+    view?.spellInfo?.(0);
+    expect(monsterRecall).toHaveBeenCalledTimes(1);
+    expect(spell).toHaveBeenCalledTimes(1);
   });
 
   it("reads the store day from the constants records", async () => {
