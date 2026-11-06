@@ -14,7 +14,7 @@
  * the model is asked again about the new situation.
  */
 
-import type { AgentActions, AgentCommand, AgentView, ItemView, MonsterView } from "../host-adapter.js";
+import type { AgentActions, AgentCommand, AgentView, ItemView, MonsterView, PlayerView } from "../host-adapter.js";
 import type { SquireContext } from "../context.js";
 import type { Mission } from "../mission.js";
 import { isStop } from "../mission.js";
@@ -53,7 +53,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { drive, nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
-import { gapFacts, missingPreparation, readinessThreshold, restRestoresMana, supplyMargin } from "../strategy/readiness.js";
+import { gapFacts, missingPreparation, poisonRecovery, readinessThreshold, restRestoresMana, supplyMargin } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -194,6 +194,12 @@ export function escapeShare(persona: Persona | null, level: number): number {
   return Math.max(0.2, Math.min(0.9, share));
 }
 
+function fleeUnique(monster: MonsterView, player: PlayerView, persona: Persona | null): boolean {
+  const scale = 1 + 0.3 * (drive(null) - drive(persona));
+  return fastUniqueAtLowLevel(monster, player) || player.depth > 0 && monster.raceFlags.includes("UNIQUE") &&
+    monster.speed > player.speed && player.level < Math.ceil(6 * scale) && player.maxHp < Math.ceil(40 * scale);
+}
+
 /** One blow of this share of maximum hit points, or twice it in all since the plan began, sends the decision back to the model. */
 const DAMAGE_SHARE_REDECIDE = 0.1;
 /** How much heavier melee sits for a caster with no mana for its attack spells, against a creature that hurts on touch or that it cannot kill quickly. */
@@ -211,7 +217,7 @@ export const SWARM_LEAVE_DREADED = 3;
 export const QUESTION_PACK_VERSION = 2;
 
 /** The version of the rules that turn an answer into a plan. Raise it when the offers, the gates or the builds change what an answer means. */
-export const GOAL_POLICY_VERSION = 2;
+export const GOAL_POLICY_VERSION = 3;
 
 /** The key a model's answer is stored and reused under: the model, the question pack, the state as sent and the goal policy. */
 export function answerKeyOf(model: string | null, hash: string): string {
@@ -1148,6 +1154,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const out: Offer[] = [];
   const incoming = damageFor(s, at, 1, terrain);
   const recovery = safeRecovery(s, terrain);
+  const weakCaster = player.depth > 0 && ["Mage", "Necromancer", "Priest", "Druid"].includes(player.cls) && player.maxHp < Math.ceil(28 * (1 + 0.3 * (drive(null) - drive(persona))));
   const tieBreakKind = persona?.toggles.favouredWeapons === true ? flourishes.favouredKind : null;
   const add = (goal: Goal, criteria: string, risk: number, routine = false, survival = player.hp - incoming.damage, uncertain = false) => out.push({ goal, criteria, risk: clamp01(risk), survival, ...(routine ? { routine: true as const } : {}), ...(uncertain ? { uncertain: true as const } : {}) });
   /* Progress and cost go on the offer once it exists, for pruning and the purpose clause. */
@@ -1160,7 +1167,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   const addLeave = (criteria: string, _risk: number) => { if (exit !== null && !out.some((o) => o.goal === "leave_level")) add("leave_level", criteria, damageRisk(exit.damage, player.hp), false, player.hp - exit.damage); };
   const nearDeath = s.hpShare < 0.35;
   const unseenLethal = s.unseenDamage > 0 && damageFor(s, at, 2, terrain).damage >= player.hp;
-  const fastUnique = inSight(view.monsters()).find((m) => fastUniqueAtLowLevel(m, player));
+  const fastUnique = inSight(view.monsters()).find((m) => fleeUnique(m, player, persona));
   /* A caster whose only attack is its spells, with no mana for any of them, facing
    * a creature that hurts on touch or that it cannot kill quickly in melee. */
   const melee = s.target === null ? undefined : combatOptions(s, "fight")[0];
@@ -1220,7 +1227,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
      * patch, only trades blows with something that would never have followed. */
     const adjacent = steps(at, s.target.grid) <= 1;
     const errand = townErrand(persona, player.depth, player.level) && !harmlessKind(s.target, view);
-    const walkUp = !adjacent && !errand && !fastUniqueAtLowLevel(s.target, player) && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
+    const walkUp = !adjacent && !weakCaster && !errand && fastUnique?.id !== s.target.id && !s.stationary.has(s.target.id) && canReach(view, terrain, s.target.grid);
     /* The game refuses every blow from an afraid character without spending a turn.
      * A creature that can paralyse is left to ranged attacks or left alone. */
     if ((adjacent || walkUp) && player.status.afraid === 0 && melee !== undefined && !meleeBarred(s, s.target)) {
@@ -1266,7 +1273,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if ((hurt || cutBad || cureStatus) && potion !== undefined && (!recovery || cureStatus)) {
     const healed = healingAmount(view, potion);
     const after = Math.min(player.maxHp, player.hp + healed);
-    if (healed >= incoming.damage || incoming.damage >= player.hp || cureStatus) {
+    if (after - player.hp > incoming.damage || incoming.damage >= player.hp || cureStatus) {
       add("heal", `Drink ${potion.name} to restore hit points.${cutBad ? " It also closes the bleeding wound." : ""} The cure reaches at least ${String(after)} HP (${healthBand(after, player.maxHp)}) before up to ${String(incoming.damage)} incoming damage (${hpShare(incoming.damage, after)}).`, damageRisk(incoming.damage, after), false, after - incoming.damage);
       tag("heal", (after - player.hp) / Math.max(1, player.maxHp - player.hp), itemSpend(view, potion.handle));
     }
@@ -1362,7 +1369,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   /* An afraid character cannot fight back, so getting away is worth offering even from an easy creature. */
   /* Low health makes escapes worth offering even against easy creatures. */
   /* A caster with no mana for its spells cannot kill at range and should not trade blows with a creature that hurts on touch. */
-  if (nearDeath || s.unseenDamage > 0 || meleeDanger || (s.awake.length > 0 && (widen || s.worst >= 1 || s.hpShare < escapeShare(persona, player.level) || player.status.afraid > 0))) {
+  if (nearDeath || s.unseenDamage > 0 || meleeDanger || fastUnique !== undefined || (s.awake.length > 0 && (widen || weakCaster || s.worst >= 1 || s.hpShare < escapeShare(persona, player.level) || incoming.damage >= player.hp * (1 - escapeShare(persona, player.level)) || player.status.afraid > 0))) {
     /* Every way out is its own option with its own cost and risk, and none is
      * ranked ahead of another here: the model weighs them, and pruning drops
      * only one that another escape beats on every count. */
@@ -1538,6 +1545,10 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   tag("leave_level", 1, FREE);
   if (recall !== null) tag("recall_town", 0.5, itemSpend(view, recall.handle, 1.5));
+  /* A poison timer can expire safely in place; walking gives it no benefit. */
+  if (cureless && poisonRecovery(view, persona) && !hungry(view) && !standingOnHarm(view, terrain, at) && s.unseenDamage === 0 && s.threats.length === 0) {
+    add("wait", "Wait here for the poison to subside; its remaining timer leaves a health reserve and no creature is known nearby.", damageRisk(incoming.damage, player.hp), true);
+  }
   const adequate = out.some((offer) => SURVIVAL_GOALS.has(offer.goal) && (offer.survival ?? 0) > 0);
   if (!bleeding && hardContactGroup(s)) {
     const take = offerTakePosition(s, terrain);
@@ -1545,6 +1556,7 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   }
   return out.filter((offer) => {
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
+    if (offer.goal === "fight" && weakCaster && out.some((other) => other.goal !== "fight" && (classOf(other.goal) === "attack" || classOf(other.goal) === "escape") && (other.survival ?? 0) > 0)) return false;
     if (walksIntoDeath(s, terrain, offer.goal)) return false;
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
@@ -2521,8 +2533,10 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
         return travelling(once("rest", view, (ctx) => safeRecovery(situationNow(ctx.view), terrain) ? ctx.act.rest() : null), { mode: "rest" });
       case "wait": {
         const holdOne = (ctx: SquireContext): AgentCommand | null => {
-          const incoming = damageFor(situationNow(ctx.view), ctx.view.player().grid, 2, terrain);
-          if (incoming.damage !== 0 || incoming.status !== 0) return null;
+          const s = situationNow(ctx.view);
+          const incoming = damageFor(s, ctx.view.player().grid, 2, terrain);
+          const poisonWait = poisonRecovery(ctx.view, personaOf()) && s.threats.length === 0 && s.unseenDamage === 0 && !hungry(ctx.view) && !standingOnHarm(ctx.view, terrain, ctx.view.player().grid);
+          if (!poisonWait && (incoming.damage !== 0 || incoming.status !== 0)) return null;
           /* Holding on a shop entrance opens the shop instead of passing a turn, and a
            * rest of one turn repeats the last rest count, which may be none. */
           const here = ctx.view.player().grid;
@@ -2862,7 +2876,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
   /** Repeated stair trips need evidence of hunting before another refresh. */
   function refreshHeld(offer: Offer, s: Situation, view: AgentView, persona: Persona | null): boolean {
     if (offer.goal !== "leave_level" || view.player().depth === 0 || s.awake.length > 0 || s.unseenDamage > 0 ||
-      s.hpShare < escapeShare(persona, view.player().level) || view.player().status.afraid > 0 || supplyMargin(view) !== null ||
+      s.hpShare < escapeShare(persona, view.player().level) || view.player().status.afraid > 0 || supplyMargin(view, persona) !== null ||
       badFeeling !== null && !lootOnlyFeeling(badFeeling)) return false;
     return s.target !== null || reachableFrontier(view, terrain) || !decisionMemory.canRefresh(view, persona);
   }
@@ -2882,13 +2896,13 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
     }
     const rest = offers.find((offer) => offer.goal === "rest");
     if (rest !== undefined && s.view.player().hp < s.view.player().maxHp) return { goal: "rest", why: "safe recovery before travel" };
-    if (s.hpShare < escapeShare(persona, s.view.player().level)) {
-      const recovery = offers.filter((offer) => (offer.goal === "rest" || classOf(offer.goal) === "escape" || classOf(offer.goal) === "heal") && (offer.survival ?? 0) > 0 && offer.uncertain !== true)
+    if (s.hpShare < escapeShare(persona, s.view.player().level) || incoming >= s.view.player().hp * (1 - escapeShare(persona, s.view.player().level)) || s.awake.some((monster) => fleeUnique(monster, s.view.player(), persona))) {
+      const recovery = offers.filter((offer) => (offer.goal === "rest" || classOf(offer.goal) === "escape" || classOf(offer.goal) === "heal") && offer.goal !== "recall_town" && (offer.survival ?? 0) > 0)
         .sort((a, b) => a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
       if (recovery !== undefined) return { goal: recovery.goal, why: "below the persona's recovery line" };
     }
     const player = s.view.player();
-    if (player.status.blind > 0 && offers.some((offer) => offer.goal === "heal" && (offer.survival ?? 0) > 0)) return { goal: "heal", why: "cure the condition before travel" };
+    if ((player.status.blind > 0 || player.status.poisoned > 0 || player.status.cut > 0) && offers.some((offer) => offer.goal === "heal" && (offer.survival ?? 0) > 0)) return { goal: "heal", why: "cure the condition before travel" };
     const target = s.target;
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
     const hunt = target !== null && player.depth > 0 && player.hp === player.maxHp &&
@@ -2900,7 +2914,7 @@ export function createGoalPlanner(options: GoalPlannerOptions): Planner<GoalDige
       assessThreat(target, player, s.awake, s.view, s.dreaded, terrain, s.speedEnergy).band <= 1 &&
       missingPreparation(s.view, player.depth + 1, persona).some((gap) => gap.kind === "level" || gap.kind === "hp");
     if (hunt) {
-      const attack = offers.filter((offer) => classOf(offer.goal) === "attack" && offer.risk <= ceiling && (offer.survival ?? 0) > 0)
+      const attack = offers.filter((offer) => classOf(offer.goal) === "attack" && offer.risk <= ceiling && (offer.survival ?? 0) > 0 && incoming <= player.hp * (1 - escapeShare(persona, player.level)))
         .sort((a, b) => a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
       if (attack !== undefined) return { goal: attack.goal, why: "safe experience in sight" };
     }

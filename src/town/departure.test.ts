@@ -86,7 +86,7 @@ describe("the town survival basket", () => {
     expect(shoppingList(needs, alchemy, 18, null)).toMatchObject([{ kind: "phase", quantity: 1, index: 1 }]);
   });
 
-  it("buys food and fuel reserves before oil top-ups and spending held by savings", () => {
+  it("buys food, fuel and oil reserves before spending held by savings", () => {
     const needs: SupplyNeed[] = [
       { kind: "food", name: "Ration of Food", have: 0, want: 5 },
       { kind: "light", name: "Wooden Torch", have: 0, want: 2 },
@@ -99,7 +99,7 @@ describe("the town survival basket", () => {
     ] };
     const persona = defaultPersona();
     persona.sliders.savings = 100;
-    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["food", "light", "food", "light"]);
+    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["food", "light", "oil", "light"]);
   });
 
   it("holds optional stock across stores while food or fuel is missing", () => {

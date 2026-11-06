@@ -156,7 +156,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 1 (shallow); deepest reached 1 (shallow).",
   "creatures": "No creatures in sight.",
-  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; five food units and no hunger.",
+  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
   "ground": "Safe ground.",
   "health": "full: 40 of 40 hit points",
   "hunger": "The character is hungry.",
@@ -287,7 +287,6 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
     "turnsWithoutExperience": 0,
     "untried": [
       "fight",
-      "descend",
       "take_position",
     ],
   },
@@ -517,7 +516,6 @@ exports[`decision context > compiles a unique in view into layers and the same s
     "untried": [
       "fight",
       "retreat",
-      "descend",
     ],
   },
 }
@@ -571,7 +569,6 @@ exports[`decision context > compiles an unseen attacker into layers and the same
     "turnsSinceProgress": 10,
     "turnsWithoutExperience": 10,
     "untried": [
-      "heal",
       "leave_level",
       "swing_unseen",
       "phase",
@@ -616,7 +613,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 3 (shallow); deepest reached 1 (shallow).",
   "creatures": "Grip, Farmer Maggot's Dog: a fair fight, 2 steps away (close)",
-  "gaps": "For dungeon level 4 (shallow) the character still lacks: working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
+  "gaps": "For dungeon level 4 (shallow) the character still lacks: 40 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
   "ground": "Safe ground.",
   "health": "near death: 6 of 30 hit points",
   "incoming": "Up to 1 HP damage in one action (under a quarter of current HP) and 16 in two (enough to kill). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",

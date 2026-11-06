@@ -102,8 +102,15 @@ export function tripLight(view: AgentView): boolean {
 export interface Requirement {
   readonly kind: "level" | "hp" | "light" | "food" | "healing" | "phase" | "recall" | "protection";
   readonly reason: string;
-  /** Short of half the floor: no persona weighs this gap away. */
+  /** A survival shortfall cannot be waived by readiness or stagnation. */
   readonly severe?: true;
+}
+
+/** The poison timer must expire before it consumes the persona's health reserve. */
+export function poisonRecovery(view: AgentView, persona: Persona | null): boolean {
+  const player = view.player();
+  return player.status.poisoned > 0 && player.status.cut === 0 &&
+    player.hp > player.status.poisoned + player.maxHp * (0.2 + 0.2 * (1 - drive(persona)));
 }
 
 export function restRestoresMana(cls: string): boolean {
@@ -113,16 +120,17 @@ export function restRestoresMana(cls: string): boolean {
 /** Unknown classes use the strictest early class floor. */
 function classFloor(cls: string, depth: number, persona: Persona | null): readonly [number, number] {
   if (depth === 2) {
-    const hp = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls) ? 20
-      : cls === "Rogue" ? 16 : ["Priest", "Druid"].includes(cls) ? 14
-      : ["Mage", "Necromancer"].includes(cls) ? 12 : 20;
-    return [Math.ceil(hp * (1 + drive(null) - drive(persona))), 2];
+    const hp = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls) ? 30
+      : cls === "Rogue" ? 26 : ["Priest", "Druid"].includes(cls) ? 24
+      : ["Mage", "Necromancer"].includes(cls) ? 20 : 30;
+    const scale = 1 + 0.3 * (drive(null) - drive(persona));
+    return [Math.ceil(hp * scale), Math.max(3, Math.ceil(3 * scale))];
   }
   if (depth < 5) {
     const martial = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls);
-    const hp = martial ? 30 : cls === "Rogue" ? 26 : 22;
-    const scale = 1 + drive(null) - drive(persona);
-    return [Math.ceil(hp * scale), Math.max(depth, Math.ceil((martial ? 3 : 4) * scale))];
+    const hp = martial ? 40 : cls === "Rogue" ? 34 : 28;
+    const scale = 1 + 0.3 * (drive(null) - drive(persona));
+    return [Math.ceil(hp * scale), Math.max(depth + 1, Math.ceil(4 * scale))];
   }
   if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
   if (cls === "Rogue") return [60, 10];
@@ -138,14 +146,18 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
   const out: Requirement[] = [];
   const need = (kind: Requirement["kind"], enough: boolean, reason: string, severe = false) => { if (!enough) out.push(severe ? { kind, reason, severe } : { kind, reason }); };
-  const [hpFloor, classLevel] = classFloor(player.cls, player.depth === 0 ? Math.min(depth, 4) : depth, persona);
+  const [classHp, classLevel] = classFloor(player.cls, depth, persona);
   const caster = ["Mage", "Necromancer"].includes(player.cls);
+  const pack = readPack(view);
+  const ranged = pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
+  /* Lower caster HP is viable only while a known ranged attack is available. */
+  const hpFloor = caster && depth < 5 && !ranged ? Math.max(classHp, classFloor("Warrior", depth, persona)[0]) : classHp;
   const levelFloor = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, level * 2 < levelFloor);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, player.maxHp * 2 < hpFloor);
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, depth < 5 || level < depth || level * 2 < levelFloor);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, depth < 5 || player.maxHp * 2 < hpFloor);
   need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
   need("food", stock.food >= 5 && !hungry(view), "five food units and no hunger");
-  if (depth >= 3 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
+  if (depth >= 2 && level < 30) need("healing", stock.cures >= 2, "two Cure Light, Serious or Critical Wounds potions");
   if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
   if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
   if (depth >= 10) {
@@ -192,7 +204,7 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
   return out;
 }
 
-/** Light and food are never weighed: without them a trip down is lost whatever else is carried. A severe level or HP gap is not weighed either. */
+/** Early HP and level floors remain binding when stagnation lowers optional preparation. */
 const HARD_GAPS: ReadonlySet<Requirement["kind"]> = new Set(["light", "food"]);
 
 /**
@@ -265,17 +277,19 @@ function countWord(n: number): string {
 /**
  * The return starts above the lower stay-on-level floor, leaving supplies for the route.
  *
- * The first two levels ask for no potion or Phase Door: their creatures are
- * the ones a character levels on, and the town floor of two of each meant one
- * scroll read on level 1 sent the character home, every trip.
+ * The first two levels tolerate spending individual potions or scrolls.
+ * When both reserves fall low, the return starts before the next fight.
  */
-export function supplyMargin(view: AgentView): string | null {
+export function supplyMargin(view: AgentView, persona: Persona | null = null): string | null {
   const player = view.player();
   if (player.depth === 0) return null;
   const stock = supplies(view);
   if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
   if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
-  if (player.depth <= 2) return null;
+  if (player.depth <= 2) {
+    const reserve = Math.max(1, Math.ceil(2 * (1 - drive(persona))));
+    return stock.cures < reserve && stock.phase < reserve ? "healing and Phase Door" : null;
+  }
   if (stock.cures < (player.depth >= 10 ? 4 : player.depth >= 6 ? 2 : 1)) return "healing";
   if (player.depth >= 6 && stock.phase < 2) return "Phase Door";
   if (player.depth >= 10 && stock.escapes <= 2) return "long escapes";

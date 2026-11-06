@@ -184,7 +184,12 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return trade(act.shopSell(sale.handle, sale.quantity));
         }
         const order = purchaseOrder?.() ?? null;
-        const list = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order);
+        const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona);
+        const oil = needs.find((need) => need.kind === "oil");
+        /* Early ranged damage needs gold left after the alchemy visit. */
+        const oilReserve = store.featName === "Alchemy Shop" && view.player().maxSp > 0 && oil !== undefined
+          ? Math.max(0, Math.min(oil.want, Math.max(1, Math.ceil((persona?.sliders.consumables ?? 50) / 25))) - oil.have) * PRICE_FLOOR.oil : 0;
+        const list = shoppingList(needs, store, Math.max(0, view.player().gold - oilReserve), persona, order);
         const purchase = list[0];
         /* With the supplies settled, the gold on hand can fund the top aim, unless the persona chose to keep it. */
         const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
