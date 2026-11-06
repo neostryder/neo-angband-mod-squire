@@ -19,6 +19,55 @@ function goals(w: ReturnType<typeof world>, journey = createJourney(w.terrain), 
 }
 
 describe("journey descent clock", () => {
+  it("walks back to a leashed frontier after a phase leaves the character outside the leash", () => {
+    const row = `#<${".".repeat(28)}@.........#`;
+    const wall = "#".repeat(row.length);
+    const w = suppliedWorld({ map: [wall, row, `#####,${"#".repeat(row.length - 6)}`, wall], player: { cls: "Warrior", depth: 3, maxDepth: 3, level: 4, maxLevel: 4, hp: 53, maxHp: 53 } });
+    const journey = createJourney(w.terrain);
+    expect(goals(w, journey, false, offers("explore"))).toContain("explore");
+    expect(journey.leashed(w.view, w.at())).toBe(false);
+    expect(journey.searching(w.view)).toBe(false);
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0])).toEqual({ code: "walk", dir: 4 });
+  });
+
+  it("opens a closed door on the exploration route without depending on easy alter", () => {
+    const w = suppliedWorld({ map: ["########", "#<.@+.,#", "########"] });
+    const journey = createJourney(w.terrain);
+    goals(w, journey, false, offers("explore"));
+    expect(journey.explore({ view: w.view, act: w.act } as Parameters<typeof journey.explore>[0], true)).toEqual({ code: "open", dir: 6 });
+  });
+
+  it("tries another unknown square after a probe passes no game time and forgets probes on a new floor", () => {
+    const w = suppliedWorld({ map: ["#######", "#<.@,,#", "###,###", "#######"] });
+    const journey = createJourney(w.terrain);
+    const ctx = { view: w.view, act: w.act } as Parameters<typeof journey.explore>[0];
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 2 });
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 6 });
+    expect(journey.canExplore(w.view, true)).toBe(false);
+    w.setPlayer({ depth: 2 });
+    expect(journey.explore(ctx, true)).toEqual({ code: "walk", dir: 2 });
+  });
+
+  it("keeps a stationary gaze excluded when it leaves sight and clears it when the square is seen empty", () => {
+    const eye = { grid: { x: 5, y: 1 }, race: "floating eye", raceFlags: ["NEVER_MOVE"] };
+    const w = suppliedWorld({ map: ["##########", "#<@.....,#", "##########"], monsters: [eye] });
+    const journey = createJourney(w.terrain);
+    const cell = w.view.cell;
+    let hidden = false;
+    const view: AgentView = { ...w.view, cell: (x, y) => {
+      const at = cell(x, y);
+      return at !== null && x === eye.grid.x && y === eye.grid.y ? { ...at, inView: !hidden } : at;
+    } };
+    expect(journey.canExplore(view, true)).toBe(false);
+    w.setMonsters([]);
+    hidden = true;
+    w.advance(10);
+    expect(journey.canExplore(view, true)).toBe(false);
+    expect(journey.checkedRoute(view, [{ x: 8, y: 1 }])).toBeNull();
+    hidden = false;
+    expect(journey.canExplore(view, true)).toBe(true);
+  });
+
   it("starts at first descent, survives refresh trips and resets only on a depth gain or new character", () => {
     let time = 0;
     const w = suppliedWorld({ map: ROOM, player: { depth: 0 } });

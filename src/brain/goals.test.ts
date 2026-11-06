@@ -3861,6 +3861,104 @@ describe("explore that keeps looping on one level", () => {
 });
 
 describe("lab stall regressions", () => {
+  const stalledMap = ["#######", "#<.@,,#", "###,###", "#######"];
+  const stalledPlayer = { cls: "Warrior", depth: 3, maxDepth: 3, level: 4, maxLevel: 4, hp: 53, maxHp: 53 };
+
+  function execute(w: ReturnType<typeof world>, p: ReturnType<typeof createGoalPlanner>, goal: string) {
+    const q = asked(p.ask(w.view));
+    expect(offered(q)).toContain(goal);
+    const choice = p.choose(pick(goal), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    return choice.plan;
+  }
+
+  function failProbeAndWait(w: ReturnType<typeof world>, p: ReturnType<typeof createGoalPlanner>) {
+    const plan = execute(w, p, "explore");
+    expect(plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 2 });
+    expect(p.trigger(w.view, plan)).toContain("refused the walk command");
+    for (let i = 0; i < 3; i++) {
+      const wait = execute(w, p, "wait");
+      expect(wait.step(w.view, w.act)).toEqual({ code: "hold" });
+      w.advance(10);
+      expect(wait.step(w.view, w.act)).toBeNull();
+    }
+  }
+
+  it("takes a different plain frontier step after three healthy waits, then uses stairs after the second refusal", () => {
+    const w = suppliedWorld({ map: stalledMap, player: stalledPlayer });
+    const { p } = planner(w);
+    failProbeAndWait(w, p);
+    const retry = execute(w, p, "explore");
+    expect(retry.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    expect(p.trigger(w.view, retry)).toContain("refused the walk command");
+    const stairs = execute(w, p, "leave_level");
+    expect(stairs.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    w.moveTo({ x: 1, y: 1 });
+    w.advance(10);
+    expect(stairs.step(w.view, w.act)).toEqual({ code: "ascend" });
+  });
+
+  it.each([true, false])("reads an escape after two failed probes with no staircase, with Deep Descent available %s", (descent) => {
+    const w = suppliedWorld({ map: ["#######", "#..@,,#", "###,###", "#######"], player: stalledPlayer });
+    const { p } = planner(w);
+    failProbeAndWait(w, p);
+    const retry = execute(w, p, "explore");
+    expect(retry.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    expect(p.trigger(w.view, retry)).toContain("refused the walk command");
+    if (descent) w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)", "3 Potions of Cure Light Wounds", "a Scroll of Phase Door", "a Scroll of Deep Descent"]);
+    const goal = descent ? "deep_descent" : "phase";
+    const escape = execute(w, p, goal);
+    const command = escape.step(w.view, w.act);
+    expect(command?.code).toBe("read");
+    const item = w.view.inventory().find((item) => item.handle === command?.args?.["handle"]);
+    expect(item?.name).toContain(descent ? "Deep Descent" : "Phase Door");
+  });
+
+  it("stops issuing idle holds after three healthy waits when no move or escape exists", () => {
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], player: stalledPlayer });
+    w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const { p } = planner(w);
+    for (let i = 0; i < 3; i++) {
+      const wait = execute(w, p, "wait");
+      expect(wait.step(w.view, w.act)).toEqual({ code: "hold" });
+      w.advance(10);
+      expect(wait.step(w.view, w.act)).toBeNull();
+    }
+    expect(p.ask(w.view)).toMatchObject({ handBack: expect.stringContaining("three idle waits") });
+  });
+
+  it("does not replace a refused wait with random swings when there is no unseen attacker", () => {
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], player: stalledPlayer });
+    w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const { p } = planner(w);
+    const wait = execute(w, p, "wait");
+    expect(wait.step(w.view, w.act)).toEqual({ code: "hold" });
+    expect(p.trigger(w.view, wait)).toContain("refused the hold command");
+    expect(offered(p.ask(w.view))).not.toContain("swing_unseen");
+  });
+
+  it("keeps the descent safety floor when the only staircase after failed probes leads deeper", () => {
+    const w = suppliedWorld({ map: ["#######", "#>.@,,#", "###,###", "#######"], player: { ...stalledPlayer, level: 1, maxLevel: 1 } });
+    const { p } = planner(w);
+    failProbeAndWait(w, p);
+    const retry = execute(w, p, "explore");
+    expect(retry.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    expect(p.trigger(w.view, retry)).toContain("refused the walk command");
+    expect(offered(p.ask(w.view))).toEqual(["phase"]);
+  });
+
+  it("allows more than three waits while a safe poison timer is recovering", () => {
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], player: { ...stalledPlayer, status: { poisoned: 5 } } });
+    w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)", "3 Scrolls of Phase Door"]);
+    const { p } = planner(w);
+    for (let i = 0; i < 5; i++) {
+      const wait = execute(w, p, "wait");
+      expect(wait.step(w.view, w.act)).toEqual({ code: "hold" });
+      w.advance(10);
+      expect(wait.step(w.view, w.act)).toBeNull();
+    }
+  });
+
   const eye = { grid: { x: 5, y: 2 }, race: "floating eye", level: 1, raceFlags: ["NEVER_MOVE"] };
 
   it("routes exploration around a floating eye with a frontier beyond it", () => {

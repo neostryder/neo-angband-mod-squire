@@ -13,7 +13,7 @@ import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
 import { travelTo } from "../travel.js";
 import { flowFrom, stepDown, type FlowField } from "../flow.js";
-import { besideParalysingGazer, frontiers, hasFloorObject, isRoutable, isWalkable, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
+import { besideParalysingGazer, frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownDownStairs, knownStairs, paralysingGazer, standingOnHarm } from "../map.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { recallItem, RECALL_FROM_DEPTH } from "../town/needs.js";
@@ -55,6 +55,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   let deepest = 0;
   let clockTurn = -1;
   const relaxed = new Set<string>();
+  const blockedDark = new Set<string>();
+  const gazers = new Map<number, MonsterView>();
+  let darkStep: { from: Loc; to: Loc; turn: number } | null = null;
 
   function depthMinutes(view: AgentView): number {
     const player = view.player();
@@ -116,6 +119,9 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     breederExit(view);
     leashField = null;
     if (state.fresh) {
+      blockedDark.clear();
+      gazers.clear();
+      darkStep = null;
       if (turn < lastTurn) {
         returnReason = null;
         chosenReturn = false;
@@ -123,6 +129,19 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       previousHp = null;
       unseenUntil = -1;
       remembered.clear();
+    }
+    if (darkStep !== null) {
+      if (turn === darkStep.turn && key(player.grid) === key(darkStep.from)) blockedDark.add(key(darkStep.to));
+      darkStep = null;
+    }
+    /* A stationary eye does not stop blocking its corridor when a corner hides
+     * it. Forgetting that position makes the route reverse on each sighting. */
+    for (const monster of view.monsters()) {
+      if (monster.visible && paralysingGazer(view, monster) && (monster.raceFlags.includes("NEVER_MOVE") || /^floating eye$/i.test(monster.race))) gazers.set(monster.id, monster);
+    }
+    for (const [id, monster] of gazers) {
+      const cell = view.cell(monster.grid.x, monster.grid.y);
+      if (cell?.inView === true && cell.monster !== id) gazers.delete(id);
     }
     /* The trip is over the moment the character stands in town, whatever brought it there. */
     if (player.depth === 0) {
@@ -158,6 +177,10 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return ![...remembered.values()].some((entry) => entry.until >= view.turn());
   }
 
+  function gazeReach(view: AgentView, grid: Loc): boolean {
+    return besideParalysingGazer(view, grid) || !view.player().objectFlags.includes("FREE_ACT") && [...gazers.values()].some((monster) => steps(grid, monster.grid) <= 1);
+  }
+
   function checkedRoute(view: AgentView, goals: readonly Loc[]): Loc[] | null {
     const player = view.player();
     routeFailure = null;
@@ -165,7 +188,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return fail("blindness, confusion or an unexplained hit prevents a checked walk");
     const threats = [...remembered.values()].filter((entry) => entry.until >= view.turn()).map((entry) => entry.monster);
-    const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap && (!breederLevel || !view.monsters().some((monster) => monster.visible && key(monster.grid) === key(grid)));
+    const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap && (!breederLevel || !view.monsters().some((monster) => monster.visible && key(monster.grid) === key(grid)));
     const field = flowFrom({ goals, canEnter: enter });
     if (!Number.isFinite(field.distance(player.grid))) return fail("no unblocked known route reaches the staircase");
     const route: Loc[] = [];
@@ -261,7 +284,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     leashField ??= flowFrom({ goals: sources, canEnter: (grid) => {
       const cell = view.cell(grid.x, grid.y);
       if (cell === null || !cell.known) return false;
-      return isRoutable(view, terrain, grid) && !terrain.isClosedDoor(cell.feat) && !cell.trap;
+      return isRoutable(view, terrain, grid) && !gazeReach(view, grid) && !terrain.isClosedDoor(cell.feat) && !cell.trap;
     } });
     const field = leashField;
     if (view.cell(at.x, at.y)?.known === false) return DIRECTIONS.some((dir) => field.distance({ x: at.x + dir.dx, y: at.y + dir.dy }) + 1 <= limit);
@@ -435,17 +458,35 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     } };
   }
 
+  function explorationStep(view: AgentView, wide: boolean): Loc | null {
+    observe(view);
+    const at = view.player().grid;
+    const search = !wide && searching(view);
+    if (!wide && !search && (expired || returnReason !== null || departure.finished(view))) return null;
+    const allowed = (grid: Loc) => wide || search || leashed(view, grid);
+    const dark = (from: Loc, insideLeash = true) => DIRECTIONS.map((dir) => ({ x: from.x + dir.dx, y: from.y + dir.dy })).find((grid) => {
+      const cell = view.cell(grid.x, grid.y);
+      return cell !== null && !cell.known && !blockedDark.has(key(grid)) && (!insideLeash || allowed(grid)) && !gazeReach(view, grid);
+    });
+    const goals = frontiers(view, terrain).filter((grid) => allowed(grid) && !gazeReach(view, grid) &&
+      dark(grid, key(grid) === key(at)) !== undefined);
+    if (goals.some((grid) => key(grid) === key(at))) return dark(at) ?? null;
+    /* A phase or retreat can leave the character outside the leash. The return
+     * route must cross that ground to reach a frontier inside it. */
+    const returning = !allowed(at);
+    const field = flowFrom({ goals, canEnter: (grid) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && (returning || allowed(grid)) });
+    const direction = stepDown(field, at, (grid) => isWalkable(view, terrain, grid) && !gazeReach(view, grid) && (returning || allowed(grid)));
+    return direction === null ? null : { x: at.x + direction.dx, y: at.y + direction.dy };
+  }
+
   function explore(ctx: SquireContext, wide = widened): AgentCommand | null {
     observe(ctx.view);
-    const search = !wide && searching(ctx.view);
-    if (!wide && !search && (expired || returnReason !== null || departure.finished(ctx.view))) return null;
-    const allowed = (grid: Loc) => wide || search || leashed(ctx.view, grid);
-    const goals = frontiers(ctx.view, terrain).filter(allowed);
     if (breederLevel && checkedRoute(ctx.view, exitTargets(ctx.view)) !== null) {
       const plan = guarded("leave_level", { label: "leave", step: () => null });
       return plan.step(ctx.view, ctx.act);
     }
     if (breederLevel && searching(ctx.view)) {
+      const goals = frontiers(ctx.view, terrain);
       const breeders = ctx.view.monsters().filter((monster) => monster.visible && monster.raceFlags.includes("MULTIPLY"));
       const away = (grid: Loc) => breeders.some((monster) => steps(monster.grid, grid) <= 1);
       const safeGoals = goals.filter((grid) => !away(grid));
@@ -455,18 +496,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
     }
     const at = ctx.view.player().grid;
-    if (!goals.some((grid) => key(grid) === key(at))) {
-      const field = flowFrom({ goals, canEnter: (grid) => isRoutable(ctx.view, terrain, grid) && allowed(grid) });
-      const direction = stepDown(field, at, (grid) => isWalkable(ctx.view, terrain, grid) && allowed(grid));
-      return direction === null ? null : ctx.act.move(direction.key);
-    }
-    /* An unknown square has no proved stair distance, so it stays inside the leash's remaining margin. */
-    const direction = DIRECTIONS.find((dir) => {
-      const next = { x: at.x + dir.dx, y: at.y + dir.dy };
-      const cell = ctx.view.cell(next.x, next.y);
-      return cell !== null && !cell.known && allowed(next) && !besideParalysingGazer(ctx.view, next);
-    });
-    return direction === undefined ? null : ctx.act.move(direction.key);
+    const next = explorationStep(ctx.view, wide);
+    if (next === null) return null;
+    const direction = DIRECTIONS.find((dir) => at.x + dir.dx === next.x && at.y + dir.dy === next.y)!;
+    if (ctx.view.cell(next.x, next.y)?.known === false) darkStep = { from: at, to: next, turn: ctx.view.turn() };
+    return isClosedDoor(ctx.view, terrain, next) ? ctx.act.open(direction.key) : ctx.act.move(direction.key);
   }
 
   function blocked(view: AgentView): string | null {
@@ -490,5 +524,5 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return terrain.isUpStair(view.cell(end.x, end.y)?.feat ?? -1) ? "up" : "down";
   }
 
-  return { apply, guarded, explore, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, preparation: missingPreparation, exitFailure: () => routeFailure };
+  return { apply, guarded, explore, canExplore: (view: AgentView, wide = widened) => explorationStep(view, wide) !== null, safeDelay, checkedRoute, leashed, blocked, breederExit, exitWay, searching, searchingNow, depthMinutes, firstStair, preparation: missingPreparation, exitFailure: () => routeFailure };
 }
