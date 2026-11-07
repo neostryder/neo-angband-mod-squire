@@ -303,16 +303,14 @@ describe("brain", () => {
     expect(r.logs.filter((line) => line.includes("plays by its own rules"))).toHaveLength(1);
   });
 
-  it("pauses an empty-plan loop and tries a different rule choice", async () => {
+  it("escalates three empty decisions on the next tick without a wall-clock wait", async () => {
     let tries = 0;
     const p = planner(() => walks(0));
-    p.rules = () => { tries += 1; return { reflex: "another move", plan: walks(1), context: null, answers: {} }; };
+    p.recover = () => { tries += 1; return { reflex: "another move", plan: walks(1), context: null, answers: {} }; };
     const r = rig({ planner: p, results: Array.from({ length: MAX_EMPTY_DECISIONS + 2 }, () => answered()) });
-    for (let i = 0; i <= MAX_EMPTY_DECISIONS + 1; i += 1) { r.tick(); await flush(); r.tick(); }
-    expect(r.brain.state()).toBe("waiting");
+    for (let i = 0; i < MAX_EMPTY_DECISIONS; i += 1) { r.tick(); await flush(); r.tick(); }
+    expect(r.brain.noOpGoals()).toEqual({ last100: 3, consecutive: 3 });
     expect(r.brain.stoppedBecause()).toBeNull();
-    r.advance(1000);
-    r.tick();
     expect(r.tick()).toEqual(WALK);
     expect(tries).toBe(1);
   });
@@ -332,6 +330,22 @@ describe("brain", () => {
     expect(r.brain.state()).not.toBe("stopped");
   });
 
+  it("bounds no-op status to the last 100 completed decisions", () => {
+    const statuses: string[] = [];
+    let empty = true;
+    const p: Planner<null> = { ask: () => ({ reflex: "test", plan: walks(empty ? 0 : 1), context: null, answers: {} }), choose: () => ({ plan: walks(1) }), trigger: () => null,
+      recover: () => ({ reflex: "recovery", plan: walks(1), context: null, answers: {} }) };
+    const brain = createBrain({ backend: JEV, rulesOnly: true, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send: () => { throw new Error("No request is needed."); },
+      token: () => null, now: () => 0, log: () => {}, status: (_label, reason) => statuses.push(reason ?? "") });
+    for (let tick = 0; tick < 5; tick++) brain.controller(view, act);
+    expect(brain.noOpGoals().last100).toBe(3);
+    expect(statuses.some((reason) => reason.includes("No-op goals in the last 100 decisions: 3"))).toBe(true);
+    empty = false;
+    for (let tick = 0; tick < 220; tick++) brain.controller(view, act);
+    expect(brain.noOpGoals()).toEqual({ last100: 0, consecutive: 0 });
+    expect(statuses.at(-1)).toContain("No-op goals in the last 100 decisions: 0");
+  });
+
   it("pauses and retries when the planner has nothing to ask", () => {
     const r = rig({
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
@@ -348,10 +362,10 @@ describe("brain", () => {
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
       results: [], release,
     });
-    r.tick();
-    r.tick();
+    expect(r.tick()).toBeNull();
+    expect(r.tick()).toEqual({ code: "hold" });
     expect(release).not.toHaveBeenCalled();
-    expect(r.logs).toHaveLength(1);
+    expect(r.logs.some((line) => line.includes("controller issued no command"))).toBe(true);
     expect(r.brain.stoppedBecause()).toBeNull();
   });
 

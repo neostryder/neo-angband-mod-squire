@@ -88,6 +88,9 @@ export function createBridge(mod: ModApi2): Bridge {
   let driver: Api2Driver | null = null;
   let autoplayed = false;
   let world: AgentView | null = null;
+  let worldToken: string | null = null;
+  let worldDirty = true;
+  let worldVersion = 0;
   let feed: MessageFeed | null = null;
   const capture = createEncounterCapture();
   const stops: (() => Promise<void>)[] = [];
@@ -117,8 +120,15 @@ export function createBridge(mod: ModApi2): Bridge {
   };
 
   const readWorld = async (): Promise<AgentView | null> => {
+    const token = input === null ? null : JSON.stringify(input.token);
+    if (!worldDirty && world !== null && token !== null && token === worldToken) return world;
+    const version = worldVersion;
     const read = await viewWorld(mod, { ...(feed === null ? {} : { messages: feed }), capture: (frame, prepared) => capture.frame(frame, key, prepared) });
-    if (read !== null) world = read;
+    if (read !== null) {
+      world = read;
+      worldToken = token;
+      worldDirty = version !== worldVersion;
+    }
     return read;
   };
 
@@ -155,6 +165,7 @@ export function createBridge(mod: ModApi2): Bridge {
     encounterFrames: () => capture.frames(),
     recordCommandResult: (code, ok, turnAtSubmit) => capture.event({ kind: "result", value: { code, ok, turnAtSubmit } }),
     readWorld: async () => {
+      if (!worldDirty && world !== null && input !== null && JSON.stringify(input.token) === worldToken) return world;
       await refreshCharacter();
       return readWorld();
     },
@@ -172,10 +183,10 @@ export function createBridge(mod: ModApi2): Bridge {
       feed = await watchMessages(mod);
       stops.push(() => feed?.stop() ?? Promise.resolve());
       subscribe("driver-changed", (event) => { driver = event; });
-      subscribe("player-command", (value) => capture.event({ kind: "command", value }));
-      subscribe("combat-outcome", (value) => capture.event({ kind: "combat", value }));
-      subscribe("heal", (value) => capture.event({ kind: "heal", value }));
-      subscribe("run-end", (value) => capture.event({ kind: "boundary", value: { report: value.report !== null } }));
+      subscribe("player-command", (value) => { worldDirty = true; worldVersion++; capture.event({ kind: "command", value }); });
+      subscribe("combat-outcome", (value) => { worldDirty = true; worldVersion++; capture.event({ kind: "combat", value }); });
+      subscribe("heal", (value) => { worldDirty = true; worldVersion++; capture.event({ kind: "heal", value }); });
+      subscribe("run-end", (value) => { worldDirty = true; worldVersion++; capture.event({ kind: "boundary", value: { report: value.report !== null } }); });
       await readWorld();
     },
     readWorld: host.readWorld,

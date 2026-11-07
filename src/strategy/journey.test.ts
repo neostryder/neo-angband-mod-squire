@@ -11,6 +11,49 @@ import { invalidateHazards } from "../map.js";
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
 
+describe("round 10 plain recovery", () => {
+  it("learns a refused first step and chooses another approach to the frontier", () => {
+    const w = suppliedWorld({ map: ["##########", "#.@....,.#", "#........#", "##########"], player: { depth: 2, level: 3, hp: 30, maxHp: 30 } });
+    const logs: string[] = [];
+    const journey = createJourney(w.terrain, undefined, undefined, () => 0, (line) => logs.push(line));
+    const first = journey.emergency(w.view, w.act);
+    const second = journey.emergency(w.view, w.act);
+    expect(first.code).toBe("walk");
+    expect(second.code).toBe("walk");
+    expect(second.dir).not.toBe(first.dir);
+    expect(logs.some((line) => line.includes("this route is excluded"))).toBe(true);
+  });
+
+  it.each([["#####", "#@%,#", "#####"], ["#####", "#@+,#", "#####"]])("works through an obstacle instead of returning no command in %j", (...map) => {
+    const w = suppliedWorld({ map });
+    const journey = createJourney(w.terrain);
+    expect(journey.emergency(w.view, w.act).code).toBe(map[1]!.includes("%") ? "tunnel" : "open");
+  });
+
+  it("uses Deep Descent when no route or target exists", () => {
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], pack: ["a Scroll of Deep Descent"] });
+    expect(createJourney(w.terrain).emergency(w.view, w.act).code).toBe("read");
+  });
+
+  it("keeps a ranged attack executable against distant breeders during departure", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { hp: 13, maxHp: 13 },
+      pack: ["20 Arrows (1d4) (+0,+0)"], worn: ["a Short Bow (x2) (+0,+0)"],
+      monsters: [5, 6, 7].map((x) => ({ grid: { x, y: 1 }, raceFlags: ["MULTIPLY"] })) });
+    const journey = createJourney(w.terrain);
+    expect(journey.breederExit(w.view)).toBe(true);
+    const offers: Offer[] = [{ goal: "shoot", criteria: "Use the clear shot.", risk: 0.1 }];
+    expect(journey.apply(offers, w.view, null, new Set(), false).some((offer) => offer.goal === "shoot")).toBe(true);
+    const ammo = w.view.inventory().find((item) => item.name?.includes("Arrows"))!;
+    expect(journey.guarded("shoot", { label: "shoot", step: (_view, act) => act.fire(ammo.handle) }).step(w.view, w.act)?.code).toBe("fire");
+  });
+
+  it("spends time in a sealed room without repeating a zero-count rest", () => {
+    const w = world({ map: ["###", "#@#", "###"] });
+    const command = createJourney(w.terrain).emergency(w.view, w.act);
+    expect(command).toEqual(w.act.rest(2));
+  });
+});
+
 describe("stair reversal guards", () => {
   it.each([1, 2])("permits tactical DL2 commands at the persona capacity floor at level %i", (level) => {
     const w = suppliedWorld({ map: ROOM, player: { depth: 1, level, maxLevel: level, hp: 13, maxHp: 13 },
@@ -425,7 +468,7 @@ describe("round 4 unfinished level exploration", () => {
     expect(journey.watchdog(view, true)).toBeNull();
   });
 
-  it("ends watchdog recovery without a blind move or hold when combat becomes unsafe", () => {
+  it("walks toward the exit instead of ending recovery beside a lethal blocker", () => {
     let time = 0;
     const w = suppliedWorld({ map: ROOM, player: { ...player, level: 5, maxLevel: 5 } });
     const journey = createJourney(w.terrain, undefined, undefined, () => time);
@@ -435,7 +478,7 @@ describe("round 4 unfinished level exploration", () => {
     const plan = journey.watchdog(w.view, true);
     expect(plan).not.toBeNull();
     w.setMonsters([{ grid: { x: 3, y: 1 }, race: "ancient multi-hued dragon", level: 40 }]);
-    expect(plan?.step(w.view, w.act)).toBeNull();
+    expect(plan?.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
   });
 });
 
@@ -950,13 +993,13 @@ describe("journey offer and execution guards", () => {
     expect(journey.breederExit(w.view)).toBe(false);
   });
 
-  it("counts awake breeders and keeps the early threshold limited to levels 1 through 5", () => {
+  it("uses the clearing forecast at both level five and level six", () => {
     const w = suppliedWorld({ map: ["##########", "#<@......#", "##########"], player: { level: 5 }, monsters: breeders.map((monster, index) => ({ ...monster, asleep: index === 2 })) });
     const journey = createJourney(w.terrain);
-    expect(journey.breederExit(w.view)).toBe(false);
+    expect(journey.breederExit(w.view)).toBe(true);
     w.setPlayer({ level: 6 });
     w.setMonsters(breeders);
-    expect(journey.breederExit(w.view)).toBe(false);
+    expect(journey.breederExit(w.view)).toBe(true);
     w.setPlayer({ level: 5 });
     expect(journey.breederExit(w.view)).toBe(true);
   });

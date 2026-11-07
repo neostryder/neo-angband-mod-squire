@@ -23,6 +23,9 @@ describe("encounter capture", () => {
     expect(capture.frames()).toHaveLength(2);
     expect(capture.frames()[1]).toMatchObject({ floor: "hero:1:7", events: [{ kind: "boundary", value: { report: false } }] });
     expect(capture.frames()[0]!.world.turn).toBe(20);
+    const exported = capture.frames();
+    (exported[0]!.world as { turn: number }).turn = 999;
+    expect(capture.frames()[0]!.world.turn).toBe(20);
   });
 });
 

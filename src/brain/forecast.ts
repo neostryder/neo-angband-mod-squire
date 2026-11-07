@@ -221,7 +221,8 @@ export function forecastFight(frame: TacticalFrame, target: MonsterView, attack:
   let loss = forecastExposure(view, view.player().grid, horizon, frame.context.terrain, frame.context.facts);
   const meanHorizon = Math.min(4, Math.max(energy, approach + mean * energy));
   if (meanHorizon !== horizon) loss = { ...loss, mean: forecastExposure(view, view.player().grid, meanHorizon, frame.context.terrain, frame.context.facts).mean };
-  if (hp.exact && attack.minimum !== null && attack.minimum >= hp.high && attack.failure < 1) {
+  /* A hit clears this whole HP scenario; uncertainty about the population maximum remains in the forecast. */
+  if (attack.minimum !== null && attack.minimum >= hp.high && attack.failure < 1) {
     const rest = forecastExposure(view, view.player().grid, Math.max(energy, Math.min(4, actions)), frame.context.terrain,
       { ...frame.context.facts, monsters: (frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible)).filter((m) => m.id !== target.id) });
     loss = { ...loss, mean: rest.mean + Math.max(0, frame.one.mean - rest.mean) * attack.failure / (1 - attack.failure) };

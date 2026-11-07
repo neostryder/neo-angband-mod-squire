@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStore, KnownTarget, KnownWorldData } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { Api2EventMap, Api2InputState, Api2Subscription, JsonRecord, KnownItem, KnownMonster, KnownPlayer, KnownStore, KnownTarget, KnownWorldData, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import { squareIsDisarmableTrap, TRF, TV, type InputSnapshot, type ItemView, type PlayerView, type StoreView, type TargetView } from "@rpgm-tools/neo-angband-core";
 import { FEAT, world, type World } from "./harness.js";
 import { GAME_TERRAIN } from "./terrain-records.fixture.js";
@@ -8,6 +8,9 @@ import { clearShot, forecastExposure } from "./brain/threat-model.js";
 import { attackOutcome } from "./brain/combat-kit.js";
 import { createGoalPlanner } from "./brain/goals.js";
 import { defaultCfg } from "./settings.js";
+import { createEncounterCapture } from "./journal.js";
+import { createBridge } from "./api2/host.js";
+import { createTick } from "./api2/controller.js";
 import { HUNGRY_BELOW } from "./brain/pack.js";
 import { contentTerrain as contentTerrain1, viewInput as viewInput1, viewWorld as viewWorld1, type HostReads } from "./host-adapter.js";
 import { contentTerrain, viewInput, viewWorld, watchMessages, type Api2Reads } from "./host-adapter-api2.js";
@@ -337,6 +340,116 @@ function records(): Record<string, readonly JsonRecord[]> {
 }
 
 describe("viewWorld under API 2", () => {
+  it("indexes occupants and retains cells only within the current snapshot", async () => {
+    const w = scene();
+    const known = knownFrom(w);
+    const first = (await viewWorld(fakeApi({ world: known, records: records() }).api))!;
+    const monster = first.monsters()[0]!;
+    const cell = first.cell(monster.grid.x, monster.grid.y);
+    expect(cell?.monster).toBe(monster.id);
+    expect(first.cell(monster.grid.x, monster.grid.y)).toBe(cell);
+    const second = (await viewWorld(fakeApi({ world: { ...known, monsters: [] }, records: records() }).api))!;
+    expect(second.cell(monster.grid.x, monster.grid.y)?.monster).toBe(0);
+    expect(second.cell(monster.grid.x, monster.grid.y)).not.toBe(cell);
+  });
+
+  it("skips unchanged world construction and refreshes after an input revision", async () => {
+    const known = knownFrom(scene());
+    const api = fakeApi({ world: known, records: records() }).api;
+    const read = vi.fn(() => ok(known));
+    const mod = { ...api, meta: { log: () => {} }, view: { ...api.view, world: read,
+      character: () => ok({ key: "hero" }), options: () => ok({ birth: {} }), player: () => ok({ autoplayed: true }) } } as unknown as ModApi2;
+    const bridge = createBridge(mod);
+    const input = { token: known.token, phase: "play", prompt: null } as Api2InputState;
+    bridge.setInput(input);
+    const first = await bridge.readWorld();
+    expect(await bridge.readWorld()).toBe(first);
+    expect(read).toHaveBeenCalledTimes(1);
+    bridge.setInput({ ...input, token: { ...known.token, revision: known.token.revision + 1 } });
+    expect(await bridge.readWorld()).not.toBe(first);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("invalidates an unchanged input snapshot when a combat event arrives", async () => {
+    const known = knownFrom(scene());
+    const api = fakeApi({ world: known, records: records() }).api;
+    const listeners = new Map<string, (payload: unknown) => void>();
+    const mod = { ...api, meta: { log: () => {}, settings: () => ok({}) },
+      store: { prefs: { get: () => ok(null) }, character: { get: () => ok(null) } },
+      events: { on: (name: string, listener: (payload: unknown) => void) => { listeners.set(name, listener); return ok({ id: name }); }, off: () => ok(null) },
+      view: { ...api.view, character: () => ok({ key: "hero" }), options: () => ok({ birth: {} }), player: () => ok({ autoplayed: true }) } } as unknown as ModApi2;
+    const bridge = createBridge(mod);
+    await bridge.prime();
+    bridge.setInput({ token: known.token, phase: "play", prompt: null } as Api2InputState);
+    const first = await bridge.readWorld();
+    expect(await bridge.readWorld()).toBe(first);
+    listeners.get("combat-outcome")!({ attacker: "unseen", target: "player", kind: "melee", hit: true, died: false, grid: { x: 1, y: 1 }, playerDamage: 1 });
+    expect(await bridge.readWorld()).not.toBe(first);
+    const reads = mod.view as { world: () => Promise<{ ok: true; value: KnownWorldData }> };
+    let finish: ((result: { ok: true; value: KnownWorldData }) => void) | undefined;
+    reads.world = () => new Promise((resolve) => { finish = resolve; });
+    bridge.setInput({ token: { ...known.token, revision: known.token.revision + 1 }, phase: "play", prompt: null } as Api2InputState);
+    const pending = bridge.readWorld();
+    await vi.waitFor(() => expect(finish).toBeDefined());
+    listeners.get("heal")!({ who: "player", grid: { x: 1, y: 1 }, playerAmount: 1 });
+    finish!({ ok: true, value: known });
+    const interrupted = await pending;
+    reads.world = () => ok(known);
+    expect(await bridge.readWorld()).not.toBe(interrupted);
+    await bridge.dispose();
+  });
+
+  it.runIf(process.env["SQUIRE_BENCHMARK"] === "1")("measures snapshot and idle read cost", async () => {
+    const w = world({ map: Array.from({ length: 66 }, (_, y) => y === 32 ? "#@" + ".".repeat(194) + ",#" : "#".repeat(198)) });
+    const known = knownFrom(w, []);
+    const api = fakeApi({ world: known, records: records() }).api;
+    const capture = createEncounterCapture();
+    const timings: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      const start = performance.now();
+      const view = (await viewWorld(api, { capture: (frame, prepared) => capture.frame(frame, "hero", prepared) }))!;
+      for (let y = 0; y < 66; y++) for (let x = 0; x < 198; x++) view.cell(x, y);
+      if (i >= 10) timings.push(performance.now() - start);
+    }
+    timings.sort((a, b) => a - b);
+    console.log(JSON.stringify({ snapshotMedianMs: timings[7], min: timings[0], max: timings.at(-1) }));
+    const mod = { ...api, meta: { log: () => {} }, view: { ...api.view,
+      character: () => ok({ key: "hero" }), options: () => ok({ birth: {} }), player: () => ok({ autoplayed: true }) } } as unknown as ModApi2;
+    const bridge = createBridge(mod);
+    const tick = createTick(bridge, () => null);
+    const input = { token: known.token, phase: "play", prompt: null } as Api2InputState;
+    const idle: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      const start = performance.now();
+      await tick(mod, input);
+      if (i >= 10) idle.push(performance.now() - start);
+    }
+    idle.sort((a, b) => a - b);
+    console.log(JSON.stringify({ idleTickMedianMs: idle[7], min: idle[0], max: idle.at(-1) }));
+    const active: number[] = [];
+    const activeMod = { ...mod, act: { submit: () => ok(null) } } as unknown as ModApi2;
+    const activeBridge = createBridge(activeMod);
+    let chosen: string | undefined;
+    const activeTick = createTick(activeBridge, (view, act) => {
+      const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => 1234, rng: () => 0.5 });
+      const choice = planner.rules!(view, "decision timing");
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      const command = choice.plan.step(view, act);
+      chosen = command?.code;
+      return command;
+    });
+    for (let i = 0; i < 25; i++) {
+      const start = performance.now();
+      await activeTick(activeMod, { ...input, token: { ...known.token, revision: i + 1 } });
+      if (i >= 10) active.push(performance.now() - start);
+      expect(chosen).toBe("walk");
+    }
+    active.sort((a, b) => a - b);
+    console.log(JSON.stringify({ decisionTickMedianMs: active[7], min: active[0], max: active.at(-1) }));
+    expect(idle[7]).toBeLessThan(5);
+    expect(active[7]).toBeLessThan(20);
+  });
+
   it("reuses player and monster objects within one immutable view", async () => {
     const api = fakeApi({ world: knownFrom(scene()), records: records() }).api;
     const first = await viewWorld(api);
