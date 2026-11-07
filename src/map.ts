@@ -19,7 +19,7 @@
 
 import type { AgentView, CellView, MonsterView } from "./host-adapter.js";
 import type { Loc } from "./grid.js";
-import { neighbours, steps } from "./grid.js";
+import { key, neighbours, steps } from "./grid.js";
 import type { Terrain } from "./terrain.js";
 
 /** The cell at a grid, or null when it is off the map. */
@@ -71,7 +71,6 @@ export function neverMoves(view: AgentView, monster: MonsterView): boolean {
 interface Hazards {
   readonly turn: number;
   readonly epoch: number;
-  readonly shallowWeak: boolean;
   readonly stationary: readonly Loc[];
   readonly gazers: readonly Loc[];
 }
@@ -91,7 +90,6 @@ function hazardsOf(view: AgentView): Hazards {
   const turn = view.turn();
   const kept = hazardCache.get(view);
   if (kept !== undefined && kept.turn === turn && kept.epoch === hazardEpoch) return kept;
-  const player = view.player();
   const stationary: Loc[] = [];
   const gazers: Loc[] = [];
   for (const monster of view.monsters()) {
@@ -99,14 +97,15 @@ function hazardsOf(view: AgentView): Hazards {
     if (neverMoves(view, monster)) stationary.push(monster.grid);
     if (paralysingGazer(view, monster)) gazers.push(monster.grid);
   }
-  const fresh: Hazards = { turn, epoch: hazardEpoch, shallowWeak: player.depth > 0 && player.level <= 5, stationary, gazers };
+  const fresh: Hazards = { turn, epoch: hazardEpoch, stationary, gazers };
   hazardCache.set(view, fresh);
   return fresh;
 }
 
 export function besideStationaryThreat(view: AgentView, at: Loc): boolean {
   const hazards = hazardsOf(view);
-  return hazards.shallowWeak && hazards.stationary.some((grid) => steps(grid, at) <= 1);
+  /* A fixed occupant blocks its cell; adjacent melee exposure belongs to the forecast. */
+  return hazards.stationary.some((grid) => steps(grid, at) === 0);
 }
 
 export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {
@@ -164,10 +163,11 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
    * first step. */
   const me = view.player().grid;
   const found: Loc[] = [];
+  const occupied = new Set(view.monsters().filter((m) => m.visible).map((m) => key(m.grid)));
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
-      if (besideParalysingGazer(view, at) || besideStationaryThreat(view, at)) continue;
+      if (besideParalysingGazer(view, at) || besideStationaryThreat(view, at) || occupied.has(key(at))) continue;
       if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);

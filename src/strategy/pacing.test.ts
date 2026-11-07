@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { archetype, defaultPersona } from "../persona/persona.js";
 import { world } from "../harness.js";
-import { createLevelPacing, diveSchedule, levelBudget, stairLeash } from "./pacing.js";
+import { createExplorationPressure, createLevelPacing, diveSchedule, levelBudget, stairLeash } from "./pacing.js";
 
 describe("overall dive schedule", () => {
-  it.each([[2, 4], [3, 8], [4, 11], [5, 15], [6, 18], [7, 21], [8, 24], [9, 27], [10, 30]])("targets DL%s by minute %s and escalates three minutes later", (depth, minutes) => {
+  it.each([[2, 2], [3, 4.5], [4, 7], [5, 9.5], [6, 12], [7, 15], [8, 18], [9, 21], [10, 24]])("targets DL%s by minute %s and escalates three minutes later", (depth, minutes) => {
     expect(diveSchedule(minutes - 0.01, depth - 1).stage).toBe(0);
     expect(diveSchedule(minutes, depth - 1)).toMatchObject({ stage: 1, next: { depth, minutes } });
     expect(diveSchedule(minutes + 3, depth - 1).stage).toBe(2);
@@ -99,5 +100,71 @@ describe("level game-turn budgets", () => {
     expect(pacing.observe(w.view)).toMatchObject({ turns: 0, explored: 0 });
     w.reveal({ x: 6, y: 1 });
     expect(pacing.observe(w.view)).toMatchObject({ turns: 0, explored: 1 });
+  });
+});
+
+describe("exploration pressure", () => {
+  it("raises pressure during oscillation and resets after a discovery", () => {
+    const w = world({ map: ["###########", "# .@..... #", "###########"] });
+    const pressure = createExplorationPressure();
+    pressure.observe(w.view);
+    let state = pressure.observe(w.view);
+    for (let i = 0; i < 100; i += 1) {
+      w.moveTo({ x: 3 + i % 2, y: 1 });
+      w.advance(10);
+      state = pressure.observe(w.view);
+    }
+    expect(state).toMatchObject({ force: true, distinct: 2, revealed: 0 });
+    expect(state.value).toBeGreaterThan(0.8);
+    expect(state.text).toContain("no new ground for");
+    w.reveal({ x: 9, y: 1 });
+    expect(pressure.observe(w.view).value).toBe(0);
+  });
+
+  it("raises pressure when a character circles a small room without revealing ground", () => {
+    const w = world({ map: ["########", "#......#", "#.@....#", "#......#", "#......#", "#......#", "########"] });
+    const pressure = createExplorationPressure();
+    let state = pressure.observe(w.view);
+    for (let i = 0; i < 180; i += 1) {
+      w.moveTo({ x: 1 + i % 4, y: 1 + Math.floor(i / 4) % 4 });
+      w.advance(10);
+      state = pressure.observe(w.view);
+    }
+    expect(state.distinct).toBe(16);
+    expect(state.force).toBe(true);
+  });
+
+  it.each(["creature", "item", "recovery", "unsafe"])("keeps pressure at zero during %s", (reason) => {
+    const w = world({ map: ["########", "#.@... #", "########"], monsters: reason === "creature" ? [{ grid: { x: 4, y: 1 } }] : [], floor: reason === "item" ? [{ x: 2, y: 1, name: "a Potion of Cure Light Wounds" }] : [] });
+    const pressure = createExplorationPressure();
+    for (let i = 0; i < 120; i += 1) {
+      w.advance(10);
+      expect(pressure.observe(w.view, null, reason !== "recovery" && reason !== "unsafe").value).toBe(0);
+    }
+  });
+
+  it("uses ambition, curiosity and patience for rate, ceiling and the dive clock", () => {
+    const timid = archetype("coward");
+    timid.sliders.patience = 90;
+    const normal = defaultPersona();
+    const bold = archetype("diver");
+    bold.sliders.curiosity = 90;
+    const careless = defaultPersona();
+    careless.sliders.impulsiveness = 100;
+    careless.sliders.selfpreservation = 0;
+    careless.quirks.forgetful = { on: true, strength: 100 };
+    const values = [timid, normal, bold, careless].map((persona) => {
+      const w = world({ map: ["########", "#.@... #", "########"] });
+      const pressure = createExplorationPressure();
+      let state = pressure.observe(w.view, persona);
+      for (let i = 0; i < 70; i += 1) { w.advance(10); state = pressure.observe(w.view, persona); }
+      return state.value;
+    });
+    expect(values[0]).toBeLessThan(values[1]!);
+    expect(values[1]).toBeLessThan(values[2]!);
+    expect(values[1]).toBeLessThan(values[3]!);
+    expect(diveSchedule(2.8, 1, timid).stage).toBe(0);
+    expect(diveSchedule(2.8, 1, normal).stage).toBeGreaterThan(0);
+    expect(diveSchedule(1.6, 1, careless).stage).toBeGreaterThan(0);
   });
 });

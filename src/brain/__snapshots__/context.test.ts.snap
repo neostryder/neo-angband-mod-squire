@@ -14,7 +14,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
     "incoming",
     "tactical",
     "ground",
-    "level",
+    "geometry",
     "status",
     "swarm",
   ],
@@ -37,10 +37,10 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "character": "Level 5 (novice) Human Warrior, on dungeon level 2 (shallow); deepest reached 1 (shallow).",
   "creatures": "3 giant white mouse (a few): an easy kill each, the nearest 2 steps away (close)",
   "gaps": "The character is prepared for dungeon level 3 (shallow).",
+  "geometry": "Next to the character: north floor, north-east floor, east floor, south-east floor, south floor, south-west floor, west floor, north-west floor. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 5 steps (near) away, 6 turns (a short wait) to reach and take. Choke points: 2 steps (close) north-west (a corridor), 2 turns (soon); 3 steps (close) south-west (a corridor), 3 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 21 in two (a quarter to half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
-  "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
   "stuck": {
@@ -52,6 +52,7 @@ exports[`decision context > compiles a breeder level into layers and the same st
     "turnsWithoutExperience": 0,
     "untried": [
       "take_position",
+      "leave_level",
     ],
   },
   "swarm": "3 giant white mouse (a few) in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.",
@@ -183,7 +184,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 1 (shallow); deepest reached 1 (shallow).",
   "creatures": "No creatures in sight.",
-  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
+  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; 2 food units and no hunger; 1 healing potion; 1 usable escape.",
   "ground": "Safe ground.",
   "health": "full: 40 of 40 hit points",
   "hunger": "The character is hungry.",
@@ -204,7 +205,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   },
   "tactical": {
     "alternatives": [],
-    "blocker": "working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions",
+    "blocker": "working light; 2 food units and no hunger; 1 healing potion; 1 usable escape",
     "interpretation": "a=100 energy; intervals and scenarios are estimates, not probabilities or absolute bounds",
     "omitted": 0,
     "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; status=0; unknown=none",
@@ -325,7 +326,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 6 (shallow); deepest reached 1 (shallow).",
   "creatures": "3 jackal (a few): an easy kill each, the nearest 3 steps away (close), faster than the character",
-  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
+  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 6.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -349,7 +350,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
     "alternatives": [
       "fight:m1/- a~unknown loss~unknown/unknown after~unknown viable=no",
     ],
-    "blocker": "maximum character level 6; one usable Word of Recall",
+    "blocker": "maximum character level 6",
     "interpretation": "a=100 energy; intervals and scenarios are estimates, not probabilities or absolute bounds",
     "omitted": 0,
     "pressure": "HP loss mean/scenario: 1a=0/0 2a=16.5/33; status=0; unknown=blows",
@@ -400,7 +401,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 4 (shallow); deepest reached 1 (shallow).",
   "creatures": "cave spider: an easy kill, 3 steps away (close)",
-  "gaps": "For dungeon level 5 (shallow) the character still lacks: one usable Word of Recall.",
+  "gaps": "The character is prepared for dungeon level 5 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
   "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -429,7 +430,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
     "alternatives": [
       "fight:m1/- a~unknown loss~14/28 after~32 viable=no",
     ],
-    "blocker": "none",
+    "blocker": "the checked route loses its HP reserve or permits a disabling attack",
     "interpretation": "a=100 energy; intervals and scenarios are estimates, not probabilities or absolute bounds",
     "omitted": 0,
     "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; status=0; unknown=blows",
@@ -613,7 +614,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 5 (shallow); deepest reached 1 (shallow).",
   "creatures": "Bullroarer the Hobbit: deadly, 4 steps away (near), unique, faster than the character",
-  "gaps": "For dungeon level 6 (shallow) the character still lacks: one usable Word of Recall.",
+  "gaps": "The character is prepared for dungeon level 6 (shallow).",
   "geometry": "Next to the character: north floor, north-east floor, east floor, south-east floor, south floor, south-west floor, west floor, north-west floor. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 5 steps (near) away, 6 turns (a short wait) to reach and take. Choke points: 2 steps (close) north-west (a corridor), 2 turns (soon); 2 steps (close) south-west (a corridor), 2 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
@@ -756,7 +757,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 3 (shallow); deepest reached 1 (shallow).",
   "creatures": "Grip, Farmer Maggot's Dog: a fair fight, 2 steps away (close)",
-  "gaps": "For dungeon level 4 (shallow) the character still lacks: 40 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
+  "gaps": "For dungeon level 4 (shallow) the character still lacks: clear status before a planned descent; working light; 2 food units and no hunger; 1 healing potion; 1 usable escape.",
   "ground": "Safe ground.",
   "health": "near death: 6 of 30 hit points",
   "incoming": "Up to 1 HP damage in one action (under a quarter of current HP) and 16 in two (enough to kill). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
@@ -776,7 +777,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   },
   "tactical": {
     "alternatives": [],
-    "blocker": "40 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions",
+    "blocker": "clear status before a planned descent; working light; 2 food units and no hunger; 1 healing potion; 1 usable escape",
     "interpretation": "a=100 energy; intervals and scenarios are estimates, not probabilities or absolute bounds",
     "omitted": 0,
     "pressure": "HP loss mean/scenario: 1a=1/1 2a=9/16; status=0; unknown=blows",

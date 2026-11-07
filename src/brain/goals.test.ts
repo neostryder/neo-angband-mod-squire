@@ -98,7 +98,7 @@ describe("round 7 early survival", () => {
     expect(offered(supplied)).toContain("descend");
     w.setPlayer({ depth: 1 });
     w.advance(10);
-    expect(offered(p.ask(w.view))).not.toContain("descend");
+    expect(offered(p.ask(w.view))).toContain("descend");
   });
 
   it("rejects the previous character's answer even when the watchdog detected replacement first", () => {
@@ -176,7 +176,7 @@ describe("corpus progress regressions", () => {
     time = 7 * 60000;
     w.advance(10);
     const q = asked(p.ask(w.view));
-    expect(String(q.request.state["dive_schedule"])).toContain("the target was DL2 by minute 4");
+    expect(String(q.request.state["dive_schedule"])).toContain("the target was DL2 by minute 2");
     expect(String(q.request.state["dive_schedule"])).toContain("at least three minutes late");
     expect(offered(q)).not.toEqual(["descend"]);
   });
@@ -2962,7 +2962,7 @@ describe("early experience and recovery", () => {
   it("throws oil at a visible weak sleeper for a 12-HP Mage before exploring", () => {
     const w = suppliedWorld({ map: CORRIDOR, player: weakMage, pack: ["5 Flasks of Oil"], monsters: [sleeper], monsterRecall: lore });
     const q = reflexed(planner(w, true).p.ask(w.view));
-    expect(q.reflex).toBe("safe experience in sight");
+    expect(q.reflex).toBe("take the cheap survivable fight");
     expect(q.answers["goal"]).toMatchObject({ choice: "throw_oil" });
     expect(offered(q)).not.toContain("fight");
     expect(q.plan.step(w.view, w.act)?.code).toBe("throw");
@@ -3061,7 +3061,7 @@ describe("early experience and recovery", () => {
 });
 
 describe("the readiness answer", () => {
-  const spec = { map: ["########", "#<@..>.#", "########"], player: { cls: "Warrior", depth: 1, level: 4, maxLevel: 4, hp: 60, maxHp: 60 }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)", "3 Scrolls of Phase Door"] };
+  const spec = { map: ["########", "#<@..>.#", "########"], player: { cls: "Warrior", depth: 10, level: 30, maxLevel: 30, hp: 100, maxHp: 100, objectFlags: ["SEE_INVIS"] }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)", "3 Scrolls of Phase Door", "2 Scrolls of Teleportation", "3 Potions of Cure Critical Wounds"] };
   const unstocked = () => {
     const w = suppliedWorld(spec);
     w.setPack(spec.pack);
@@ -3072,12 +3072,12 @@ describe("the readiness answer", () => {
     const w = unstocked();
     const q = asked(planner(w).p.ask(w.view));
     expect(q.request.questions["ready_to_descend"]).toMatchObject({ type: "noul" });
-    expect(q.request.state["gaps"]).toBe("For dungeon level 2 (shallow) the character still lacks: two Cure Light, Serious or Critical Wounds potions.");
-    expect((q.request.questions["ready_to_descend"] as { instructions: string }).instructions).toBe("The character is on dungeon level 1 (shallow) and could go down to level 2 (shallow), but it lacks: two Cure Light, Serious or Critical Wounds potions. Is it ready to go down anyway?");
-    const ready = suppliedWorld({ ...spec, player: { ...spec.player, level: 4, maxLevel: 4 } });
+    expect(q.request.state["gaps"]).toBe("For dungeon level 11 (middle depths) the character still lacks: usable Word of Recall.");
+    expect((q.request.questions["ready_to_descend"] as { instructions: string }).instructions).toBe("The character is on dungeon level 10 (middle depths) and could go down to level 11 (middle depths), but it lacks: usable Word of Recall. Is it ready to go down anyway?");
+    const ready = suppliedWorld({ ...spec, pack: [...spec.pack, "a Scroll of Word of Recall"], player: { ...spec.player, level: 30, maxLevel: 30 } });
     const plain = asked(planner(ready).p.ask(ready.view));
     expect(plain.request.questions["ready_to_descend"]).toBeUndefined();
-    expect(plain.request.state["gaps"]).toBe("The character is prepared for dungeon level 2 (shallow).");
+    expect(plain.request.state["gaps"]).toBe("The character is prepared for dungeon level 11 (middle depths).");
   });
 
   it("goes down only when the answer clears the persona's threshold", () => {
@@ -3891,7 +3891,7 @@ describe("command discipline", () => {
     expect(p.trigger(w.view, plan)).toBe("The step left the character where it was.");
   });
 
-  it("stops the plan when a pickup leaves the object on the floor", () => {
+  it("stops a failed pickup and refuses that pile for the rest of the floor", () => {
     const w = suppliedWorld({ map: CORRIDOR, floor: [{ x: 2, y: 1, name: "a Flask of Oil" }] });
     const { p } = planner(w);
     const choice = p.choose(pick("pick_up"), asked(p.ask(w.view)).context, w.view);
@@ -3899,12 +3899,7 @@ describe("command discipline", () => {
     expect(choice.plan.step(w.view, w.act)).toEqual({ code: "pickup" });
     w.advance(1);
     expect(p.trigger(w.view, choice.plan)).toBe("The object is still on the floor after picking it up.");
-    const again = p.choose(pick("pick_up"), asked(p.ask(w.view)).context, w.view);
-    if (!("plan" in again)) throw new Error("expected a plan");
-    expect(again.plan.step(w.view, w.act)).toEqual({ code: "pickup" });
-    w.setFloor([]);
-    w.advance(1);
-    expect(p.trigger(w.view, again.plan)).toBeNull();
+    expect(offered(p.ask(w.view))).not.toContain("pick_up");
   });
 
   it("reads the danger again after a blow and stops when hit points fall a band", () => {
@@ -4392,6 +4387,7 @@ describe("lab route and poison interruptions", () => {
     const w = suppliedWorld({ map: ["#########", "#<@....>#", "#########"], player: { depth: 1, level: 6, hp: 62, maxHp: 62 }, monsters: [{ grid: { x: 5, y: 1 }, race: "floating eye", raceFlags: ["NEVER_MOVE"] }] });
     expect(offered(planner(w).p.ask(w.view))).not.toContain("descend");
     w.setPlayer({ objectFlags: ["FREE_ACT"] });
+    w.setMonsters([]);
     expect(offered(planner(w).p.ask(w.view))).toContain("descend");
   });
 });
@@ -4420,9 +4416,9 @@ describe("early lab survival", () => {
     expect(steps({ x: w.at().x + dir.dx, y: w.at().y + dir.dy }, { x: 3, y: 2 })).toBeGreaterThanOrEqual(2);
   });
 
-  it("uses the timed floor to descend from a staircase with one cure and no phase", () => {
+  it("uses the timed floor to descend from a staircase with a cure and an escape", () => {
     const w = suppliedWorld({ map: ["########", "#<@...>#", "########"], player: { cls: "Warrior", depth: 1, level: 3, maxLevel: 3, hp: 18, maxHp: 18 } });
-    w.setPack(["a Potion of Cure Light Wounds", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
     w.moveTo({ x: 6, y: 1 });
     let time = 0;
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => time });
@@ -4460,7 +4456,7 @@ describe("early lab survival", () => {
 
 describe("immediate shallow dives", () => {
   it("interrupts exploration for a seen down staircase and dives before hunting or training", () => {
-    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["2 Potions of Cure Light Wounds", "5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
+    const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 1, level: 3, maxLevel: 3, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["a Scroll of Phase Door", "2 Potions of Cure Light Wounds", "5 Flasks of Oil", "5 Rations of Food", "a Wooden Torch (5000 turns)"] });
     const p = planner(w, true).p;
     expect(p.trigger(w.view, { label: "explore", step: () => null })).toContain("down staircase");
     const q = reflexed(p.ask(w.view));
@@ -4496,7 +4492,7 @@ it("keeps exploring when a known shallow down staircase has no remembered route"
 
 describe("shallow dive regressions", () => {
   function necromancer(depth = 1, hp = 32) {
-    return world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 4, maxLevel: 4, hp, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }, { name: "Magic Missile", sidx: 1, learned: false }], pack: ["2 Rations of Food", "Magic for Beginners", "2 Potions of Cure Light Wounds"] });
+    return world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Necromancer", classFlags: ["UNLIGHT"], light: 0, depth, level: 4, maxLevel: 4, hp, maxHp: 40, sp: 1, maxSp: 1 }, spells: [{ name: "Nether Bolt", sidx: 0 }, { name: "Phase Door", sidx: 2, fail: 0, mana: 0 }, { name: "Magic Missile", sidx: 1, learned: false }], pack: ["2 Rations of Food", "Magic for Beginners", "2 Potions of Cure Light Wounds"] });
   }
 
   it.each([1, 2, 3, 4])("dives on DL%i before learning a spell with reflexes disabled", (depth) => {
@@ -4525,7 +4521,7 @@ describe("shallow dive regressions", () => {
     p.ask(w.view);
     let checks = logs.filter((line) => line.startsWith("dive check:"));
     expect(checks).toHaveLength(1);
-    for (const value of ["ranged true", "hp===maxHp false", "hp>=80percent false", "caster attack true", "cures plus escapes 2>=2", "maxHp 40>=12", "tripLight true", "food 2>=2", "hungry false", "stair reachable true", "route checked true"]) expect(checks[0]).toContain(value);
+    for (const value of ["ranged true", "hp===maxHp false", "hp>=80percent false", "caster attack true", "cures plus escapes 4>=2", "maxHp 40>=10", "tripLight true", "food 2>=2", "hungry false", "stair reachable true", "route checked true"]) expect(checks[0]).toContain(value);
     time = 60000;
     p.ask(w.view);
     w.advance(10);
@@ -4596,7 +4592,7 @@ describe("shallow dive regressions", () => {
 describe("shared early dive policy", () => {
   it.each([false, true])("does not interrupt exploration for a retained supply return with reflexes %s", (reflex) => {
     const w = suppliedWorld({ map: ["########", "#.@..>,#", "########"], player: { cls: "Warrior", depth: 10, level: 15, maxLevel: 15, light: 2, objectFlags: ["SEE_INVIS"] }, pack: ["5 Flasks of Oil"] });
-    w.setPack(["5 Flasks of Oil", "2 Rations of Food", "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "2 Wooden Torches (5000 turns)"]);
+    w.setPack(["5 Flasks of Oil", "2 Rations of Food", "3 Scrolls of Phase Door", "2 Wooden Torches (5000 turns)"]);
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex, log: () => {} });
     p.ask(w.view);
     w.setPlayer({ depth: 1 });
@@ -4609,12 +4605,12 @@ describe("shared early dive policy", () => {
     expect(choice !== null && "plan" in choice ? choice.plan.step(w.view, w.act)?.code : null).toBe("walk");
   });
 
-  it.each([false, true])("forces a safe known descent after 15 seconds even with soft gaps and reflexes %s", (reflex) => {
+  it.each([false, true])("forces a safe known descent after the persona delay when preparation is met and reflexes %s", (reflex) => {
     let time = 0;
-    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { cls: "Warrior", depth: 5, maxDepth: 5, level: 7, maxLevel: 7 } });
+    const w = suppliedWorld({ map: ["########", "#<@..>,#", "########"], player: { cls: "Warrior", depth: 5, maxDepth: 5, level: 10, maxLevel: 10, hp: 100, maxHp: 100 } });
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, reflex, log: () => {}, persona: archetype("coward"), now: () => time });
-    expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
-    time = 15001;
+    if (!reflex) expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
+    time = 60001;
     expect(p.trigger(w.view, { label: "explore", step: () => null })).toContain("down staircase");
     const q = reflexed(p.ask(w.view));
     expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
@@ -4663,4 +4659,129 @@ describe("shared early dive policy", () => {
     expect(p.trigger(w.view, { label: "explore", step: () => null })).toBeNull();
     expect(offered(p.ask(w.view))).not.toContain("descend");
   });
+});
+
+describe("bundle B progress regressions", () => {
+  it.each([[1, 13], [5, 49]])("routes past a grey mold without local delays at level %i with %i HP", (level, hp) => {
+    const w = suppliedWorld({ map: ["############", "#..........#", "#.@.......,#", "#..........#", "#..........#", "#..........#", "############"], player: { depth: 3, level, maxLevel: level, hp, maxHp: hp }, monsters: [{ grid: { x: 4, y: 2 }, race: "grey mold", hp: 28, maxHp: 28, raceFlags: ["NEVER_MOVE"] }], monsterRecall: () => "It can hit to hurt (1d4) and hit to hurt (1d4)." });
+    const { p } = planner(w, true);
+    const q = p.ask(w.view);
+    expect(offered(q)).toContain("explore");
+    const choice = "reflex" in q ? q : p.choose(pick("explore"), asked(q).context, w.view);
+    if (!("plan" in choice)) throw new Error("expected exploration");
+    for (let i = 0; i < 16 && w.at().x < 9; i += 1) {
+      const command = choice.plan.step(w.view, w.act);
+      if (command === null) break;
+      expect(command.code).toBe("walk");
+      const direction = DIRECTIONS.find((dir) => dir.key === command.dir)!;
+      const next = { x: w.at().x + direction.dx, y: w.at().y + direction.dy };
+      expect(next).not.toEqual({ x: 4, y: 2 });
+      if (hp === 13) expect(steps(next, { x: 4, y: 2 })).toBeGreaterThan(1);
+      w.moveTo(next);
+      w.advance(10);
+    }
+    expect(w.at().x).toBeGreaterThanOrEqual(9);
+  });
+
+  it.each([false, true])("remembers a refused wearable across movement and watchdog recovery, time spent %s", (spent) => {
+    const w = suppliedWorld({ map: ["#########", "#.@....,#", "#########"], pack: ["a Cloak [1,+0]"] });
+    const before = w.view.player();
+    const view: AgentView = { ...w.view, equipment: () => w.view.equipment().map((item) => item === null ? null : { ...item, timeout: item.timeout - w.view.turn() }), simulateLoadout: () => ({ before: { player: before, equipment: w.view.equipment(), stats: { resists: [], resistElements: [] } }, after: { player: { ...before, ac: before.ac + 6 }, equipment: w.view.equipment(), stats: { resists: [], resistElements: [] } }, delta: { ac: 6, toH: 0, toD: 0, blows: 0, shots: 0, speed: 0, maxHp: 0, maxSp: 0, light: 0, resists: [] }, placements: [{ slot: 0, worn: w.view.inventory()[0], displaced: null }], unresolved: [] } as unknown as LoadoutSimulation) };
+    let time = 0;
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 90;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: true, persona, chaos: false, now: () => time });
+    p.watchdog!(view, true);
+    const first = reflexed(p.ask(view));
+    expect(first.plan.step(view, w.act)?.code).toBe("wield");
+    if (spent) w.advance(10);
+    first.plan.step(view, w.act);
+    w.moveTo({ x: 3, y: 1 });
+    w.advance(100);
+    time = 60000;
+    expect(p.watchdog!(view, true)).not.toBeNull();
+    expect(offered(p.ask(view))).not.toContain("wear");
+    const stale = p.choose(pick("wear"), first.context, view);
+    if (!("plan" in stale)) throw new Error("expected a refused plan");
+    expect(stale.plan.step(view, w.act)).toBeNull();
+    w.setPlayer({ depth: 2 });
+    expect(offered(p.ask(view))).toContain("wear");
+  });
+
+  it.each([false, true])("remembers refused pickups across a walk away and back, time spent %s", (spent) => {
+    const w = suppliedWorld({ map: ["#########", "#.@....,#", "#########"], floor: [{ x: 2, y: 1, name: "a Potion of Cure Light Wounds" }] });
+    const { p } = planner(w);
+    const q = asked(p.ask(w.view));
+    const chosen = p.choose(pick("pick_up"), q.context, w.view);
+    if (!("plan" in chosen)) throw new Error("expected pickup");
+    expect(chosen.plan.step(w.view, w.act)?.code).toBe("pickup");
+    if (spent) w.advance(10);
+    chosen.plan.step(w.view, w.act);
+    w.moveTo({ x: 3, y: 1 });
+    w.advance(100);
+    expect(offered(p.ask(w.view))).not.toContain("fetch");
+    w.moveTo({ x: 2, y: 1 });
+    w.advance(100);
+    expect(offered(p.ask(w.view))).not.toContain("pick_up");
+  });
+
+  it("forces exploration beyond recent positions before the watchdog deadline", () => {
+    const w = suppliedWorld({ map: ["############", "# .@...... #", "############"], player: { level: 12, maxLevel: 12 } });
+    const { p } = planner(w);
+    let q = p.ask(w.view);
+    for (let i = 0; i < 100; i += 1) {
+      w.moveTo({ x: 3 + i % 2, y: 1 });
+      w.advance(10);
+      q = p.ask(w.view);
+    }
+    const forced = reflexed(q);
+    expect(forced.reflex).toContain("Exploration pressure");
+    expect(forced.answers["goal"]).toMatchObject({ choice: "explore" });
+    expect(forced.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    w.setPlayer({ hp: 10 });
+    w.advance(10);
+    expect(offered(p.ask(w.view))).not.toContain("explore");
+  });
+});
+
+describe("corpus death forecast regressions", () => {
+  it.each(["crow", "soldier", "kobold archer", "battle-scarred veteran", "scruffy little dog"])("rejects a losing healing exchange with a fast %s when an escape remains", (race) => {
+    const w = suppliedWorld({ map: ["#########", "#.......#", "#..@....#", "#.......#", "#########"], player: { depth: race.includes("veteran") || race.includes("dog") ? 0 : 1, level: 1, maxLevel: 1, hp: 13, maxHp: 13, toDam: 0, blows: 100 },
+      worn: ["a Dagger (1d4) (+0,+0)"], monsters: [{ grid: { x: 4, y: 2 }, race, speed: 120, hp: 30, maxHp: 30 }], monsterRecall: () => "It can hit to hurt (1d4)." });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: true });
+    const q = p.rules!(w.view, "compare the fight with an escape");
+    if (!("context" in q)) throw new Error("expected a survival decision");
+    const choices = q.context.offers;
+    expect(choices.some((offer) => ["phase", "cast_escape", "teleport", "retreat", "break_sight"].includes(offer.goal) && offer.forecast?.viable === true)).toBe(true);
+    expect("answers" in q ? q.answers["goal"] : undefined).not.toMatchObject({ choice: "heal" });
+    expect("answers" in q ? q.answers["goal"] : undefined).not.toMatchObject({ choice: "fight" });
+  });
+});
+
+it("keeps exploration pressure in compact context and discounts a local wait", () => {
+  const w = suppliedWorld({ map: ["############", "# .@...... #", "############"], player: { level: 12, maxLevel: 12 } });
+  const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, stateTokens: 1024 });
+  let q = p.ask(w.view);
+  for (let i = 0; i < 40; i += 1) { w.advance(10); q = p.ask(w.view); }
+  const question = asked(q);
+  expect(question.request.state["exploration_pressure"]).toContain("no new ground for 40 decisions");
+  expect(question.request.state["tactical"]).toBeDefined();
+  const selected = p.choose({ goal: { type: "choice", choice: "wait", confidence: 1, probabilities: { wait: 0.9, explore: 0.1 } } }, question.context, w.view);
+  if (!("plan" in selected)) throw new Error("expected exploration");
+  expect(selected.plan.label).toBe("explore");
+});
+
+it("lets a careless town character take seen stairs before optional preparation", () => {
+  const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, maxDepth: 0, level: 1, maxLevel: 1 }, worn: ["a Wooden Torch (5000 turns)"] });
+  const careless = defaultPersona();
+  careless.sliders.impulsiveness = 100;
+  careless.sliders.selfpreservation = 0;
+  careless.sliders.patience = 0;
+  careless.quirks.forgetful = { on: true, strength: 100 };
+  const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: careless, log: () => {} });
+  const q = reflexed(p.ask(w.view));
+  expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
+  expect(q.plan.step(w.view, w.act)?.code).toBe("walk");
+  const careful = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: archetype("coward"), log: () => {} }).ask(w.view);
+  expect("context" in careful ? careful.context.offers.map((offer) => offer.goal) : []).not.toContain("descend");
 });

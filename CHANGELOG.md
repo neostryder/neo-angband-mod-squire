@@ -52,6 +52,8 @@ Fixed.
 - [Visible] **Squire hears what the player did with the keyboard.** When it takes over again, its model is told which levels the character went through and what it fought, killed and used, ahead of Squire's other outcomes, for the next 100 commands.
 
 ### Changed
+- [Visible] [Balance] Squire derives descent floors, supplies, route risk, training time, stair refreshes and its depth schedule from the persona. The default ranged starter kit can enter DL2 at character level 1.
+- [Visible] Squire raises exploration pressure during quiet pacing, discounts local delays and walks toward executable ground beyond recent positions. Stationary creatures block their own squares; refused gear and floor piles stay excluded for the level.
 - [Visible] [Balance] **Backing away or moving to a better square stops after three steps.** Squire looks at the fight again from there. A walk to the stairs still goes all the way.
 - [Visible] **Escape or Ctrl-Z takes the keyboard back from Squire, and other keys no longer do.** Any other key leaves Squire playing and shows a line saying how to take over or open the errand menu, so a stray key no longer ends a run. Every key Squire answers and every hand-back goes in the log.
 - [Visible] **Taking the keyboard back drops Squire's plan.** When the keyboard comes back to Squire, it decides afresh from the game as it is, and a model answer asked before the keyboard changed hands is thrown away rather than acted on.

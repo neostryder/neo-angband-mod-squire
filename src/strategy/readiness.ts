@@ -5,7 +5,7 @@ import { canRead, detectionSources, hungry, readPack } from "../brain/pack.js";
 import { shownName } from "../town/needs.js";
 import { TV } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
-import { drive, readinessExtra } from "./pursuits.js";
+import { drive } from "./pursuits.js";
 import { depthBand } from "../brain/bands.js";
 
 const TV_FLASK = 27;
@@ -96,9 +96,9 @@ export function supplies(view: AgentView): Supplies {
  * The departure guard also permits a bounded earning trip with enough current fuel.
  * Escapes are not trips: a staircase taken to survive is never held back by it.
  */
-export function tripLight(view: AgentView): boolean {
+export function tripLight(view: AgentView, persona: Persona | null = null): boolean {
   const stock = supplies(view);
-  return stock.lastingLight || stock.workingLight && stock.fuel >= 1;
+  return stock.lastingLight || stock.workingLight && stock.fuel >= descentPolicy(persona).reserve;
 }
 
 export interface Requirement {
@@ -119,31 +119,40 @@ export function restRestoresMana(cls: string): boolean {
   return cls !== "Blackguard";
 }
 
-/** Unknown classes use the strictest early class floor. */
-function classFloor(cls: string, depth: number, persona: Persona | null): readonly [number, number] {
-  if (depth === 2) {
-    const hp = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls) ? 30
-      : cls === "Rogue" ? 26 : ["Priest", "Druid"].includes(cls) ? 24
-      : ["Mage", "Necromancer"].includes(cls) ? 20 : 30;
-    const scale = 1 + 0.3 * (drive(null) - drive(persona));
-    return [Math.ceil(hp * scale), Math.max(3, Math.ceil(3 * scale))];
-  }
-  if (depth < 5) {
-    const martial = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls);
-    const hp = martial ? 40 : cls === "Rogue" ? 34 : 28;
-    const scale = 1 + 0.3 * (drive(null) - drive(persona));
-    return [Math.ceil(hp * scale), Math.max(depth + 1, Math.ceil(4 * scale))];
-  }
-  if (depth <= 10 && ["Mage", "Necromancer"].includes(cls)) return [36 + 4 * (depth - 5), 15];
-  if (["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls)) return [60, 6];
-  if (cls === "Rogue") return [60, 10];
-  if (["Priest", "Druid"].includes(cls)) return [60, 15];
-  return [80, 15];
+/** Preparation and tempo share the same appetite so optional gates cannot restore a universal floor. */
+export function descentPolicy(persona: Persona | null) {
+  const s = persona?.sliders;
+  const quirk = (name: "cowardice" | "forgetful" | "delusional" | "deathwish") => persona?.quirks[name].on === true ? persona.quirks[name].strength / 100 : 0;
+  const appetite = Math.max(0, Math.min(1, 0.5 +
+    0.003 * ((s?.ambition ?? 70) - 70) + 0.002 * ((s?.boldness ?? 65) - 65) +
+    0.0025 * ((s?.impulsiveness ?? 50) - 50) - 0.002 * ((s?.selfpreservation ?? 55) - 55) -
+    0.0015 * ((s?.patience ?? 50) - 50) - 0.001 * ((s?.paranoia ?? 50) - 50) -
+    0.001 * ((s?.escapes ?? 50) - 50) - 0.001 * ((s?.levelfeel ?? 50) - 50) + 0.001 * ((s?.optimism ?? 50) - 50) -
+    0.001 * ((s?.towntrips ?? 35) - 35) +
+    0.25 * quirk("forgetful") + 0.15 * quirk("delusional") + 0.5 * quirk("deathwish") - 0.5 * quirk("cowardice")));
+  return { appetite, scale: 1.5 - appetite, hpShare: 0.95 - 0.3 * appetite, recoveryShare: Math.min(1, 1.25 - 0.5 * appetite),
+    reserve: Math.round(2 * (1 - appetite)), food: Math.round(4 * (1 - appetite)),
+    risk: 0.1 + 0.7 * appetite, trainMinutes: 4 * (1 - appetite) ** 2,
+    reversals: Math.round(1 + 4 * appetite), refreshes: Math.round(1 + 4 * (1 - appetite)) };
 }
 
-/** Ambition shortens the wait before an early dive can use its timed preparation floor. */
+/** The default kit supports DL2 at level 1 and about 10 HP; later depths ask for growing capacity. */
+function classFloor(cls: string, depth: number, persona: Persona | null): readonly [number, number] {
+  const policy = descentPolicy(persona);
+  const martial = ["Warrior", "Blackguard", "Paladin", "Ranger"].includes(cls);
+  const scale = policy.scale;
+  if (depth > 10) {
+    const hp = martial || ["Rogue", "Priest", "Druid"].includes(cls) ? 60 : 80;
+    const level = martial ? 6 : cls === "Rogue" ? 10 : 15;
+    return [Math.ceil(hp * scale), Math.ceil(Math.max(depth, level) * scale)];
+  }
+  const caution = Math.max(0, 0.5 - policy.appetite);
+  return [Math.ceil((10 + (depth - 2) * (martial ? 6 : 5) + 24 * caution) * scale),
+    Math.max(1, Math.ceil((depth - 2) * 0.65 * scale + caution * 4))];
+}
+
 export function descentWait(persona: Persona | null): number {
-  return 2.5 - 1.5 * Math.max(0, Math.min(1, (persona?.sliders.ambition ?? 50) / 100));
+  return descentPolicy(persona).trainMinutes;
 }
 
 export function earlyDescentReady(view: AgentView, reserves = 2, hpFraction = 1): boolean {
@@ -160,72 +169,65 @@ export function shallowDiveChecks(view: AgentView, persona: Persona | null = nul
   const player = view.player();
   const pack = readPack(view);
   const stock = supplies(view);
-  const caster = ["Mage", "Necromancer"].includes(player.cls);
+  const policy = descentPolicy(persona);
+  const [maxHpFloor, levelFloor] = classFloor(player.cls, player.depth + 1, persona);
+  const ranged = pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
   return {
-    ranged: namedCount(view, /\bFlasks? of Oil\b/i) >= 5 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0,
-    fullHp: player.hp === player.maxHp,
-    hpReady: player.hp >= player.maxHp * 0.8,
-    casterAttack: !caster || pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0,
-    reserves: stock.cures + stock.phase + stock.escapes,
-    levelFloor: Math.max(3, Math.ceil((player.depth + 1) * 0.6) + 1),
-    maxHpFloor: Math.max(12, Math.ceil(classFloor(player.cls, player.depth + 1, persona)[0] * 0.6)),
-    tripLight: tripLight(view),
-    food: stock.food,
-    hungry: hungry(view),
-    statusReady: earlyDescentReady(view, 0, 0.8),
-    arrivalSupplies: player.depth < 4 || stock.food >= 4 && stock.cures >= 1 && stock.phase + stock.escapes >= 1 && (stock.lastingLight || stock.fuel >= 2),
+    ranged, fullHp: player.hp === player.maxHp, hpReady: player.hp >= player.maxHp * policy.hpShare,
+    casterAttack: ranged || !["Mage", "Necromancer"].includes(player.cls) || policy.appetite > 0.85,
+    reserves: stock.cures + stock.phase + stock.escapes, levelFloor, maxHpFloor,
+    tripLight: tripLight(view, persona), food: stock.food, hungry: hungry(view),
+    statusReady: earlyDescentReady(view, 0, policy.hpShare),
+    arrivalSupplies: stock.cures >= policy.reserve && stock.phase + stock.escapes >= policy.reserve &&
+      (policy.reserve === 0 || canRead(view) || reliableEscapeSpell(view)),
   };
 }
 
 export function shallowDiveReady(view: AgentView, depth = view.player().depth + 1, persona: Persona | null = null): boolean {
   const player = view.player();
-  if (player.depth < 1 || player.depth > 4 || depth !== player.depth + 1) return false;
+  if (player.depth < 1 || depth > 10 || depth !== player.depth + 1) return false;
   const checks = shallowDiveChecks(view, persona);
-  return checks.ranged && checks.statusReady && checks.reserves >= 2 && player.maxLevel >= checks.levelFloor && player.maxHp >= checks.maxHpFloor && checks.tripLight && checks.food >= 2 && !checks.hungry && checks.arrivalSupplies;
+  return checks.ranged && checks.hpReady && missingPreparation(view, depth, persona).length === 0;
 }
 
 /** The actual destination is checked even when the command starts in town. */
 export function missingPreparation(view: AgentView, depth: number, persona: Persona | null = null, depthMinutes = 0, earlyStair = false, stairEscape = false): Requirement[] {
-  if (depth <= 1 || earlyStair && shallowDiveReady(view, depth, persona)) return [];
+  if (depth <= 1) return [];
   const player = view.player();
   const stock = supplies(view);
   const level = Number.isFinite(player.maxLevel) ? player.maxLevel : player.level;
   const out: Requirement[] = [];
   const need = (kind: Requirement["kind"], enough: boolean, reason: string, severe = false) => { if (!enough) out.push(severe ? { kind, reason, severe } : { kind, reason }); };
   const [classHp, classLevel] = classFloor(player.cls, depth, persona);
+  const policy = descentPolicy(persona);
   const caster = ["Mage", "Necromancer"].includes(player.cls);
   const pack = readPack(view);
   const ranged = pack.oil.length > 0 || pack.attackWand.length > 0 || pack.attackSpell.length > 0 || pack.launcher && pack.ammo.length > 0;
-  /* Lower caster HP is viable only while a known ranged attack is available. */
-  const normalHp = caster && depth <= 10 && !ranged ? Math.max(classHp, classFloor("Warrior", depth, persona)[0]) : classHp;
-  const timed = depth >= 2 && depth <= 4 && depthMinutes >= descentWait(persona) && earlyDescentReady(view, 0) &&
-    stock.cures >= 1 && (stairEscape || stock.phase + stock.escapes >= 1 && canRead(view));
-  const hpFloor = timed ? Math.ceil(normalHp * 0.6) : normalHp;
-  const normalLevel = Math.max(depth, classLevel, depth >= 10 && caster && level <= 28 ? depth + 5 : 0);
-  const diving = earlyStair && depth <= 10 && earlyDescentReady(view, 2, 0.8) && stock.cures >= 1 && stock.phase + stock.escapes >= 1 && canRead(view);
-  const stocked = stock.phase + stock.escapes >= 2 || earlyStair && depth <= 5;
-  const paced = timed && player.maxHp >= hpFloor || depth <= 10 && (diving || earlyDescentReady(view) && stocked &&
-    (depthMinutes >= descentWait(persona) || earlyStair && depth <= 5)) && player.maxHp >= hpFloor;
-  /* Level 2 apprentices still rule out sending a level 2 character deeper. */
-  const levelFloor = paced ? Math.min(normalLevel, Math.max(3, Math.ceil(depth * 0.6) + 1)) : normalLevel;
-  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, depth <= 10 || level < depth || level * 2 < levelFloor);
-  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, depth <= 10 || player.maxHp * 2 < hpFloor);
-  need("light", (depth >= 10 && player.cls !== "Necromancer" ? player.light >= 2 : stock.workingLight) || player.classFlags.includes("UNLIGHT"), depth >= 10 ? "light radius 2" : "working light");
-  need("food", stock.food >= (diving ? 2 : 5) && !hungry(view), diving ? "two food units and no hunger" : "five food units and no hunger");
-  if (depth >= 2 && level < 30) need("healing", stock.cures >= (timed ? 1 : 2), timed ? "one Cure Light, Serious or Critical Wounds potion" : "two Cure Light, Serious or Critical Wounds potions");
-  if (depth >= 5) need("recall", stock.recall >= 1 && canRead(view), "one usable Word of Recall");
-  if (depth >= 6) need("phase", stock.phase >= 1 && canRead(view), "one usable Phase Door");
-  if (depth >= 10) {
-    need("phase", stock.escapes >= (depth > 25 ? 6 : 2) && canRead(view), depth > 25 ? "six long escapes" : "two long escapes");
-    if (level < 30) need("healing", depth > 25 ? stock.serious >= 10 : stock.critical >= 3, depth > 25 ? "ten Cure Serious or Critical Wounds potions" : "three Cure Critical Wounds potions");
+  const equipped = ranged || policy.appetite > 0.85;
+  const train = depth > 10 || equipped || depthMinutes >= policy.trainMinutes;
+  const hpFloor = Math.ceil(classHp * (train ? 1 : 1.25));
+  const levelFloor = classLevel + (train ? 0 : Math.ceil(2 * policy.scale));
+  need("level", level >= levelFloor || level >= 50, `maximum character level ${String(levelFloor)}`, true);
+  need("hp", player.maxHp >= hpFloor, `${String(hpFloor)} maximum hit points`, true);
+  need("protection", [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0), "clear status before a planned descent", true);
+  need("light", stock.workingLight || stock.lastingLight, "working light");
+  need("food", stock.food >= policy.food && !hungry(view), `${String(policy.food)} food units and no hunger`);
+  if (depth <= 10 || level < 30) need("healing", stock.cures >= policy.reserve, `${String(policy.reserve)} healing potion${policy.reserve === 1 ? "" : "s"}`);
+  need("phase", stock.phase + stock.escapes >= policy.reserve && (policy.reserve === 0 || canRead(view) || reliableEscapeSpell(view)), `${String(policy.reserve)} usable escape${policy.reserve === 1 ? "" : "s"}`);
+  need("protection", !caster || ranged || level >= 8 * policy.scale || policy.appetite > 0.85, "an affordable ranged attack", true);
+  if (depth > 10) {
+    need("recall", stock.recall >= Math.round(policy.scale) && canRead(view), "usable Word of Recall");
+    need("phase", stock.escapes >= Math.ceil((depth > 25 ? 6 : 2) * policy.scale) && canRead(view), "long escapes for the persona's reserve");
+    if (level < 30) need("healing", depth > 25 ? stock.serious >= Math.ceil(10 * policy.scale) : stock.critical >= Math.ceil(3 * policy.scale), "strong cures for the persona's reserve");
     const detectsInvisible = detectionSources(view).some((source) => {
       if (!/^(Detection|Reveal Monsters)$|Rods? of Detection/i.test(source.name) || /charging/i.test(source.name)) return false;
       return source.kind !== "cast" || view.spellbooks().some((book) => book.spells.some((spell) => spell.sidx === source.sidx && spell.fail <= 15));
     });
-    need("protection", player.objectFlags.includes("SEE_INVIS") || player.objectFlags.includes("TELEPATHY") || detectsInvisible, "See Invisible, telepathy or usable detection of invisible creatures");
+    need("protection", policy.appetite > 0.85 || player.objectFlags.includes("SEE_INVIS") || player.objectFlags.includes("TELEPATHY") || detectsInvisible, "See Invisible, telepathy or usable detection of invisible creatures");
   }
-  if (depth >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
-  if (depth > 20) {
+  const preparationDepth = depth * policy.scale;
+  if (preparationDepth >= 20) need("protection", player.objectFlags.includes("FREE_ACT"), "Free Action");
+  if (preparationDepth > 20) {
     /* Only known equipped resistance is evidence; an item's raw hidden resists are not. */
     const inspect = view as AgentView & { inspectItem?: (handle: number) => { readonly text: string } | null };
     const texts = view.equipment().flatMap((item) => item === null ? [] : [inspect.inspectItem?.(item.handle)?.text ?? ""]);
@@ -233,28 +235,28 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
     /* Race, class and known worn flags count as well as item text: a Dwarf is never blinded. */
     const protects = (element: string, flag: string) => has(element) || player.objectFlags.includes(flag);
     const basics = ["acid", "lightning", "fire", "cold"].filter(has);
-    need("protection", has("fire") && basics.length >= (depth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
-    need("protection", player.stats.length >= 5 && [0, 3, 4, ...(caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : [])].every((index) => (player.stats[index] ?? 0) >= 7), "Strength, Dexterity, Constitution and the casting stat at least 7");
-    if (depth >= 40) need("protection", has("poison") && protects("confusion", "PROT_CONF"), "poison and confusion resistance");
-    if (depth >= 56) need("protection", protects("blindness", "PROT_BLIND"), "blindness resistance");
-    if (depth >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
+    need("protection", has("fire") && basics.length >= (preparationDepth > 25 ? 4 : 3), depth > 25 ? "all four basic resistances" : "fire resistance and two other basic resistances");
+    need("protection", player.stats.length >= 5 && [0, 3, 4, ...(caster ? [1] : ["Priest", "Druid", "Paladin"].includes(player.cls) ? [2] : [])].every((index) => (player.stats[index] ?? 0) >= Math.ceil(7 * policy.scale)), `Strength, Dexterity, Constitution and the casting stat at least ${String(Math.ceil(7 * policy.scale))}`);
+    if (preparationDepth >= 40) need("protection", has("poison") && protects("confusion", "PROT_CONF"), "poison and confusion resistance");
+    if (preparationDepth >= 56) need("protection", protects("blindness", "PROT_BLIND"), "blindness resistance");
+    if (preparationDepth >= 60) need("protection", has("chaos") && has("disenchantment"), "chaos and disenchantment resistance");
   }
-  if (depth >= 46) {
-    need("hp", player.maxHp >= 500, "500 maximum hit points");
-    const speed = depth >= 81 ? 20 : depth >= 60 ? 10 : 5;
+  if (preparationDepth >= 46) {
+    need("hp", player.maxHp >= Math.ceil(500 * policy.scale), `${String(Math.ceil(500 * policy.scale))} maximum hit points`);
+    const speed = Math.ceil((preparationDepth >= 81 ? 20 : preparationDepth >= 60 ? 10 : 5) * policy.scale);
     need("protection", player.speed >= 110 + speed, `+${String(speed)} speed`);
     need("healing", namedCount(view, /\bPotions? of (\*?Healing\*?|Life)\b/i) > 0, "large healing");
     if (level < 50) need("protection", player.objectFlags.includes("HOLD_LIFE"), "Hold Life before maximum character level 50");
   }
-  if (depth >= 56) {
+  if (preparationDepth >= 56) {
     need("protection", player.objectFlags.includes("TELEPATHY"), "telepathy");
-    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 2 || namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 1, "two Healing potions or one *Healing* or Life potion");
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= Math.ceil(2 * policy.scale) || namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= Math.round(policy.scale), "two Healing potions or one *Healing* or Life potion");
   }
   if (depth >= 100) {
-    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= 5, "five Healing potions");
-    need("healing", namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= 15, "fifteen *Healing* or Life potions");
-    need("protection", namedCount(view, /\bPotions? of Speed\b/i) >= 10, "ten Speed potions");
-    if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= 15, "fifteen Restore Mana potions");
+    need("healing", namedCount(view, /\bPotions? of Healing\b/i) >= Math.ceil(5 * policy.scale), `${String(Math.ceil(5 * policy.scale))} Healing potions`);
+    need("healing", namedCount(view, /\bPotions? of (\*Healing\*|Life)/i) >= Math.ceil(15 * policy.scale), `${String(Math.ceil(15 * policy.scale))} *Healing* or Life potions`);
+    need("protection", namedCount(view, /\bPotions? of Speed\b/i) >= Math.ceil(10 * policy.scale), `${String(Math.ceil(10 * policy.scale))} Speed potions`);
+    if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= Math.ceil(15 * policy.scale), `${String(Math.ceil(15 * policy.scale))} Restore Mana potions`);
   }
   return out;
 }
@@ -277,7 +279,7 @@ export function descentGaps(view: AgentView, depth: number, persona: Persona | n
  * Early stagnation lowers the bar while the survival checks still apply.
  */
 export function readinessThreshold(persona: Persona | null, depth = 5, turnsWithoutExperience = 0): number {
-  const urgency = drive(persona);
+  const urgency = descentPolicy(persona).appetite;
   const base = Math.min(0.85, Math.max(0.3, 0.8 - 0.6 * urgency));
   if (depth >= 5) return base;
   const minimum = 0.2 + 0.1 * (1 - urgency);
@@ -295,34 +297,23 @@ export function gapFacts(view: AgentView, persona: Persona | null = null, depthM
   return `For dungeon level ${String(depth)} (${depthBand(depth)}) the character still lacks: ${gaps.map((gap) => gap.reason).join("; ")}.${phase}`;
 }
 
-/**
- * The town basket. Its death-safety floor is two healing potions, two Phase
- * Doors, two food units and working light with two fuel units; above that floor
- * the persona's drive sets the extra wants (`readinessExtra`), so a cautious
- * character stocks higher. With no persona the default extra of one asks the
- * floor.
- */
+/** Town preparation keeps the persona's reserve preference when the trip begins. */
 export function missingEssentials(view: AgentView, persona: Persona | null = null): Requirement[] {
   const stock = supplies(view);
   const { healing: cures, phase, food, light: fuel } = basketWants(persona);
   const out: Requirement[] = [];
   if (stock.cures < cures) out.push({ kind: "healing", reason: `${countWord(cures)} healing potion${cures === 1 ? "" : "s"}` });
-  if (stock.phase < phase || !canRead(view)) out.push({ kind: "phase", reason: `${countWord(phase)} usable Phase Door${phase === 1 ? "" : "s"}` });
+  if (phase > 0 && (stock.phase < phase || !canRead(view))) out.push({ kind: "phase", reason: `${countWord(phase)} usable Phase Door${phase === 1 ? "" : "s"}` });
   if (stock.food < food) out.push({ kind: "food", reason: `${countWord(food)} food units` });
   if (!stock.lastingLight && (!stock.workingLight || stock.fuel < fuel)) out.push({ kind: "light", reason: `working light and ${countWord(fuel)} fuel unit${fuel === 1 ? "" : "s"}` });
   return out;
 }
 
-/** How many of each basket item the persona wants before it leaves town. Two healing and two Phase Doors hold for every persona. */
+/** The default town basket asks for two of each essential; careless personas can leave with less. */
 export function basketWants(persona: Persona | null): { readonly healing: number; readonly phase: number; readonly food: number; readonly light: number } {
-  const extra = readinessExtra(persona);
-  return {
-    healing: Math.max(2, 1 + extra),
-    phase: Math.max(2, 1 + extra),
-    food: Math.max(2, 2 + Math.max(0, extra - 1)),
-    /* Two spares, because the level 1 margin turns back at one. */
-    light: 2 + Math.max(0, extra - 1),
-  };
+  const policy = descentPolicy(persona);
+  const count = Math.ceil(3 * (1 - policy.appetite));
+  return { healing: count, phase: count, food: Math.max(count, policy.food), light: count };
 }
 
 function countWord(n: number): string {
@@ -333,20 +324,28 @@ function countWord(n: number): string {
  * The return starts above the lower stay-on-level floor, leaving supplies for the route.
  *
  * The first two levels tolerate spending individual potions or scrolls.
- * When both reserves fall low, the return starts before the next fight.
+ * A persona that requires a reserve turns back before its next unsupported fight.
  */
 export function supplyMargin(view: AgentView, persona: Persona | null = null): string | null {
   const player = view.player();
   if (player.depth === 0) return null;
   const stock = supplies(view);
-  if (stock.food <= (player.depth === 1 ? 1 : 3) || hungry(view)) return "food";
-  if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= 1)) return "light and fuel";
-  if (player.depth <= 2) {
-    const reserve = Math.max(1, Math.ceil(2 * (1 - drive(persona))));
-    return stock.cures < reserve && stock.phase < reserve ? "healing and Phase Door" : null;
+  const policy = descentPolicy(persona);
+  if (player.depth <= 10) {
+    if (stock.food < policy.food || hungry(view)) return "food";
+    if (!stock.lastingLight && (!stock.workingLight || stock.fuel < policy.reserve)) return "light and fuel";
+    if (player.depth <= 2) return stock.cures < policy.reserve || stock.phase + stock.escapes < policy.reserve ? "healing and Phase Door" : null;
+    if (stock.cures < policy.reserve) return "healing";
+    return stock.phase + stock.escapes < policy.reserve ? "Phase Door" : null;
   }
-  if (stock.cures < (player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1)) return "healing";
-  if (player.depth >= 6 && stock.phase < 1) return "Phase Door";
-  if (player.depth >= 10 && stock.escapes < 2) return "long escapes";
+  if (stock.food <= Math.round((player.depth === 1 ? 1 : 3) * policy.scale) || hungry(view)) return "food";
+  if (!stock.lastingLight && (!stock.workingLight || stock.fuel <= policy.reserve)) return "light and fuel";
+  if (player.depth <= 2) {
+    const reserve = policy.reserve;
+    return stock.cures < reserve || stock.phase + stock.escapes < reserve ? "healing and Phase Door" : null;
+  }
+  if (stock.cures < Math.round((player.depth >= 10 ? 3 : player.depth >= 6 ? 2 : 1) * policy.scale)) return "healing";
+  if (player.depth >= 6 && stock.phase < policy.reserve) return "Phase Door";
+  if (player.depth >= 10 && stock.escapes < Math.round(2 * policy.scale)) return "long escapes";
   return null;
 }
