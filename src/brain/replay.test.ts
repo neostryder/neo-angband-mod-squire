@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FEAT, suppliedWorld, world, type WorldSpec } from "../harness.js";
+import { FEAT, itemNamed, suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { attackOptions } from "./combat-kit.js";
 import { createGoalPlanner } from "./goals.js";
@@ -11,6 +11,143 @@ import { JEV } from "./backend.js";
 import { createTally } from "./tally.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { breedersOverwhelm } from "../strategy/journey.js";
+
+describe("round 11 survival recovery", () => {
+  const encounters = [
+    ["mean-looking mercenary", 0, 23, 24, [[1, 10]]], ["battle-scarred veteran", 0, 32, 36, [[2, 6]]], ["scrawny cat", 0, 2, 1, [[1, 1]]],
+    ["scruffy little dog", 0, 2, 1, [[1, 1]]], ["squint-eyed rogue", 0, 9, 9, [[1, 6]]], ["small kobold", 1, 8, 24, [[1, 5]]], ["giant yellow centipede", 1, 7, 14, [[1, 3], [1, 3]]],
+  ] as const;
+
+  it.each(encounters)("responds to an awake %s on depth %i before resuming travel", (race, depth, monsterHp, ac, dice) => {
+    for (const hp of [10, 13, 15]) for (const shop of [".", "G"]) for (const x of [3, 4]) {
+      const w = suppliedWorld({ map: ["#########", `#.@...${shop}>#`, "#.......#", "#########"],
+        player: { depth, level: 1, maxLevel: 1, hp, maxHp: hp, blows: 100 }, worn: ["a Dagger (1d4) (+0,+0)"],
+        monsters: [{ grid: { x, y: 1 }, race, level: depth, hp: monsterHp, maxHp: monsterHp,
+          knownCombat: { averageHp: monsterHp, health: "unhurt", blows: dice.map(([count, sides]) => ({ method: "HIT", effect: "HURT", damage: { base: 0, dice: count, sides, mBonus: 0 } })), spellFrequency: null, innateFrequency: null, status: [] } }], monsterRecall: () => `It has an armor rating of ${String(ac)}.` });
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: defaultPersona(), log: () => {}, now: () => 0, rng: () => 0.5 });
+      const choice = p.rules!(w.view, "encounter replay");
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      expect(choice.plan.label).not.toBe("recover with a real command");
+      expect(choice.context.offers.some((offer) => ["fight", "phase", "retreat", "break_sight", "teleport", ...(x === 4 ? ["descend", "shop"] : [])].includes(offer.goal)), JSON.stringify({ hp, shop, x, offers: choice.context.offers, reflex: choice.reflex })).toBe(true);
+      const command = choice.plan.step(w.view, w.act);
+      expect(command).not.toBeNull();
+      if (x === 3 && command?.code === "walk") expect(["retreat", "break_sight", "leave_level", "take_position"]).toContain(choice.answers["goal"]?.type === "choice" ? choice.answers["goal"].choice : "");
+    }
+  });
+
+  it("survives town pursuit and reaches the first stairs across forty seeds", () => {
+    let survived = 0;
+    let descended = 0;
+    let commands = 0;
+    const codes: Record<string, number> = {};
+    for (let seed = 1; seed <= 40; seed++) {
+      let state = seed;
+      const rng = () => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state / 4294967296; };
+      const [race, , monsterHp, ac, dice] = encounters[(seed - 1) % 5]!;
+      const monster = { id: 1, race, level: 0, hp: monsterHp as number, maxHp: monsterHp, speed: 110, asleep: false, grid: { x: 4 + seed % 5, y: 2 },
+        knownCombat: { averageHp: monsterHp, health: "unhurt" as const, blows: dice.map(([count, sides]) => ({ method: "HIT", effect: "HURT", damage: { base: 0, dice: count, sides, mBonus: 0 } })), spellFrequency: null, innateFrequency: null, status: [] } };
+      const w = world({ map: ["#################", "#...............#", "#.@...........>.#", `#${seed % 2 === 0 ? "G" : "."}..............#`, "#################"],
+        player: { depth: 0, maxDepth: 0, level: 1, maxLevel: 1, hp: 10 + seed % 6, maxHp: 10 + seed % 6, gold: 0, blows: 100, toDam: 1, skills: [0, 0, 0, 0, 0, 0, 45] },
+        pack: ["2 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"],
+        worn: ["a Dagger (1d6) (+0,+0)", "a Wooden Torch (5000 turns)"], monsters: [monster], monsterRecall: () => `It has an armor rating of ${String(ac)}.` });
+      let time = 0;
+      const trail: string[] = [];
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: defaultPersona(), log: (line) => trail.push(line), now: () => time, rng });
+      let arriving = true;
+      const planner = { ...p, rules: (...args: Parameters<NonNullable<typeof p.rules>>) => {
+        if (arriving) { arriving = false; return p.recover!(args[0], "commandless arrival replay"); }
+        return p.rules!(...args);
+      } };
+      const brain = createBrain({ backend: JEV, rulesOnly: true, planner, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+        send: () => { throw new Error("The replay uses rules."); }, token: () => ({ epoch: 1, revision: w.view.turn() }), now: () => time, log: (line) => trail.push(line), status: () => {},
+        gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }) });
+      let escaped = false;
+      for (let tick = 0; tick < 400 && w.view.player().hp > 0; tick++) {
+        time += 10;
+        const command = brain.controller(w.view, w.act);
+        if (command === null) continue;
+        commands++;
+        codes[command.code] = (codes[command.code] ?? 0) + 1;
+        if (command.code === "descend") { escaped = true; break; }
+        const dir = DIRECTIONS.find((d) => d.key === command.dir);
+        if (command.code === "walk" && dir !== undefined) {
+          const to = { x: w.at().x + dir.dx, y: w.at().y + dir.dy };
+          if (w.view.cell(to.x, to.y)?.passable && (monster.hp <= 0 || to.x !== monster.grid.x || to.y !== monster.grid.y)) w.moveTo(to);
+        } else if (command.code === "melee") {
+          expect(dir).toBeDefined();
+          expect({ x: w.at().x + dir!.dx, y: w.at().y + dir!.dy }).toEqual(monster.grid);
+          if (rng() < 0.7) monster.hp -= 2 + Math.floor(rng() * 6);
+        }
+        else if (command.code === "read") {
+          const handle = (command.args as { handle: number }).handle;
+          const item = w.view.inventory().find((entry) => entry.handle === handle)!;
+          expect(item.name).toContain("Phase Door");
+          const landings = Array.from({ length: 15 }, (_, i) => ({ x: i + 1, y: 1 + Math.floor(rng() * 3) }))
+            .filter((at) => Math.max(Math.abs(at.x - w.at().x), Math.abs(at.y - w.at().y)) >= 5 && (at.x !== monster.grid.x || at.y !== monster.grid.y));
+          w.moveTo(landings[Math.floor(rng() * landings.length)]!);
+          w.setPack(w.view.inventory().flatMap((entry) => entry.handle !== handle ? [entry.name!] : entry.number > 1 ? [`${String(entry.number - 1)} Scrolls of Phase Door`] : []));
+        } else if (command.code === "quaff") {
+          const handle = (command.args as { handle: number }).handle;
+          const item = w.view.inventory().find((entry) => entry.handle === handle)!;
+          expect(item.name).toContain("Cure Light Wounds");
+          w.setPlayer({ hp: Math.min(w.view.player().maxHp, w.view.player().hp + 2 + Math.floor(rng() * 8) + Math.floor(rng() * 8)) });
+          w.setPack(w.view.inventory().flatMap((entry) => entry.handle !== handle ? [entry.name!] : entry.number > 1 ? [`${String(entry.number - 1)} Potions of Cure Light Wounds`] : []));
+        }
+        else if (command.code === "rest") w.setPlayer({ hp: Math.min(w.view.player().maxHp, w.view.player().hp + 1) });
+        if (monster.hp > 0) {
+          const distance = () => Math.max(Math.abs(w.at().x - monster.grid.x), Math.abs(w.at().y - monster.grid.y));
+          if (distance() <= 1) {
+            if (rng() < 0.5) w.setPlayer({ hp: w.view.player().hp - dice.reduce((sum: number, [count, sides]) => sum + Array.from({ length: count }, () => 1 + Math.floor(rng() * sides)).reduce((a, b) => a + b, 0), 0) });
+          } else if (rng() >= (seed % 5 < 2 ? 0.5 : 0.25)) {
+            monster.grid = { x: monster.grid.x + Math.sign(w.at().x - monster.grid.x), y: monster.grid.y + Math.sign(w.at().y - monster.grid.y) };
+          }
+        }
+        w.setMonsters(monster.hp > 0 ? [monster] : []);
+        w.advance(10);
+      }
+      if (w.view.player().hp > 0) survived++;
+      if (escaped) descended++;
+      expect(w.view.player().hp, `seed ${String(seed)}: ${trail.slice(-8).join(" | ")}`).toBeGreaterThan(0);
+    }
+    console.log(JSON.stringify({ townSeeds: 40, survived, descended, commands, codes }));
+    expect(survived).toBe(40);
+    expect(descended).toBeGreaterThanOrEqual(32);
+  });
+
+  it("returns to ordinary goals after one recovery command so hunger cannot be bypassed", () => {
+    const w = suppliedWorld({ map: ["########", "#.@...>#", "########"], player: { depth: 0, level: 1, hp: 13, maxHp: 13 } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: defaultPersona(), log: () => {}, now: () => 0 });
+    const recovery = p.recover!(w.view, "empty offers");
+    expect(recovery.plan.step(w.view, w.act)).not.toBeNull();
+    w.advance(10);
+    w.setPlayer({ status: { food: 500 } });
+    expect(recovery.plan.step(w.view, w.act)).toBeNull();
+    const choice = p.rules!(w.view, "hungry replay");
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    expect(choice.plan.step(w.view, w.act)?.code).toBe("eat");
+  });
+
+  it("buys food while hungry in town and eats before resuming travel", () => {
+    const w = world({ map: ["########", "#@.G..>#", "########"], player: { depth: 0, hp: 13, maxHp: 13, gold: 50, status: { food: 500 } },
+      stores: [{ feat: FEAT.GENERAL, featName: "General Store", isHome: false, owner: { name: "keeper", purse: 1000 }, stock: [{ ...itemNamed("a Ration of Food", 0), index: 0, price: 1, number: 20 }] }] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: defaultPersona(), log: () => {} });
+    const choice = p.rules!(w.view, "hungry shopping");
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    let bought = false;
+    for (let tick = 0; tick < 12; tick++) {
+      const command = choice.plan.step(w.view, w.act);
+      if (command?.code === "shop-buy") { bought = true; w.setPack(["5 Rations of Food"]); break; }
+      expect(command?.code).toBe("walk");
+      const dir = DIRECTIONS.find((d) => d.key === command?.dir)!;
+      w.moveTo({ x: w.at().x + dir.dx, y: w.at().y + dir.dy });
+      w.advance(10);
+    }
+    expect(bought).toBe(true);
+    const next = p.rules!(w.view, "food purchased");
+    if (!("plan" in next)) throw new Error(next.handBack);
+    expect(next.plan.step(w.view, w.act)?.code).toBe("eat");
+  });
+});
 
 describe("round 10 command liveness", () => {
   it.each([{}, { afraid: 10 }, { confused: 10 }, { blind: 10 }, { poisoned: 10 }, { paralyzed: 10 }])("logs empty goals and issues recovery on the next tick at status %j", (status) => {
@@ -269,7 +406,7 @@ describe("synthetic decision replay", () => {
   it.each([0, 1])("leaves the harmless town crowd behind at DL%i", (depth) => {
     const w = suppliedWorld({ map: ["############", "#..........#", "#.@.....>.,#", "#..........#", "############"],
       player: { depth, level: 1, maxLevel: 1, hp: 13, maxHp: 13, gold: 0 }, pack: ["15 Flasks of Oil"],
-      monsters: ["filthy street urchin", "scruffy little dog", "scrawny cat"].map((race, i) => ({ id: i + 1, race, glyph: ["p", "C", "f"][i]!, level: 0, grid: { x: i + 1, y: 1 },
+      monsters: ["filthy street urchin", "aimless-looking merchant", "Farmer Maggot"].map((race, i) => ({ id: i + 1, race, glyph: "p", level: 0, grid: { x: i + 1, y: 1 }, raceFlags: ["NEVER_BLOW"],
         knownCombat: { blows: [], averageHp: null, health: "unhurt" as const, status: [], spellFrequency: null, innateFrequency: null } })) });
     Object.assign(w.view, { apiVersion: "2.0.0" });
     let foundStair = depth === 0;

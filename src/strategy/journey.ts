@@ -6,13 +6,14 @@ import type { SquireContext } from "../context.js";
 import type { Goal, Offer } from "../brain/goals.js";
 import type { Plan } from "../brain/brain.js";
 import { floorTarget } from "../brain/items.js";
-import { canRead, hungry, unknownFlavours } from "../brain/pack.js";
+import { canRead, hungry, readPack, unknownFlavours } from "../brain/pack.js";
 import { arrivalFeeling, dangerousLevelFeeling } from "../brain/level-feel.js";
-import { forecastFight, forecastWalk, tacticalFrame } from "../brain/forecast.js";
+import { forecastFight, forecastPhase, forecastWalk, tacticalFrame } from "../brain/forecast.js";
 import { attackOptions } from "../brain/combat-kit.js";
-import { damageField, forecastExposure, riskQuantile, rememberedCleared, assessThreat, incomingDamage } from "../brain/threat-model.js";
+import { damageField, forecastExposure, riskQuantile, rememberedCleared, assessThreat, incomingDamage, turnsPerAction } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
+import { stuckThresholds } from "../brain/decision-memory.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
 import { travelTo } from "../travel.js";
 import { flowFrom, stepDown, type FlowField } from "../flow.js";
@@ -287,6 +288,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const recovery: Plan = { label: `watchdog: recover at stage ${String(stage)}`, step(current, act) {
       if (current.player().depth !== startDepth || commands >= 24 || now() - started >= 8000) return null;
       commands += 1;
+      if (hungry(current)) return emergency(current, act);
       if (!recoverySafe(current, stage >= 4)) return emergency(current, act);
       if (stage >= 2 && recoveryHealthy(current, true) && recoverySafe(current, stage >= 4) && !recallActive) {
         const command = recoveryStair(current, act, knownDownStairs(current, terrain));
@@ -324,8 +326,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   let emergencyAttempt: { depth: number; level: number | undefined; turn: number; from: string; to: Loc; feat: number; monster: number } | null = null;
-  const emergencyBlocked = new Map<string, string>();
+  const emergencyBlocked = new Map<string, { signature: string; turn: number }>();
   let emergencyFloor = "";
+  let emergencyTarget: Loc | null = null;
+  const emergencyVisits = new Map<string, number>();
+  const emergencyAbandoned = new Map<string, number>();
 
   function emergency(view: AgentView, act: AgentActions): AgentCommand {
     observe(view);
@@ -333,41 +338,126 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const at = player.grid;
     const level = view.knownLevel?.()?.levelId;
     const floor = `${String(player.depth)}:${String(level)}`;
-    if (floor !== emergencyFloor) { emergencyBlocked.clear(); emergencyFloor = floor; }
+    const hold = turnsPerRecovery(view);
+    if (floor !== emergencyFloor || emergencyAttempt !== null && view.turn() < emergencyAttempt.turn) {
+      emergencyBlocked.clear(); emergencyVisits.clear(); emergencyAbandoned.clear(); emergencyTarget = null; emergencyFloor = floor;
+    }
+    for (const [grid, refusal] of emergencyBlocked) if (view.turn() - refusal.turn > hold) emergencyBlocked.delete(grid);
+    for (const [grid, turn] of emergencyAbandoned) if (view.turn() - turn > hold) emergencyAbandoned.delete(grid);
     if (emergencyAttempt !== null) {
       const previous = emergencyAttempt;
       if (previous.depth !== player.depth || previous.level !== level || view.turn() < previous.turn) emergencyBlocked.clear();
       else if (previous.turn === view.turn() && previous.from === key(at)) {
-        emergencyBlocked.set(key(previous.to), `${String(previous.feat)}:${String(previous.monster)}`);
-        log(`recovery refused a step to ${key(previous.to)}; this route is excluded until its terrain or occupant changes.`);
+        emergencyBlocked.set(key(previous.to), { signature: `${String(previous.feat)}:${String(previous.monster)}`, turn: view.turn() });
+        log(`recovery refused a step to ${key(previous.to)}; this route is excluded briefly until time, terrain or its occupant changes.`);
       }
       emergencyAttempt = null;
     }
     const here = view.cell(at.x, at.y);
     if (player.status.poisoned === 0 && player.status.cut === 0) {
       if (terrain.isDownStair(here?.feat ?? -1) && recoveryHealthy(view, true) && canStair(view, true)) return act.descend();
-      if (terrain.isUpStair(here?.feat ?? -1)) return act.ascend();
+      if (terrain.isUpStair(here?.feat ?? -1) && canStair(view, false)) return act.ascend();
     }
-    const adjacent = monsterSnapshot(view).find((monster) => monster.visible && steps(at, monster.grid) === 1);
+    const pack = readPack(view);
+    const context = { terrain, facts: { observedDamage, quantile: riskQuantile(lastPersona) } };
+    const frame = tacticalFrame(view, context);
+    const adjacentFights = monsterSnapshot(view).filter((monster) => monster.visible && !monster.asleep && steps(at, monster.grid) === 1)
+      .flatMap((monster) => attackOptions(view, monster, "fight", context).map((attack) => ({ monster, forecast: forecastFight(frame, monster, attack) })))
+      .sort((a, b) => Number(b.forecast.viable) - Number(a.forecast.viable) || a.forecast.loss.upper - b.forecast.loss.upper || a.forecast.actions - b.forecast.actions);
+    const adjacent = adjacentFights[0]?.monster;
     const attack = () => {
       if (adjacent === undefined || player.status.afraid > 0) return null;
       const dir = DIRECTIONS.find((direction) => at.x + direction.dx === adjacent.grid.x && at.y + direction.dy === adjacent.grid.y)!;
       return act.melee(dir.key);
     };
-    const contact = incomingDamage(view, at, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona) });
-    if (contact.damage < player.hp * descentPolicy(lastPersona).risk && contact.status === 0) {
+    const contact = incomingDamage(view, at, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
+    const approaching = incomingDamage(view, at, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
+    if (hungry(view) && pack.food[0] !== undefined && contact.damage === 0 && contact.status === 0) return act.eat(pack.food[0].handle);
+    if (adjacentFights[0]?.forecast.viable === true && contact.damage < player.hp * descentPolicy(lastPersona).risk && contact.status === 0) {
       const command = attack();
       if (command !== null) return command;
+    }
+    if (adjacent !== undefined || contact.damage > 0 || contact.status > 0 || approaching.damage > player.hp * descentPolicy(lastPersona).risk || approaching.status > 0) {
+      const exits = knownStairs(view, terrain).filter((grid) => {
+        if (!canStair(view, terrain.isDownStair(view.cell(grid.x, grid.y)?.feat ?? -1))) return false;
+        if (steps(at, grid) === 0) return true;
+        const route = checkedRoute(view, [grid], true);
+        return route !== null && forecastWalk(frame, route, true).viable;
+      });
+      const escape = recoveryStair(view, act, exits);
+      if (escape !== null) return escape;
+      const routes = DIRECTIONS.map((dir) => ({ dir, to: { x: at.x + dir.dx, y: at.y + dir.dy } }))
+        .filter(({ to }) => isWalkable(view, terrain, to) && !standingOnHarm(view, terrain, to) && !monsterSnapshot(view).some((monster) => monster.visible && key(monster.grid) === key(to)))
+        .map((route) => ({ ...route, forecast: forecastWalk(frame, [route.to]) }))
+        .filter(({ forecast }) => forecast.viable && forecast.escaped)
+        .sort((a, b) => a.forecast.loss.upper - b.forecast.loss.upper);
+      if (routes[0] !== undefined) return act.move(routes[0].dir.key);
+      const spell = pack.escapeSpell[0];
+      if (spell !== undefined && forecastPhase(frame, spell.fail / 100).viable) return act.cast(spell.sidx);
+      const phase = canRead(view) ? pack.phase[0] : undefined;
+      if (phase !== undefined && forecastPhase(frame, 0).viable) return act.read(phase.handle);
+      const teleport = canRead(view) ? pack.teleport.find((item) => /Scroll/i.test(item.name)) : undefined;
+      if (teleport !== undefined) return act.read(teleport.handle);
+      const command = attack();
+      if (command !== null) return command;
+      if (phase !== undefined) return act.read(phase.handle);
+      log("recovery cannot break contact; no usable attack or escape exists.");
+      return act.hold();
     }
     const enter = (grid: Loc): boolean => {
       if (key(grid) === key(at)) return true;
       const cell = view.cell(grid.x, grid.y);
-      if (cell === null || emergencyBlocked.get(key(grid)) === `${String(cell.feat)}:${String(cell.monster)}`) return false;
+      if (cell === null || emergencyBlocked.get(key(grid))?.signature === `${String(cell.feat)}:${String(cell.monster)}`) return false;
       return (isRoutable(view, terrain, grid) || diggableObstacle(view, grid)) && cell.monster <= 0 && !standingOnHarm(view, terrain, grid);
     };
-    const goals = [...frontiers(view, terrain), ...knownStairs(view, terrain), ...obstacleFrontiers(view)].filter((grid) => key(grid) !== key(at) && enter(grid));
+    const probe = (): AgentCommand | null => {
+      if (!frontiers(view, terrain).some((grid) => key(grid) === key(at))) return null;
+      const direction = DIRECTIONS.find((dir) => {
+        const to = { x: at.x + dir.dx, y: at.y + dir.dy };
+        const cell = view.cell(to.x, to.y);
+        return cell?.known === false && emergencyBlocked.get(key(to))?.signature !== `${String(cell.feat)}:${String(cell.monster)}` &&
+          incomingDamage(view, to, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona) }).damage < player.hp;
+      });
+      if (direction === undefined) return null;
+      const to = { x: at.x + direction.dx, y: at.y + direction.dy };
+      const cell = view.cell(to.x, to.y)!;
+      emergencyAttempt = { depth: player.depth, level, turn: view.turn(), from: key(at), to, feat: cell.feat, monster: cell.monster };
+      log(`recovery probes unexplored ground at ${key(to)}.`);
+      return act.move(direction.key);
+    };
+    if (emergencyTarget !== null && key(emergencyTarget) === key(at)) {
+      const command = probe();
+      if (command !== null) return command;
+    }
+    const stairs = knownStairs(view, terrain);
+    const goals = (player.depth === 0 && stairs.length > 0 ? stairs : [...frontiers(view, terrain), ...stairs, ...obstacleFrontiers(view)]).filter((grid) => key(grid) !== key(at) && enter(grid) && !emergencyAbandoned.has(key(grid)));
+    const visits = (emergencyVisits.get(key(at)) ?? 0) + 1;
+    emergencyVisits.set(key(at), visits);
+    if (emergencyTarget !== null && (visits > stuckThresholds(lastPersona).repeat || !goals.some((grid) => key(grid) === key(emergencyTarget!)))) {
+      emergencyAbandoned.set(key(emergencyTarget), view.turn());
+      log(`recovery abandons ${key(emergencyTarget)} after repeated visits or a changed destination.`);
+      emergencyTarget = null;
+      emergencyVisits.clear();
+    }
     if (goals.length > 0) {
-      const field = flowFrom({ goals, canEnter: enter });
+      let field = flowFrom({ goals: emergencyTarget === null ? goals.filter((grid) => !emergencyAbandoned.has(key(grid))) : [emergencyTarget], canEnter: enter });
+      if (emergencyTarget !== null && !Number.isFinite(field.distance(at))) {
+        emergencyAbandoned.set(key(emergencyTarget), view.turn());
+        emergencyTarget = null;
+        field = flowFrom({ goals: goals.filter((grid) => !emergencyAbandoned.has(key(grid))), canEnter: enter });
+      }
+      if (emergencyTarget === null && Number.isFinite(field.distance(at))) {
+        let target = at;
+        for (let distance = field.distance(at); distance > 0; distance -= 1) {
+          const next = stepDown(field, target, enter);
+          if (next === null) break;
+          target = { x: target.x + next.dx, y: target.y + next.dy };
+        }
+        emergencyTarget = target;
+        emergencyVisits.clear();
+        log(`recovery commits to ${key(target)}.`);
+        field = flowFrom({ goals: [target], canEnter: enter });
+      }
       const direction = stepDown(field, at, (grid) => enter(grid) && incomingDamage(view, grid, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona) }).damage < player.hp);
       if (direction !== null) {
         const to = { x: at.x + direction.dx, y: at.y + direction.dy };
@@ -377,41 +467,22 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         return diggableObstacle(view, to) ? act.tunnel(direction.key) : isClosedDoor(view, terrain, to) ? act.open(direction.key) : act.move(direction.key);
       }
     }
-    if (frontiers(view, terrain).some((grid) => key(grid) === key(at))) {
-      const direction = DIRECTIONS.find((dir) => {
-        const to = { x: at.x + dir.dx, y: at.y + dir.dy };
-        const cell = view.cell(to.x, to.y);
-        return cell?.known === false && emergencyBlocked.get(key(to)) !== `${String(cell.feat)}:${String(cell.monster)}` &&
-          incomingDamage(view, to, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona) }).damage < player.hp;
-      });
-      if (direction !== undefined) {
-        const to = { x: at.x + direction.dx, y: at.y + direction.dy };
-        const cell = view.cell(to.x, to.y)!;
-        emergencyAttempt = { depth: player.depth, level, turn: view.turn(), from: key(at), to, feat: cell.feat, monster: cell.monster };
-        log(`recovery probes unexplored ground at ${key(to)}.`);
-        return act.move(direction.key);
-      }
-    }
+    const probing = probe();
+    if (probing !== null) return probing;
     const stock = supplies(view);
     if (canRead(view)) {
       const descent = view.inventory().find((item) => /Deep Descent/i.test(shownName(item) ?? ""));
       if (descent !== undefined && stock.workingLight) return act.read(descent.handle);
     }
-    const direction = DIRECTIONS.find((dir) => {
-      const grid = { x: at.x + dir.dx, y: at.y + dir.dy };
-      return enter(grid) && incomingDamage(view, grid, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona) }).damage < player.hp;
-    });
-    if (direction !== undefined) {
-      const to = { x: at.x + direction.dx, y: at.y + direction.dy };
-      const cell = view.cell(to.x, to.y)!;
-      emergencyAttempt = { depth: player.depth, level, turn: view.turn(), from: key(at), to, feat: cell.feat, monster: cell.monster };
-      return diggableObstacle(view, to) ? act.tunnel(direction.key) : isClosedDoor(view, terrain, to) ? act.open(direction.key) : act.move(direction.key);
-    }
     const command = attack();
     if (command !== null) return command;
-    if (player.status.poisoned === 0 && player.status.cut === 0 && terrain.isDownStair(here?.feat ?? -1)) return act.descend();
+    if (player.status.poisoned === 0 && player.status.cut === 0 && shallowDiveChecks(view, lastPersona).statusReady && terrain.isDownStair(here?.feat ?? -1) && canStair(view, true)) return act.descend();
     log("recovery has no reachable frontier, stair, attack or survivable step; the character spends time waiting for an opening.");
     return terrain.isShopEntrance(here?.feat ?? -1) || recoverySafe(view) && !monsterSnapshot(view).some((monster) => monster.visible && !monster.asleep) ? act.rest(2) : act.hold();
+  }
+
+  function turnsPerRecovery(view: AgentView): number {
+    return turnsPerAction(playerSnapshot(view).speed) * stuckThresholds(lastPersona).repeat;
   }
 
   function recoveryStair(view: AgentView, act: AgentActions, goals: readonly Loc[]): AgentCommand | null {

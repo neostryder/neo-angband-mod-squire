@@ -631,7 +631,6 @@ exports[`decision context > compiles a unique in view into layers and the same s
     "untried": [
       "fight",
       "retreat",
-      "descend",
     ],
   },
   "tactical": {
