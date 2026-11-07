@@ -1,3 +1,4 @@
+import { playerSnapshot, monsterSnapshot, snapshotEpoch, snapshotIdentity } from "../map.js";
 import type { AgentView, MonsterView, PlayerView } from "../host-adapter.js";
 import { key, neighbours, steps, type Loc } from "../grid.js";
 import type { Terrain } from "../terrain.js";
@@ -114,7 +115,7 @@ export function harmlessKind(monster: MonsterView, view: AgentView, contacts = 0
     if (learned.upper > 0) return false;
     if (!learned.uncertain) return true;
   }
-  if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
+  if (playerSnapshot(view).depth !== 0 || /\(\d+d\d+/.test(text)) return false;
   return contacts >= HARMLESS_CONTACTS || monster.raceFlags.includes("RAND_25") || monster.raceFlags.includes("RAND_50");
 }
 
@@ -263,7 +264,7 @@ export function meleeMoments(view: AgentView, monster: MonsterView, quantile = 0
   if (monster.raceFlags.includes("NEVER_BLOW")) return { mean: 0, variance: 0, upper: 0, plausible: 0, uncertain: false };
   const blows = monster.knownCombat?.blows;
   if (blows === undefined || blows.length === 0) return null;
-  const player = view.player();
+  const player = playerSnapshot(view);
   const stats = view.simulateLoadout?.({}) ?? null;
   let mean = 0;
   let variance = 0;
@@ -350,7 +351,7 @@ export function resistedDamage(damage: number, attack: string, player: PlayerVie
 }
 
 function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>, observed?: ReadonlyMap<string, number>, expectation = false, quantile?: number): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
-  const player = view.player();
+  const player = playerSnapshot(view);
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const weak = breederBlow(view, monster, observed);
   const lowBreeder = monster.level <= 2 && monster.raceFlags.includes("MULTIPLY") && !monster.raceFlags.includes("UNIQUE") && monster.spellFlags.length === 0 && !/poison|acid|paraly|confus|hold|drain|may breathe|may cast spells/i.test(text);
@@ -391,7 +392,7 @@ function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<No
 function rangedPath(view: AgentView, from: Loc, to: Loc, bolt: boolean, monsters: readonly MonsterView[], openedDoor?: Loc): { clear: boolean; uncertain: boolean } {
   const distance = steps(from, to);
   const projection = view.projectionPath;
-  if (projection !== undefined && key(to) === key(view.player().grid) && openedDoor === undefined) {
+  if (projection !== undefined && key(to) === key(playerSnapshot(view).grid) && openedDoor === undefined) {
     const grids = projection.call(view, from).grids;
     const end = grids.findIndex((grid) => key(grid) === key(from));
     if (end < 0) return { clear: false, uncertain: false };
@@ -423,34 +424,125 @@ interface ReachPositions extends Map<string, number> {
   incomplete?: true;
 }
 
-/** Only reachable attack positions count; a closed door costs an opening action. */
-function attackPositions(view: AgentView, monster: MonsterView, at: Loc, actions: number, terrain: Terrain | undefined, monsters: readonly MonsterView[], openedDoor?: Loc, ranged = false, priorActions = 0): ReachPositions {
-  const available = actions + priorActions;
+interface ReachMap {
+  readonly costs: Map<string, number>;
+  readonly parents: Map<string, string>;
+  readonly limit: number;
+  readonly incomplete: boolean;
+}
+
+interface ThreatSnapshot {
+  readonly turn: number;
+  readonly epoch: number;
+  readonly player: PlayerView;
+  readonly monsters: readonly MonsterView[];
+  readonly reach: Map<string, ReachMap>;
+  readonly damage: Map<string, DamageEstimate>;
+  readonly exposure: Map<string, ExposureForecast>;
+  readonly attacks: Map<string, ReturnType<typeof attackFacts>>;
+  readonly creatureIds: WeakMap<MonsterView, number>;
+  readonly creatures: Map<string, number>;
+}
+
+const threatSnapshots = new WeakMap<object, ThreatSnapshot>();
+const identities = new WeakMap<object, number>();
+let nextIdentity = 0;
+
+function identity(value: object | undefined): number {
+  if (value === undefined) return 0;
+  let id = identities.get(value);
+  if (id === undefined) { id = ++nextIdentity; identities.set(value, id); }
+  return id;
+}
+
+function threatSnapshot(view: AgentView): ThreatSnapshot {
+  const player = playerSnapshot(view);
+  const monsters = monsterSnapshot(view);
+  const token = snapshotIdentity(view);
+  let snapshot = threatSnapshots.get(token);
+  if (snapshot === undefined || snapshot.turn !== view.turn() || snapshot.epoch !== snapshotEpoch() || key(snapshot.player.grid) !== key(player.grid) || snapshot.monsters !== monsters) {
+    snapshot = { turn: view.turn(), epoch: snapshotEpoch(), player, monsters, reach: new Map(), damage: new Map(), exposure: new Map(), attacks: new Map(), creatureIds: new WeakMap(), creatures: new Map() };
+    threatSnapshots.set(token, snapshot);
+  }
+  return snapshot;
+}
+
+function creatureId(snapshot: ThreatSnapshot, monster: MonsterView): number {
+  let id = snapshot.creatureIds.get(monster);
+  if (id === undefined) {
+    const signature = JSON.stringify(monster);
+    id = snapshot.creatures.get(signature);
+    if (id === undefined) { id = snapshot.creatures.size + 1; snapshot.creatures.set(signature, id); }
+    snapshot.creatureIds.set(monster, id);
+  }
+  return id;
+}
+
+/** The cap keeps old remembered positions from flooding the whole floor. */
+function attackPositions(view: AgentView, monster: MonsterView, limit: number, terrain: Terrain | undefined, monsters: readonly MonsterView[], openedDoor: Loc | undefined, ignoreBodies: boolean, blocked?: Loc): ReachMap {
   const costs = new Map<string, number>([[key(monster.grid), 0]]);
+  const parents = new Map<string, string>();
   const queue: { at: Loc; cost: number }[] = [{ at: monster.grid, cost: 0 }];
-  const positions: ReachPositions = new Map<string, number>();
-  for (let head = 0; head < queue.length && head < 4000; head += 1) {
+  const occupied = new Set(monsters.filter((m) => m.id !== monster.id).map((m) => key(m.grid)));
+  const fixed = neverMoves(view, monster);
+  const movesBodies = monster.raceFlags.some((flag) => flag === "MOVE_BODY" || flag === "KILL_BODY");
+  const destroys = monster.raceFlags.some((flag) => flag === "PASS_WALL" || flag === "KILL_WALL" || flag === "SMASH_WALL");
+  let incomplete = false;
+  for (let head = 0; head < queue.length; head += 1) {
     const here = queue[head]!;
-    if (ranged || steps(here.at, at) === 1) positions.set(key(here.at), Math.max(positions.get(key(here.at)) ?? 0, Math.min(actions, available - here.cost)));
-    if (neverMoves(view, monster) || here.cost >= available - 1) continue;
+    if (fixed) continue;
     for (const next of neighbours(here.at)) {
-      if (key(next) === key(at) || priorActions === 0 && !monster.raceFlags.some((flag) => flag === "MOVE_BODY" || flag === "KILL_BODY") && monsters.some((m) => m.id !== monster.id && key(m.grid) === key(next))) continue;
+      const nextKey = key(next);
+      if (blocked !== undefined && nextKey === key(blocked) || !ignoreBodies && !movesBodies && occupied.has(nextKey)) continue;
       const cell = view.cell(next.x, next.y);
       if (cell === null) continue;
       let cost = here.cost + 1;
       if (cell.known && !cell.passable && (openedDoor === undefined || key(openedDoor) !== key(next))) {
-        const destroys = monster.raceFlags.some((flag) => flag === "PASS_WALL" || flag === "KILL_WALL" || flag === "SMASH_WALL");
         if (!destroys && !(terrain?.isClosedDoor(cell.feat) && monster.raceFlags.includes("BASH_DOOR"))) {
           if (terrain?.isClosedDoor(cell.feat) && monster.raceFlags.includes("OPEN_DOOR")) cost += 1;
           else continue;
         }
       }
-      if (cost >= available || cost >= (costs.get(key(next)) ?? Infinity)) continue;
-      costs.set(key(next), cost);
+      if (cost >= (costs.get(nextKey) ?? Infinity)) continue;
+      if (cost > limit) { incomplete = true; continue; }
+      costs.set(nextKey, cost);
+      parents.set(nextKey, key(here.at));
       queue.push({ at: next, cost });
     }
   }
-  if (queue.length > 4000) {
+  return { costs, parents, limit, incomplete };
+}
+
+/** Most grids need eight distance lookups; only paths crossing the target need a detour search. */
+function reachableAttacks(view: AgentView, monster: MonsterView, at: Loc, actions: number, terrain: Terrain | undefined, monsters: readonly MonsterView[], openedDoor?: Loc, ranged = false, priorActions = 0): ReachPositions {
+  const available = actions + priorActions;
+  if (!ranged && steps(monster.grid, at) > available) return new Map();
+  const snapshot = threatSnapshot(view);
+  const signature = `${creatureId(snapshot, monster)}:${identity(terrain)}:${monsters.map((m) => `${m.id}@${key(m.grid)}`).join(";")}:${openedDoor === undefined ? "" : key(openedDoor)}:${priorActions > 0}`;
+  const limit = Math.min(12, Math.max(available - 1, monsterActions(monster, snapshot.player, 4) - 1));
+  const reach = (blocked?: Loc) => {
+    const cacheKey = `${signature}:${blocked === undefined ? "" : key(blocked)}`;
+    let kept = snapshot.reach.get(cacheKey);
+    if (kept === undefined || kept.limit < limit) {
+      kept = attackPositions(view, monster, limit, terrain, monsters, openedDoor, priorActions > 0, blocked);
+      snapshot.reach.set(cacheKey, kept);
+    }
+    return kept;
+  };
+  let map = reach();
+  const target = key(at);
+  const slots = ranged ? [...map.costs.keys()] : neighbours(at).map(key);
+  const crossesTarget = (slot: string) => {
+    for (let parent = map.parents.get(slot); parent !== undefined; parent = map.parents.get(parent)) if (parent === target) return true;
+    return false;
+  };
+  if (slots.some((slot) => (map.costs.get(slot) ?? Infinity) < available && crossesTarget(slot))) map = reach(at);
+  const positions: ReachPositions = new Map();
+  for (const slot of slots) {
+    const cost = map.costs.get(slot);
+    if ((slot !== target || key(monster.grid) === target) && cost !== undefined && cost < available) positions.set(slot, Math.min(actions, available - cost));
+  }
+  if (available - 1 > map.limit && map.incomplete) {
     positions.incomplete = true;
     for (const near of neighbours(at)) {
       const cell = view.cell(near.x, near.y);
@@ -461,9 +553,36 @@ function attackPositions(view: AgentView, monster: MonsterView, at: Loc, actions
 }
 
 /** The ceiling counts HP damage separately from disabling effects and missing facts. */
-export function incomingDamage(view: AgentView, at: Loc = view.player().grid, actions = 1, terrain?: Terrain, facts: ThreatFacts = {}): DamageEstimate {
-  const player = view.player();
-  const monsters = facts.monsters ?? view.monsters().filter((m) => m.visible);
+export function incomingDamage(view: AgentView, at: Loc = playerSnapshot(view).grid, actions = 1, terrain?: Terrain, facts: ThreatFacts = {}): DamageEstimate {
+  return damageField(view, actions, terrain, facts).at(at);
+}
+
+/** Route floods share the same threat facts and reach maps for all their grids. */
+export function damageField(view: AgentView, actions: number, terrain?: Terrain, facts: ThreatFacts = {}): { at: (grid: Loc) => DamageEstimate } {
+  const snapshot = threatSnapshot(view);
+  const monsters = facts.monsters ?? snapshot.monsters.filter((m) => m.visible);
+  const signature = threatSignature(view, actions, terrain, facts);
+  return { at: (at) => {
+    const cacheKey = `${key(at)}:${signature}`;
+    let damage = snapshot.damage.get(cacheKey);
+    if (damage === undefined) {
+      damage = evaluateDamage(view, at, actions, terrain, { ...facts, monsters });
+      snapshot.damage.set(cacheKey, damage);
+    }
+    return damage;
+  } };
+}
+
+function threatSignature(view: AgentView, actions: number, terrain: Terrain | undefined, facts: ThreatFacts): string {
+  const snapshot = threatSnapshot(view);
+  const monsters = facts.monsters ?? monsterSnapshot(view).filter((m) => m.visible);
+  return JSON.stringify([actions, identity(terrain), identity(facts.energy), monsters.map((m) => creatureId(snapshot, m)),
+    [...facts.observedDamage ?? []], [...facts.lastSeen ?? []], facts.openedDoor, facts.unseenHit, facts.unseenDamage, facts.creaturesOnly, facts.expectation, facts.quantile]);
+}
+
+function evaluateDamage(view: AgentView, at: Loc, actions: number, terrain: Terrain | undefined, facts: ThreatFacts): DamageEstimate {
+  const player = playerSnapshot(view);
+  const monsters = facts.monsters ?? monsterSnapshot(view).filter((m) => m.visible);
   const occupied = new Map<string, number>();
   const ticks = Math.ceil(actions * 10 / energyBounds(player.speed, facts.energy).low);
   const statusDamage = facts.creaturesOnly === true ? 0 : ticks * ((player.status.poisoned > 0 ? 1 : 0) + (player.status.cut > 200 ? 3 : player.status.cut > 100 ? 2 : player.status.cut > 0 ? 1 : 0) + starvationDamage(view));
@@ -474,22 +593,31 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
   let incomplete = false;
   if (monsters.length === 0) return { damage, status, uncertainty };
   const stats = view.simulateLoadout?.({}) ?? null;
+  const snapshot = threatSnapshot(view);
+  const observed = JSON.stringify([...facts.observedDamage ?? []]);
   const melee: { positions: Map<string, number>; damage: number }[] = [];
   for (const monster of monsters) {
     if (monster.visible && steps(monster.grid, at) > 20) continue;
     const count = monsterActions(monster, player, actions, facts.energy);
     const seen = monster.visible ? undefined : facts.lastSeen?.get(monster.id);
     const prior = seen === undefined ? 0 : Math.max(0, Math.ceil((view.turn() - seen) * energyBounds(monster.speed, facts.energy).high / 100));
-    const read = attackFacts(view, monster, stats, facts.observedDamage, facts.expectation, facts.quantile);
+    const attackKey = `${creatureId(snapshot, monster)}:${facts.expectation}:${facts.quantile}:${observed}`;
+    let read = snapshot.attacks.get(attackKey);
+    if (read === undefined) {
+      read = attackFacts(view, monster, stats, facts.observedDamage, facts.expectation, facts.quantile);
+      snapshot.attacks.set(attackKey, read);
+    }
+    /* Distant sleepers and fixed melee creatures cannot reach this route segment. */
+    if (read.ranged === 0 && (steps(monster.grid, at) > count + prior || neverMoves(view, monster) && steps(monster.grid, at) > 1)) continue;
     const phase = facts.expectation === true ? actions * energyBounds(monster.speed, facts.energy).high / energyBounds(player.speed, facts.energy).low / count : 1;
-    const positions = attackPositions(view, monster, at, count, terrain, monsters, facts.openedDoor, false, prior);
+    const positions = reachableAttacks(view, monster, at, count, terrain, monsters, facts.openedDoor, false, prior);
     incomplete ||= positions.incomplete === true;
     const meleeDamage = Math.max(0, ...positions.values()) * read.melee * phase;
     const path = rangedPath(view, monster.grid, at, read.bolt, monsters, facts.openedDoor);
     let spellDamage = path.clear ? count * read.ranged * phase : 0;
     let rangedStatus = path.clear;
     if (read.ranged > 0 || read.status > 0) {
-      const reachable = attackPositions(view, monster, at, count, terrain, monsters, facts.openedDoor, true, prior);
+      const reachable = reachableAttacks(view, monster, at, count, terrain, monsters, facts.openedDoor, true, prior);
       if (reachable.incomplete === true) {
         incomplete = true;
         spellDamage = Math.max(spellDamage, count * read.ranged * phase);
@@ -541,10 +669,10 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
 
 /** A perception omission clears a memory only when every reachable position is visibly empty. */
 export function rememberedCleared(view: AgentView, monster: MonsterView, lastSeen: number, terrain?: Terrain, energy?: SpeedEnergy): boolean {
-  if (view.player().status.blind > 0 || view.knownLevel?.() === undefined || view.knownLevel?.() === null) return false;
-  if (view.monsters().some((m) => m.visible && m.id === monster.id)) return false;
+  if (playerSnapshot(view).status.blind > 0 || view.knownLevel?.() === undefined || view.knownLevel?.() === null) return false;
+  if (monsterSnapshot(view).some((m) => m.visible && m.id === monster.id)) return false;
   const elapsed = Math.max(0, Math.ceil((view.turn() - lastSeen) * energyBounds(monster.speed, energy).high / 100));
-  const positions = attackPositions(view, monster, view.player().grid, 1, terrain, view.monsters(), undefined, true, elapsed);
+  const positions = reachableAttacks(view, monster, playerSnapshot(view).grid, 1, terrain, monsterSnapshot(view), undefined, true, elapsed);
   if (positions.incomplete === true || positions.size === 0 || positions.size >= 4000) return false;
   return [...positions.keys()].every((position) => {
     const [x, y] = position.split(",").map(Number);
@@ -563,7 +691,18 @@ export interface ExposureForecast {
 }
 
 /** The scenario uses a damage quantile; missing capabilities never become absolute bounds. */
-export function forecastExposure(view: AgentView, at: Loc = view.player().grid, actions = 1, terrain?: Terrain, facts: ThreatFacts = {}): ExposureForecast {
+export function forecastExposure(view: AgentView, at: Loc = playerSnapshot(view).grid, actions = 1, terrain?: Terrain, facts: ThreatFacts = {}): ExposureForecast {
+  const snapshot = threatSnapshot(view);
+  const cacheKey = `${key(at)}:${threatSignature(view, actions, terrain, facts)}`;
+  let exposure = snapshot.exposure.get(cacheKey);
+  if (exposure === undefined) {
+    exposure = evaluateExposure(view, at, actions, terrain, facts);
+    snapshot.exposure.set(cacheKey, exposure);
+  }
+  return exposure;
+}
+
+function evaluateExposure(view: AgentView, at: Loc, actions: number, terrain: Terrain | undefined, facts: ThreatFacts): ExposureForecast {
   const { quantile: _quantile, ...ceilingFacts } = facts;
   const worst = incomingDamage(view, at, actions, terrain, ceilingFacts);
   const upper = incomingDamage(view, at, actions, terrain, { ...facts, quantile: facts.quantile ?? riskQuantile() });
@@ -571,7 +710,7 @@ export function forecastExposure(view: AgentView, at: Loc = view.player().grid, 
   const unknown = new Set<string>();
   if (terrain !== undefined && standingOnHarm(view, terrain, at)) unknown.add("terrain-damage");
   if (upper.incomplete === true || mean.incomplete === true) unknown.add("position-budget");
-  for (const monster of facts.monsters ?? view.monsters().filter((m) => m.visible)) {
+  for (const monster of facts.monsters ?? monsterSnapshot(view).filter((m) => m.visible)) {
     if (meleeMoments(view, monster)?.uncertain !== false && !monster.raceFlags.includes("NEVER_BLOW")) unknown.add(/\(\d+d\d+/.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "") ? "blow-mechanics" : "blows");
     const flags = knownSpellFlags(view, monster);
     if (flags.length > 0 && (monster.knownCombat?.spellFrequency === null || monster.knownCombat?.spellFrequency === undefined)) unknown.add("casting-rate");
@@ -584,19 +723,19 @@ export function forecastExposure(view: AgentView, at: Loc = view.player().grid, 
   return { mean: mean.damage, upper: upper.damage, worst: unknown.size > 0 ? null : worst.damage, status: upper.status, unknown: [...unknown] };
 }
 
-function monstersWithTimedEffects(view: AgentView, monsters: readonly MonsterView[] = view.monsters()): boolean {
-  const status = view.player().status;
+function monstersWithTimedEffects(view: AgentView, monsters: readonly MonsterView[] = monsterSnapshot(view)): boolean {
+  const status = playerSnapshot(view).status;
   return status.fast > 0 || status.sprint > 0 || status.resAcid > 0 || status.resElec > 0 || status.resFire > 0 || status.resCold > 0 || status.resPois > 0 ||
     monsters.some((monster) => monster.knownCombat?.status.some((effect) => effect === "hasted" || effect === "slowed") === true);
 }
 
-export function threatWindow(view: AgentView, at: Loc = view.player().grid, terrain?: Terrain, facts: ThreatFacts = {}): { one: DamageEstimate; two: DamageEstimate } {
+export function threatWindow(view: AgentView, at: Loc = playerSnapshot(view).grid, terrain?: Terrain, facts: ThreatFacts = {}): { one: DamageEstimate; two: DamageEstimate } {
   return { one: incomingDamage(view, at, 1, terrain, facts), two: incomingDamage(view, at, 2, terrain, facts) };
 }
 
 /** A possible kill improves attack comparisons, while a missed attack keeps its danger. */
 export function effectiveAttack(view: AgentView, target: MonsterView, spell?: CastableSpell): { damage: number; failure: number } {
-  const player = view.player();
+  const player = playerSnapshot(view);
   if (spell !== undefined) {
     const info = view.spellInfo?.(spell.sidx);
     if (info === undefined || info === null || !info.canCastNow) return { damage: 0, failure: 1 };
@@ -692,7 +831,7 @@ export function inLineOfFire(view: AgentView, from: Loc, to: Loc): boolean {
 
 export function clearShot(view: AgentView, target: MonsterView): boolean {
   const { projectionPath } = view;
-  if (projectionPath === undefined) return rangedPath(view, view.player().grid, target.grid, true, view.monsters().filter((m) => m.visible)).clear;
+  if (projectionPath === undefined) return rangedPath(view, playerSnapshot(view).grid, target.grid, true, monsterSnapshot(view).filter((m) => m.visible)).clear;
   const path = projectionPath.call(view, target.grid).grids;
   const end = path.findIndex((grid) => same(grid, target.grid));
   if (end < 0) return false;
@@ -711,7 +850,7 @@ export function bestBallAim(view: AgentView, monsters: readonly MonsterView[], t
     const at = monster.grid;
     if (!clearShot(view, monster)) continue;
     const grids = blastArea.call(view, at, radius, 0).grids;
-    if (grids.some((grid) => same(grid, view.player().grid))) continue;
+    if (grids.some((grid) => same(grid, playerSnapshot(view).grid))) continue;
     const caught = monsters.filter((m) => m.visible && grids.some((grid) => same(grid, m.grid))).length;
     if (caught > count && caught > 0) {
       best = at;

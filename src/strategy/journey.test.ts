@@ -6,6 +6,7 @@ import { newProgress } from "../progress.js";
 import { createGoalPlanner, type Goal, type Offer } from "../brain/goals.js";
 import { candidateAims } from "./aims.js";
 import { createJourney } from "./journey.js";
+import { invalidateHazards } from "../map.js";
 
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
@@ -665,6 +666,7 @@ describe("journey descent clock", () => {
     expect(journey.canExplore(view, true)).toBe(false);
     expect(journey.checkedRoute(view, [{ x: 8, y: 1 }])).toBeNull();
     hidden = false;
+    invalidateHazards();
     expect(journey.canExplore(view, true)).toBe(true);
   });
 

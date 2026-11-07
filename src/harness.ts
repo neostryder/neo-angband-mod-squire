@@ -530,6 +530,7 @@ export function world(spec: WorldSpec): World {
       trapSpec = next;
     },
     reveal(at: Loc): void {
+      invalidateHazards();
       const square = squares[at.y]?.[at.x];
       if (square !== undefined) square.known = true;
     },

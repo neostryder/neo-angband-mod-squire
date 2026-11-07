@@ -22,7 +22,7 @@ import type { SquireCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
 import { createTravelWatch, createWatcher, type TravelMode, type TravelWatch, type Watcher } from "../disturb.js";
 import { DIRECTIONS, directionToward, key, neighbours, steps, type Loc } from "../grid.js";
-import { besideStationaryThreat, neverMoves, besideParalysingGazer, paralysingGazer, frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownCount, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
+import { shareSnapshot, besideStationaryThreat, neverMoves, besideParalysingGazer, paralysingGazer, frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownCount, knownDownStairs, knownStairs, standingOnHarm } from "../map.js";
 import { flowFrom, stepAway } from "../flow.js";
 import { newProgress, type Progress } from "../progress.js";
 import { awakeInSight, inSight, pickTarget } from "../threat.js";
@@ -39,7 +39,7 @@ import { proceduralPick } from "../knight.js";
 import { attackSpellsOutOfMana, canRead, deviceFail, unseenAttacks, detectionSource, hungry, readPack, starvationDamage, studyable, unknownFlavours, unseenSources, type Pack } from "./pack.js";
 import { gearCandidates } from "../gear/compare.js";
 import type { Persona } from "../persona/persona.js";
-import { forecastExposure, riskQuantile } from "./threat-model.js";
+import { damageField, forecastExposure, riskQuantile } from "./threat-model.js";
 import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling } from "../persona/blend.js";
 import { fleesFromNew, forget, mustPickUp, nudgePosition, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
@@ -791,14 +791,32 @@ function escapeRoute(s: Situation, terrain: Terrain, goals: readonly Loc[]): Esc
   goals = goals.filter((at) => !terrain.isDownStair(s.view.cell(at.x, at.y)?.feat ?? -1) || player.depth === 0 ||
     trapped && key(at) === key(player.grid) ||
     !missingPreparation(s.view, player.depth + 1, null, s.depthMinutes, s.earlyStair, stairsUnderfoot(s, terrain)).some((gap) => gap.severe && (gap.kind === "level" || gap.kind === "hp")));
+  if (goals.length === 0) return null;
   if (goals.some((at) => key(at) === key(player.grid))) return { at: player.grid, route: [], damage: 0, down: terrain.isDownStair(s.view.cell(player.grid.x, player.grid.y)!.feat) };
   if (player.status.confused > 0) return null;
   /* Poison and bleeding cost the same on every square. Adding them at each step
    * counted them over and over, and no first step ever looked better than
    * standing still, so a poisoned character with nothing in sight never found
    * the stairs. They are counted once, for the whole walk. */
-  const ailment = (actions: number) => incomingDamage(s.view, player.grid, actions, terrain, { monsters: [], ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }) }).damage;
-  const threat = (at: Loc, actions: number, door?: Loc) => Math.max(0, damageFor(s, at, actions, terrain, door).damage - ailment(actions));
+  const ailments = new Map<number, number>();
+  const fields = new Map<string, ReturnType<typeof damageField>>();
+  const ailment = (actions: number) => {
+    let damage = ailments.get(actions);
+    if (damage === undefined) {
+      damage = incomingDamage(s.view, player.grid, actions, terrain, { monsters: [], ...(s.speedEnergy === undefined ? {} : { energy: s.speedEnergy }) }).damage;
+      ailments.set(actions, damage);
+    }
+    return damage;
+  };
+  const threat = (at: Loc, actions: number, door?: Loc) => {
+    const cacheKey = `${actions}:${door === undefined ? "" : key(door)}`;
+    let field = fields.get(cacheKey);
+    if (field === undefined) {
+      field = damageField(s.view, actions, terrain, { ...combatContext(s).facts, ...(door === undefined ? {} : { openedDoor: door }) });
+      fields.set(cacheKey, field);
+    }
+    return Math.max(0, field.at(at).damage - ailment(actions));
+  };
   const queue: { at: Loc; elapsed: number; first: Loc; damage: number; route: readonly Loc[] }[] = [{ at: player.grid, elapsed: 0, first: player.grid, damage: 0, route: [] }];
   const visited = new Map<string, number>([[key(player.grid), 0]]);
   for (let head = 0; head < queue.length && head < 4000; head += 1) {
@@ -3365,6 +3383,7 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
       const monsters = source.monsters();
       /* Every safety check in this decision must use the same observed state. */
       view = { ...source, player: () => player, inventory: () => inventory, equipment: () => equipment, monsters: () => monsters };
+      shareSnapshot(source, view);
       observeLevel(view);
       if (player.depth > 0) visitedShops.clear();
       if (player.dead || player.winner) return { handBack: player.dead ? "The character has died." : "The character has won." };

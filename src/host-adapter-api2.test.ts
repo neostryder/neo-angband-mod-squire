@@ -337,6 +337,18 @@ function records(): Record<string, readonly JsonRecord[]> {
 }
 
 describe("viewWorld under API 2", () => {
+  it("reuses player and monster objects within one immutable view", async () => {
+    const api = fakeApi({ world: knownFrom(scene()), records: records() }).api;
+    const first = await viewWorld(api);
+    const second = await viewWorld(api);
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first!.player()).toBe(first!.player());
+    expect(first!.monsters()).toBe(first!.monsters());
+    expect(second!.player()).not.toBe(first!.player());
+    expect(second!.monsters()).not.toBe(first!.monsters());
+  });
+
   it("gives the same player, gear, target, shops, spells, turn and map size as API 1", async () => {
     const w = scene();
     const one = viewWorld1(api1Host(w));
