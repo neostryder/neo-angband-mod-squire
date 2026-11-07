@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { suppliedWorld, world, type WorldSpec } from "../harness.js";
+import { FEAT, suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { attackOptions } from "./combat-kit.js";
 import { createGoalPlanner } from "./goals.js";
+import { DIRECTIONS } from "../grid.js";
 
 function replay(spec: WorldSpec) {
   const w = suppliedWorld(structuredClone(spec));
@@ -81,6 +82,68 @@ describe("forecast decision integration", () => {
 });
 
 describe("synthetic decision replay", () => {
+  it.each([0, 1])("leaves the harmless town crowd behind at DL%i", (depth) => {
+    const w = suppliedWorld({ map: ["############", "#..........#", "#.@.....>.,#", "#..........#", "############"],
+      player: { depth, level: 1, maxLevel: 1, hp: 13, maxHp: 13, gold: 0 }, pack: ["15 Flasks of Oil"],
+      monsters: ["filthy street urchin", "scruffy little dog", "scrawny cat"].map((race, i) => ({ id: i + 1, race, glyph: ["p", "C", "f"][i]!, level: 0, grid: { x: i + 1, y: 1 },
+        knownCombat: { blows: [], averageHp: null, health: "unhurt" as const, status: [], spellFrequency: null, innateFrequency: null } })) });
+    Object.assign(w.view, { apiVersion: "2.0.0" });
+    let foundStair = depth === 0;
+    const cell = w.view.cell.bind(w.view);
+    Object.assign(w.view, { cell: (x: number, y: number) => x === 8 && y === 2 ? { ...cell(x, y)!, feat: FEAT.DOWN_STAIR, known: foundStair, inView: foundStair } : cell(x, y) });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => 1234, rng: () => 0.5, reflex: false });
+    let descended = false;
+    const goals: string[] = [];
+    for (let i = 0; i < 20 && !descended; i++) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      expect(q.context.offers.map((offer) => offer.goal)).not.toContain("endure");
+      const goal = q.context.offers.find((offer) => offer.goal === "descend")?.goal ?? q.context.offers.find((offer) => offer.goal === "explore")?.goal;
+      if (goal === undefined) throw new Error(`No progress goal: ${q.context.offers.map((offer) => offer.goal).join(",")}`);
+      goals.push(goal);
+      const choice = p.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      expect(p.trigger(w.view, choice.plan)).not.toBe("A creature in view can now kill the character before its next action.");
+      for (let j = 0; j < 20; j++) {
+        const command = choice.plan.step(w.view, w.act);
+        if (command === null) break;
+        if (command.code === "descend") { w.setPlayer({ depth: depth + 1 }); descended = true; break; }
+        if (command.code !== "walk") throw new Error(`Unexpected command: ${command.code}`);
+        const dir = DIRECTIONS.find((d) => d.key === command.dir)!;
+        w.moveTo({ x: w.at().x + dir.dx, y: w.at().y + dir.dy });
+        w.advance(10);
+        if (!foundStair && w.at().x >= 6) { foundStair = true; break; }
+      }
+      choice.plan.end?.(w.view);
+    }
+    expect(descended).toBe(true);
+    expect(w.view.player().depth).toBe(depth + 1);
+    if (depth === 1) expect(goals).toContain("explore");
+  });
+
+  it("walks to the town staircase during stage four recovery beside a quiet crowd", () => {
+    const w = suppliedWorld({ map: ["############", "#..........#", "#.@.....>..#", "#..........#", "############"],
+      player: { depth: 0, level: 1, maxLevel: 1, hp: 13, maxHp: 13, gold: 0 }, pack: ["15 Flasks of Oil"],
+      monsters: ["filthy street urchin", "scruffy little dog", "scrawny cat"].map((race, i) => ({ id: i + 1, race, level: 0, grid: { x: i + 1, y: 1 } })) });
+    let time = 0;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => time, rng: () => 0.5, reflex: false });
+    p.watchdog!(w.view, true);
+    time = 90001;
+    const recovery = p.watchdog!(w.view, true);
+    if (recovery === null || !("plan" in recovery)) throw new Error("Expected a watchdog recovery");
+    expect(recovery.plan.label).toBe("watchdog: recover at stage 4");
+    let descended = false;
+    for (let i = 0; i < 20; i++) {
+      const command = recovery.plan.step(w.view, w.act);
+      if (command?.code === "descend") { descended = true; break; }
+      expect(command?.code).toBe("walk");
+      const dir = DIRECTIONS.find((d) => d.key === command?.dir)!;
+      w.moveTo({ x: w.at().x + dir.dx, y: w.at().y + dir.dy });
+      w.advance(10);
+    }
+    expect(descended).toBe(true);
+  });
+
   it("repeats a public fixture with a fixed clock and answer", () => {
     const fixture: WorldSpec = { map: ["#########", "#<@....,#", "#########"], player: { depth: 1, level: 3, hp: 24, maxHp: 24 },
       monsters: [{ grid: { x: 5, y: 1 }, race: "floating eye", raceFlags: ["NEVER_MOVE"], hp: 6, maxHp: 6 }], pack: ["5 Flasks of Oil"] };

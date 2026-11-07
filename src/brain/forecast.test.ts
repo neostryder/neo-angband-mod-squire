@@ -130,7 +130,8 @@ describe("healing and escape continuations", () => {
   it("keeps the failed-cast origin branch and an uncertain landing", () => {
     const w = world({ map: ROOM, player: { hp: 10, maxHp: 40 }, monsters: [{ grid: { x: 3, y: 2 }, speed: 120 }], monsterRecall: () => "It can bite to hurt (2d6)." });
     const forecast = forecastPhase(tacticalFrame(w.view, { terrain: w.terrain }), 0.25);
-    expect(forecast.loss.upper).toBeGreaterThanOrEqual(24);
+    expect(forecast.loss.upper).toBeGreaterThanOrEqual(20);
+    expect(forecast.loss.worst).toBeNull();
     expect(forecast.viable).toBe(false);
     expect(forecast.complete).toBe(false);
     expect(forecast.loss.unknown).toContain("landing");

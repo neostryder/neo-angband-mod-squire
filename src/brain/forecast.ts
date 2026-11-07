@@ -100,7 +100,7 @@ export function forecastContext(frame: TacticalFrame, alternatives: readonly { r
     return frame.view.inventory().reduce((sum, item) => sum + (handles.has(item.handle) ? item.number : 0), 0);
   };
   return {
-    pressure: `HP loss mean/scenario: 1a=${String(number(frame.one.mean))}/${String(number(frame.one.upper))} 2a=${String(number(frame.two.mean))}/${String(number(frame.two.upper))}; status=${String(frame.two.status)}; unknown=${frame.two.unknown.join(",") || "none"}`,
+    pressure: `HP loss mean/scenario: 1a=${String(number(frame.one.mean))}/${String(number(frame.one.upper))} 2a=${String(number(frame.two.mean))}/${String(number(frame.two.upper))}; worst1=${frame.one.worst === null ? "unknown" : String(number(frame.one.worst))}; status=${String(frame.two.status)}; unknown=${frame.two.unknown.join(",") || "none"}`,
     threats: ranked.slice(0, 3).map(({ monster: m, exposure }) => {
       const hp = targetHp(m);
       const age = m.visible ? "" : ` age=${String(Math.max(0, frame.view.turn() - (frame.context.facts?.lastSeen?.get(m.id) ?? frame.view.turn())))}ticks`;
@@ -119,7 +119,7 @@ export function forecastContext(frame: TacticalFrame, alternatives: readonly { r
       const evidence = [...(frame.context.facts?.observedDamage ?? [])].filter(([race]) => threats.some((m) => m.race === race)).slice(-1);
       return evidence.length === 0 ? {} : { evidence: evidence.map(([race, damage]) => `${race}: observed ${String(damage)} HP/action`).join("; ") };
     })(),
-    interpretation: "a=100 energy; intervals and scenarios are estimates, not probabilities or absolute bounds",
+    interpretation: "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
   };
 }
 
@@ -238,7 +238,7 @@ export function forecastFight(frame: TacticalFrame, target: MonsterView, attack:
   const escape = forecastExposure(view, view.player().grid, 2, frame.context.terrain, pursuitFacts(frame, remaining, Math.min(4, Number.isFinite(actions) ? actions : 4)));
   const after = view.player().hp - upper - escape.upper;
   const result: FightForecast = { action, hp, commands: { low, mean, high }, actions,
-    loss: { ...loss, mean: loss.mean + meanTerminal, upper }, after, reserve,
+    loss: { ...loss, mean: loss.mean + meanTerminal, upper, worst: tail > 0 ? null : loss.worst }, after, reserve,
     viable: after >= reserve && high <= limit && loss.status === 0 && !loss.unknown.includes("terrain-damage") && Number.isFinite(actions),
     resources: mean, limit, complete: tail === 0 && hp.high <= 512 && !distribution.approximate && unknown.length === 0, unknown };
   frame.fights.set(cacheKey, result);
@@ -252,6 +252,7 @@ export function forecastWalk(frame: TacticalFrame, route: readonly Loc[], stair 
   const monsters = frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible);
   let mean = 0;
   let upper = 0;
+  let worst: number | null = 0;
   let status = 0;
   let previous = player.grid;
   let valid = route.length > 0 && route.length <= 4;
@@ -260,16 +261,17 @@ export function forecastWalk(frame: TacticalFrame, route: readonly Loc[], stair 
     const exposure = forecastExposure(view, at, 1, frame.context.terrain, pursuitFacts(frame, monsters, index));
     mean += exposure.mean;
     upper += exposure.upper;
+    worst = worst === null || exposure.worst === null ? null : worst + exposure.worst;
     status = Math.max(status, exposure.status);
     previous = at;
   }
   const tile = view.cell(previous.x, previous.y);
   const checkedStair = stair && tile !== null && frame.context.terrain !== undefined && (frame.context.terrain.isUpStair(tile.feat) || frame.context.terrain.isDownStair(tile.feat));
   const contact = forecastExposure(view, previous, checkedStair ? 1 : 2, frame.context.terrain, pursuitFacts(frame, monsters, route.length));
-  if (checkedStair) { mean += contact.mean; upper += contact.upper; }
+  if (checkedStair) { mean += contact.mean; upper += contact.upper; worst = worst === null || contact.worst === null ? null : worst + contact.worst; }
   const hidden = monsters.every((monster) => monster.raceFlags.includes("NEVER_MOVE") || !inLineOfFire(view, monster.grid, previous));
   const escaped = valid && (checkedStair || hidden && contact.upper === 0 && contact.status === 0);
-  const loss = { mean, upper, status, unknown: escaped ? [] : ["pursuit"] };
+  const loss = { mean, upper, worst, status, unknown: escaped ? [] : ["pursuit"] };
   return { loss, after: player.hp - upper, viable: escaped && player.hp - upper >= Math.max(2, player.maxHp * 0.1) && status === 0,
     escaped, failure: valid ? 0 : 1, recontact: contact.upper, complete: valid && escaped };
 }
@@ -299,7 +301,7 @@ export function forecastPhase(frame: TacticalFrame, failure: number | null = 0, 
   const landingUpper = Math.max(player.maxHp * (long ? 0.05 : 0.1), ...exposures.map((e) => e.upper));
   const p = failure ?? 0.5;
   const upper = Math.max(landingUpper, p > 0 ? frame.one.upper : 0);
-  return { loss: { mean: (1 - p) * landingMean + p * frame.one.mean, upper, status: p > 0 ? frame.one.status : 0, unknown: ["landing", ...(p > 0 ? frame.one.unknown : []), ...(failure === null ? ["escape-failure"] : [])] },
+  return { loss: { mean: (1 - p) * landingMean + p * frame.one.mean, upper, worst: null, status: p > 0 ? frame.one.status : 0, unknown: ["landing", ...(p > 0 ? frame.one.unknown : []), ...(failure === null ? ["escape-failure"] : [])] },
     after: player.hp - upper, viable: player.hp - upper >= Math.max(2, player.maxHp * 0.1) && !(p > 0 && frame.one.unknown.includes("terrain-damage")), escaped: false, failure, recontact: landingUpper, complete: false };
 }
 
