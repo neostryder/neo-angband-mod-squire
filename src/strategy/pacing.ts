@@ -4,7 +4,7 @@ import type { AgentView } from "../host-adapter.js";
 import { arrivalFeeling } from "../brain/level-feel.js";
 import { descentPolicy } from "./readiness.js";
 import type { Persona } from "../persona/persona.js";
-import { frontiers, knownCount } from "../map.js";
+import { frontiers, knownCount, knownGridCount } from "../map.js";
 import { key, type Loc } from "../grid.js";
 import type { Terrain } from "../terrain.js";
 import { shownName } from "../town/needs.js";
@@ -78,11 +78,7 @@ export function createLevelPacing() {
       arrival = feeling;
       lastTurn = turn;
       let progress = player.exp > xp || player.gold > gold;
-      const bounds = view.mapBounds();
-      let seen = 0;
-      for (let y = 0; y < bounds.height; y += 1) {
-        for (let x = 0; x < bounds.width; x += 1) if (view.cell(x, y)?.known === true) seen += 1;
-      }
+      const seen = knownGridCount(view);
       if (!fresh && seen > known) progress = true;
       known = Math.max(known, seen);
       if (fresh) arrivalKnown = known;

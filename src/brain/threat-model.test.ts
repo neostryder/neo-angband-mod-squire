@@ -7,6 +7,42 @@ import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
 import { defaultPersona } from "../persona/persona.js";
 import { riskQuantile } from "./threat-model.js";
+import { invalidateHazards } from "../map.js";
+
+describe("snapshot threat reuse", () => {
+  it("answers a second nearby grid without repeating the reach flood", () => {
+    const w = world({ map: Array.from({ length: 11 }, (_, y) => y === 0 || y === 10 ? "###############" : "#.............#"), monsters: [{ grid: { x: 8, y: 5 }, level: 1 }] });
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const first = incomingDamage(w.view, { x: 6, y: 5 }, 2, w.terrain);
+    expect(first.damage).toBeGreaterThan(0);
+    expect(reads).toBeGreaterThan(20);
+    reads = 0;
+    expect(incomingDamage(w.view, { x: 6, y: 6 }, 2, w.terrain).damage).toBe(first.damage);
+    expect(reads).toBeLessThan(20);
+  });
+
+  it("distinguishes changed monster facts at the same id and grid", () => {
+    const w = world({ map: ["######", "#.@..#", "######"], monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
+    const monster = w.view.monsters()[0]!;
+    expect(incomingDamage(w.view, undefined, 1, w.terrain, { monsters: [monster] }).damage).toBe(2);
+    expect(incomingDamage(w.view, undefined, 1, w.terrain, { monsters: [{ ...monster, level: 9 }] }).damage).toBe(35);
+    w.setMonsters([]);
+    expect(incomingDamage(w.view).damage).toBe(0);
+  });
+
+  it("bounds a long remembered pursuit and retains uncertainty at the cap", () => {
+    const w = world({ map: Array.from({ length: 66 }, (_, y) => y === 0 || y === 65 ? "#".repeat(198) : "#" + ".".repeat(196) + "#"), monsters: [{ grid: { x: 30, y: 30 }, visible: false }] });
+    w.advance(1000);
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const danger = incomingDamage(w.view, { x: 50, y: 30 }, 2, w.terrain, { monsters: w.view.monsters(), lastSeen: new Map([[1, 1]]) });
+    expect(danger.incomplete).toBe(true);
+    expect(reads).toBeLessThan(6000);
+  });
+});
 
 describe("round 8 early creature damage", () => {
   const races = ["filthy street urchin", "scruffy little dog", "scrawny cat", "village idiot", "blubbering idiot", "mean-looking mercenary", "mangy-looking leper", "rock lizard", "giant white mouse"];
@@ -410,6 +446,7 @@ describe("incoming damage windows", () => {
     const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceIndex: 1, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }, { grid: { x: 4, y: 1 }, raceIndex: 2, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }], monsterRecall: (index) => index === 1 ? "It may cast spells which produce fire bolts (12)." : "Its attacks are unknown." });
     expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(0);
     Object.assign(w.view, { monsterRecall: (index: number) => ({ text: index === 1 ? "It may breathe fire (12)." : "Its attacks are unknown." }) });
+    invalidateHazards();
     expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(12);
   });
 
@@ -422,6 +459,7 @@ describe("incoming damage windows", () => {
     w.setPlayer({ status: { resFire: 10 } });
     expect(incomingDamage(w.view).damage).toBe(2);
     resistance = 3;
+    invalidateHazards();
     expect(incomingDamage(w.view).damage).toBe(0);
     resistance = -1;
     w.setPlayer({ status: { resFire: 0 } });

@@ -17,7 +17,7 @@
  * own knowledge are the same thing.
  */
 
-import type { AgentView, CellView, MonsterView } from "./host-adapter.js";
+import type { AgentView, CellView, MonsterView, PlayerView } from "./host-adapter.js";
 import type { Loc } from "./grid.js";
 import { key, neighbours, steps } from "./grid.js";
 import type { Terrain } from "./terrain.js";
@@ -51,7 +51,7 @@ export function isClosedDoor(view: AgentView, terrain: Terrain, at: Loc): boolea
  */
 export function isRoutable(view: AgentView, terrain: Terrain, at: Loc): boolean {
   return (isKnownGround(view, terrain, at) || isClosedDoor(view, terrain, at)) && !besideParalysingGazer(view, at) &&
-    (!besideStationaryThreat(view, at) || steps(view.player().grid, at) === 0);
+    (!besideStationaryThreat(view, at) || steps(playerSnapshot(view).grid, at) === 0);
 }
 
 export function neverMoves(view: AgentView, monster: MonsterView): boolean {
@@ -78,6 +78,68 @@ interface Hazards {
 const hazardCache = new WeakMap<object, Hazards>();
 let hazardEpoch = 0;
 
+export function snapshotEpoch(): number {
+  return hazardEpoch;
+}
+
+interface Snapshot {
+  readonly turn: number;
+  readonly epoch: number;
+  readonly player: PlayerView;
+  readonly monsters: MonsterView[];
+  readonly lists: Map<Terrain, Map<string, Loc[]>>;
+  known?: number;
+}
+
+const snapshots = new WeakMap<AgentView, Snapshot>();
+
+function snapshotOf(view: AgentView): Snapshot {
+  const turn = view.turn();
+  let snapshot = snapshots.get(view);
+  if (snapshot === undefined || snapshot.turn !== turn || snapshot.epoch !== hazardEpoch) {
+    snapshot = { turn, epoch: hazardEpoch, player: view.player(), monsters: view.monsters(), lists: new Map() };
+    snapshots.set(view, snapshot);
+  }
+  return snapshot;
+}
+
+export function snapshotIdentity(view: AgentView): object {
+  return snapshotOf(view);
+}
+
+/** A decision wrapper keeps the source's immutable player, monsters and map. */
+export function shareSnapshot(source: AgentView, wrapper: AgentView): void {
+  snapshots.set(wrapper, snapshotOf(source));
+}
+
+export function playerSnapshot(view: AgentView): PlayerView {
+  return snapshotOf(view).player;
+}
+
+export function monsterSnapshot(view: AgentView): MonsterView[] {
+  return snapshotOf(view).monsters;
+}
+
+export function knownGridCount(view: AgentView): number {
+  const snapshot = snapshotOf(view);
+  if (snapshot.known === undefined) {
+    const bounds = view.mapBounds();
+    let known = 0;
+    for (let y = 0; y < bounds.height; y++) for (let x = 0; x < bounds.width; x++) if (view.cell(x, y)?.known === true) known++;
+    snapshot.known = known;
+  }
+  return snapshot.known;
+}
+
+function snapshotList(view: AgentView, terrain: Terrain, name: string, read: () => Loc[]): Loc[] {
+  const snapshot = snapshotOf(view);
+  let lists = snapshot.lists.get(terrain);
+  if (lists === undefined) { lists = new Map(); snapshot.lists.set(terrain, lists); }
+  let list = lists.get(name);
+  if (list === undefined) { list = read(); lists.set(name, list); }
+  return [...list];
+}
+
 /**
  * Forget every kept hazard answer. A real view never changes, so this is for a
  * test world that edits the one view object in place.
@@ -92,7 +154,7 @@ function hazardsOf(view: AgentView): Hazards {
   if (kept !== undefined && kept.turn === turn && kept.epoch === hazardEpoch) return kept;
   const stationary: Loc[] = [];
   const gazers: Loc[] = [];
-  for (const monster of view.monsters()) {
+  for (const monster of monsterSnapshot(view)) {
     if (!monster.visible) continue;
     if (neverMoves(view, monster)) stationary.push(monster.grid);
     if (paralysingGazer(view, monster)) gazers.push(monster.grid);
@@ -109,7 +171,7 @@ export function besideStationaryThreat(view: AgentView, at: Loc): boolean {
 }
 
 export function paralysingGazer(view: AgentView, monster: MonsterView): boolean {
-  if (view.player().objectFlags.includes("FREE_ACT")) return false;
+  if (playerSnapshot(view).objectFlags.includes("FREE_ACT")) return false;
   if (/^floating eye$/i.test(monster.race)) return true;
   const memory = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const paralysis = /\bparaly[sz]\w*/i.test(memory);
@@ -131,7 +193,7 @@ export function isWalkable(view: AgentView, terrain: Terrain, at: Loc): boolean 
    * one is found by walking into it, as it is for the player. */
   if (cell === null) return false;
   if (cell.monster <= 0) return true;
-  return !view.monsters().some((m) => m.id === cell.monster && m.visible);
+  return !monsterSnapshot(view).some((m) => m.id === cell.monster && m.visible);
 }
 
 /** Whether the character is standing somewhere that is hurting it. */
@@ -157,18 +219,22 @@ export function standingOnHarm(view: AgentView, terrain: Terrain, at: Loc): bool
  * only exits are doors would otherwise read as fully explored.
  */
 export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
+  return snapshotList(view, terrain, "frontiers", () => findFrontiers(view, terrain));
+}
+
+function findFrontiers(view: AgentView, terrain: Terrain): Loc[] {
   const bounds = view.mapBounds();
   /* The character's own grid is ground it stands on, even before the game has
    * remembered it: arriving on a new level, the map can be blank until the
    * first step. */
-  const me = view.player().grid;
+  const me = playerSnapshot(view).grid;
   const found: Loc[] = [];
-  const occupied = new Set(view.monsters().filter((m) => m.visible).map((m) => key(m.grid)));
+  const occupied = new Set(monsterSnapshot(view).filter((m) => m.visible).map((m) => key(m.grid)));
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const at: Loc = { x, y };
-      if (besideParalysingGazer(view, at) || besideStationaryThreat(view, at) || occupied.has(key(at))) continue;
       if (!isKnownGround(view, terrain, at) && !isClosedDoor(view, terrain, at) && !(x === me.x && y === me.y)) continue;
+      if (besideParalysingGazer(view, at) || besideStationaryThreat(view, at) || occupied.has(key(at))) continue;
       for (const there of neighbours(at)) {
         const cell = cellAt(view, there);
         if (cell !== null && !cell.known) {
@@ -183,6 +249,10 @@ export function frontiers(view: AgentView, terrain: Terrain): Loc[] {
 
 /** Every staircase the character remembers, up and down. */
 export function knownStairs(view: AgentView, terrain: Terrain): Loc[] {
+  return snapshotList(view, terrain, "stairs", () => findStairs(view, terrain));
+}
+
+function findStairs(view: AgentView, terrain: Terrain): Loc[] {
   const bounds = view.mapBounds();
   const found: Loc[] = [];
   for (let y = 0; y < bounds.height; y++) {
@@ -197,16 +267,7 @@ export function knownStairs(view: AgentView, terrain: Terrain): Loc[] {
 
 /** Every down staircase the character remembers. */
 export function knownDownStairs(view: AgentView, terrain: Terrain): Loc[] {
-  const bounds = view.mapBounds();
-  const found: Loc[] = [];
-  for (let y = 0; y < bounds.height; y++) {
-    for (let x = 0; x < bounds.width; x++) {
-      const cell = view.cell(x, y);
-      if (cell === null || !cell.known) continue;
-      if (terrain.isDownStair(cell.feat)) found.push({ x, y });
-    }
-  }
-  return found;
+  return snapshotList(view, terrain, "down-stairs", () => knownStairs(view, terrain).filter((grid) => terrain.isDownStair(view.cell(grid.x, grid.y)!.feat)));
 }
 
 /**

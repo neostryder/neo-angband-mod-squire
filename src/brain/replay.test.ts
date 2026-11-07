@@ -4,6 +4,102 @@ import { defaultCfg } from "../settings.js";
 import { attackOptions } from "./combat-kit.js";
 import { createGoalPlanner } from "./goals.js";
 import { DIRECTIONS } from "../grid.js";
+import { Session } from "node:inspector/promises";
+
+function largeDecision() {
+  const grids = Array.from({ length: 66 }, () => Array<string>(198).fill("#"));
+  for (let y = 25; y <= 40; y++) for (let x = 1; x <= 28; x++) grids[y]![x] = ".";
+  for (let x = 1; x <= 151; x++) grids[32]![x] = x === 151 ? "," : ".";
+  for (let i = 0; i < 20; i++) {
+    for (let y = 27 + i % 8; y <= 34 + i % 8; y++) for (let x = 7 + i * 6; x <= 10 + i * 6; x++) grids[y]![x] = ".";
+  }
+  grids[32]![1] = "<";
+  grids[32]![2] = "@";
+  const map = grids.map((row) => row.join(""));
+  const monsters = Array.from({ length: 20 }, (_, i) => ({ id: i + 1, raceIndex: i + 1, race: `creature ${i}`, grid: { x: 8 + i * 6, y: 28 + i % 8 },
+    level: 1, asleep: i % 3 === 0, raceFlags: i % 4 === 0 ? ["NEVER_MOVE"] : [] }));
+  const w = suppliedWorld({ map, player: { depth: 1, level: 3, maxLevel: 3, hp: 40, maxHp: 40 }, monsters });
+  const snapshot = () => {
+    const turn = w.view.turn();
+    const player = w.view.player();
+    const creatures = w.view.monsters();
+    const cells = Array.from({ length: 66 }, (_, y) => Array.from({ length: 198 }, (_, x) => w.view.cell(x, y)));
+    return { ...w.view, apiVersion: "2.0.0", turn: () => turn, player: () => player, monsters: () => creatures,
+      cell: (x: number, y: number) => cells[y]?.[x] ?? null };
+  };
+  const seed = snapshot();
+  w.setMonsters(monsters.slice(0, 10));
+  w.advance(300);
+  const current = snapshot();
+  return () => {
+    const planner = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => 1234, rng: () => 0.5, reflex: false });
+    planner.ask({ ...seed });
+    const view = { ...current };
+    return { view, run: () => {
+      const question = planner.ask(view);
+      if ("handBack" in question) throw new Error(question.handBack);
+      const goal = question.context.offers.find((offer) => offer.goal === "explore")?.goal ?? question.context.offers[0]!.goal;
+      const choice = planner.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, question.context, view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      return { goal, command: choice.plan.step(view, w.act) };
+    } };
+  };
+}
+
+describe("large snapshot decision cost", () => {
+  it("bounds threat searches and snapshot reads through goals and journey", async () => {
+    const { view, run } = largeDecision()();
+    let playerReads = 0;
+    let monsterReads = 0;
+    const player = view.player;
+    const creatures = view.monsters;
+    view.player = () => { playerReads++; return player(); };
+    view.monsters = () => { monsterReads++; return creatures(); };
+    const session = new Session();
+    session.connect();
+    try {
+      await session.post("Profiler.enable");
+      await session.post("Profiler.startPreciseCoverage", { callCount: true, detailed: false });
+      await session.post("Profiler.start");
+      const start = performance.now();
+      const result = run();
+      const elapsed = performance.now() - start;
+      const { profile } = await session.post("Profiler.stop");
+      const coverage = await session.post("Profiler.takePreciseCoverage");
+      const calls = (name: string) => coverage.result.flatMap((script) => script.functions).filter((fn) => fn.functionName === name).reduce((sum, fn) => sum + fn.ranges[0]!.count, 0);
+      const samples = new Map<number, number>();
+      for (const id of profile.samples ?? []) samples.set(id, (samples.get(id) ?? 0) + 1);
+      const hot = profile.nodes.map((node) => ({ name: node.callFrame.functionName, line: node.callFrame.lineNumber + 1, samples: samples.get(node.id) ?? 0 })).sort((a, b) => b.samples - a.samples).slice(0, 8);
+      console.log(JSON.stringify({ elapsed, playerReads, monsterReads, attackPositions: calls("attackPositions"), incomingDamage: calls("incomingDamage"), ...result, hot }));
+      expect(result).toMatchObject({ goal: "explore", command: { code: "walk", dir: 6 } });
+      expect(calls("attackPositions")).toBeLessThanOrEqual(40);
+      expect(calls("incomingDamage")).toBeLessThanOrEqual(500);
+      expect(playerReads).toBeLessThanOrEqual(1000);
+      expect(monsterReads).toBeLessThanOrEqual(500);
+    } finally {
+      await session.post("Profiler.stopPreciseCoverage");
+      session.disconnect();
+    }
+  }, 120000);
+
+  // The isolated run avoids measuring contention from the other test workers.
+  it.runIf(process.env["SQUIRE_BENCHMARK"] === "1")("keeps a warm decision below 20 ms on fresh snapshots", () => {
+    const setup = largeDecision();
+    const timings: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      const { run } = setup();
+      const start = performance.now();
+      const result = run();
+      const elapsed = performance.now() - start;
+      expect(result).toMatchObject({ goal: "explore", command: { code: "walk", dir: 6 } });
+      if (i >= 10) timings.push(elapsed);
+    }
+    timings.sort((a, b) => a - b);
+    const median = timings[Math.floor(timings.length / 2)]!;
+    console.log(JSON.stringify({ median, min: timings[0], max: timings.at(-1), timings }));
+    expect(median).toBeLessThan(20);
+  });
+});
 
 function replay(spec: WorldSpec) {
   const w = suppliedWorld(structuredClone(spec));

@@ -8,8 +8,32 @@ import {
   isRoutable,
   isWalkable,
   knownDownStairs,
+  knownStairs,
   standingOnHarm,
 } from "./map.js";
+
+describe("snapshot map lists", () => {
+  it("reuses scans and refreshes them after a same-turn reveal", () => {
+    const w = world({ map: ["########", "#<@..>,#", "########"] });
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const front = frontiers(w.view, w.terrain);
+    const stairs = knownStairs(w.view, w.terrain);
+    const down = knownDownStairs(w.view, w.terrain);
+    expect(reads).toBeGreaterThan(0);
+    reads = 0;
+    expect(frontiers(w.view, w.terrain)).toEqual(front);
+    expect(knownStairs(w.view, w.terrain)).toEqual(stairs);
+    expect(knownDownStairs(w.view, w.terrain)).toEqual(down);
+    expect(reads).toBe(0);
+    stairs.pop();
+    expect(knownStairs(w.view, w.terrain)).toHaveLength(2);
+    w.reveal({ x: 6, y: 1 });
+    expect(frontiers(w.view, w.terrain)).toEqual([]);
+    expect(reads).toBeGreaterThan(0);
+  });
+});
 
 describe("reading the map", () => {
   const w = world({
