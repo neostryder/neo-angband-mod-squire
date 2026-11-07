@@ -23,6 +23,11 @@ export function riskQuantile(persona: Persona | null = null): number {
     ((sliders?.paranoia ?? 50) - 50) * 0.0005 - ((sliders?.boldness ?? 65) - 65) * 0.001));
 }
 
+/** A pursuit estimate needs renewed observation or damage within the persona's patience. */
+export function threatMemoryTurns(persona: Persona | null, speed: number, energy?: SpeedEnergy): number {
+  return Math.ceil(turnsPerAction(speed, energy) * (2 + ((persona?.sliders.selfpreservation ?? 55) + (persona?.sliders.paranoia ?? 50)) / 25));
+}
+
 function diceQuantile(dice: number, sides: number, quantile: number): number {
   if (dice * sides > 256) return dice * sides;
   let law = new Map<number, number>([[0, 1]]);
@@ -191,6 +196,7 @@ export interface ThreatFacts {
   readonly creaturesOnly?: boolean;
   readonly expectation?: boolean;
   readonly quantile?: number;
+  readonly memoryTurns?: number;
 }
 
 export interface UnseenHit {
@@ -544,12 +550,13 @@ function reachableAttacks(view: AgentView, monster: MonsterView, at: Loc, action
   }
   if (available - 1 > map.limit && map.incomplete) {
     positions.incomplete = true;
-    for (const near of neighbours(at)) {
-      const cell = view.cell(near.x, near.y);
-      if (cell !== null && (!cell.known || cell.passable)) positions.set(key(near), actions);
-    }
   }
   return positions;
+}
+
+/** Contact geometry also matters when armor reduces the estimated blow to zero. */
+export function canMakeContact(view: AgentView, monster: MonsterView, at: Loc, actions: number, terrain?: Terrain, facts: ThreatFacts = {}): boolean {
+  return reachableAttacks(view, monster, at, monsterActions(monster, playerSnapshot(view), actions, facts.energy), terrain, facts.monsters ?? monsterSnapshot(view), facts.openedDoor).size > 0;
 }
 
 /** The ceiling counts HP damage separately from disabling effects and missing facts. */
@@ -577,7 +584,7 @@ function threatSignature(view: AgentView, actions: number, terrain: Terrain | un
   const snapshot = threatSnapshot(view);
   const monsters = facts.monsters ?? monsterSnapshot(view).filter((m) => m.visible);
   return JSON.stringify([actions, identity(terrain), identity(facts.energy), monsters.map((m) => creatureId(snapshot, m)),
-    [...facts.observedDamage ?? []], [...facts.lastSeen ?? []], facts.openedDoor, facts.unseenHit, facts.unseenDamage, facts.creaturesOnly, facts.expectation, facts.quantile]);
+    [...facts.observedDamage ?? []], [...facts.lastSeen ?? []], facts.openedDoor, facts.unseenHit, facts.unseenDamage, facts.creaturesOnly, facts.expectation, facts.quantile, facts.memoryTurns]);
 }
 
 function evaluateDamage(view: AgentView, at: Loc, actions: number, terrain: Terrain | undefined, facts: ThreatFacts): DamageEstimate {
@@ -597,9 +604,11 @@ function evaluateDamage(view: AgentView, at: Loc, actions: number, terrain: Terr
   const observed = JSON.stringify([...facts.observedDamage ?? []]);
   const melee: { positions: Map<string, number>; damage: number }[] = [];
   for (const monster of monsters) {
+    if (monster.asleep) continue;
     if (monster.visible && steps(monster.grid, at) > 20) continue;
     const count = monsterActions(monster, player, actions, facts.energy);
     const seen = monster.visible ? undefined : facts.lastSeen?.get(monster.id);
+    if (seen !== undefined && facts.memoryTurns !== undefined && view.turn() - seen > facts.memoryTurns) continue;
     const prior = seen === undefined ? 0 : Math.max(0, Math.ceil((view.turn() - seen) * energyBounds(monster.speed, facts.energy).high / 100));
     const attackKey = `${creatureId(snapshot, monster)}:${facts.expectation}:${facts.quantile}:${observed}`;
     let read = snapshot.attacks.get(attackKey);
@@ -620,8 +629,6 @@ function evaluateDamage(view: AgentView, at: Loc, actions: number, terrain: Terr
       const reachable = reachableAttacks(view, monster, at, count, terrain, monsters, facts.openedDoor, true, prior);
       if (reachable.incomplete === true) {
         incomplete = true;
-        spellDamage = Math.max(spellDamage, count * read.ranged * phase);
-        rangedStatus = true;
       }
       for (const [position, remaining] of reachable) {
         const [x, y] = position.split(",").map(Number);

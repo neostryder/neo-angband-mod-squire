@@ -218,19 +218,23 @@ export function forecastFight(frame: TacticalFrame, target: MonsterView, attack:
   const energy = (attack.energy ?? 100) / 100;
   const actions = approach + mean * energy;
   const horizon = Math.min(4, Math.max(energy, approach + high * energy));
-  let loss = forecastExposure(view, view.player().grid, horizon, frame.context.terrain, frame.context.facts);
+  /* Attacking wakes the target, so its sleeping state cannot discount retaliation. */
+  const facts = { ...frame.context.facts, monsters: [...(frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible)).filter((m) => m.id !== target.id), { ...target, asleep: false }] };
+  const one = target.asleep ? forecastExposure(view, view.player().grid, 1, frame.context.terrain, facts) : frame.one;
+  const two = target.asleep || !frame.context.facts?.monsters?.some((m) => m.id === target.id) ? forecastExposure(view, view.player().grid, 2, frame.context.terrain, facts) : frame.two;
+  let loss = forecastExposure(view, view.player().grid, horizon, frame.context.terrain, facts);
   const meanHorizon = Math.min(4, Math.max(energy, approach + mean * energy));
-  if (meanHorizon !== horizon) loss = { ...loss, mean: forecastExposure(view, view.player().grid, meanHorizon, frame.context.terrain, frame.context.facts).mean };
+  if (meanHorizon !== horizon) loss = { ...loss, mean: forecastExposure(view, view.player().grid, meanHorizon, frame.context.terrain, facts).mean };
   /* A hit clears this whole HP scenario; uncertainty about the population maximum remains in the forecast. */
   if (attack.minimum !== null && attack.minimum >= hp.high && attack.failure < 1) {
     const rest = forecastExposure(view, view.player().grid, Math.max(energy, Math.min(4, actions)), frame.context.terrain,
       { ...frame.context.facts, monsters: (frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible)).filter((m) => m.id !== target.id) });
-    loss = { ...loss, mean: rest.mean + Math.max(0, frame.one.mean - rest.mean) * attack.failure / (1 - attack.failure) };
+    loss = { ...loss, mean: rest.mean + Math.max(0, one.mean - rest.mean) * attack.failure / (1 - attack.failure) };
   }
   const tail = Number.isFinite(high) ? Math.max(0, approach + high * energy - horizon) : Infinity;
-  const terminal = tail === 0 || frame.two.mean === 0 ? 0 : frame.two.mean / 2 * tail;
+  const terminal = tail === 0 || two.mean === 0 ? 0 : two.mean / 2 * tail;
   const meanTail = Number.isFinite(mean) ? Math.max(0, approach + mean * energy - meanHorizon) : Infinity;
-  const meanTerminal = meanTail === 0 || frame.two.mean === 0 ? 0 : frame.two.mean / 2 * meanTail;
+  const meanTerminal = meanTail === 0 || two.mean === 0 ? 0 : two.mean / 2 * meanTail;
   const upper = loss.upper + terminal * 1.5;
   const limit = resourceLimit(view, attack);
   const unknown = [...new Set([...loss.unknown, ...(hp.exact ? [] : [hp.prior ? "hp-prior" : "hp-spread"]), ...(attack.accuracyKnown ? [] : ["accuracy"]), ...(distribution.approximate ? ["damage-law"] : []), ...(attack.kind !== "fight" && view.projectionPath === undefined ? ["projection"] : []), ...(attack.kind === "cast_attack" ? ["spell-hit-save"] : []), ...(attack.kind === "aim_wand" && attack.source !== null && !/\(\d+ charges?\)/i.test(attack.source.name) ? ["device-charges"] : []), ...(tail > 0 ? ["terminal-tail"] : [])])];
@@ -308,6 +312,8 @@ export function forecastPhase(frame: TacticalFrame, failure: number | null = 0, 
 
 export interface HealForecast {
   readonly net: number;
+  readonly loss: ExposureForecast;
+  readonly recovery: boolean;
   readonly kill: FightForecast | null;
   readonly escape: EscapeForecast;
   readonly after: number;
@@ -335,6 +341,7 @@ export function forecastHeal(frame: TacticalFrame, amount: number, failure = 0, 
     ...pack.escapeSpell.map((spell) => forecastPhase(future, (futureView.spellInfo?.(spell.sidx)?.failChance ?? spell.fail) / 100, !/Phase Door|Blink|Shadow Shift/i.test(spell.name))),
   ];
   const escape = escapes.sort((a, b) => Number(b.viable) - Number(a.viable) || b.after - a.after)[0] ?? { ...forecastPhase(future, 1), viable: false };
-  return { net: healed - player.hp - cureExposure.mean, kill, escape, after,
-    viable: after > 0 && !cureExposure.unknown.includes("terrain-damage") && (failure === 0 || player.hp > frame.one.upper) && (kill?.viable === true || escape.viable && (readPack(futureView).phase.length > 0 || readPack(futureView).teleport.length > 0 || readPack(futureView).escapeSpell.length > 0)) };
+  const recovery = forecastExposure(futureView, player.grid, 2, frame.context.terrain, { ...futureContext.facts, creaturesOnly: true });
+  return { net: healed - player.hp - cureExposure.mean, loss: cureExposure, recovery: recovery.upper === 0 && recovery.status === 0, kill, escape, after,
+    viable: after > 0 && !cureExposure.unknown.includes("terrain-damage") && (failure === 0 || player.hp > frame.one.upper) && (recovery.upper === 0 && recovery.status === 0 || kill?.viable === true || escape.viable && (readPack(futureView).phase.length > 0 || readPack(futureView).teleport.length > 0 || readPack(futureView).escapeSpell.length > 0)) };
 }
