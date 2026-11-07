@@ -2349,6 +2349,9 @@ function riskQuantile(persona = null) {
   const sliders = persona?.sliders;
   return Math.max(0.7, Math.min(0.95, 0.85 + ((sliders?.selfpreservation ?? 55) - 55) * 1e-3 + ((sliders?.paranoia ?? 50) - 50) * 5e-4 - ((sliders?.boldness ?? 65) - 65) * 1e-3));
 }
+function threatMemoryTurns(persona, speed, energy) {
+  return Math.ceil(turnsPerAction(speed, energy) * (2 + ((persona?.sliders.selfpreservation ?? 55) + (persona?.sliders.paranoia ?? 50)) / 25));
+}
 function diceQuantile(dice, sides, quantile) {
   if (dice * sides > 256) return dice * sides;
   let law = /* @__PURE__ */ new Map([[0, 1]]);
@@ -2717,12 +2720,11 @@ function reachableAttacks(view, monster, at, actions, terrain, monsters, openedD
   }
   if (available - 1 > map.limit && map.incomplete) {
     positions.incomplete = true;
-    for (const near of neighbours(at)) {
-      const cell2 = view.cell(near.x, near.y);
-      if (cell2 !== null && (!cell2.known || cell2.passable)) positions.set(key(near), actions);
-    }
   }
   return positions;
+}
+function canMakeContact(view, monster, at, actions, terrain, facts = {}) {
+  return reachableAttacks(view, monster, at, monsterActions(monster, playerSnapshot(view), actions, facts.energy), terrain, facts.monsters ?? monsterSnapshot(view), facts.openedDoor).size > 0;
 }
 function incomingDamage(view, at = playerSnapshot(view).grid, actions = 1, terrain, facts = {}) {
   return damageField(view, actions, terrain, facts).at(at);
@@ -2756,7 +2758,8 @@ function threatSignature(view, actions, terrain, facts) {
     facts.unseenDamage,
     facts.creaturesOnly,
     facts.expectation,
-    facts.quantile
+    facts.quantile,
+    facts.memoryTurns
   ]);
 }
 function evaluateDamage(view, at, actions, terrain, facts) {
@@ -2776,9 +2779,11 @@ function evaluateDamage(view, at, actions, terrain, facts) {
   const observed = JSON.stringify([...facts.observedDamage ?? []]);
   const melee = [];
   for (const monster of monsters) {
+    if (monster.asleep) continue;
     if (monster.visible && steps(monster.grid, at) > 20) continue;
     const count2 = monsterActions(monster, player, actions, facts.energy);
     const seen = monster.visible ? void 0 : facts.lastSeen?.get(monster.id);
+    if (seen !== void 0 && facts.memoryTurns !== void 0 && view.turn() - seen > facts.memoryTurns) continue;
     const prior = seen === void 0 ? 0 : Math.max(0, Math.ceil((view.turn() - seen) * energyBounds(monster.speed, facts.energy).high / 100));
     const attackKey = `${creatureId(snapshot2, monster)}:${facts.expectation}:${facts.quantile}:${observed}`;
     let read = snapshot2.attacks.get(attackKey);
@@ -2798,8 +2803,6 @@ function evaluateDamage(view, at, actions, terrain, facts) {
       const reachable = reachableAttacks(view, monster, at, count2, terrain, monsters, facts.openedDoor, true, prior);
       if (reachable.incomplete === true) {
         incomplete = true;
-        spellDamage = Math.max(spellDamage, count2 * read.ranged * phase);
-        rangedStatus = true;
       }
       for (const [position, remaining] of reachable) {
         const [x, y] = position.split(",").map(Number);
@@ -3428,9 +3431,12 @@ function forecastFight(frame, target, attack) {
   const energy = (attack.energy ?? 100) / 100;
   const actions = approach + mean2 * energy;
   const horizon = Math.min(4, Math.max(energy, approach + high * energy));
-  let loss = forecastExposure(view, view.player().grid, horizon, frame.context.terrain, frame.context.facts);
+  const facts = { ...frame.context.facts, monsters: [...(frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible)).filter((m) => m.id !== target.id), { ...target, asleep: false }] };
+  const one = target.asleep ? forecastExposure(view, view.player().grid, 1, frame.context.terrain, facts) : frame.one;
+  const two = target.asleep || !frame.context.facts?.monsters?.some((m) => m.id === target.id) ? forecastExposure(view, view.player().grid, 2, frame.context.terrain, facts) : frame.two;
+  let loss = forecastExposure(view, view.player().grid, horizon, frame.context.terrain, facts);
   const meanHorizon = Math.min(4, Math.max(energy, approach + mean2 * energy));
-  if (meanHorizon !== horizon) loss = { ...loss, mean: forecastExposure(view, view.player().grid, meanHorizon, frame.context.terrain, frame.context.facts).mean };
+  if (meanHorizon !== horizon) loss = { ...loss, mean: forecastExposure(view, view.player().grid, meanHorizon, frame.context.terrain, facts).mean };
   if (attack.minimum !== null && attack.minimum >= hp.high && attack.failure < 1) {
     const rest = forecastExposure(
       view,
@@ -3439,12 +3445,12 @@ function forecastFight(frame, target, attack) {
       frame.context.terrain,
       { ...frame.context.facts, monsters: (frame.context.facts?.monsters ?? view.monsters().filter((m) => m.visible)).filter((m) => m.id !== target.id) }
     );
-    loss = { ...loss, mean: rest.mean + Math.max(0, frame.one.mean - rest.mean) * attack.failure / (1 - attack.failure) };
+    loss = { ...loss, mean: rest.mean + Math.max(0, one.mean - rest.mean) * attack.failure / (1 - attack.failure) };
   }
   const tail = Number.isFinite(high) ? Math.max(0, approach + high * energy - horizon) : Infinity;
-  const terminal = tail === 0 || frame.two.mean === 0 ? 0 : frame.two.mean / 2 * tail;
+  const terminal = tail === 0 || two.mean === 0 ? 0 : two.mean / 2 * tail;
   const meanTail = Number.isFinite(mean2) ? Math.max(0, approach + mean2 * energy - meanHorizon) : Infinity;
-  const meanTerminal = meanTail === 0 || frame.two.mean === 0 ? 0 : frame.two.mean / 2 * meanTail;
+  const meanTerminal = meanTail === 0 || two.mean === 0 ? 0 : two.mean / 2 * meanTail;
   const upper = loss.upper + terminal * 1.5;
   const limit = resourceLimit(view, attack);
   const unknown = [.../* @__PURE__ */ new Set([...loss.unknown, ...hp.exact ? [] : [hp.prior ? "hp-prior" : "hp-spread"], ...attack.accuracyKnown ? [] : ["accuracy"], ...distribution.approximate ? ["damage-law"] : [], ...attack.kind !== "fight" && view.projectionPath === void 0 ? ["projection"] : [], ...attack.kind === "cast_attack" ? ["spell-hit-save"] : [], ...attack.kind === "aim_wand" && attack.source !== null && !/\(\d+ charges?\)/i.test(attack.source.name) ? ["device-charges"] : [], ...tail > 0 ? ["terminal-tail"] : []])];
@@ -3565,12 +3571,15 @@ function forecastHeal(frame, amount, failure2 = 0, mana = 0, curedStatus = frame
     ...pack.escapeSpell.map((spell) => forecastPhase(future, (futureView.spellInfo?.(spell.sidx)?.failChance ?? spell.fail) / 100, !/Phase Door|Blink|Shadow Shift/i.test(spell.name)))
   ];
   const escape = escapes.sort((a, b) => Number(b.viable) - Number(a.viable) || b.after - a.after)[0] ?? { ...forecastPhase(future, 1), viable: false };
+  const recovery = forecastExposure(futureView, player.grid, 2, frame.context.terrain, { ...futureContext.facts, creaturesOnly: true });
   return {
     net: healed - player.hp - cureExposure.mean,
+    loss: cureExposure,
+    recovery: recovery.upper === 0 && recovery.status === 0,
     kill,
     escape,
     after,
-    viable: after > 0 && !cureExposure.unknown.includes("terrain-damage") && (failure2 === 0 || player.hp > frame.one.upper) && (kill?.viable === true || escape.viable && (readPack(futureView).phase.length > 0 || readPack(futureView).teleport.length > 0 || readPack(futureView).escapeSpell.length > 0))
+    viable: after > 0 && !cureExposure.unknown.includes("terrain-damage") && (failure2 === 0 || player.hp > frame.one.upper) && (recovery.upper === 0 && recovery.status === 0 || kill?.viable === true || escape.viable && (readPack(futureView).phase.length > 0 || readPack(futureView).teleport.length > 0 || readPack(futureView).escapeSpell.length > 0))
   };
 }
 
@@ -8085,8 +8094,15 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
       chosenReturn = false;
       departure.end();
     }
-    for (const monster of monsterSnapshot(view)) if (monster.visible && !monster.asleep) remembered3.set(monster.id, { monster: { ...monster, visible: false }, until: turn + 100 });
-    for (const [id, entry] of remembered3) if (!view.apiVersion.startsWith("2.") && entry.until < turn || rememberedCleared(view, entry.monster, entry.until - 100, terrain)) remembered3.delete(id);
+    const patience = threatMemoryTurns(lastPersona, player.speed);
+    for (const monster of monsterSnapshot(view)) if (monster.visible && !monster.asleep) {
+      const prior = remembered3.get(monster.id);
+      const distance = steps(player.grid, monster.grid);
+      const approached = prior !== void 0 && key(prior.monster.grid) !== key(monster.grid) && distance < prior.distance;
+      const renewed = prior === void 0 || approached || distance <= 1 || previousHp !== null && player.hp < previousHp;
+      remembered3.set(monster.id, { monster: { ...monster, visible: false }, until: turn + 100, activeUntil: renewed ? turn + patience : prior.activeUntil, distance });
+    }
+    for (const [id, entry] of remembered3) if (turn - (entry.until - 100) > (view.apiVersion.startsWith("2.") ? patience : 100) || rememberedCleared(view, entry.monster, entry.until - 100, terrain)) remembered3.delete(id);
     if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && previousHp - player.hp > incomingDamage(view, player.grid, 2, terrain, { monsters: [] }).damage && !standingOnHarm(view, terrain, player.grid) && !monsterSnapshot(view).some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
@@ -8126,6 +8142,8 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     return ![...remembered3.values()].some((entry) => threatensDelay(view, entry.monster, entry.until - 100));
   }
   function threatensDelay(view, monster, seen = view.turn()) {
+    if (view.turn() > (remembered3.get(monster.id)?.activeUntil ?? Infinity)) return false;
+    if (monster.asleep) return monster.raceFlags.includes("MULTIPLY") && canMakeContact(view, monster, playerSnapshot(view).grid, 2 + Math.ceil(4 * riskQuantile(lastPersona)), terrain);
     if (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, playerSnapshot(view).grid) <= 10) return true;
     const danger2 = forecastExposure(view, playerSnapshot(view).grid, 4, terrain, { monsters: [monster], quantile: riskQuantile(lastPersona), lastSeen: /* @__PURE__ */ new Map([[monster.id, seen]]), creaturesOnly: true, observedDamage });
     return danger2.upper > 0 || danger2.status > 0;
@@ -8162,7 +8180,7 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     };
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return fail("blindness, confusion or an unexplained hit prevents a checked walk");
-    const threats = [...remembered3.values()].map((entry) => entry.monster);
+    const threats = [...remembered3.values()].filter((entry) => view.turn() <= entry.activeUntil).map((entry) => entry.monster);
     const enter2 = (grid) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap && (!breederLevel || !monsterSnapshot(view).some((monster) => monster.visible && key(monster.grid) === key(grid)));
     const field = flowFrom({ goals, canEnter: enter2 });
     if (!Number.isFinite(field.distance(player.grid))) return fail("no unblocked known route reaches the staircase");
@@ -8511,14 +8529,17 @@ function createJourney(terrain, unseenDanger, levelsPersist = () => false, now =
     const occupied = new Set(monsterSnapshot(view).filter((monster) => monster.visible).map((monster) => key(monster.grid)));
     const stationaryRisk = /* @__PURE__ */ new Set();
     const checked = /* @__PURE__ */ new Set();
-    const dangerField = damageField(view, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona) });
+    const dangerField = damageField(view, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
+    const contactField = damageField(view, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
     for (const monster of monsterSnapshot(view)) {
-      if (!monster.visible || !neverMoves(view, monster)) continue;
-      for (const dir of DIRECTIONS) {
-        const grid = { x: monster.grid.x + dir.dx, y: monster.grid.y + dir.dy };
+      if (!monster.visible) continue;
+      const fixed = neverMoves(view, monster);
+      const reach2 = fixed ? 1 : monsterActions(monster, playerSnapshot(view), 1);
+      for (let y = monster.grid.y - reach2; y <= monster.grid.y + reach2; y++) for (let x = monster.grid.x - reach2; x <= monster.grid.x + reach2; x++) {
+        const grid = { x, y };
         if (key(grid) === key(at) || checked.has(key(grid))) continue;
         checked.add(key(grid));
-        const danger2 = dangerField.at(grid);
+        const danger2 = (fixed ? dangerField : contactField).at(grid);
         if (danger2.status > 0 || danger2.damage > playerSnapshot(view).hp * descentPolicy(lastPersona).risk) stationaryRisk.add(key(grid));
       }
     }
@@ -9445,8 +9466,14 @@ function damageFor(s, at = s.view.player().grid, actions = 1, terrain, openedDoo
 function creatureDamageFor(s, at, terrain) {
   return incomingDamage(s.view, at, 1, terrain, { ...combatContext(s).facts, creaturesOnly: true }).damage;
 }
+function travelExclusion(s, terrain, goal) {
+  if (!walksIntoDeath(s, terrain, goal)) return null;
+  const player = s.view.player();
+  if ((goal === "explore" || goal === "fetch") && player.depth > 0 && player.level <= 10 && (player.hp < player.maxHp && safeRecovery(s, terrain) || player.status.confused > 0 || player.status.blind > 0)) return "recovery or impaired movement preconditions";
+  return "forecast requires combat or escape before travel";
+}
 function combatContext(s) {
-  return { ...s.terrain === void 0 ? {} : { terrain: s.terrain }, facts: { quantile: riskQuantile(s.persona ?? null), ...s.observedDamage === void 0 ? {} : { observedDamage: s.observedDamage }, monsters: s.threats, unseenDamage: s.unseenDamage, ...s.unseenHit === void 0 ? {} : { unseenHit: s.unseenHit }, lastSeen: s.lastSeen, ...s.speedEnergy === void 0 ? {} : { energy: s.speedEnergy } } };
+  return { ...s.terrain === void 0 ? {} : { terrain: s.terrain }, facts: { quantile: riskQuantile(s.persona ?? null), memoryTurns: threatMemoryTurns(s.persona ?? null, s.view.player().speed, s.speedEnergy), ...s.observedDamage === void 0 ? {} : { observedDamage: s.observedDamage }, monsters: s.threats, unseenDamage: s.unseenDamage, ...s.unseenHit === void 0 ? {} : { unseenHit: s.unseenHit }, lastSeen: s.lastSeen, ...s.speedEnergy === void 0 ? {} : { energy: s.speedEnergy } } };
 }
 function hitFor(attack, target) {
   if (attack.damage === null) return "";
@@ -9472,8 +9499,9 @@ function safeRecovery(s, terrain) {
   const incoming = damageFor(s, player.grid, 2, terrain);
   return incoming.damage === 0 && incoming.status === 0 && s.unseenDamage === 0 && !s.threats.some((m) => {
     if (neverMoves(s.view, m) && !m.raceFlags.includes("MULTIPLY") && steps(player.grid, m.grid) > 1) return false;
-    const away = steps(player.grid, m.grid);
-    return away <= (m.raceFlags.includes("MULTIPLY") ? 10 : m.asleep ? 8 : 5) || m.raceFlags.includes("PASS_WALL") && away <= 10;
+    if (canMakeContact(s.view, m, player.grid, 2 + Math.ceil(4 * riskQuantile(s.persona ?? null)), terrain, combatContext(s).facts)) return true;
+    const exposure2 = incomingDamage(s.view, player.grid, 4, terrain, { ...combatContext(s).facts, monsters: [m], creaturesOnly: true });
+    return exposure2.damage > 0 || exposure2.status > 0;
   });
 }
 function closeDoorStep(s, terrain) {
@@ -9618,14 +9646,14 @@ function walksIntoDeath(s, terrain, goal) {
   if (player.depth > 0 && player.level <= 10 && (goal === "explore" || goal === "fetch")) {
     if (player.hp < player.maxHp && safeRecovery(s, terrain) || player.status.confused > 0 || player.status.blind > 0 || s.awake.some((monster) => fleeUnique(monster, player, s.persona ?? null, s.view))) return true;
     if (s.threats.length > 0 && s.unseenDamage === 0) {
-      const contact2 = damageFor(s, player.grid, 2, terrain);
+      const contact2 = incomingDamage(s.view, player.grid, 2, terrain, { ...combatContext(s).facts, creaturesOnly: true });
       if (player.hp - contact2.damage < Math.max(2, player.maxHp * 0.1) || contact2.status > 0) return true;
     }
   }
   if (s.threats.length === 0 && s.unseenDamage === 0) return false;
   const incoming = creatureDamageFor(s, s.view.player().grid, terrain);
   if (!(goal === "descend" && stairsUnderfoot(s, terrain)) && s.awake.some((monster) => !neverMoves(s.view, monster) && steps(player.grid, monster.grid) <= 1) && incoming > 0) return true;
-  const contact = damageFor(s, player.grid, 2, terrain);
+  const contact = incomingDamage(s.view, player.grid, 2, terrain, { ...combatContext(s).facts, creaturesOnly: true });
   if (!(goal === "descend" && stairsUnderfoot(s, terrain)) && s.awake.some((monster) => !neverMoves(s.view, monster)) && (contact.damage > player.hp * descentPolicy(s.persona ?? null).risk || contact.status > 0)) return true;
   if (incoming === 0 || incoming < s.view.player().hp) return false;
   return !(goal === "descend" && stairsUnderfoot(s, terrain));
@@ -9791,8 +9819,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   const melee = s.target === null ? void 0 : combatOptions(s, "fight", frame)[0];
   const strandedMelee = s.target !== null && !s.target.asleep && melee !== void 0 && attackSpellsOutOfMana(view) && (hurtsOnTouch(view, s.target) || !killsQuickly(s.target, melee));
   const meleeDanger = strandedMelee && s.target !== null && steps(at, s.target.grid) <= 1;
-  const contact = damageFor(s, at, 2, terrain);
-  const costlyContact = s.awake.length > 0 && !(s.awake.every((monster) => monster.raceFlags.includes("MULTIPLY")) && !s.swarming) && (contact.damage > player.hp * descentPolicy(persona).risk || contact.status > 0) && (s.target === null || melee === void 0 || !forecastFight(frame, s.target, melee).viable);
+  const contact = incomingDamage(s.view, at, 2, terrain, { ...combatContext(s).facts, creaturesOnly: true });
+  const costlyContact = s.threats.length > 0 && !(s.threats.every((monster) => monster.raceFlags.includes("MULTIPLY")) && !s.swarming) && (contact.damage > player.hp * descentPolicy(persona).risk || contact.status > 0) && (s.target === null || melee === void 0 || !forecastFight(frame, s.target, melee).viable);
   if (s.breederExit === true || player.level <= 5 && s.swarming) {
     const door = closeDoorStep(s, terrain);
     if (door !== null) add3("close_door", "Close the adjacent open door to separate the breeders from the exit route. The closing action is survivable and the door reduces incoming damage over two actions.", damageRisk(incoming.damage, player.hp));
@@ -9917,6 +9945,9 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       add3(goal, `Use ${source.name} to ${purpose}. This spends an action exposed to the unseen threat; success does not prove the region is safe.`, exposure(s));
     }
   }
+  if (s.unseenDamage === 0 && player.status.afraid === 0 && creatureDamageFor(s, at, terrain) >= player.hp && s.threats.some((monster) => !monster.visible && !monster.asleep && steps(at, monster.grid) <= 1)) {
+    add3("swing_unseen", "Strike toward the most recently seen adjacent pursuer. Its current position is uncertain, so a miss spends an action exposed to the remembered threat.", exposure(s), false, player.hp - incoming.damage, true);
+  }
   if (ailing && cureless && player.depth > 0 && reachableAnyStairs(view, terrain)) {
     addLeave(`${leaveBy}. ${player.status.poisoned > 0 ? "The poison" : "The bleeding"} keeps costing hit points and nothing carried cures it; the way to the shops that sell cures starts at the stairs.`, exposure(s) * 0.3);
   }
@@ -10009,10 +10040,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     }
     const flight = retreatStairs(s, terrain, widen, escapeShare(persona, player.level));
     const retreat = retreatStep(s, terrain, flight);
-    if ((s.awake.length > 0 || s.unseenDamage > 0) && retreat !== null) add3("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
+    if ((s.threats.length > 0 || s.unseenDamage > 0) && retreat !== null) add3("retreat", s.unseenDamage > 0 ? "Step away from the region of unexplained damage toward a checked escape route or safer ground; the unseen attacker could still follow." : flight === "any" ? "Head for the nearest known staircase and take it, leaving the awake creatures behind." : flight === "down" ? "Head for a known down staircase and take it, leaving the awake creatures behind." : stayingPut(s) === "never" ? "Step up to three steps away from the awake creatures in sight. None of them ever moves, so out of their reach the character is safe from them." : stayingPut(s) === "still" ? "Step up to three steps away from the awake creatures in sight. None of them has moved from its square, so out of their reach the character is likely safe from them." : "Step up to three steps away from the awake creatures in sight; one standing next to the character may still strike as it leaves.", damageRisk(retreat.damage, player.hp), false, player.hp - retreat.damage);
     tag("retreat", flight === "none" ? 0.4 : 1, FREE);
   }
-  if (!quietArrival && !bleeding && s.awake.every((monster) => neverMoves(view, monster)) && recovery && (hurt2 || player.sp < player.maxSp && restRestoresMana(player.cls))) {
+  if (!quietArrival && !bleeding && recovery && (hurt2 || player.sp < player.maxSp && restRestoresMana(player.cls))) {
     add3("rest", "Rest until hit points and restorable mana recover.", 0.01, recallActive);
   }
   if (hungry(view) && s.pack.food[0] !== void 0) {
@@ -10107,11 +10138,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
       const source = offer.goal === "heal" ? potion : healSpell;
       const fail = "sidx" in source ? source.fail / 100 : 0;
       const healed = forecastHeal(frame, healingAmount(view, source), fail, "sidx" in source ? source.mana : 0, healingStatus(view, source));
-      const following = healed.kill?.viable === true ? fightAlternative(healed.kill) : escapeAlternative(healed.escape);
+      const following = healed.recovery ? { meanLoss: 0, scenarioLoss: 0, after: healed.after, actions: 0, viable: true, unknown: [] } : healed.kill?.viable === true ? fightAlternative(healed.kill) : escapeAlternative(healed.escape);
       evaluated = {
         ...following,
-        meanLoss: frame.one.mean + following.meanLoss,
-        scenarioLoss: frame.one.upper + following.scenarioLoss,
+        meanLoss: healed.loss.mean + following.meanLoss,
+        scenarioLoss: healed.loss.upper + following.scenarioLoss,
         after: healed.after - following.scenarioLoss,
         actions: 1 + following.actions,
         viable: healed.viable
@@ -10136,6 +10167,11 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     };
   }
   const forecastSafe = out.some((offer) => offer.forecast?.viable === true);
+  if (!out.some((offer) => offer.goal === "fight")) {
+    const target = s.target;
+    const reason = target === null ? "no visible target within pursuit reach" : player.status.afraid > 0 ? "the character is afraid" : meleeBarred(s, target) ? "stationary or disabling melee is barred" : target.asleep && s.hpShare < escapeShare(persona, player.level) ? "recover before waking the target" : melee === void 0 ? "no executable melee attack" : !canReach(view, terrain, target.grid) ? "the target has no reachable route" : weakCaster ? "the fragile caster cannot approach for melee" : fastUnique?.id === target.id ? "the fast unique requires escape instead of pursuit" : s.stationary.has(target.id) ? "the target has not approached" : townErrand(persona, player.depth, player.level) ? "the town errand takes priority over pursuit" : "a ranged attack takes priority over approaching melee";
+    audit?.set("fight", `not offered: ${reason}`);
+  }
   const kept = out.filter((offer) => {
     if (forecastSafe && offer.forecast?.viable === false && offer.forecast.unknown.length === 0) return false;
     if (poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal)) return false;
@@ -10149,7 +10185,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
   });
-  for (const offer of out) audit?.set(offer.goal, kept.includes(offer) ? "offered" : walksIntoDeath(s, terrain, offer.goal) ? "excluded: forecast requires combat or escape before travel" : forecastSafe && offer.forecast?.viable === false ? "excluded: losing forecast with a viable alternative" : "excluded: combat or status preconditions");
+  for (const offer of out) audit?.set(offer.goal, kept.includes(offer) ? "offered" : travelExclusion(s, terrain, offer.goal) !== null ? `excluded: ${travelExclusion(s, terrain, offer.goal)}` : forecastSafe && offer.forecast?.viable === false ? "excluded: losing forecast with a viable alternative" : "excluded: combat or status preconditions");
   return kept;
 }
 function cardinalWalls(s, at) {
@@ -10389,6 +10425,7 @@ function createCharacterPlanner(options) {
   let recallRead = null;
   let descentRead = null;
   const rememberedThreats = /* @__PURE__ */ new Map();
+  const pursuit = /* @__PURE__ */ new Map();
   let observed = null;
   let unseenHit = null;
   let hunting = null;
@@ -10407,6 +10444,7 @@ function createCharacterPlanner(options) {
     const levelId = view.knownLevel?.()?.levelId;
     if (observed !== null && (observed.depth !== player.depth || observed.levelId !== levelId || turn < observed.turn)) {
       rememberedThreats.clear();
+      pursuit.clear();
       if (view.turn() < observed.turn) observedDamage.clear();
       unseenHit = null;
       contacts.clear();
@@ -10415,6 +10453,13 @@ function createCharacterPlanner(options) {
     }
     if (observe) {
       const visible = view.monsters().filter((m) => m.visible);
+      const damaged = observed !== null && player.hp < observed.hp;
+      for (const monster of visible) {
+        const prior = pursuit.get(monster.id);
+        const distance = steps(player.grid, monster.grid);
+        const approached = prior !== void 0 && key(prior.grid) !== key(monster.grid) && distance < prior.distance;
+        pursuit.set(monster.id, { grid: { ...monster.grid }, distance, since: prior === void 0 || damaged || approached || distance <= 1 ? turn : prior.since });
+      }
       const explains = (grid, damage) => {
         const background = incomingDamage(view, grid, 2, terrain, { monsters: [], ...options.speedEnergy === void 0 ? {} : { energy: options.speedEnergy } }).damage;
         return starvationDamage(view) > 0 && background >= damage || visible.some((monster) => !monster.asleep && incomingDamage(view, grid, 2, terrain, { monsters: [monster], ...options.speedEnergy === void 0 ? {} : { energy: options.speedEnergy } }).damage - background >= damage);
@@ -10439,13 +10484,15 @@ function createCharacterPlanner(options) {
       }
       observed = { depth: player.depth, levelId, hp: player.hp, grid: { ...player.grid }, turn };
     }
-    for (const [id, memory] of rememberedThreats) if (turn < memory.turn || !view.apiVersion.startsWith("2.") && turn - memory.turn > 50 || rememberedCleared(view, memory.monster, memory.turn, terrain, options.speedEnergy)) rememberedThreats.delete(id);
+    const patience = threatMemoryTurns(personaOf(), player.speed, options.speedEnergy);
+    for (const [id, memory] of rememberedThreats) if (turn < memory.turn || turn - memory.turn > (view.apiVersion.startsWith("2.") ? patience : 50) || rememberedCleared(view, memory.monster, memory.turn, terrain, options.speedEnergy)) rememberedThreats.delete(id);
     const unseenDamage = unseenDamageAt(unseenHit ?? void 0, player.grid, turn);
     if (player.depth !== 0) townWalked.clear();
     else if (observe) townWalked.add(key(player.grid));
     const situation = situationOf(view, dreadedNow(), stationaryNow(view, update2), [...rememberedThreats.values()].map((m) => m.monster), unseenDamage, terrain, options.speedEnergy, (monster) => harmlessNow(view, monster), disablers);
     if (hunting !== null && (hunting.depth !== player.depth || situation.target?.id !== hunting.id || situation.target.race !== hunting.race)) hunting = null;
-    return { ...situation, swarming: breedersOverwhelm(view, terrain, personaOf(), observedDamage), persona: personaOf(), observedDamage, depthMinutes: journey.depthMinutes(view), earlyStair: journey.firstStair(view), ...hunting === null ? {} : { hunting: hunting.id }, ...unseenHit === null ? {} : { unseenHit }, ...player.depth === 0 ? { townWalked } : {}, breederExit: journey.breederExit(view, personaOf()), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
+    const threats = situation.threats.filter((monster) => !monster.visible || steps(player.grid, monster.grid) <= 1 || turn - (pursuit.get(monster.id)?.since ?? turn) <= patience);
+    return { ...situation, threats, awake: situation.awake.filter((monster) => threats.some((threat) => threat.id === monster.id)), swarming: breedersOverwhelm(view, terrain, personaOf(), observedDamage), persona: personaOf(), observedDamage, depthMinutes: journey.depthMinutes(view), earlyStair: journey.firstStair(view), ...hunting === null ? {} : { hunting: hunting.id }, ...unseenHit === null ? {} : { unseenHit }, ...player.depth === 0 ? { townWalked } : {}, breederExit: journey.breederExit(view, personaOf()), lastSeen: new Map([...rememberedThreats].map(([id, memory]) => [id, memory.turn])) };
   }
   const stalled = /* @__PURE__ */ new Map();
   const sameTurn = /* @__PURE__ */ new Map();
@@ -10491,7 +10538,7 @@ function createCharacterPlanner(options) {
     return last.length === 2 && last.every(Boolean);
   }
   let lastOutcome = null;
-  let lastOfferAudit = "";
+  let lastOfferAudit = () => "";
   let outcomeVersion = 0;
   let badFeeling = null;
   let feelingDepth = -1;
@@ -10616,7 +10663,7 @@ function createCharacterPlanner(options) {
         } else {
           if (goal !== null) refused.set(goal, { where: whereNow(v), turn: v.turn(), empty: true });
           const why = plan.refusal?.() ?? (goal === null ? null : refusalOf(goal, v)) ?? (goal === "step_aside" ? "no adjacent safe square exists" : goal === "explore" ? journey.blocked(v) ?? "no executable first step reaches the selected frontier" : "the goal's preconditions have no executable action in this view");
-          log(`${goal ?? plan.label} ended without a command: ${why}. ${lastOfferAudit}`);
+          log(`${goal ?? plan.label} ended without a command: ${why}. ${lastOfferAudit()}`);
           noteOutcome(`${plan.label}: ${why}; no game time passed.`);
         }
       } else if (outcomeVersion === version) {
@@ -10712,7 +10759,7 @@ function createCharacterPlanner(options) {
     if (standingOnHarm(v, terrain, to) && !standingOnHarm(v, terrain, p.grid)) return "the next step is onto lava or other ground that burns.";
     if (!WALKS.has(goal)) return null;
     if (p.depth > 0 && p.level <= 4 && (goal === "explore" || goal === "fetch")) {
-      const contact = incomingDamage(v, to, 1, terrain, combatContext(s).facts);
+      const contact = incomingDamage(v, to, 1, terrain, { ...combatContext(s).facts, creaturesOnly: true });
       if (contact.damage > p.hp * descentPolicy(personaOf()).risk || contact.status > 0) return "the next step enters a creature's attack reach before recovery or combat.";
     }
     const damage = creatureDamageFor(s, to, terrain);
@@ -10953,7 +11000,8 @@ function createCharacterPlanner(options) {
         return once("swing at the unseen attacker", view, (ctx) => {
           if (ctx.view.player().status.afraid > 0) return null;
           const s = situationNow(ctx.view);
-          const dir = s.unseenHit?.direction ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)].key;
+          const remembered3 = s.threats.filter((monster) => !monster.visible && !monster.asleep && steps(ctx.view.player().grid, monster.grid) <= 1).sort((a, b) => (s.lastSeen.get(b.id) ?? 0) - (s.lastSeen.get(a.id) ?? 0))[0];
+          const dir = s.unseenHit?.direction ?? (remembered3 === void 0 ? null : directionToward(ctx.view.player().grid, remembered3.grid)) ?? DIRECTIONS[Math.floor(rng() * DIRECTIONS.length)].key;
           return ctx.act.melee(dir);
         });
       case "cast_area":
@@ -11662,7 +11710,8 @@ function createCharacterPlanner(options) {
       let explorationAvailable;
       const canExplore = () => explorationAvailable ??= journey.canExplore(view, true);
       const exclusion = (goal2) => {
-        if (walksIntoDeath(s, terrain, goal2)) return "forecast requires combat or escape before travel";
+        const travel = travelExclusion(s, terrain, goal2);
+        if (travel !== null) return travel;
         if (focus !== null && !focus.has(goal2)) return "outside the current focus";
         if (goal2 === "leave_level" && !journey.canLeave(view) || goal2 === "descend" && !journey.canStair(view, true)) return "stair reversal guard";
         if (goal2 === "explore" && (player.depth === 0 ? reachableStairs(view, terrain) : !canExplore())) return "no executable exploration route";
@@ -11687,7 +11736,23 @@ function createCharacterPlanner(options) {
         const state2 = exclusion(goal2);
         audit.set(goal2, state2 !== null ? `excluded: ${state2}` : offers.some((offer) => offer.goal === goal2) ? "offered" : base.some((offer) => offer.goal === goal2) ? `excluded by journey: ${journey.blocked(view) ?? "preparation or route policy"}` : audit.get(goal2) ?? "not offered: preconditions absent");
       }
-      lastOfferAudit = `Goal audit at turn ${String(turn)}, depth ${String(player.depth)}, position ${key(player.grid)}, HP ${String(player.hp)}: ${[...audit].map(([goal2, state2]) => `${goal2}=${state2}`).join("; ")}.`;
+      const auditText = () => {
+        const facts = { ...combatContext(s).facts, creaturesOnly: true };
+        const one2 = forecastExposure(view, player.grid, 1, terrain, facts);
+        const two2 = forecastExposure(view, player.grid, 2, terrain, facts);
+        const monsters2 = [...s.threats, ...view.monsters().filter((m) => m.visible && !s.threats.some((threat) => threat.id === m.id))];
+        const threats = monsters2.map((monster) => {
+          const hp = targetHp(monster);
+          const forecast = forecastExposure(view, player.grid, 1, terrain, { ...facts, monsters: [monster] });
+          const active2 = s.threats.some((m) => m.id === monster.id);
+          const since = pursuit.get(monster.id)?.since ?? turn;
+          return `${monster.race} m${String(monster.id)} race_level=${String(monster.level)} grid=${key(monster.grid)} distance=${String(steps(player.grid, monster.grid))} ${monster.asleep ? "asleep" : "awake"} ${monster.visible ? "visible" : `remembered age=${String(turn - (s.lastSeen.get(monster.id) ?? turn))}`} HP=${hp.exact ? "known" : hp.prior ? "assumed" : "known-average"}:${hp.low.toFixed(1)}..${hp.high.toFixed(1)} damage=${monster.knownCombat?.blows.length || /\(\d+d\d+/.test(view.monsterRecall?.(monster.raceIndex)?.text ?? "") ? "known-blows" : "assumed"} mean/scenario=${forecast.mean.toFixed(1)}/${forecast.upper.toFixed(1)} status=${String(forecast.status)} unknown=${forecast.unknown.join(",") || "none"} active=${String(active2)} no_approach=${String(turn - since)}`;
+        });
+        const target = s.target;
+        const fight = target === null ? "no visible target within pursuit reach" : player.status.afraid > 0 ? "afraid" : meleeBarred(s, target) ? "melee barred by stationary or disabling contact" : !canReach(view, terrain, target.grid) ? "target has no route" : `target m${String(target.id)}; ${audit.get("fight") ?? "preconditions absent"}`;
+        return `Goal audit at turn ${String(turn)}, depth ${String(player.depth)}, position ${key(player.grid)}, HP ${String(player.hp)}: ${[...audit].map(([goal2, state2]) => `${goal2}=${state2}`).join("; ")}. Forecast creatures mean/scenario one=${one2.mean.toFixed(1)}/${one2.upper.toFixed(1)} two=${two2.mean.toFixed(1)}/${two2.upper.toFixed(1)} status=${String(two2.status)} unseen=${s.unseenDamage.toFixed(1)} patience=${String(threatMemoryTurns(persona, player.speed, options.speedEnergy))}; fight reason: ${fight}; threats: ${threats.join("; ") || "none"}.`;
+      };
+      lastOfferAudit = auditText;
       const diving = journey.dive(view, persona, recalling);
       let advance2 = takeDive(view, diving.take) ? "descend" : null;
       if (advance2 === null && cfg.descend && player.depth > 0 && player.depth < 10 && !recalling && !descending && journey.safeDelay(view) && player.hp >= player.maxHp * descentPolicy(persona).hpShare) {
@@ -11716,7 +11781,7 @@ function createCharacterPlanner(options) {
         offers = journey.apply([{ goal: "explore", criteria: "Explore reachable unknown ground to earn experience at this depth.", risk: exposure(s) + 0.02 }], view, persona, visitedShops, recalling, true, chosenHome).filter(usable);
       }
       if (offers.length === 0) {
-        log(lastOfferAudit);
+        log(lastOfferAudit());
         const tried = offered.map((o) => o.goal);
         const reason = journey.blocked(view) ?? nothingToDo(view, tried);
         const tellWiden = !widenedReasons.has(reason);
@@ -11801,6 +11866,10 @@ function createCharacterPlanner(options) {
         log(`goal: pruned ${pruned.map((p) => `${p.goal} (${p.by} does as well or better)`).join(", ")}`);
         offers = kept;
       }
+      for (const offer of offers) audit.set(offer.goal, "offered");
+      for (const [goal2, state2] of audit) if (state2 === "offered" && !offers.some((offer) => offer.goal === goal2)) audit.set(goal2, "excluded by final offer pruning");
+      lastOfferAudit = auditText;
+      if (creatureDamageFor(s, player.grid, terrain) >= player.hp) log(lastOfferAudit());
       const ailingNow = player.hp < player.maxHp && (player.status.poisoned > 0 || player.status.cut > 0);
       const engaged = (s.awake.length > 0 || s.unseenDamage > 0 || ailingNow) && offers.some((o) => ["escape", "heal", "gamble"].includes(classOf(o.goal)));
       const pack = engaged ? { pruned, gate: escapeThresholds(persona) } : pruned.length > 0 ? { pruned } : void 0;
@@ -11943,7 +12012,9 @@ function createCharacterPlanner(options) {
           state,
           questions: persona === null ? { goal, ...gate, ...ready } : { goal, ...gate, in_character: { type: "choice", instructions: inCharacterInstructions(persona), criteria }, ...ready, ...options.orders?.ask(offers, view) ?? {} }
         },
-        context: { depth: player.depth, offers, newCreatures, situation, layers, stateHash: stateHash(state), ...pack === void 0 ? {} : { pack }, ...loop === null ? {} : { loop } }
+        context: { depth: player.depth, offers, newCreatures, situation, layers, get audit() {
+          return auditText();
+        }, stateHash: stateHash(state), ...pack === void 0 ? {} : { pack }, ...loop === null ? {} : { loop } }
       };
       const requestTokens = estimateTokens(JSON.stringify(question.request));
       log(`goal: full request estimate ${String(requestTokens)} tokens`);

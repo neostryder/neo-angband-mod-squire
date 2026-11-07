@@ -10,7 +10,7 @@ import { canRead, hungry, readPack, unknownFlavours } from "../brain/pack.js";
 import { arrivalFeeling, dangerousLevelFeeling } from "../brain/level-feel.js";
 import { forecastFight, forecastPhase, forecastWalk, tacticalFrame } from "../brain/forecast.js";
 import { attackOptions } from "../brain/combat-kit.js";
-import { damageField, forecastExposure, riskQuantile, rememberedCleared, assessThreat, incomingDamage, turnsPerAction } from "../brain/threat-model.js";
+import { canMakeContact, damageField, forecastExposure, monsterActions, riskQuantile, threatMemoryTurns, rememberedCleared, assessThreat, incomingDamage, turnsPerAction } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { stuckThresholds } from "../brain/decision-memory.js";
@@ -88,7 +88,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   let previousHp: number | null = null;
   let unseenUntil = -1;
   let lastTurn = -1;
-  const remembered = new Map<number, { monster: MonsterView; until: number }>();
+  const remembered = new Map<number, { monster: MonsterView; until: number; activeUntil: number; distance: number }>();
   let town = { ready: true, earning: false, reason: "", target: null as number | null };
   let expired = false;
   let footOffered = false;
@@ -713,8 +713,15 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       chosenReturn = false;
       departure.end();
     }
-    for (const monster of monsterSnapshot(view)) if (monster.visible && !monster.asleep) remembered.set(monster.id, { monster: { ...monster, visible: false }, until: turn + 100 });
-    for (const [id, entry] of remembered) if (!view.apiVersion.startsWith("2.") && entry.until < turn || rememberedCleared(view, entry.monster, entry.until - 100, terrain)) remembered.delete(id);
+    const patience = threatMemoryTurns(lastPersona, player.speed);
+    for (const monster of monsterSnapshot(view)) if (monster.visible && !monster.asleep) {
+      const prior = remembered.get(monster.id);
+      const distance = steps(player.grid, monster.grid);
+      const approached = prior !== undefined && key(prior.monster.grid) !== key(monster.grid) && distance < prior.distance;
+      const renewed = prior === undefined || approached || distance <= 1 || previousHp !== null && player.hp < previousHp;
+      remembered.set(monster.id, { monster: { ...monster, visible: false }, until: turn + 100, activeUntil: renewed ? turn + patience : prior.activeUntil, distance });
+    }
+    for (const [id, entry] of remembered) if (turn - (entry.until - 100) > (view.apiVersion.startsWith("2.") ? patience : 100) || rememberedCleared(view, entry.monster, entry.until - 100, terrain)) remembered.delete(id);
     if (previousHp !== null && player.hp < previousHp && player.status.poisoned === 0 && player.status.cut === 0 && previousHp - player.hp > incomingDamage(view, player.grid, 2, terrain, { monsters: [] }).damage && !standingOnHarm(view, terrain, player.grid) && !monsterSnapshot(view).some((monster) => monster.visible && !monster.asleep)) unseenUntil = turn + 100;
     previousHp = player.hp;
     lastTurn = turn;
@@ -760,6 +767,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   function threatensDelay(view: AgentView, monster: MonsterView, seen = view.turn()): boolean {
+    if (view.turn() > (remembered.get(monster.id)?.activeUntil ?? Infinity)) return false;
+    if (monster.asleep) return monster.raceFlags.includes("MULTIPLY") && canMakeContact(view, monster, playerSnapshot(view).grid, 2 + Math.ceil(4 * riskQuantile(lastPersona)), terrain);
     if (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, playerSnapshot(view).grid) <= 10) return true;
     const danger = forecastExposure(view, playerSnapshot(view).grid, 4, terrain, { monsters: [monster], quantile: riskQuantile(lastPersona), lastSeen: new Map([[monster.id, seen]]), creaturesOnly: true, observedDamage });
     return danger.upper > 0 || danger.status > 0;
@@ -801,7 +810,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const fail = (why: string): null => { routeFailure = why; return null; };
     if (goals.some((grid) => key(grid) === key(player.grid))) return [];
     if (player.status.blind > 0 || player.status.confused > 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return fail("blindness, confusion or an unexplained hit prevents a checked walk");
-    const threats = [...remembered.values()].map((entry) => entry.monster);
+    const threats = [...remembered.values()].filter((entry) => view.turn() <= entry.activeUntil).map((entry) => entry.monster);
     const enter = (grid: Loc) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) && !terrain.isClosedDoor(view.cell(grid.x, grid.y)?.feat ?? -1) && !view.cell(grid.x, grid.y)?.trap && (!breederLevel || !monsterSnapshot(view).some((monster) => monster.visible && key(monster.grid) === key(grid)));
     const field = flowFrom({ goals, canEnter: enter });
     if (!Number.isFinite(field.distance(player.grid))) return fail("no unblocked known route reaches the staircase");
@@ -1182,14 +1191,17 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const occupied = new Set(monsterSnapshot(view).filter((monster) => monster.visible).map((monster) => key(monster.grid)));
     const stationaryRisk = new Set<string>();
     const checked = new Set<string>();
-    const dangerField = damageField(view, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona) });
+    const dangerField = damageField(view, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
+    const contactField = damageField(view, 1, terrain, { observedDamage, quantile: riskQuantile(lastPersona), creaturesOnly: true });
     for (const monster of monsterSnapshot(view)) {
-      if (!monster.visible || !neverMoves(view, monster)) continue;
-      for (const dir of DIRECTIONS) {
-        const grid = { x: monster.grid.x + dir.dx, y: monster.grid.y + dir.dy };
+      if (!monster.visible) continue;
+      const fixed = neverMoves(view, monster);
+      const reach = fixed ? 1 : monsterActions(monster, playerSnapshot(view), 1);
+      for (let y = monster.grid.y - reach; y <= monster.grid.y + reach; y++) for (let x = monster.grid.x - reach; x <= monster.grid.x + reach; x++) {
+        const grid = { x, y };
         if (key(grid) === key(at) || checked.has(key(grid))) continue;
         checked.add(key(grid));
-        const danger = dangerField.at(grid);
+        const danger = (fixed ? dangerField : contactField).at(grid);
         if (danger.status > 0 || danger.damage > playerSnapshot(view).hp * descentPolicy(lastPersona).risk) stationaryRisk.add(key(grid));
       }
     }

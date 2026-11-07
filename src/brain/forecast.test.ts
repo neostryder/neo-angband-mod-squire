@@ -6,6 +6,14 @@ import { attackLaw, forecastFight, forecastHeal, forecastPhase, forecastWalk, st
 
 const ROOM = ["############", "#..........#", "#.@........#", "#..........#", "############"];
 
+it("charges retaliation after attacking a sleeper without declaring it an immediate attacker", () => {
+  const w = world({ map: ROOM, monsters: [{ grid: { x: 3, y: 2 }, asleep: true, level: 5, hp: 80, maxHp: 80 }], monsterRecall: () => "It can hit to hurt (2d6)." });
+  const frame = tacticalFrame(w.view, { terrain: w.terrain });
+  const target = w.view.monsters()[0]!;
+  expect(frame.one.upper).toBe(0);
+  expect(forecastFight(frame, target, attackOptions(w.view, target, "fight")[0]!).loss.upper).toBeGreaterThan(0);
+});
+
 describe("target HP intervals", () => {
   it.each(["somewhat", "wounded", "badly", "almost"] as const)("keeps %s HP endpoints rather than a midpoint kill", (health) => {
     const w = world({ map: ROOM, pack: ["5 Flasks of Oil"], monsters: [{ grid: { x: 5, y: 2 }, hp: 1, maxHp: 100,

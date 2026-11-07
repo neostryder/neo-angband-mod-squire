@@ -189,7 +189,7 @@ describe("moving exposure forecast", () => {
     const w = world({ map: rows, monsters: [{ grid: { x: 1, y: 1 }, id: 1, visible: false }], monsterRecall: () => "It can hit to hurt (1d4)." });
     w.advance(10000);
     const exposure = forecastExposure(w.view, w.at(), 1, w.terrain, { monsters: w.view.monsters(), lastSeen: new Map([[1, 0]]), energy: turnEnergy });
-    expect(exposure.upper).toBeGreaterThan(0);
+    expect(exposure.upper).toBe(0);
     expect(exposure.unknown).toContain("position-budget");
   });
 

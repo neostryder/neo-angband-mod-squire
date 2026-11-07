@@ -11,6 +11,185 @@ import { JEV } from "./backend.js";
 import { createTally } from "./tally.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 import { breedersOverwhelm } from "../strategy/journey.js";
+import { forecastExposure, threatMemoryTurns } from "./threat-model.js";
+
+describe("round 12 phantom threats", () => {
+  const monster = { id: 1, grid: { x: 5, y: 1 }, race: "soldier", level: 5, speed: 120 };
+  const makePlanner = (w: ReturnType<typeof suppliedWorld>, persona = defaultPersona()) => createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona, log: () => {}, now: () => 0, reflex: false });
+  const offers = (p: ReturnType<typeof makePlanner>, w: ReturnType<typeof suppliedWorld>) => {
+    const q = p.ask(w.view);
+    if ("handBack" in q) throw new Error(q.handBack);
+    return q.context.offers;
+  };
+
+  it("expires an omitted attacker without damage instead of expanding it forever", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....,#", "##########"], player: { depth: 1, level: 4, hp: 26, maxHp: 30 }, monsters: [monster] });
+    const cell = w.view.cell.bind(w.view);
+    Object.assign(w.view, { apiVersion: "2.0.0", knownLevel: () => ({ levelId: 1 }), cell: (x: number, y: number) => { const square = cell(x, y); return square === null ? null : { ...square, inView: false }; } });
+    const p = makePlanner(w);
+    offers(p, w);
+    w.setMonsters([]);
+    w.advance(10);
+    expect(offers(p, w).some((o) => o.goal === "rest")).toBe(false);
+    w.advance(threatMemoryTurns(defaultPersona(), w.view.player().speed));
+    expect(offers(p, w).some((o) => o.goal === "rest")).toBe(true);
+  });
+
+  it.each(["asleep", "wall", "rubble", "floating eye", "mold", "mushroom patch"])("does not turn %s into immediate lethal damage", (candidate) => {
+    const blocked = candidate === "wall" || candidate === "rubble";
+    const w = suppliedWorld({ map: ["#########", blocked ? `#@${candidate === "wall" ? "#" : "%"}....,#` : "#@.....,#", "#########"], player: { depth: 1, hp: 26, maxHp: 30 },
+      monsters: [{ ...monster, grid: { x: blocked ? 3 : 4, y: 1 }, speed: 150, level: 30, asleep: candidate === "asleep", raceFlags: ["mold", "mushroom patch"].includes(candidate) ? ["NEVER_MOVE"] : [], race: candidate === "mold" ? "grey mold" : candidate === "mushroom patch" ? "green mushroom patch" : candidate === "floating eye" ? candidate : monster.race }] });
+    expect(forecastExposure(w.view, w.at(), 2, w.terrain).upper).toBe(0);
+  });
+
+  it.each(["eat", "heal", "rest"])("keeps %s executable beside an unreachable awake monster", (goal) => {
+    const w = suppliedWorld({ map: ["###########", "#<@...,,###", "###########", "#########.#", "###########"], player: { depth: 1, level: 4, hp: 26, maxHp: 30, status: goal === "eat" ? { food: 500 } : goal === "heal" ? { poisoned: 30 } : {} },
+      pack: ["5 Rations of Food", "3 Potions of Cure Critical Wounds"], monsters: [{ ...monster, grid: { x: 9, y: 3 }, speed: 150, level: 30 }] });
+    const p = makePlanner(w);
+    const q = p.ask(w.view);
+    if ("handBack" in q) throw new Error(q.handBack);
+    expect(q.context.offers.map((o) => o.goal)).toContain(goal);
+    const choice = p.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, w.view);
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
+    expect(choice.plan.step(w.view, w.act)?.code).toBe(goal === "heal" ? "quaff" : goal);
+  });
+
+  it("expires a distant nonapproaching lethal estimate and renews it on approach or damage", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....,#", "##########"], player: { depth: 1, level: 4, hp: 26, maxHp: 30 }, monsters: [{ ...monster, speed: 150, level: 30 }] });
+    const p = makePlanner(w);
+    offers(p, w);
+    w.advance(threatMemoryTurns(defaultPersona(), w.view.player().speed) + 1);
+    expect(offers(p, w).map((o) => o.goal)).toContain("rest");
+    w.setMonsters([{ ...monster, grid: { x: 4, y: 1 }, speed: 150, level: 30 }]);
+    w.advance(10);
+    expect(offers(p, w).map((o) => o.goal)).not.toContain("rest");
+    w.advance(threatMemoryTurns(defaultPersona(), w.view.player().speed) + 1);
+    offers(p, w);
+    w.setPlayer({ hp: 25 });
+    w.advance(10);
+    expect(offers(p, w).map((o) => o.goal)).not.toContain("rest");
+  });
+
+  it("keeps combat exclusions paired with an executable combat or escape offer", () => {
+    let excluded = 0;
+    for (const persona of [archetype("coward"), defaultPersona(), archetype("diver")]) for (const race of ["soldier", "floating eye", "Fang, Farmer Maggot's Dog", "Grip, Farmer Maggot's Dog", "unknown creature"]) for (const distance of [1, 2, 4]) for (const reserves of [true, false]) {
+      const w = suppliedWorld({ map: ["############", "#..........#", "#.@......,.#", "#..........#", "############"], player: { depth: 1, level: 4, hp: 26, maxHp: 26 },
+        monsters: [{ ...monster, race, level: race === "unknown creature" ? 0 : 5, raceFlags: race.includes("Dog") ? ["UNIQUE"] : [], grid: { x: 2 + distance, y: 2 } }] });
+      if (!reserves) w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+      const p = makePlanner(w, persona);
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      if (!q.context.audit?.includes("excluded: forecast requires combat or escape")) continue;
+      excluded++;
+      const response = q.context.offers.find((o) => ["fight", "shoot", "throw_oil", "aim_wand", "cast_attack", "retreat", "phase", "teleport", "cast_escape", "break_sight", "close_door", "step_aside", "leave_level"].includes(o.goal));
+      expect(response, q.context.audit).toBeDefined();
+      const goal = response!.goal;
+      const choice = p.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      expect(choice.plan.step(w.view, w.act), q.context.audit).not.toBeNull();
+    }
+    expect(excluded).toBeGreaterThan(0);
+  });
+
+  it("names the threat, assumptions, forecast and missing fight precondition in the audit", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....,#", "##########"], player: { depth: 1, level: 4, hp: 26, maxHp: 26, status: { afraid: 5 } },
+      monsters: [{ ...monster, grid: { x: 3, y: 1 }, level: 30, knownCombat: { averageHp: null, health: "unhurt", blows: [], status: [], spellFrequency: null, innateFrequency: null } }] });
+    const q = makePlanner(w).ask(w.view);
+    if ("handBack" in q) throw new Error(q.handBack);
+    expect(q.context.audit).toContain("soldier m1 race_level=30 grid=3,1 distance=1 awake visible HP=assumed:");
+    expect(q.context.audit).toContain("damage=assumed mean/scenario=");
+    expect(q.context.audit).toContain("Forecast creatures mean/scenario one=");
+    expect(q.context.audit).toContain("fight reason: afraid");
+  });
+
+  it("keeps a recent unseen hit actionable and lets unsupported danger expire", () => {
+    const w = suppliedWorld({ map: ["##########", "#<@.....,#", "##########"], player: { depth: 1, level: 4, hp: 30, maxHp: 30 } });
+    const p = makePlanner(w);
+    offers(p, w);
+    w.setPlayer({ hp: 26 });
+    w.advance(10);
+    expect(offers(p, w).map((o) => o.goal)).toContain("swing_unseen");
+    w.advance(threatMemoryTurns(defaultPersona(), w.view.player().speed) + 1);
+    expect(offers(p, w).map((o) => o.goal)).toContain("rest");
+  });
+
+  it("offers a combat or escape command for a recent omitted lethal pack without reserves", () => {
+    const w = suppliedWorld({ map: ["##########", "#........#", "#.@....,,#", "#........#", "##########"], player: { depth: 1, level: 4, hp: 26, maxHp: 26 },
+      monsters: [1, 2, 3].map((id) => ({ ...monster, id, grid: { x: 3, y: id } })) });
+    Object.assign(w.view, { apiVersion: "2.0.0" });
+    w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
+    const p = makePlanner(w);
+    offers(p, w);
+    w.setMonsters([]);
+    w.advance(10);
+    const q = p.ask(w.view);
+    if ("handBack" in q) throw new Error(q.handBack);
+    expect(q.context.audit).toContain("forecast requires combat or escape");
+    const response = q.context.offers.find((o) => ["swing_unseen", "retreat", "phase", "leave_level", "step_aside"].includes(o.goal));
+    expect(response, q.context.audit).toBeDefined();
+    const goal = response!.goal;
+    const choice = p.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, w.view);
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    expect(choice.plan.step(w.view, w.act)).not.toBeNull();
+  });
+
+  it("scales the expiry window through the persona", () => {
+    expect(threatMemoryTurns(archetype("coward"), 110)).toBeGreaterThan(threatMemoryTurns(archetype("diver"), 110));
+  });
+
+  it("keeps every offered first exploration step executable around a creature", () => {
+    let explored = 0;
+    for (const persona of [archetype("coward"), defaultPersona(), archetype("diver")]) for (const speed of [100, 110, 120]) for (const level of [0, 1, 5]) for (const asleep of [true, false]) {
+      const w = suppliedWorld({ map: ["############", "#..........#", "#.@......,.#", "#..........#", "############"], player: { depth: 1, level: 4, hp: 26, maxHp: 26 }, monsters: [{ ...monster, grid: { x: 6, y: 2 }, speed, level, asleep }] });
+      const p = makePlanner(w, persona);
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      if (!q.context.offers.some((o) => o.goal === "explore")) continue;
+      const choice = p.choose({ goal: { type: "choice", choice: "explore", confidence: 1, probabilities: { explore: 1 } } }, q.context, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      expect(choice.plan.step(w.view, w.act), JSON.stringify({ speed, level, asleep, audit: q.context.audit })).not.toBeNull();
+      explored++;
+    }
+    expect(explored).toBeGreaterThan(0);
+  });
+
+  it("replays one hundred decisions after an attacker leaves perception without a phantom freeze", () => {
+    const row = `#<@${".".repeat(140)},#`;
+    const w = suppliedWorld({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { depth: 1, level: 4, hp: 26, maxHp: 26 }, pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"], monsters: [{ ...monster, grid: { x: 3, y: 1 } }] });
+    Object.assign(w.view, { apiVersion: "2.0.0" });
+    const p = makePlanner(w);
+    offers(p, w);
+    w.setMonsters([]);
+    w.advance(300);
+    let endured = 0;
+    let empty = 0;
+    let movement = 0;
+    const codes: Record<string, number> = {};
+    for (let tick = 0; tick < 100; tick++) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      const goal = q.context.offers.find((o) => o.goal === "explore")?.goal ?? q.context.offers[0]!.goal;
+      if (goal === "endure") endured++;
+      const choice = p.choose({ goal: { type: "choice", choice: goal, confidence: 1, probabilities: { [goal]: 1 } } }, q.context, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      const command = choice.plan.step(w.view, w.act);
+      if (command !== null) codes[command.code] = (codes[command.code] ?? 0) + 1;
+      if (command === null) empty++;
+      if (command?.code === "walk") {
+        movement++;
+        const direction = DIRECTIONS.find((dir) => dir.key === command.dir)!;
+        w.moveTo({ x: w.at().x + direction.dx, y: w.at().y + direction.dy });
+      }
+      choice.plan.end?.(w.view);
+      w.advance(10);
+    }
+    console.log(JSON.stringify({ round12: "omitted attacker", decisions: 100, endured, empty, movement, codes }));
+    expect(endured).toBe(0);
+    expect(empty).toBe(0);
+    expect(movement).toBeGreaterThan(0);
+  });
+});
 
 describe("round 11 survival recovery", () => {
   const encounters = [
