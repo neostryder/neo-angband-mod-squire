@@ -20,10 +20,10 @@ import { flowFrom, stepDown, type FlowField } from "../flow.js";
 import { besideStationaryThreat, besideParalysingGazer, frontiers, hasFloorObject, isClosedDoor, isRoutable, isWalkable, knownDownStairs, knownStairs, neverMoves, paralysingGazer, standingOnHarm } from "../map.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
-import { recallItem, RECALL_FROM_DEPTH, shownName } from "../town/needs.js";
+import { recallItem, RECALL_FROM_DEPTH, shownName, PRICE_FLOOR } from "../town/needs.js";
 import { createDeparture, EARNING_LEASH, EARNING_TURNS } from "../town/departure.js";
 import { createExplorationPressure, createLevelPacing, diveSchedule, stairLeash, type ExplorationPressure } from "./pacing.js";
-import { descentGaps as gapsAt, missingPreparation as preparationAt, poisonRecovery, descentPolicy, supplies, supplyMargin, tripLight, shallowDiveChecks, shallowDiveReady } from "./readiness.js";
+import { assessDescent, HEALING_POTION, type PreparationSource, type Requirement, missingPreparation as preparationAt, poisonRecovery, descentPolicy, supplies, supplyMargin, tripLight, shallowDiveChecks, shallowDiveReady } from "./readiness.js";
 import { stepsBand, turnsBand } from "../brain/bands.js";
 
 const OPTIONAL: ReadonlySet<Goal> = new Set(["explore", "fetch", "pick_up", "tunnel"]);
@@ -81,6 +81,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   let pressure: ExplorationPressure | null = null;
   const departure = createDeparture();
   let returnReason: string | null = null;
+  let townWish: string | null = null;
+  let levelTurn = 0;
+  let levelAt = now();
+  let inventoryAt = -Infinity;
+  const diagnostics = new Map<string, { signature: string; at: number; turn: number; repeats: number }>();
   let returnStock: ReturnType<typeof supplies> | null = null;
   let returnDepth = -1;
   /* Set when the persona chose the trip home; the margin did not force it. */
@@ -161,7 +166,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (down && player.depth > 0 && player.depth < 10) {
       const checks = shallowDiveChecks(view, lastPersona);
       const trapped = besideStationaryThreat(view, player.grid) && !knownStairs(view, terrain).some((at) => terrain.isUpStair(view.cell(at.x, at.y)?.feat ?? -1));
-      if (!trapped && (player.maxLevel < checks.levelFloor || player.maxHp < checks.maxHpFloor)) return false;
+      if (!trapped && (player.maxLevel < checks.levelFloor || player.maxHp < checks.maxHpFloor) && assessment(view).hard.some((gap) => gap.kind === "level" || gap.kind === "hp")) return false;
     }
     while (flips.length > 0 && now() - flips[0]! >= 60000 * descentPolicy(lastPersona).scale) flips.shift();
     if (crossed?.from === destination && crossed.to === player.depth && flips.length >= descentPolicy(lastPersona).reversals) return false;
@@ -539,7 +544,8 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
 
   function missingPreparation(view: AgentView, depth: number, persona: Persona | null = lastPersona) {
     const minutes = depthMinutes(view);
-    const gaps = preparationAt(view, depth, persona, minutes, firstStair(view), stairEscape(view));
+    const assessed = depth === playerSnapshot(view).depth + 1 && playerSnapshot(view).depth > 0 && depth <= 10 ? assessment(view, persona) : null;
+    const gaps = assessed === null ? preparationAt(view, depth, persona, minutes, firstStair(view), stairEscape(view)) : [...assessed.hard, ...assessed.soft];
     const normal = preparationAt(view, depth, persona);
     const changes = normal.filter((gap) => !gaps.some((current) => current.kind === gap.kind && current.reason === gap.reason))
       .map((gap) => `${gap.reason} -> ${gaps.find((current) => current.kind === gap.kind)?.reason ?? `${gap.kind} floor met`}`);
@@ -552,8 +558,81 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   }
 
   function descentGaps(view: AgentView, depth: number, persona: Persona | null) {
-    missingPreparation(view, depth, persona);
-    return gapsAt(view, depth, persona, depthMinutes(view), firstStair(view), stairEscape(view));
+    return depth === playerSnapshot(view).depth + 1 && depth <= 10 ? assessment(view, persona) : {
+      hard: missingPreparation(view, depth, persona).filter((gap) => gap.severe || gap.kind === "food" || gap.kind === "light"),
+      soft: missingPreparation(view, depth, persona).filter((gap) => !gap.severe && gap.kind !== "food" && gap.kind !== "light"),
+    };
+  }
+
+  function diagnostic(event: string, view: AgentView, data: Record<string, unknown>): void {
+    const signature = JSON.stringify(data, (name, value: unknown) => ["restlessness", "effective", "value"].includes(name) ? undefined : value);
+    const previous = diagnostics.get(event);
+    const interval = 10000 * descentPolicy(lastPersona).scale;
+    if (event !== "inventory-minute" && previous?.signature === signature && now() - previous.at < interval) {
+      previous.repeats += 1;
+      return;
+    }
+    log(JSON.stringify({ event, depth: playerSnapshot(view).depth, turn: view.turn(), levelMinutes: Number(((now() - levelAt) / 60000).toFixed(2)),
+      levelTurns: view.turn() - levelTurn, repeats: previous?.repeats ?? 0, ...data }));
+    diagnostics.set(event, { signature, at: now(), turn: view.turn(), repeats: 0 });
+  }
+
+  const sourceCache = new WeakMap<AgentView, { stamp: string; sources: Partial<Record<Requirement["kind"], PreparationSource>> }>();
+  const assessmentCache = new WeakMap<AgentView, { stamp: string; value: ReturnType<typeof assessDescent> }>();
+
+  function assessment(view: AgentView, persona = lastPersona) {
+    const minutes = depthMinutes(view);
+    const stamp = JSON.stringify([view.turn(), snapshotEpoch(), persona, supplies(view)]);
+    const resultStamp = `${stamp}:${String(levelTurn)}:${String(depthAt)}:${String(Math.floor(now() / 1000))}`;
+    const result = assessmentCache.get(view);
+    if (result?.stamp === resultStamp) return result.value;
+    let cached = sourceCache.get(view);
+    if (cached?.stamp !== stamp) {
+      const sources: Partial<Record<Requirement["kind"], PreparationSource>> = {};
+      const townRoute = checkedRoute(view, upStairs(view)) !== null || canRead(view) && recallItem(view) !== null && safeDelay(view);
+      const patterns = { food: /Ration|Food|Waybread|Mushroom/i, healing: HEALING_POTION, phase: /Phase Door|Teleport/i, light: /Torch|Torches|Lantern|Oil/i, protection: /Flask.*Oil|Wand|Bow|Sling|Crossbow|Arrow|Bolt|Shot|Book/i };
+      const field = flowFrom({ goals: [playerSnapshot(view).grid], canEnter: (grid) => isRoutable(view, terrain, grid) && !gazeReach(view, grid) });
+      const available = new Set<string>();
+      const bounds = view.mapBounds();
+      for (let y = 0; y < bounds.height; y++) for (let x = 0; x < bounds.width; x++) {
+        if (!hasFloorObject(view, { x, y }) || !Number.isFinite(field.distance({ x, y }))) continue;
+        const names = [...view.floorItems(x, y).map((item) => shownName(item) ?? ""), ...(view.knownFloorItems?.(x, y) ?? []).map((entry) => entry.item?.name ?? "")];
+        for (const [kind, pattern] of Object.entries(patterns)) if (names.some((name) => pattern.test(name)) && checkedRoute(view, [{ x, y }]) !== null) available.add(kind);
+      }
+      for (const kind of ["food", "healing", "phase", "light", "protection"] as const) {
+        const price = kind === "protection" ? PRICE_FLOOR.oil : PRICE_FLOOR[kind];
+        const buy = townRoute && playerSnapshot(view).gold >= price && departure.supplyAffordable(view, kind === "protection" ? "oil" : kind);
+        sources[kind] = { satisfiable: available.has(kind) || buy, why: available.has(kind) ? "a matching floor item has a checked route" : buy ? "a town route and purchase gold exist; entered stock permits buying or stock is unverified" : !townRoute ? "no checked town route, safe Recall or matching floor item" : "gold or entered stock cannot supply this requirement and no matching floor item is reachable" };
+      }
+      const candidates = monsterSnapshot(view).filter((monster) => monster.visible && !monster.asleep && steps(playerSnapshot(view).grid, monster.grid) <= AUTOFIGHT_REACH && Number.isFinite(field.distance(monster.grid)))
+        .sort((a, b) => steps(playerSnapshot(view).grid, a.grid) - steps(playerSnapshot(view).grid, b.grid)).slice(0, Math.ceil(1 + 4 * descentPolicy(persona).appetite));
+      const frame = tacticalFrame(view, { terrain, facts: { observedDamage, quantile: riskQuantile(persona) } });
+      const training = candidates.some((monster) => attackOptions(view, monster, "fight", { terrain, facts: { observedDamage, quantile: riskQuantile(persona) } }).some((attack) => forecastFight(frame, monster, attack).viable));
+      sources.level = sources.hp = { satisfiable: training, why: training ? "a reachable creature has a viable training fight" : "no viable nearby training fight was found within the persona's evaluation budget" };
+      cached = { stamp, sources };
+      sourceCache.set(view, cached);
+    }
+    const value = assessDescent(view, playerSnapshot(view).depth + 1, persona, { minutes, turns: Math.max(0, view.turn() - levelTurn),
+      overdue: schedule(view).stage >= 2, sources: cached.sources });
+    assessmentCache.set(view, { stamp: resultStamp, value });
+    return value;
+  }
+
+  function resolveTown(view: AgentView): void {
+    townWish = returnReason;
+    if (returnReason === null) return;
+    const readiness = assessment(view);
+    const actionable = checkedRoute(view, upStairs(view)) !== null || canRead(view) && recallItem(view) !== null && safeDelay(view);
+    const starving = hungry(view) && supplies(view).food === 0;
+    const preferDive = !starving && (readiness.override || readiness.relaxed && readiness.hard.length === 0 && readiness.soft.length === 0 ||
+      descentPolicy(lastPersona).appetite > 0.85);
+    diagnostic("town-decision", view, { reason: returnReason, decision: !actionable ? "rank town lower; search or descend" : preferDive ? "rank town lower; preparation softened" : "return to town",
+      actionable, restlessness: Number(readiness.restlessness.toFixed(1)), requirements: readiness.requirements, persona: lastPersona?.sliders ?? null, quirks: lastPersona?.quirks ?? null });
+    if (!actionable || preferDive) {
+      returnReason = null;
+      chosenReturn = false;
+      departure.end();
+    }
   }
 
   function breederExit(view: AgentView, persona = lastPersona): boolean {
@@ -580,7 +659,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (player.depth >= 1 && player.depth < 10) {
       const policy = descentPolicy(lastPersona);
       if (stock.food < policy.food || hungry(view)) return "food";
-      if (!stock.lastingLight && (!stock.workingLight || stock.fuel < policy.reserve)) return "light and fuel";
+      if (!tripLight(view, lastPersona)) return "light and fuel";
       if (stock.cures < policy.reserve) return "healing";
       if (stock.phase + stock.escapes < policy.reserve) return "Phase Door";
       return null;
@@ -617,6 +696,10 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const state = pacing.observe(view, terrain, lastPersona);
     if (state.fresh) {
       leashAt = now();
+      levelAt = now();
+      levelTurn = turn;
+      inventoryAt = -Infinity;
+      diagnostics.clear();
       dangerousFeeling = false;
     }
     dangerousFeeling ||= dangerousLevelFeeling(view.messages()) !== null;
@@ -735,6 +818,16 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
        * so an empty pack ends it only once the character is hungry. */
       else if (departure.finished(view) || supplies(view).food === 0 && hungry(view) || !supplies(view).workingLight && !supplies(view).lastingLight) returnReason ??= "the earning trip's limit or return route";
     }
+    resolveTown(view);
+    if (state.fresh) {
+      const readiness = assessment(view);
+      diagnostic("level-arrival", view, { persona: lastPersona?.sliders ?? null, quirks: lastPersona?.quirks ?? null, requirements: readiness.requirements, restlessness: Number(readiness.restlessness.toFixed(1)), decision: readiness.hard.length + readiness.soft.length === 0 ? "ready" : "prepare or explore" });
+    }
+    if (turn < inventoryAt || turn - inventoryAt >= 600) {
+      const stock = supplies(view);
+      diagnostic("inventory-minute", view, { food: stock.food, cures: stock.cures, escapes: stock.phase + stock.escapes, lightTurns: stock.lightTurns, flasks: stock.flasks, gold: player.gold });
+      inventoryAt = turn;
+    }
     expired = state.expired;
     anchor = state.anchor;
     if (returnReason === null) {
@@ -780,14 +873,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     observe(view);
     const player = playerSnapshot(view);
     const gaps = descentGaps(view, player.depth + 1, persona);
-    const stock = supplies(view);
     const expiredReserve = reserveExpired(view) && recoveryHealthy(view, true);
     const behind = scheduledRecovery(view);
     const policy = descentPolicy(persona);
-    const reserves = stock.cures >= policy.reserve && stock.phase + stock.escapes >= policy.reserve;
     const allowed = (player.depth > 0 || policy.appetite > 0.85 && town.ready) && !player.dead && !recalling && returnReason === null && !departure.active() &&
-      !breederLevel && stairAllowed(view, true) && tripLight(view, lastPersona) && gaps.hard.length === 0 &&
-      (reserves || expiredReserve && policy.appetite > 0.7);
+      !breederLevel && stairAllowed(view, true) && gaps.hard.length === 0 && (player.depth >= 10 || gaps.soft.length === 0);
     const route = allowed ? checkedRoute(view, knownDownStairs(view, terrain)) : null;
     const ready = route !== null && !standingOnHarm(view, terrain, player.grid) && !(unseenDanger?.(view) ?? view.turn() <= unseenUntil) &&
       safeDelay(view) && player.hp >= player.maxHp * descentPolicy(lastPersona).hpShare &&
@@ -797,7 +887,11 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const delay = behind ? 0 : 15000 * policy.trainMinutes;
     const due = ready && diveSince !== null && (now() - diveSince.time >= delay || view.turn() - diveSince.turn >= 100 * policy.scale);
     const take = ready && player.depth < 10 && (shallowDiveReady(view, player.depth + 1, persona) || expiredReserve && policy.appetite > 0.7 || immediateDive && gaps.soft.length === 0 || due && gaps.soft.length === 0);
-    return { allowed: allowed && (!behind || ready), take, route, due };
+    const readiness = assessment(view, persona);
+    diagnostic("descent-decision", view, { decision: take ? "descend" : allowed ? "rank descent below preparation" : "explore, recover or return", allowed, routeChecked: route !== null,
+      reason: readiness.override ? "schedule exceeded persona slack; preparation gates softened" : readiness.relaxed ? "restlessness softened preparation" : "persona preparation and immediate survival checks",
+      restlessness: Number(readiness.restlessness.toFixed(1)), requirements: readiness.requirements, persona: persona?.sliders ?? null, quirks: persona?.quirks ?? null });
+    return { allowed: allowed && (schedule(view).stage < 2 || ready), take, route, due };
   }
 
   function gazeReach(view: AgentView, grid: Loc): boolean {
@@ -873,7 +967,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (depth <= 0 || (unseenDanger?.(view) ?? view.turn() <= unseenUntil)) return null;
     const front = frontiers(view, terrain);
     if (front.length === 0) return null;
-    if (returnReason !== null && checkedRoute(view, upStairs(view)) === null) return "exit";
+    if ((returnReason !== null || townWish !== null) && checkedRoute(view, upStairs(view)) === null) return "exit";
     if (depth >= RECALL_FROM_DEPTH) return null;
     if (breederLevel && checkedRoute(view, exitTargets(view)) === null) return "exit";
     if (upStairs(view).length === 0 && departure.active() && (expired || departure.finished(view)) && checkedRoute(view, exitTargets(view)) === null) return "exit";
@@ -985,12 +1079,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (player.depth > 0 && chosen !== null && returnReason === null && returnMargin(view) !== null) {
       returnReason = chosen;
       chosenReturn = true;
+      resolveTown(view);
     }
     if (player.depth === 0) town = departure.status(view, terrain, persona, visited);
+    const diving = dive(view, persona, recalling);
     const home = returnReason !== null;
     const unfinished = player.depth > 0 && !home && !breederLevel && !dangerousFeeling && (expired || offers.some((offer) => offer.goal === "leave_level")) && explorationStep(view, true) !== null;
     if (refreshReturn(view)) return [{ goal: "descend", criteria: "Return immediately down the connected staircase to finish the depth-preserving refresh.", risk: 0, survival: player.hp }];
-    const diving = dive(view, persona, recalling);
     if (diving.take && offers.some((offer) => offer.goal === "descend")) return [{ goal: "descend", criteria: "Follow the checked route to the down staircase before optional exploration or upkeep.", risk: 0.02, survival: player.hp }];
     const target = pickTarget(monsterSnapshot(view), player.grid, { wakeSleepers: true, reach: AUTOFIGHT_REACH });
     /* Compute `searching` once for this apply: the filter and the post-filter both read it, and each call
@@ -1021,17 +1116,18 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       if (offer.goal === "recall_town" && !safeDelay(view) && !offer.criteria.includes("cannot stop the next blow")) return false;
       if (offer.goal === "recall_dungeon") return !recalling && town.ready && tripLight(view, lastPersona) && missingPreparation(view, player.maxDepth, lastPersona).length === 0;
       if (offer.goal === "descend" && player.depth === 0 && player.status.poisoned > 0) return false;
-      if (offer.goal === "descend") return !recalling && (tripLight(view, lastPersona) || player.depth === 0 && town.earning) && (player.depth === 0 ? town.ready || town.earning || widen : diving.allowed);
+      if (offer.goal === "descend") return !recalling && (player.depth === 0 ? (tripLight(view, lastPersona) || town.earning) && (town.ready || town.earning || widen) : diving.allowed);
       /* The tactical planner prices a route through unseen danger; this return check cannot replace it. */
       if (offer.goal === "leave_level" && !unseenDanger?.(view) && !monsterSnapshot(view).some((monster) => monster.visible && !monster.asleep)) return checkedRoute(view, exitTargets(view)) !== null && searchFor() !== "stay";
       if (offer.goal === "explore" && search()) return true;
-      if (OPTIONAL.has(offer.goal) && (home || expired)) return false;
+      if (offer.goal === "explore" && player.depth > 0 && (home || expired) && explorationStep(view, true) !== null) return true;
+      if (OPTIONAL.has(offer.goal) && (home || expired) && offer.goal !== "fetch" && offer.goal !== "pick_up") return false;
       if (offer.goal === "explore" && player.depth > 0) return explorationStep(view, false) !== null;
       if (offer.goal === "fetch") {
         const loot = floorTarget(view, terrain, false, lastPersona);
-        return loot !== null && leashed(view, loot.at);
+        return loot !== null && (leashed(view, loot.at) || hungry(view) && /Ration|Food|Waybread|Mushroom/i.test(loot.name) && checkedRoute(view, [loot.at]) !== null);
       }
-      if (offer.goal === "pick_up") return leashed(view, player.grid);
+      if (offer.goal === "pick_up") return leashed(view, player.grid) || hungry(view) && view.floorItems(player.grid.x, player.grid.y).some((item) => /Ration|Food|Waybread|Mushroom/i.test(shownName(item) ?? ""));
       return true;
     });
     /* Soft gaps leave the descent to the model's readiness answer; the goal planner holds it back below the persona's threshold. */
@@ -1041,7 +1137,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const reason = home ? chosenReturn ? "The character wants fresh potions and scrolls from town before this pack runs dry." : `The character's ${returnReason ?? "supplies"} margin calls for town now.` : "This level has used its game-turn budget without enough progress.";
     if (player.depth > 0 && (home || expired && !unfinished)) {
       const walkable = departure.active() && player.depth < RECALL_FROM_DEPTH && (checkedRoute(view, exitTargets(view)) !== null || search());
-      if (search()) out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
+      out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `Search this level for food or the up stairs; walking home from here is cheaper than a Recall scroll. ${reason}` } : offer);
       if (!walkable && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: `Read Word of Recall to return to town while waiting is safe. ${reason}`, risk: 0.02 });
       if ((home || (quietRefreshes.get(player.depth) ?? 0) < descentPolicy(lastPersona).refreshes) && checkedRoute(view, exitTargets(view)) !== null) {
         footOffered = true;
@@ -1056,15 +1152,23 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     if (breederLevel && !recalling && safeDelay(view) && canRead(view) && recallItem(view) !== null && !out.some((offer) => offer.goal === "recall_town")) out.push({ goal: "recall_town", criteria: "Read Word of Recall to leave this breeder level while waiting is safe.", risk: 0.02, survival: player.hp });
     /* A stair search that is not the return-to-town search keeps its own wording. */
     if (search() && !(player.depth > 0 && (home || expired))) {
-      const why = breederLevel ? "Search this level on foot for a staircase to leave the breeders behind." : searchFor() === "stay" ? `Walk past the stair leash to explore the unfinished level before considering a refresh.${levelsPersist() ? " With persistent levels, the stairs up only lead back to the level already cleared." : ""}` : "Search this level on foot for a staircase onward.";
+      const why = townWish !== null ? "Search this level on foot for the up stairs or food; a missing town route cannot stop exploration." : breederLevel ? "Search this level on foot for a staircase to leave the breeders behind." : searchFor() === "stay" ? `Walk past the stair leash to explore the unfinished level before considering a refresh.${levelsPersist() ? " With persistent levels, the stairs up only lead back to the level already cleared." : ""}` : "Search this level on foot for a staircase onward.";
       out = out.map((offer) => offer.goal === "explore" ? { ...offer, criteria: `${why} ${offer.criteria}` } : offer);
     }
     if (!footOffered && !monsterSnapshot(view).some((monster) => monster.visible && !monster.asleep)) {
       const missing = missingPreparation(view, player.depth + 1, lastPersona)[0];
       if (missing !== undefined) out = out.map((offer) => offer.goal === "leave_level" ? { ...offer, criteria: `Take a checked up staircase to a safer level. The next depth needs ${missing.reason}.${offer.criteria.includes("the game says") ? ` ${offer.criteria}` : ""}` } : offer);
     }
-    return out.filter((offer) => offer.goal !== "leave_level" && offer.goal !== "descend" ||
+    out = out.filter((offer) => offer.goal !== "leave_level" && offer.goal !== "descend" ||
       (offer.goal === "descend" ? stairAllowed(view, true) : canLeave(view)));
+    if (!recalling && player.depth > 0 && !out.some((offer) => ["explore", "descend", "leave_level", "study", "wear", "eat"].includes(offer.goal)) &&
+      player.hp >= player.maxHp * descentPolicy(persona).hpShare && safeDelay(view) && explorationStep(view, true) !== null) {
+      out.push({ goal: "explore", criteria: "Search reachable unknown ground for food or a staircase; town and preparation preferences rank lower while no progress route is offered.", risk: 0.02 });
+      diagnostic("progress-offer", view, { decision: "rank preferences lower; retain executable exploration" });
+    }
+    if (home || expired) out = out.map((offer) => offer.goal === "explore" || offer.goal === "fetch" || offer.goal === "pick_up" ?
+      { ...offer, criteria: `${offer.criteria} Search for food or the up stairs if town is needed. The town trip ranks above optional detours while its route remains available.`, risk: offer.risk + 0.02 * descentPolicy(persona).scale } : offer);
+    return out;
   }
 
   function guarded(goal: Goal | null, plan: Plan, initialView?: AgentView): Plan {
@@ -1088,6 +1192,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
       }
       observe(view);
       const player = playerSnapshot(view);
+      if (goal === "explore" && (expired || returnReason !== null || departure.finished(view))) return explore({ view, act } as SquireContext, true);
       if (goal === "descend" && refreshReturn(view)) return act.descend();
       if (wide && goal === "explore" || goal === "explore" && searching(view)) return plan.step(view, act);
       if (breederLevel && goal === "explore") return explore({ view, act } as SquireContext, true);
@@ -1112,7 +1217,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         /* A rejected judgment cannot let the errand ladder bypass the guards. */
         const command = plan.step(view, act);
         if (command === null) return null;
-        if (command.code === "descend") return !breederLevel && !expired && returnReason === null && tripLight(view, lastPersona) && (player.depth === 0 ? town.ready : missingPreparation(view, player.depth + 1, lastPersona).length === 0) ? command : null;
+        if (command.code === "descend") return player.depth > 0 ? dive(view).take ? command : null : !breederLevel && !expired && returnReason === null && tripLight(view, lastPersona) && town.ready ? command : null;
         if (command.code === "walk") {
           const direction = DIRECTIONS.find((entry) => entry.key === command.dir);
           const at = direction === undefined ? null : { x: player.grid.x + direction.dx, y: player.grid.y + direction.dy };
@@ -1120,17 +1225,18 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         }
         return command.code === "pickup" && !breederLevel && leashed(view, player.grid) && !expired && returnReason === null ? command : null;
       }
-      if (OPTIONAL.has(goal) && (expired || returnReason !== null || departure.finished(view))) return refuse(expired ? "the level exploration budget expired" : returnReason !== null ? `the town return needs ${returnReason}` : "the bounded earning trip finished");
+      if (OPTIONAL.has(goal) && goal !== "fetch" && goal !== "pick_up" && (expired || returnReason !== null || departure.finished(view))) return refuse(expired ? "the level exploration budget expired" : returnReason !== null ? `the town return needs ${returnReason}` : "the bounded earning trip finished");
       if (goal === "fetch") {
         const loot = floorTarget(view, terrain, false, lastPersona);
-        if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at)) return refuse("no unrefused floor item is reachable inside the current leash");
+        const food = loot !== null && hungry(view) && /Ration|Food|Waybread|Mushroom/i.test(loot.name) && checkedRoute(view, [loot.at]) !== null;
+        if (loot === null ? !hasFloorObject(view, player.grid) || !leashed(view, player.grid) : !leashed(view, loot.at) && !food) return refuse("no unrefused floor item is reachable inside the current leash");
         /* Engine runs can cross the leash before the next planner observation. */
         const single: AgentView = { ...view };
         delete single.travelPath;
         const command = plan.step(single, act);
         if (command?.code === "walk" || command?.code === "open") {
           const dir = DIRECTIONS.find((entry) => entry.key === command.dir);
-          if (dir === undefined || !leashed(view, { x: player.grid.x + dir.dx, y: player.grid.y + dir.dy })) return refuse("the floor item route leaves the persona's current stair leash");
+          if (dir === undefined || !food && !leashed(view, { x: player.grid.x + dir.dx, y: player.grid.y + dir.dy })) return refuse("the floor item route leaves the persona's current stair leash");
         }
         return command;
       }
@@ -1360,7 +1466,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
   function blocked(view: AgentView): string | null {
     if (breederLevel) return "Squire must leave this breeder level, but it has no checked exit or safe Recall wait.";
     if (playerSnapshot(view).depth === 0 && !town.ready) return `Squire cannot leave town ready: it still needs ${town.reason}, and no bounded earning trip is safe.`;
-    if (returnReason !== null) return `Squire needs town for ${returnReason}, but it has no checked return or safe Recall wait.`;
+    if (returnReason !== null) return `Squire ranks town for ${returnReason} above optional detours; exploration remains available.`;
     const missing = missingPreparation(view, playerSnapshot(view).depth + 1, lastPersona)[0];
     return missing === undefined ? null : `Squire cannot descend yet: it needs ${missing.reason}.`;
   }

@@ -21,6 +21,43 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
+describe("round 13 hunger and progress", () => {
+  it.each([archetype("coward"), defaultPersona(), archetype("diver"), archetype("berserker")])("never idles during 60 hungry turns with a reachable frontier for $name", (persona) => {
+    const row = `#.@${".".repeat(80)},#`;
+    const w = world({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0, status: { food: 500 } }, worn: ["a Wooden Torch (5000 turns)"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona, log: () => {}, chaos: false, now: () => 0 });
+    for (let i = 0; i < 60; i++) {
+      const q = reflexed(p.ask(w.view));
+      expect(q.answers["goal"]).toMatchObject({ choice: "explore" });
+      const command = q.plan.step(w.view, w.act);
+      expect(command?.code).toBe("walk");
+      const direction = DIRECTIONS.find((dir) => dir.key === command?.dir)!;
+      w.moveTo({ x: w.at().x + direction.dx, y: w.at().y + direction.dy });
+      w.advance(10);
+      q.plan.end?.(w.view);
+    }
+    expect(w.at().x).toBeGreaterThan(50);
+  });
+
+  it.each([5, 30])("fetches food at x=%i before nearer optional loot when hungry", (x) => {
+    const row = `#.@${".".repeat(35)},#`;
+    const w = world({ map: ["#".repeat(row.length), row, "#".repeat(row.length)], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0, status: { food: 500 } },
+      worn: ["a Wooden Torch (5000 turns)"], floor: [{ x: 1, y: 1, name: "a Potion of Cure Light Wounds" }, { x, y: 1, name: "a Ration of Food" }] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => 0 });
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "fetch" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+  });
+
+  it("heads for town before training or descending when hungry and foodless", () => {
+    const w = world({ map: ["#########", "#<@..>.,#", "#########"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 20, status: { food: 500 } }, worn: ["a Wooden Torch (5000 turns)"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, now: () => 0 });
+    const q = reflexed(p.ask(w.view));
+    expect(q.answers["goal"]).toMatchObject({ choice: "leave_level" });
+    expect(q.plan.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+  });
+});
+
 describe("round 8 quiet tactics", () => {
   it("caps endure after three undamaged commands even while fear persists", () => {
     const w = world({ map: ["###", "#@#", "###"], player: { depth: 1, hp: 6, maxHp: 13, status: { afraid: 10 } } });
@@ -204,8 +241,8 @@ describe("corpus progress regressions", () => {
     time = 7 * 60000;
     w.advance(10);
     const q = asked(p.ask(w.view));
-    expect(String(q.request.state["dive_schedule"])).toContain("the target was DL2 by minute 2");
-    expect(String(q.request.state["dive_schedule"])).toContain("at least three minutes late");
+    expect(String(q.request.state["dive_schedule"])).toContain("the target was DL2 by minute 4");
+    expect(String(q.request.state["dive_schedule"])).toContain("persona slack of 3.0 minutes");
     expect(offered(q)).not.toEqual(["descend"]);
   });
 
@@ -247,8 +284,7 @@ describe("corpus progress regressions", () => {
     const q = p.ask(w.view);
     expect(offered(q)).toContain("eat");
     expect(offered(q)).not.toContain("swing_unseen");
-    if ("handBack" in q || "reflex" in q) throw new Error("expected a question");
-    expect(String(q.request.state["incoming"])).toContain("uncertainty 0 HP");
+    expect(reflexed(q).plan.step(w.view, w.act)?.code).toBe("eat");
   });
 });
 
@@ -4494,7 +4530,7 @@ describe("immediate shallow dives", () => {
     expect(q.plan.step(w.view, w.act)).toEqual({ code: "descend" });
   });
 
-  it("skips repeated widening for three singleton explore decisions and checks normal offers again", () => {
+  it("takes a seen staircase after game-turn restlessness without repeated widening", () => {
     const w = world({ map: ["########", "#<@..>,#", "########"], player: { cls: "Mage", depth: 0, level: 1, maxLevel: 1, hp: 12, maxHp: 12, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"] });
     const logs: string[] = [];
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (line) => logs.push(line), reflex: true });
@@ -4505,12 +4541,11 @@ describe("immediate shallow dives", () => {
     w.advance(2000);
     for (let i = 0; i < 5; i += 1) {
       const next = p.ask(w.view);
-      expect(offered(next)).toEqual(["explore"]);
-      if ("request" in next) p.choose(pick("explore"), next.context, w.view);
+      expect(offered(next)).toEqual(["descend"]);
       w.advance(10);
     }
-    expect(logs.filter((line) => line.includes("nothing to offer"))).toHaveLength(1);
-    expect(logs.filter((line) => line.includes("widens its choices"))).toHaveLength(1);
+    expect(logs.filter((line) => line.includes("nothing to offer"))).toHaveLength(0);
+    expect(logs.filter((line) => line.includes("widens its choices"))).toHaveLength(0);
   });
 });
 
@@ -4812,5 +4847,5 @@ it("lets a careless town character take seen stairs before optional preparation"
   expect(q.answers["goal"]).toMatchObject({ choice: "descend" });
   expect(q.plan.step(w.view, w.act)?.code).toBe("walk");
   const careful = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: archetype("coward"), log: () => {} }).ask(w.view);
-  expect("context" in careful ? careful.context.offers.map((offer) => offer.goal) : []).not.toContain("descend");
+  expect("context" in careful ? careful.context.offers.find((offer) => offer.goal === "descend")?.criteria : "").toContain("Earn gold");
 });

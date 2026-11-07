@@ -15,12 +15,13 @@
  * - floorItems answers only for the character's own square.
  * - A timed effect is the lowest duration in the grade the status line names, so a check against a grade boundary (a cut worse than a bad cut) answers as API 1 does, and a check inside a grade does not. Food is the status line's percentage times 100, which loses less than one percent.
  * - Recall and Deep Descent read 1 while active and 0 otherwise, because the known player does not say when they fire.
- * - An item's timeout is the number its name says are charging. A light's fuel is not in the known item, so a torch or lantern reads as out of fuel.
+ * - A light uses its public fuel field, with displayed turns as a fallback for older snapshots. Other items use their charging count.
  */
 
 import type { Api2InputState, Api2Subscription, KnownItem, KnownMonster, KnownPlayer, KnownStoreItem, KnownWorldData, LoadoutSimulation as KnownLoadoutSimulation, ModApi2 } from "@rpgm-tools/neo-angband-mod-sdk";
 import type { CellView, GameConstants, StoreItemView } from "@rpgm-tools/neo-angband-core";
 import type { AgentView, BlowRules, ItemView, LoadoutSimulation, MonsterView, PlayerView, StoreView } from "./host-adapter.js";
+import { TV } from "./gear/compare.js";
 import { recordFlags, terrainFromRecords, terrainRecords as readTerrainRecords, type Terrain, type TerrainRecord } from "./terrain.js";
 
 /** The parts of API 2 these reads use. */
@@ -263,7 +264,8 @@ function playerView(known: KnownPlayer, floors: GradeFloors): PlayerView {
 function itemView(item: KnownItem): ItemView {
   const { charging, fuel, unknownRunes: _unknownRunes, ...rest } = writable(item);
   /* A light's fuel and a rod's recharge both read as the timeout, as they did under API 1. */
-  return { ...rest, timeout: fuel ?? charging };
+  const displayedFuel = rest.tval === TV.LIGHT ? Number(/\((\d+) turns\)/i.exec(rest.name ?? rest.label ?? "")?.[1] ?? 0) : 0;
+  return { ...rest, timeout: fuel ?? (displayedFuel || charging) };
 }
 
 function simulationView(simulation: KnownLoadoutSimulation, floors: GradeFloors): LoadoutSimulation {

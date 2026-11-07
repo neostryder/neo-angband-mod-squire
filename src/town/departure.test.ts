@@ -15,6 +15,17 @@ const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHom
 ] };
 
 describe("the town survival basket", () => {
+  it("checks each requirement against entered stock and actual prices", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 20 }, stores: [{ ...alchemy, stock: alchemy.stock.map((item) => ({ ...item, price: item.index === 0 ? 40 : 18 })) }] });
+    const departure = createDeparture();
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(true);
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(false);
+    expect(departure.supplyAffordable(w.view, "phase")).toBe(true);
+    w.setPlayer({ gold: 40 });
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(true);
+  });
   it("uses only entered shop prices when deciding whether a reserve can be bought", () => {
     const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 16 }, stores: [alchemy] });
     const departure = createDeparture();

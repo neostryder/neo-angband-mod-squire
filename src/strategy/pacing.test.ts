@@ -4,7 +4,7 @@ import { world } from "../harness.js";
 import { createExplorationPressure, createLevelPacing, diveSchedule, levelBudget, stairLeash } from "./pacing.js";
 
 describe("overall dive schedule", () => {
-  it.each([[2, 2], [3, 4.5], [4, 7], [5, 9.5], [6, 12], [7, 15], [8, 18], [9, 21], [10, 24]])("targets DL%s by minute %s and escalates three minutes later", (depth, minutes) => {
+  it.each([[2, 4], [3, 7.5], [4, 11], [5, 15], [6, 18], [7, 21], [8, 24], [9, 27], [10, 30]])("targets DL%s by minute %s and escalates three minutes later", (depth, minutes) => {
     expect(diveSchedule(minutes - 0.01, depth - 1).stage).toBe(0);
     expect(diveSchedule(minutes, depth - 1)).toMatchObject({ stage: 1, next: { depth, minutes } });
     expect(diveSchedule(minutes + 3, depth - 1).stage).toBe(2);
@@ -163,8 +163,8 @@ describe("exploration pressure", () => {
     expect(values[0]).toBeLessThan(values[1]!);
     expect(values[1]).toBeLessThan(values[2]!);
     expect(values[1]).toBeLessThan(values[3]!);
-    expect(diveSchedule(2.8, 1, timid).stage).toBe(0);
-    expect(diveSchedule(2.8, 1, normal).stage).toBeGreaterThan(0);
-    expect(diveSchedule(1.6, 1, careless).stage).toBeGreaterThan(0);
+    expect(diveSchedule(4.2, 1, timid).stage).toBe(0);
+    expect(diveSchedule(4.2, 1, normal).stage).toBeGreaterThan(0);
+    expect(diveSchedule(2.2, 1, careless).stage).toBeGreaterThan(0);
   });
 });

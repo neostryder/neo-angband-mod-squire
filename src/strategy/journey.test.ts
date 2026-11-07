@@ -8,9 +8,120 @@ import { candidateAims } from "./aims.js";
 import { createJourney } from "./journey.js";
 import { invalidateHazards } from "../map.js";
 import { stuckThresholds } from "../brain/decision-memory.js";
+import { archetype, defaultPersona } from "../persona/persona.js";
 
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
+
+describe("round 13 town and descent progress", () => {
+  it.each(["hungry", "restock", "fuel", "earning"])("keeps an executable frontier for a %s town wish without stairs", (reason) => {
+    const w = world({ map: ["#########", "#.@....,#", "#########"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 },
+      worn: ["a Wooden Torch (5000 turns)"], pack: reason === "hungry" ? [] : ["3 Rations of Food"] });
+    if (reason === "hungry") w.setPlayer({ status: { food: 500 } });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(offers("explore", "fetch", "descend"), w.view, defaultPersona(), new Set(), false, false, reason);
+    expect(out.some((offer) => offer.goal === "explore")).toBe(true);
+    expect(journey.guarded("explore", { label: "search", step: (view, act) => journey.explore({ view, act } as Parameters<typeof journey.explore>[0]) }).step(w.view, w.act)?.code).toBe("walk");
+    expect(journey.blocked(w.view) ?? "").not.toContain("no checked return");
+  });
+
+  it.each(["healing", "escape", "food", "light", "level", "hp", "ranged"])("eventually takes an available down stair with unattainable %s", (gap) => {
+    let time = 0;
+    const w = world({ map: ["######", "#.@>.#", "######"], player: { cls: gap === "ranged" ? "Mage" : "Warrior", depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 },
+      pack: ["3 Rations of Food", "a Potion of Cure Light Wounds", "a Scroll of Phase Door", ...(gap === "ranged" ? [] : ["5 Flasks of Oil"])].filter((name) =>
+        !(gap === "food" && name.includes("Food") || gap === "healing" && name.includes("Potion") || gap === "escape" && name.includes("Scroll"))), worn: gap === "light" ? [] : ["a Wooden Torch (5000 turns)"] });
+    if (gap === "level") w.setPlayer({ level: 1, maxLevel: 1 });
+    if (gap === "hp") w.setPlayer({ hp: 8, maxHp: 8 });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    journey.dive(w.view);
+    time = 10 * 60000;
+    w.advance(10);
+    expect(journey.dive(w.view).take).toBe(true);
+    w.moveTo({ x: 3, y: 1 });
+    expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)?.code).toBe("descend");
+  });
+
+  it("softens unavailable supplies sooner for bold and careless characters", () => {
+    const careless = defaultPersona();
+    careless.sliders.impulsiveness = 100;
+    careless.sliders.selfpreservation = 0;
+    careless.sliders.patience = 0;
+    careless.quirks.forgetful = { on: true, strength: 100 };
+    const times = [archetype("coward"), defaultPersona(), archetype("diver"), careless].map((persona) => {
+      let time = 0;
+      const w = world({ map: ["######", "#.@>.#", "######"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 }, pack: ["3 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
+      const journey = createJourney(w.terrain, undefined, undefined, () => time);
+      journey.dive(w.view, persona);
+      for (; time <= 20 * 60000; time += 15000) if (journey.dive(w.view, persona).take) return time;
+      return Infinity;
+    });
+    expect(times.every(Number.isFinite)).toBe(true);
+    expect(times[0]).toBeGreaterThan(times[1]!);
+    expect(times[1]).toBeGreaterThan(times[2]!);
+    expect(times[2]).toBeGreaterThanOrEqual(times[3]!);
+  });
+
+  it.each(["empty", "wait", "fetch"])("lifts a preference that leaves no travel offer from %s", (goal) => {
+    const w = world({ map: ["#########", "#.@....,#", "#########"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain);
+    const out = journey.apply(goal === "empty" ? [] : offers(goal as Goal), w.view, defaultPersona(), new Set(), false);
+    expect(out.some((offer) => ["explore", "descend", "leave_level"].includes(offer.goal))).toBe(true);
+    expect(journey.guarded("explore", { label: "search", step: (view, act) => journey.explore({ view, act } as Parameters<typeof journey.explore>[0]) }).step(w.view, w.act)?.code).toBe("walk");
+  });
+
+  it("reaches DL10 by minute 30 in a synthetic sequence with no obtainable reserves", () => {
+    let time = 0;
+    const w = world({ map: ["######", "#.@>.#", "######"], player: { depth: 1, maxDepth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 }, pack: ["3 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time);
+    for (let depth = 1; depth < 10; depth++) {
+      w.setPlayer({ depth, maxDepth: depth });
+      w.moveTo({ x: 2, y: 1 });
+      let dive = journey.dive(w.view);
+      while (!dive.take && time < 30 * 60000) {
+        time += 15000;
+        w.advance(10);
+        dive = journey.dive(w.view);
+      }
+      expect(dive.take).toBe(true);
+      w.moveTo({ x: 3, y: 1 });
+      expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)?.code).toBe("descend");
+    }
+    expect(time).toBeLessThanOrEqual(30 * 60000);
+  });
+
+  it("logs structured requirements, rate limits repeats and records inventory minutes", () => {
+    let time = 0;
+    const logs: string[] = [];
+    const w = world({ map: ["######", "#.@>.#", "######"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 }, pack: ["3 Rations of Food"], worn: ["a Wooden Torch (5000 turns)"] });
+    const journey = createJourney(w.terrain, undefined, undefined, () => time, (line) => logs.push(line));
+    for (let i = 0; i < 10; i++) journey.dive(w.view, defaultPersona());
+    const events = () => logs.filter((line) => line.startsWith("{")).map((line) => JSON.parse(line));
+    expect(events().filter((event) => event.event === "descent-decision")).toHaveLength(1);
+    expect(events().find((event) => event.event === "level-arrival").requirements).toHaveLength(9);
+    expect(events().find((event) => event.event === "descent-decision").requirements).toEqual(expect.arrayContaining([expect.objectContaining({ name: "healing", value: 0, threshold: 1, satisfiable: false, why: expect.stringContaining("no checked") })]));
+    time = 11000;
+    w.advance(600);
+    journey.dive(w.view, defaultPersona());
+    expect(events().filter((event) => event.event === "descent-decision").at(-1).repeats).toBe(9);
+    expect(events().filter((event) => event.event === "inventory-minute")).toHaveLength(2);
+    expect(events().filter((event) => event.event === "inventory-minute").at(-1)).toMatchObject({ food: 3, cures: 0, escapes: 0, lightTurns: 5000, flasks: 0, gold: 0 });
+  });
+
+  it("retains exploration when the final arrival-stair check removes the only stair offer", () => {
+    const w = suppliedWorld({ map: ["#########", "#<@..>.,#", "#########"], player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31 } });
+    const journey = createJourney(w.terrain);
+    w.moveTo({ x: 5, y: 1 });
+    journey.stairCommand(w.view, w.act.descend());
+    w.setPlayer({ depth: 2 });
+    w.moveTo({ x: 1, y: 1 });
+    w.setPack([]);
+    w.advance(10);
+    const out = journey.apply(offers("leave_level"), w.view, defaultPersona(), new Set(), false);
+    expect(out.map((offer) => offer.goal)).toContain("explore");
+    expect(out.map((offer) => offer.goal)).not.toContain("leave_level");
+    expect(journey.guarded("explore", { label: "search", step: (view, act) => journey.explore({ view, act } as Parameters<typeof journey.explore>[0]) }).step(w.view, w.act)?.code).toBe("walk");
+  });
+});
 
 describe("round 10 plain recovery", () => {
   it("escapes an adjacent attacker instead of repeatedly walking within reach", () => {
@@ -596,7 +707,7 @@ describe("corpus journey regressions", () => {
     expect(journey.refreshReturn(w.view)).toBe(false);
     expect(goals(w, journey, false, offers("descend", "leave_level", "explore"))).not.toContain("descend");
     expect(journey.guarded("descend", { label: "down", step: (_view, act) => act.descend() }).step(w.view, w.act)).toBeNull();
-    expect(journey.blocked(w.view)).toContain("needs town for healing");
+    expect(journey.blocked(w.view)).toContain("ranks town for healing");
   });
 
   it("exhausts a repeatedly visited frontier across plans and reopens it when terrain changes", () => {
@@ -646,7 +757,7 @@ describe("journey descent clock", () => {
     w.advance(10);
     w.setPlayer({ depth: 2 });
     expect(journey.depthMinutes(w.view)).toBe(0);
-    expect(journey.schedule(w.view)).toMatchObject({ minutes: 8, stage: 2 });
+    expect(journey.schedule(w.view)).toMatchObject({ minutes: 8, stage: 1 });
     w.setPlayer({ depth: 0 });
     expect(journey.schedule(w.view)).toMatchObject({ minutes: 8, stage: 2 });
     const fresh = suppliedWorld({ map: ROOM, player: { depth: 1 } });
@@ -664,7 +775,7 @@ describe("journey descent clock", () => {
     expect(goals(w, journey, false, offers("descend", "explore", "leave_level"))).toEqual(["descend"]);
   });
 
-  it("keeps the overdue supply return until a cure and an escape are carried", () => {
+  it("prefers an affordable town reserve until the schedule exceeds persona slack", () => {
     let time = 0;
     const w = world({ map: ROOM, player: { cls: "Warrior", depth: 1, maxDepth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 500 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
     const journey = createJourney(w.terrain, undefined, undefined, () => time);
@@ -673,7 +784,7 @@ describe("journey descent clock", () => {
     w.advance(10);
     expect(journey.dive(w.view).allowed).toBe(false);
     time = 7 * 60000;
-    expect(journey.dive(w.view).take).toBe(false);
+    expect(journey.dive(w.view).take).toBe(true);
     w.setPack(["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "4 Rations of Food", "2 Wooden Torches (5000 turns)"]);
     expect(journey.dive(w.view).take).toBe(true);
     w.moveTo({ x: 6, y: 1 });
@@ -693,13 +804,11 @@ describe("journey descent clock", () => {
     expect(journey.dive(w.view).due).toBe(true);
   });
 
-  it.each(["food", "light", "status", "hp", "level", "caster", "route", "danger"])("keeps the %s survival floor when far behind schedule", (missing) => {
+  it.each(["status", "hurt", "route", "danger"])("keeps immediate %s safety when far behind schedule", (missing) => {
     let time = 0;
-    const w = world({ map: missing === "route" ? ["########", "#<@.#.>#", "########"] : ROOM, player: { cls: missing === "caster" ? "Mage" : "Warrior", depth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 500 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: missing === "light" ? [] : ["a Wooden Torch (5000 turns)"] });
-    if (missing === "food") w.setPack(["2 Wooden Torches (5000 turns)"]);
+    const w = world({ map: missing === "route" ? ["########", "#<@.#.>#", "########"] : ROOM, player: { cls: "Warrior", depth: 1, level: 5, maxLevel: 5, hp: 38, maxHp: 38, gold: 500 }, pack: ["4 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
     if (missing === "status") w.setPlayer({ status: { confused: 5 } });
-    if (missing === "hp") w.setPlayer({ hp: 37 });
-    if (missing === "level") w.setPlayer({ level: 1, maxLevel: 1 });
+    if (missing === "hurt") w.setPlayer({ hp: 10 });
     const journey = createJourney(w.terrain, missing === "danger" ? () => true : undefined, undefined, () => time);
     journey.dive(w.view);
     time = 30 * 60000;
@@ -790,7 +899,7 @@ describe("journey descent clock", () => {
     time += 120000;
     expect(goals(w, journey)).toEqual(["descend"]);
     expect(goals(w, journey)).toEqual(["descend"]);
-    expect(logged).toHaveLength(0);
+    expect(logged.filter((line) => line.startsWith("descent gate relaxed"))).toHaveLength(0);
   });
 });
 
@@ -1530,7 +1639,7 @@ describe("bounded exploration and earning", () => {
     goals(w, journey, false, offers("descend"));
     journey.guarded("descend", { label: "descend", step: (_view, act) => act.descend() }).step(w.view, w.act);
     w.setPlayer({ depth: 1, maxDepth: 1 });
-    expect(goals(w, journey, false, offers("explore"))).not.toContain("explore");
+    expect(goals(w, journey, false, offers("explore"))).toContain("explore");
     w.setPlayer({ depth: 0 });
     expect(goals(w, journey, false, offers("descend"))).toEqual([]);
     const wide = journey.apply(offers("descend"), w.view, null, new Set(), false, true);

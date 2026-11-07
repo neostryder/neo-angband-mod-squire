@@ -44,7 +44,7 @@ import { applySafetyFloor, blend, jitteredStrength, pick as pickTop, riskCeiling
 import { fleesFromNew, forget, mustPickUp, nudgePosition, nudgeUnseen, shiftThreat } from "../persona/quirks.js";
 import { inCharacterInstructions, personaState } from "../persona/state.js";
 import { STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, stateHash, stateOf, type DecisionContext } from "./context.js";
-import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, supplyNeeds } from "../town/needs.js";
+import { lowOnSupplies, recallItem, RECALL_FROM_DEPTH, shownName, supplyNeeds } from "../town/needs.js";
 import { neededEntrances, recallPlan, townTripPlan } from "../town/plan.js";
 import type { HomeStock } from "../town/home.js";
 import { assessThreat, bestBallAim, breederBlow, knownSpellFlags, rememberedCleared, clearShot, harmlessKind, incomingDamage, threatIndex, turnsPerAction, unseenDamageAt, THREAT_BANDS, BAND_RISK, type SpeedEnergy, type ThreatBand, type UnseenHit } from "./threat-model.js";
@@ -3254,6 +3254,7 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
    * threshold. With no answer, as when Squire picks by its own rules, the character stays.
    */
   function descentHeld(digest: GoalDigest, answers: Readonly<Record<string, Answer>>, view: AgentView): boolean {
+    if (journey.dive(view, personaOf(), recallPending(view.player(), recallRead, view.turn())).take) return false;
     if (!digest.offers.some((offer) => offer.goal === "descend" && offer.gaps !== undefined)) return false;
     const answer = answers["ready_to_descend"];
     /* A fallback pick after a refusal keeps the answer the model already gave. */
@@ -3600,6 +3601,16 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
       };
       lastOfferAudit = auditText;
       const diving = journey.dive(view, persona, recalling);
+      if (hungry(view) && !recalling && !descending && journey.safeDelay(view) && creatureDamageFor(s, player.grid, terrain) === 0) {
+        const food = s.pack.food.length > 0 ? "eat" : offers.some((offer) => offer.goal === "pick_up") && view.floorItems(player.grid.x, player.grid.y).some((item) => /Ration|Food|Waybread|Mushroom/i.test(shownName(item) ?? "")) ? "pick_up" :
+          offers.some((offer) => offer.goal === "fetch") && /Ration|Food|Waybread|Mushroom/i.test(floorTarget(lootView(view), terrain, false, persona)?.name ?? "") ? "fetch" :
+          player.depth === 0 ? "shop" : journey.exitWay(view) === "up" && offers.some((offer) => offer.goal === "leave_level") ? "leave_level" : "explore";
+        if (offers.some((offer) => offer.goal === food)) {
+          const why = s.pack.food.length > 0 ? "eat before hunger spends more turns" : "find food or the staircase to town before optional goals";
+          const context: GoalDigest = { depth: player.depth, newCreatures: 0, offers: offers.filter((offer) => offer.goal === food), reflex: why };
+          return { reflex: why, plan: noteStalls(food, build(food, view), view), context, answers: { goal: { type: "choice", choice: food, confidence: 1, probabilities: { [food]: 1 } } } };
+        }
+      }
       let advance: Goal | null = takeDive(view, diving.take) ? "descend" : null;
       if (advance === null && cfg.descend && player.depth > 0 && player.depth < 10 && !recalling && !descending && journey.safeDelay(view) && player.hp >= player.maxHp * descentPolicy(persona).hpShare) {
         if (s.pack.descent.length > 0 && usableGoal("deep_descent") && diving.allowed && player.maxDepth + 5 <= 10 && preparationNow(view, player.maxDepth + 5, persona).length === 0) advance = "deep_descent";
@@ -3829,7 +3840,7 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
       const numeric = { ...forecastContext(tacticalFrame(view, combatContext(s)), offers, blocker), ...(lastFailedEscape === null ? {} : { failed_escape: lastFailedEscape }) };
       const compiled = contextOf([
         ["stuck", "exploration_pressure", pressure.value > 0 ? pressure.text : undefined],
-        ["stuck", "dive_schedule", schedule.stage === 0 || schedule.next === null ? undefined : `After ${schedule.minutes.toFixed(1)} minutes, the target was DL${String(schedule.next.depth)} by minute ${String(schedule.next.minutes)}. ${schedule.stage === 1 ? "Prioritize the next checked down staircase with recovery reserves." : evaluatedDive.allowed ? "The target is at least three minutes late; the late descent permission is available for the checked route." : "The target is at least three minutes late; the late descent permission is blocked; the tactical blocker states why."}`],
+        ["stuck", "dive_schedule", schedule.stage === 0 || schedule.next === null ? undefined : `After ${schedule.minutes.toFixed(1)} minutes, the target was DL${String(schedule.next.depth)} by minute ${String(schedule.next.minutes)}. ${schedule.stage === 1 ? "Prioritize the next checked down staircase with recovery reserves." : `The target exceeded the persona slack of ${schedule.slack.toFixed(1)} minutes; preparation gates soften while immediate survival and checked routes still apply. The late descent permission is ${evaluatedDive.allowed ? "available" : "blocked"}.`}`],
         ["memory", "character", `Level ${String(player.level)} (${levelBand(player.level)}) ${player.race} ${player.cls}, on dungeon level ${String(player.depth)} (${depthBand(player.depth)}); deepest reached ${String(player.maxDepth)} (${depthBand(player.maxDepth)}).`],
         ["memory", "health", `${healthBand(player.hp, player.maxHp)}: ${String(player.hp)} of ${String(player.maxHp)} hit points`],
         ["memory", "mana", player.maxSp > 0 ? `${manaBand(player.sp, player.maxSp)}: ${String(player.sp)} of ${String(player.maxSp)}` : undefined],

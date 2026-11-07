@@ -39,7 +39,7 @@ The known world says less than the API 1 view did, and `viewWorld` fills the gap
 - `floorItems` answers only for the character's own square.
 - A timed effect reads as the lowest duration in the grade the status line names, so a check against a grade boundary answers as API 1 did and a check inside a grade does not.
 - Recall and Deep Descent read 1 while active and 0 otherwise.
-- A light's fuel is unknown, so every torch and lantern reads as out of fuel.
+- A light uses the public fuel field. Older snapshots without that field use the displayed turns in the item name.
 
 ## Lab result
 
