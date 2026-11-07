@@ -351,7 +351,7 @@ describe("decision memory in the planner", () => {
     expect(q.context.offers.length).toBeGreaterThan(0);
     expect(q.context.offers.some((offer) => offer.goal === "rest")).toBe(false);
     expect((q.request.questions["goal"] as ChoiceQuestion).criteria).not.toHaveProperty("rest");
-    expect(q.request.state["stuck"]).toMatchObject({ cooling: [{ goal: "rest", until: w.view.turn() + stuckThresholds(null).cooldown }] });
+    expect(q.request.state["stuck"]).toMatchObject({ cooling: [{ goal: "rest", until: w.view.turn() + 10 * stuckThresholds(null).repeat }] });
     w.advance(stuckThresholds(null).cooldown);
     expect(offered(p.ask(w.view))).toContain("rest");
   });
@@ -1417,7 +1417,7 @@ describe("refusals", () => {
     w.advance(10);
     expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
     w.advance(300);
-    expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
+    expect(offered(asked(p.ask(w.view)))).toContain("fetch");
     w.moveTo({ x: 3, y: 1 });
     expect(offered(asked(p.ask(w.view)))).toContain("fetch");
   });
@@ -3504,7 +3504,7 @@ describe("tactical pack scenarios", () => {
 
   it("burning ground on the shortest way to the stairs: the state names it, and the walk out goes round it and never onto it", () => {
     const q = asked(planner(burning()).p.ask(burning().view));
-    expect(offered(q)).toEqual(["fight", "heal", "leave_level", "retreat", "descend"]);
+    expect(offered(q)).toEqual(["fight", "heal", "leave_level", "retreat"]);
     expect(q.context.pack?.pruned).toEqual([{ goal: "phase", by: "leave_level" }]);
     expect(String(q.request.state["geometry"])).toContain("Hazards on the way: burning ground 1 step (adjacent) east");
     expect(answer(burning(), choice({ fight: 0.6, leave_level: 0.4 }), 0.2).goal).toBe("fight");
@@ -3795,7 +3795,7 @@ describe("tactical pack rules", () => {
   });
 
   it("ties each option's purpose to the near-term goal, naming only what differs", () => {
-    const w = suppliedWorld({ map: ["########", "#.@...,#", "#......#", "########"], player: { depth: 3, level: 11, maxLevel: 11, hp: 40, maxHp: 60 }, monsters: ORC, monsterRecall: () => "It can hit to hurt (1d8)." });
+    const w = suppliedWorld({ map: ["########", "#.@...,#", "#......#", "########"], player: { depth: 3, level: 11, maxLevel: 11, hp: 40, maxHp: 60 }, monsters: ORC.map((monster) => ({ ...monster, grid: { x: 4, y: 1 } })), monsterRecall: () => "It can hit to hurt (1d8)." });
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, strategy: () => ({ aims: [], tripAllowed: () => false, nearGoal: "Explore this level.", nearKind: "explore" }) });
     const q = asked(p.ask(w.view));
     const criteria = (q.request.questions["goal"] as ChoiceQuestion).criteria;

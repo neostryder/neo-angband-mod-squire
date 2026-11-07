@@ -4,6 +4,7 @@ import { applySafetyFloor, riskCeiling } from "../persona/blend.js";
 import type { Goal, Offer } from "./goals.js";
 import { CYCLE_MAX_GRIDS, FAILED_TURNS, REGION_SIZE, REGION_WINDOW, REPEAT_RUN } from "./loops.js";
 import { classOf } from "./tactics.js";
+import { turnsPerAction } from "./threat-model.js";
 
 /** Two revisit windows keep even the least bold persona's short cycles in memory. */
 export const DECISION_MEMORY_SIZE = REGION_WINDOW * 2;
@@ -88,7 +89,8 @@ export function createDecisionMemory(clock: () => number = Date.now) {
   let hunting = 0;
   let enteredAt = 0;
   let refresh: { turn: number; hunting: number; at: number } | null = null;
-  const cooling = new Map<Goal, { until: number; evidence: number }>();
+  const cooling = new Map<Goal, { until: number; evidence: number; where: string }>();
+  const position = (view: AgentView) => `${String(view.player().depth)}:${String(view.player().grid.x)},${String(view.player().grid.y)}`;
 
   function reset(): void {
     entries = [];
@@ -107,6 +109,7 @@ export function createDecisionMemory(clock: () => number = Date.now) {
 
   function observe(view: AgentView): void {
     const now = snapshot(view);
+    for (const [goal, hold] of cooling) if (hold.where !== position(view)) cooling.delete(goal);
     if (previous !== null && now.turn < previous.turn) reset();
     if (widenedExplore !== null && widenedExplore.depth !== now.depth) widenedExplore = null;
     if (previous === null) progressTurn = now.turn;
@@ -212,11 +215,11 @@ export function createDecisionMemory(clock: () => number = Date.now) {
       finish(view);
       const thresholds = stuckThresholds(persona);
       for (const signal of signals(persona)) {
-        if (signal.repetitions < thresholds.futile) continue;
+        if (signal.repetitions < thresholds.futile || entries.at(-1)?.grid !== `${String(view.player().grid.x)},${String(view.player().grid.y)}`) continue;
         for (const goal of signal.cycle) {
           const hold = cooling.get(goal);
           const evidence = entries.at(-1)?.turn ?? view.turn();
-          if (hold === undefined || hold.until <= view.turn() && hold.evidence !== evidence) cooling.set(goal, { until: view.turn() + thresholds.cooldown, evidence });
+          if (hold === undefined || hold.until <= view.turn() && hold.evidence !== evidence) cooling.set(goal, { until: view.turn() + turnsPerAction(view.player().speed) * thresholds.repeat, evidence, where: position(view) });
         }
       }
       /* Escapes and routine upkeep keep their existing reflex rules, and cooling cannot displace every choice the safety floor kept. */

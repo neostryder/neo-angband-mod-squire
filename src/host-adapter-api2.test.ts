@@ -706,6 +706,19 @@ describe("viewWorld under API 2", () => {
     }
   });
 
+  it("eats at API 2 food 5 with the Hungry grade before fainting", async () => {
+    const w = world({ map: ["#######", "#@...>#", "#######"], player: { depth: 0, hp: 13, maxHp: 13, status: { food: 500 } }, pack: ["2 Rations of Food"] });
+    const known = knownFrom(w, []);
+    if (known.player === null) throw new Error("expected a player");
+    const adapted = await viewWorld(fakeApi({ world: { ...known, player: { ...known.player, status: { ...known.player.status, food: 5, foodGrade: "Hungry" } } }, records: records() }).api);
+    if (adapted === null) throw new Error("expected a view");
+    expect(adapted.player().status.food).toBe(500);
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {} });
+    const choice = p.rules!(adapted, "food replay");
+    if (!("plan" in choice)) throw new Error(choice.handBack);
+    expect(choice.plan.step(adapted, w.act)?.code).toBe("eat");
+  });
+
   it("reads a lit torch as out of fuel, which API 1 does not", async () => {
     /* The known item carries no fuel, only a charging count, which a torch never has (docs/API2-MIGRATION.md, request 26). */
     const w = world({ map: ["#####", "#@..#", "#####"], worn: ["a Wooden Torch (2500 turns)"] });

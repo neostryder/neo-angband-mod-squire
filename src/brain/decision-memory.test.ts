@@ -197,7 +197,7 @@ describe("futile decision backstop", () => {
     expect(memory.withhold(offers, w.view, null)).toEqual(offers);
     decide(goal);
     expect(memory.withhold(offers, w.view, null)).toEqual([offer("descend")]);
-    expect(memory.facts(w.view, null).cooling).toContainEqual({ goal, until: w.view.turn() + stuckThresholds(null).cooldown });
+    expect(memory.facts(w.view, null).cooling).toContainEqual({ goal, until: w.view.turn() + 10 * stuckThresholds(null).repeat });
     w.advance(stuckThresholds(null).cooldown);
     expect(memory.withhold(offers, w.view, null)).toEqual(offers);
   });
@@ -211,6 +211,15 @@ describe("futile decision backstop", () => {
       const protectedOffers: Offer[] = [offer("retreat"), { ...offer(goal), routine: true }];
       expect(memory.withhold(protectedOffers, w.view, null)).toEqual(protectedOffers);
     }
+  });
+
+  it("releases a cooled route after moving to another position", () => {
+    const { w, memory, decide } = rig();
+    for (let i = 0; i < stuckThresholds(null).futile; i++) decide("explore");
+    const offers = [offer("explore"), offer("descend")];
+    expect(memory.withhold(offers, w.view, null)).toEqual([offer("descend")]);
+    w.moveTo({ x: 3, y: 2 });
+    expect(memory.withhold(offers, w.view, null)).toEqual(offers);
   });
 
   it("keeps the safety floor's remaining choice when every alternative is over its ceiling", () => {

@@ -7,11 +7,56 @@ import { createGoalPlanner, type Goal, type Offer } from "../brain/goals.js";
 import { candidateAims } from "./aims.js";
 import { createJourney } from "./journey.js";
 import { invalidateHazards } from "../map.js";
+import { stuckThresholds } from "../brain/decision-memory.js";
 
 const ROOM = ["########", "#<@...>#", "########"];
 const RESERVES = ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"];
 
 describe("round 10 plain recovery", () => {
+  it("escapes an adjacent attacker instead of repeatedly walking within reach", () => {
+    const w = suppliedWorld({ map: ["########", "#.@...,#", "#......#", "########"], player: { depth: 0, hp: 10, maxHp: 10, level: 1 },
+      monsters: [{ grid: { x: 3, y: 1 }, hp: 100, maxHp: 100 }], monsterRecall: () => "It can hit to hurt (1d6)." });
+    expect(createJourney(w.terrain).emergency(w.view, w.act).code).toBe("read");
+  });
+
+  it("fights an adjacent attacker when no escape exists", () => {
+    const w = world({ map: ["########", "#.@...,#", "#......#", "########"], player: { depth: 0, hp: 10, maxHp: 10, level: 1 },
+      monsters: [{ grid: { x: 3, y: 1 }, hp: 100, maxHp: 100 }], monsterRecall: () => "It can hit to hurt (1d6)." });
+    expect(createJourney(w.terrain).emergency(w.view, w.act)).toEqual({ code: "melee", dir: 6 });
+  });
+
+  it("uses a survivable stair route before spending an escape", () => {
+    const w = suppliedWorld({ map: ["########", "#<@...,#", "########"], player: { hp: 30, maxHp: 30 },
+      monsters: [{ grid: { x: 3, y: 1 }, hp: 100, maxHp: 100 }], monsterRecall: () => "It can hit to hurt (1d1)." });
+    expect(createJourney(w.terrain).emergency(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+  });
+
+  it("keeps a chosen recovery destination when a nearer frontier appears behind it", () => {
+    const w = suppliedWorld({ map: ["##########", "#.@....,.#", "#........#", "##########"], player: { depth: 0 } });
+    const logs: string[] = [];
+    const journey = createJourney(w.terrain, undefined, undefined, () => 0, (line) => logs.push(line));
+    expect(journey.emergency(w.view, w.act).code).toBe("walk");
+    w.moveTo({ x: 3, y: 1 });
+    w.advance(10);
+    const cell = w.view.cell;
+    Object.assign(w.view, { cell: (x: number, y: number) => x === 1 && y === 2 ? { ...cell(x, y)!, known: false } : cell(x, y) });
+    invalidateHazards();
+    expect(journey.emergency(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
+    expect(logs.filter((line) => line.includes("recovery commits to"))).toHaveLength(1);
+  });
+
+  it("abandons a destination after repeated visits and retries it after a short game-time pause", () => {
+    const w = suppliedWorld({ map: ["##########", "#.@....,.#", "##########"], player: { depth: 0 } });
+    const logs: string[] = [];
+    const journey = createJourney(w.terrain, undefined, undefined, () => 0, (line) => logs.push(line));
+    const repeat = stuckThresholds(null).repeat;
+    for (let tick = 0; tick < repeat + 2; tick++) { journey.emergency(w.view, w.act); w.advance(10); }
+    expect(logs.some((line) => line.includes("recovery abandons"))).toBe(true);
+    w.advance(10 * repeat);
+    expect(journey.emergency(w.view, w.act).code).toBe("walk");
+    expect(logs.filter((line) => line.includes("recovery commits to"))).toHaveLength(2);
+  });
+
   it("learns a refused first step and chooses another approach to the frontier", () => {
     const w = suppliedWorld({ map: ["##########", "#.@....,.#", "#........#", "##########"], player: { depth: 2, level: 3, hp: 30, maxHp: 30 } });
     const logs: string[] = [];
@@ -468,7 +513,7 @@ describe("round 4 unfinished level exploration", () => {
     expect(journey.watchdog(view, true)).toBeNull();
   });
 
-  it("walks toward the exit instead of ending recovery beside a lethal blocker", () => {
+  it("uses an escape instead of walking beside a lethal blocker", () => {
     let time = 0;
     const w = suppliedWorld({ map: ROOM, player: { ...player, level: 5, maxLevel: 5 } });
     const journey = createJourney(w.terrain, undefined, undefined, () => time);
@@ -478,7 +523,7 @@ describe("round 4 unfinished level exploration", () => {
     const plan = journey.watchdog(w.view, true);
     expect(plan).not.toBeNull();
     w.setMonsters([{ grid: { x: 3, y: 1 }, race: "ancient multi-hued dragon", level: 40 }]);
-    expect(plan?.step(w.view, w.act)).toEqual({ code: "walk", dir: 4 });
+    expect(plan?.step(w.view, w.act)?.code).toBe("read");
   });
 });
 
