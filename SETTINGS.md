@@ -95,11 +95,19 @@ The top of the Persona tab holds the persona library. Pick a persona from the li
 
 The rest of the sheet is grouped as on screen. Sliders run from 0 to 100, and the range column names the ends. A list takes words separated by commas. A quirk has a checkbox and a strength slider.
 
+### Descent and exploration pace
+
+Ambition, Boldness, Impulsiveness, Self-preservation, Patience, Paranoia, Escape readiness, Level thoroughness, Optimism and Town trips set preparation appetite together. Cowardice lowers it; Forgetful, Delusional and Death wish raise it. A timid character asks for more HP, experience, food, cures and escapes. A careless character accepts fewer supplies and greater forecast loss. The same appetite sets the training delay, stair reversal limit, refresh limit, route HP reserve and depth schedule. Known disabling attacks and fatal steps still stop travel.
+
+The default persona has Ambition 70, Boldness 65 and Self-preservation 55. With an affordable ranged attack such as oil, a cure, an escape, light and two food units, it can take DL2 at character level 1 and 10 maximum HP. Its level floor grows to 6 by DL10; its HP floor grows to 58 for martial classes and 50 for other classes. Planned descent asks for 80 percent current HP and clear status. Without ranged capacity, it prefers some training first. Its schedule targets DL2/3/4/5/6/7/8/9/10 by minutes 2/4.5/7/9.5/12/15/18/21/24, leaving six minutes within the 30-minute goal for disruption. These targets describe planning, not measured success. Timid personas can take longer.
+
+Exploration pressure counts decisions, elapsed game turns, distinct visited cells and newly revealed cells over a window of up to 180 decisions and 1,800 game turns. For the default persona pacing over at most four cells, pressure starts after 12 quiet decisions, reaches 0.8 after 75 and caps at 1 after 90. It raises exploration choices and discounts waiting, short local moves, positioning, repeated rests and pickups. At 0.8 it chooses executable ground beyond the recent positions, preferring the frontier farthest from them; if no frontier remains it can walk toward a staircase outside that area. Discovery, a visible creature or item, real recovery, or forecast danger clears pressure. Ambition and Curiosity accelerate it; Patience and caution slow and soften it. Loop detection and the watchdog remain active.
+
 ### Temperament
 
 | Setting | Default | Range | What it changes |
 | --- | --- | --- | --- |
-| Boldness | 50 | timid to fearless | A timid character backs off from danger a fearless one would stay and face. |
+| Boldness | 65 | timid to fearless | A timid character backs off from danger a fearless one would stay and face. |
 | Impulsiveness | 50 | deliberate to rash | A rash character acts on its first instinct more often. |
 | Patience | 50 | restless to patient | A patient character rests to full, waits in corridors and reads a level before taking the stairs. |
 | Composure | 50 | panics to ice-cold | How the character's choices change when its hit points run low. |
@@ -115,9 +123,9 @@ The rest of the sheet is grouped as on screen. Sliders run from 0 to 100, and th
 
 | Setting | Default | Range | What it changes |
 | --- | --- | --- | --- |
-| Self-preservation | 70 | reckless to survival first | Squire drops any choice riskier than this allows, unless Death wish is on. |
+| Self-preservation | 55 | reckless to survival first | Squire drops any choice riskier than this allows, unless Death wish is on. |
 | Greed | 50 | indifferent to gold-hungry | A greedy character goes out of its way for gold and loot it knows about. |
-| Ambition | 50 | content to set on winning | How fast the character heads deeper. |
+| Ambition | 70 | content to set on winning | How fast the character heads deeper. |
 | Honour | 50 | fights dirty to fights fair | Attacking sleeping creatures and using corridor tactics. |
 | Mercy | 50 | kills everything to spares the harmless | Whether to attack harmless or fleeing creatures. |
 | Renown | 50 | private to showboat | Favours moves worth a Chronicle line over equally good, safer ones. |
