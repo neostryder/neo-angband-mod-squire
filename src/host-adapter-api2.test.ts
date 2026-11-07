@@ -4,7 +4,7 @@ import { squareIsDisarmableTrap, TRF, TV, type InputSnapshot, type ItemView, typ
 import { FEAT, world, type World } from "./harness.js";
 import { GAME_TERRAIN } from "./terrain-records.fixture.js";
 import { recordFlags } from "./terrain.js";
-import { clearShot } from "./brain/threat-model.js";
+import { clearShot, forecastExposure } from "./brain/threat-model.js";
 import { attackOutcome } from "./brain/combat-kit.js";
 import { createGoalPlanner } from "./brain/goals.js";
 import { defaultCfg } from "./settings.js";
@@ -478,6 +478,16 @@ describe("viewWorld under API 2", () => {
     const view = await viewWorld(api);
     expect(view!.monsters()[0]).toMatchObject({ speed: monster.raceSpeed + 10, maxHp: 10 + 6 * monster.raceLevel, knownCombat: {
       averageHp: null, health: "wounded", blows: monster.blows, spellFrequency: monster.spellFrequency, innateFrequency: monster.innateFrequency, status: ["hasted", "held"] } });
+  });
+
+  it("keeps an urchin's learned null-damage touch harmless with unknown HP", async () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 0, level: 1, hp: 10, maxHp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
+    const original = knownFrom(w);
+    const monster = { ...original.monsters![0]!, race: "filthy street urchin", averageHp: null,
+      blows: [{ method: "BEG", effect: "NONE", damage: null }, { method: "TOUCH", effect: "EAT_GOLD", damage: null }] };
+    const view = (await viewWorld(fakeApi({ world: { ...original, monsters: [monster] }, records: records() }).api))!;
+    expect(view.monsters()[0]!.knownCombat?.averageHp).toBeNull();
+    expect(forecastExposure(view, view.player().grid, 1, w.terrain).upper).toBe(0);
   });
 
   it("prefetches bounded item, baseline and projection reads for synchronous combat readers", async () => {

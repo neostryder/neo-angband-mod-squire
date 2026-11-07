@@ -8,7 +8,7 @@ import { floorTarget } from "../brain/items.js";
 import { canRead, hungry, unknownFlavours } from "../brain/pack.js";
 import { arrivalFeeling, dangerousLevelFeeling } from "../brain/level-feel.js";
 import { forecastWalk, tacticalFrame } from "../brain/forecast.js";
-import { forecastExposure, rememberedCleared, assessThreat, incomingDamage } from "../brain/threat-model.js";
+import { forecastExposure, riskQuantile, rememberedCleared, assessThreat, incomingDamage } from "../brain/threat-model.js";
 import { pickTarget } from "../threat.js";
 import { AUTOFIGHT_REACH } from "../missions/autofight.js";
 import { DIRECTIONS, key, steps, type Loc } from "../grid.js";
@@ -153,13 +153,13 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     return recoveryHealthy(view, true) && stock.cures >= descentPolicy(lastPersona).reserve && stock.phase + stock.escapes >= descentPolicy(lastPersona).reserve;
   }
 
-  function recoverySafe(view: AgentView): boolean {
+  function recoverySafe(view: AgentView, urgent = false): boolean {
     observe(view);
     const player = view.player();
     if (standingOnHarm(view, terrain, player.grid) || unseenDanger?.(view) || view.turn() <= unseenUntil ||
       [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].some((value) => value > 0)) return false;
-    const damage = incomingDamage(view, player.grid, 2, terrain, { observedDamage });
-    return damage.status === 0 && damage.damage < player.hp * 0.25;
+    const damage = incomingDamage(view, player.grid, urgent ? 1 : 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona) });
+    return damage.status === 0 && damage.damage < (urgent ? player.hp - Math.max(2, player.maxHp * 0.1) : player.hp * 0.25);
   }
 
   /** Walking and stair reversals cannot renew the deadline without a useful gain. */
@@ -241,24 +241,24 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     const recovery: Plan = { label: `watchdog: recover at stage ${String(stage)}`, step(current, act) {
       if (current.player().depth !== startDepth || commands >= 24 || now() - started >= 8000) return null;
       commands += 1;
-      if (!recoverySafe(current)) return null;
-      if (stage >= 2 && recoveryHealthy(current, true) && recoverySafe(current) && !recallActive) {
+      if (!recoverySafe(current, stage >= 4)) return null;
+      if (stage >= 2 && recoveryHealthy(current, true) && recoverySafe(current, stage >= 4) && !recallActive) {
         const command = recoveryStair(current, act, knownDownStairs(current, terrain));
         if (command !== null) return command;
       }
       const unexplored = current.player().depth > 0 && returnReason === null && !breederLevel && !dangerousFeeling && explorationStep(current, true) !== null;
-      if (stage >= 1 && unexplored && safeDelay(current) && current.player().hp >= current.player().maxHp * descentPolicy(lastPersona).hpShare) {
+      if (stage >= 1 && unexplored && (safeDelay(current) || stage >= 4 && recoverySafe(current, true)) && current.player().hp >= current.player().maxHp * descentPolicy(lastPersona).hpShare) {
         const command = explore({ view: current, act } as SquireContext, true);
         if (command !== null) return command;
       }
-      if (stage >= 3 && current.player().hp >= current.player().maxHp * descentPolicy(lastPersona).hpShare && recoverySafe(current) && !recallActive) {
+      if (stage >= 3 && current.player().hp >= current.player().maxHp * descentPolicy(lastPersona).hpShare && recoverySafe(current, stage >= 4) && !recallActive) {
         const stock = supplies(current);
         const townReady = current.player().depth === 0 && current.player().hp >= current.player().maxHp * descentPolicy(lastPersona).recoveryShare && stock.food >= Math.min(1, descentPolicy(lastPersona).food) && (stock.workingLight || stock.lastingLight);
         const stairs = knownStairs(current, terrain).filter((grid) => terrain.isUpStair(current.cell(grid.x, grid.y)?.feat ?? -1) ? !unexplored : recoveryHealthy(current, true) || townReady);
         const command = recoveryStair(current, act, stairs);
         if (command !== null) return command;
       }
-      if (stage >= 4 && !unexplored && recoverySafe(current)) {
+      if (stage >= 4 && !unexplored && recoverySafe(current, true)) {
         const scroll = canRead(current) ? unknownFlavours(current, "scroll").find((item) => !triedFlavours.has(`${String(item.handle)}:${item.name}`)) : undefined;
         const potion = unknownFlavours(current, "potion").find((item) => !triedFlavours.has(`${String(item.handle)}:${item.name}`));
         const item = scroll ?? potion;
@@ -280,7 +280,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
           !current.monsters().some((monster) => monster.visible && steps(monster.grid, grid) <= 1);
       });
       const direction = directions[recoveryAttempts % Math.max(1, directions.length)];
-      return direction === undefined ? act.hold() : act.move(direction.key);
+      return direction === undefined ? stage >= 4 ? null : act.hold() : act.move(direction.key);
     } };
     return { ...recovery, step: (current, act) => stairCommand(current, recovery.step(current, act)) };
   }
@@ -543,7 +543,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
 
   function threatensDelay(view: AgentView, monster: MonsterView, seen = view.turn()): boolean {
     if (monster.raceFlags.includes("MULTIPLY") && steps(monster.grid, view.player().grid) <= 10) return true;
-    const danger = forecastExposure(view, view.player().grid, 4, terrain, { monsters: [monster], lastSeen: new Map([[monster.id, seen]]), creaturesOnly: true, observedDamage });
+    const danger = forecastExposure(view, view.player().grid, 4, terrain, { monsters: [monster], quantile: riskQuantile(lastPersona), lastSeen: new Map([[monster.id, seen]]), creaturesOnly: true, observedDamage });
     return danger.upper > 0 || danger.status > 0;
   }
 
@@ -600,10 +600,12 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
     /* Urgent exits must tolerate distant creatures while each next step keeps a health reserve. */
     if (breederLevel || recovering) {
       const next = route[0]!;
-      const danger = incomingDamage(view, next, 2, terrain, { monsters: threats, observedDamage });
-      if (danger.status > 0 || danger.damage >= player.hp * descentPolicy(lastPersona).risk) return fail(`creatures near the next route square threaten ${String(danger.damage)} HP or a disabling effect`);
+      const urgent = recovering && recoveryStage >= 4;
+      const danger = incomingDamage(view, next, urgent ? 1 : 2, terrain, { monsters: threats, quantile: riskQuantile(lastPersona), observedDamage });
+      const budget = urgent ? player.hp - Math.max(2, player.maxHp * 0.1) : player.hp * descentPolicy(lastPersona).risk;
+      if (danger.status > 0 || danger.damage >= budget) return fail(`creatures near the next route square threaten ${String(danger.damage)} HP or a disabling effect`);
     } else if (threats.length > 0) {
-      const frame = tacticalFrame(view, { terrain, facts: { monsters: threats, observedDamage, lastSeen: new Map([...remembered].map(([id, entry]) => [id, entry.until - 100])) } });
+      const frame = tacticalFrame(view, { terrain, facts: { monsters: threats, quantile: riskQuantile(lastPersona), observedDamage, lastSeen: new Map([...remembered].map(([id, entry]) => [id, entry.until - 100])) } });
       const checked = forecastWalk(frame, route.slice(0, 4), route.length <= 4);
       if (checked.loss.status > 0 || checked.loss.upper > player.hp * descentPolicy(lastPersona).risk || checked.after < player.maxHp * (1 - descentPolicy(lastPersona).risk)) return fail("the checked route loses its HP reserve or permits a disabling attack");
     }
@@ -950,7 +952,7 @@ export function createJourney(terrain: Terrain, unseenDanger?: (view: AgentView)
         const grid = { x: monster.grid.x + dir.dx, y: monster.grid.y + dir.dy };
         if (key(grid) === key(at) || checked.has(key(grid))) continue;
         checked.add(key(grid));
-        const danger = incomingDamage(view, grid, 2, terrain, { observedDamage });
+        const danger = incomingDamage(view, grid, 2, terrain, { observedDamage, quantile: riskQuantile(lastPersona) });
         if (danger.status > 0 || danger.damage > view.player().hp * descentPolicy(lastPersona).risk) stationaryRisk.add(key(grid));
       }
     }

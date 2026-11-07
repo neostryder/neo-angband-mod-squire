@@ -5,6 +5,38 @@ import { shownName } from "../town/needs.js";
 import type { CastableSpell } from "./pack.js";
 import { starvationDamage } from "./pack.js";
 import { neverMoves, standingOnHarm } from "../map.js";
+import type { Persona } from "../persona/persona.js";
+
+/** Missing lore warrants a population prior, not the strongest unseen attack. */
+function meleePrior(monster: MonsterView): number {
+  if (monster.raceFlags.includes("UNIQUE")) return roundEstimate(monster.level);
+  if (monster.level === 0) return ["f", "r", "R", "c", "S", "C"].includes(monster.glyph ?? "") ? 1 : 2;
+  if (monster.level <= 2 && (monster.raceFlags.includes("ANIMAL") || ["f", "r", "R", "c", "S", "C"].includes(monster.glyph ?? ""))) return 1 + monster.level;
+  if (monster.level <= 2) return 2 + 2 * monster.level;
+  return roundEstimate(monster.level);
+}
+
+export function riskQuantile(persona: Persona | null = null): number {
+  const sliders = persona?.sliders;
+  return Math.max(0.7, Math.min(0.95, 0.85 + ((sliders?.selfpreservation ?? 55) - 55) * 0.001 +
+    ((sliders?.paranoia ?? 50) - 50) * 0.0005 - ((sliders?.boldness ?? 65) - 65) * 0.001));
+}
+
+function diceQuantile(dice: number, sides: number, quantile: number): number {
+  if (dice * sides > 256) return dice * sides;
+  let law = new Map<number, number>([[0, 1]]);
+  for (let i = 0; i < dice; i++) {
+    const next = new Map<number, number>();
+    for (const [damage, probability] of law) for (let roll = 1; roll <= sides; roll++) next.set(damage + roll, (next.get(damage + roll) ?? 0) + probability / sides);
+    law = next;
+  }
+  let cumulative = 0;
+  for (const [damage, probability] of law) {
+    cumulative += probability;
+    if (cumulative >= quantile) return damage;
+  }
+  return dice * sides;
+}
 
 export const THREAT_BANDS = ["an easy kill", "a fair fight", "dangerous", "deadly"] as const;
 export type ThreatBand = (typeof THREAT_BANDS)[number];
@@ -77,6 +109,11 @@ export function harmlessKind(monster: MonsterView, view: AgentView, contacts = 0
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   if (/\(\d+\)/.test(text) || /\bmay breathe\b/i.test(text)) return false;
   if (monster.raceFlags.includes("NEVER_BLOW")) return true;
+  const learned = meleeMoments(view, monster);
+  if (learned !== null) {
+    if (learned.upper > 0) return false;
+    if (!learned.uncertain) return true;
+  }
   if (view.player().depth !== 0 || /\(\d+d\d+/.test(text)) return false;
   return contacts >= HARMLESS_CONTACTS || monster.raceFlags.includes("RAND_25") || monster.raceFlags.includes("RAND_50");
 }
@@ -152,6 +189,7 @@ export interface ThreatFacts {
   /** Leave out poison and cut damage, for checks that ask whether a creature can kill the character. */
   readonly creaturesOnly?: boolean;
   readonly expectation?: boolean;
+  readonly quantile?: number;
 }
 
 export interface UnseenHit {
@@ -217,11 +255,12 @@ export interface BlowMoments {
   readonly variance: number;
   readonly upper: number;
   readonly uncertain: boolean;
+  readonly plausible: number;
 }
 
 /** Integer damage transforms must precede averaging because armor rounds each roll. */
-export function meleeMoments(view: AgentView, monster: MonsterView): BlowMoments | null {
-  if (monster.raceFlags.includes("NEVER_BLOW")) return { mean: 0, variance: 0, upper: 0, uncertain: false };
+export function meleeMoments(view: AgentView, monster: MonsterView, quantile = 0.85): BlowMoments | null {
+  if (monster.raceFlags.includes("NEVER_BLOW")) return { mean: 0, variance: 0, upper: 0, plausible: 0, uncertain: false };
   const blows = monster.knownCombat?.blows;
   if (blows === undefined || blows.length === 0) return null;
   const player = view.player();
@@ -230,12 +269,21 @@ export function meleeMoments(view: AgentView, monster: MonsterView): BlowMoments
   let variance = 0;
   let upper = 0;
   let uncertain = false;
+  let roundLaw = new Map<number, number>([[0, 1]]);
+  const append = (outcomes: ReadonlyMap<number, number>) => {
+    const combined = new Map<number, number>();
+    for (const [a, p] of roundLaw) for (const [b, q] of outcomes) combined.set(a + b, (combined.get(a + b) ?? 0) + p * q);
+    roundLaw = combined;
+  };
   for (const blow of blows) {
+    if (blow.effect === "NONE" || blow.damage === null && ["BEG", "INSULT", "MOAN", "SHOW"].includes(blow.method) ||
+      blow.damage === null && ["EAT_GOLD", "EAT_ITEM", "EAT_FOOD", "EAT_LIGHT"].includes(blow.effect)) continue;
     const die = blow.damage;
     if (die === null || die.mBonus !== 0 || die.dice * die.sides > 256 || die.dice < 0 || die.sides < 0) {
-      const fallback = roundEstimate(monster.level);
+      const fallback = meleePrior(monster);
       mean += fallback / 2;
       upper += fallback;
+      append(new Map([[0, 0.5], [fallback, 0.5]]));
       uncertain = true;
       continue;
     }
@@ -253,6 +301,7 @@ export function meleeMoments(view: AgentView, monster: MonsterView): BlowMoments
     let first = 0;
     let second = 0;
     let ceiling = 0;
+    const outcomes = new Map<number, number>([[0, 1 - hit]]);
     for (const [x, p] of law) {
       const damage = blow.effect === "NONE" ? 0 : blow.effect === "HURT" || blow.effect === "SHATTER" ? armorDamage(x, player.ac)
         : ["ACID", "ELEC", "FIRE", "COLD", "POISON"].includes(blow.effect)
@@ -260,12 +309,20 @@ export function meleeMoments(view: AgentView, monster: MonsterView): BlowMoments
       first += p * damage;
       second += p * damage * damage;
       ceiling = Math.max(ceiling, damage);
+      outcomes.set(damage, (outcomes.get(damage) ?? 0) + hit * p);
     }
     mean += hit * first;
     variance += hit * second - (hit * first) ** 2;
     upper += ceiling;
+    append(outcomes);
   }
-  return { mean, variance, upper, uncertain };
+  let cumulative = 0;
+  let plausible = upper;
+  for (const [damage, probability] of [...roundLaw].sort((a, b) => a[0] - b[0])) {
+    cumulative += probability;
+    if (cumulative >= quantile) { plausible = damage; break; }
+  }
+  return { mean, variance, upper, plausible, uncertain };
 }
 
 const ELEMENTS: readonly [RegExp, string, "resAcid" | "resElec" | "resFire" | "resCold" | "resPois"][] = [
@@ -292,13 +349,13 @@ export function resistedDamage(damage: number, attack: string, player: PlayerVie
   return damage;
 }
 
-function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>, observed?: ReadonlyMap<string, number>, expectation = false): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
+function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<NonNullable<AgentView["simulateLoadout"]>>, observed?: ReadonlyMap<string, number>, expectation = false, quantile?: number): { melee: number; ranged: number; status: number; uncertain: boolean; bolt: boolean } {
   const player = view.player();
   const text = view.monsterRecall?.(monster.raceIndex)?.text ?? "";
   const weak = breederBlow(view, monster, observed);
   const lowBreeder = monster.level <= 2 && monster.raceFlags.includes("MULTIPLY") && !monster.raceFlags.includes("UNIQUE") && monster.spellFlags.length === 0 && !/poison|acid|paraly|confus|hold|drain|may breathe|may cast spells/i.test(text);
-  const fallback = weak ?? (townsperson(monster, player.depth) ? TOWN_ROUND : lowBreeder
-    ? Math.min(roundEstimate(monster.level), Math.max(2, monster.level + Math.ceil(player.maxHp * 0.1))) : roundEstimate(monster.level));
+  const fallback = Math.max(observed?.get(monster.race) ?? 0, weak ?? (lowBreeder
+    ? Math.min(meleePrior(monster), Math.max(2, monster.level + Math.ceil(player.maxHp * 0.1))) : meleePrior(monster)));
   const blows = [...text.matchAll(/([^.(]*?)\((\d+)d(\d+)(?:,[^)]*)?\)/g)];
   const spellFlags = knownSpellFlags(view, monster);
   /* Recall omits method flags, so resistance cannot erase a physical component. */
@@ -308,10 +365,15 @@ function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<No
   }, 0);
   const magic = /\bmay (?:breathe|cast spells)\b/i.test(text) || spellFlags.length > 0;
   const spells = [...text.matchAll(/([^().]*?)\((\d+)\)/g)];
-  let ranged = magic ? Math.max(spells.length === 0 ? fallback : 0, ...spells.map((spell) => resistedDamage(Number(spell[2]), spell[1]!, player, stats))) : 0;
-  const learned = meleeMoments(view, monster);
-  if (learned !== null) melee = expectation ? learned.mean : learned.upper;
+  let ranged = magic ? Math.max(spells.length === 0 ? roundEstimate(monster.level) : 0, ...spells.map((spell) => resistedDamage(Number(spell[2]), spell[1]!, player, stats))) : 0;
+  const learned = meleeMoments(view, monster, quantile);
+  if (learned !== null) melee = expectation ? learned.mean : quantile === undefined ? learned.upper : learned.plausible;
   else if (expectation) melee = blows.length === 0 ? melee / 2 : blows.reduce((sum, blow) => sum + Number(blow[2]) * (Number(blow[3]) + 1) / 2, 0);
+  else if (quantile !== undefined && blows.length === 0) melee = Math.max(observed?.get(monster.race) ?? 0, Math.ceil(melee * quantile));
+  else if (quantile !== undefined) melee = monster.raceFlags.includes("NEVER_BLOW") ? 0 : blows.reduce((sum, blow) => {
+    const damage = diceQuantile(Number(blow[2]), Number(blow[3]), quantile);
+    return sum + Math.max(damage, resistedDamage(damage, blow[1]!, player, stats));
+  }, 0);
   if (expectation && magic) {
     const mix = castingMixture(monster, spellFlags);
     melee *= mix.melee;
@@ -323,7 +385,7 @@ function attackFacts(view: AgentView, monster: MonsterView, stats: ReturnType<No
   const status = (/\b(?:paraly[sz]|hold)\w*\b/i.test(text) || spellFlags.includes("HOLD") || effects.includes("PARALYZE")) && !flags.includes("FREE_ACT") ? 150
     : (/\bconfus\w*\b/i.test(text) || spellFlags.includes("CONF") || effects.includes("CONFUSE")) && !flags.includes("PROT_CONF") ? 10
       : spellFlags.includes("SLOW") ? 5 : 0;
-  return { melee, ranged, status, uncertain: blows.length === 0 || (magic && spells.length === 0) || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
+  return { melee, ranged, status, uncertain: (learned === null ? blows.length === 0 : learned.uncertain) || (magic && spells.length === 0) || monster.asleep || !monster.visible, bolt: (/\b(?:bolts?|missiles?|arrows?|shots?)\b/i.test(text) || spellFlags.some((flag) => /^(?:BO_|ARROW|SHOT|MISSILE)/.test(flag))) && !/\bbreathe|\bball|\bstorm/i.test(text) && !spellFlags.some((flag) => /^(?:BR_|BA_)/.test(flag)) };
 }
 
 function rangedPath(view: AgentView, from: Loc, to: Loc, bolt: boolean, monsters: readonly MonsterView[], openedDoor?: Loc): { clear: boolean; uncertain: boolean } {
@@ -418,7 +480,7 @@ export function incomingDamage(view: AgentView, at: Loc = view.player().grid, ac
     const count = monsterActions(monster, player, actions, facts.energy);
     const seen = monster.visible ? undefined : facts.lastSeen?.get(monster.id);
     const prior = seen === undefined ? 0 : Math.max(0, Math.ceil((view.turn() - seen) * energyBounds(monster.speed, facts.energy).high / 100));
-    const read = attackFacts(view, monster, stats, facts.observedDamage, facts.expectation);
+    const read = attackFacts(view, monster, stats, facts.observedDamage, facts.expectation, facts.quantile);
     const phase = facts.expectation === true ? actions * energyBounds(monster.speed, facts.energy).high / energyBounds(player.speed, facts.energy).low / count : 1;
     const positions = attackPositions(view, monster, at, count, terrain, monsters, facts.openedDoor, false, prior);
     incomplete ||= positions.incomplete === true;
@@ -494,13 +556,17 @@ export function rememberedCleared(view: AgentView, monster: MonsterView, lastSee
 export interface ExposureForecast {
   readonly mean: number;
   readonly upper: number;
+  /** Null means missing capabilities prevent an absolute bound. */
+  readonly worst: number | null;
   readonly status: number;
   readonly unknown: readonly string[];
 }
 
-/** This uses reachable worst positions for memory; it does not claim a calibrated percentile. */
+/** The scenario uses a damage quantile; missing capabilities never become absolute bounds. */
 export function forecastExposure(view: AgentView, at: Loc = view.player().grid, actions = 1, terrain?: Terrain, facts: ThreatFacts = {}): ExposureForecast {
-  const upper = incomingDamage(view, at, actions, terrain, facts);
+  const { quantile: _quantile, ...ceilingFacts } = facts;
+  const worst = incomingDamage(view, at, actions, terrain, ceilingFacts);
+  const upper = incomingDamage(view, at, actions, terrain, { ...facts, quantile: facts.quantile ?? riskQuantile() });
   const mean = incomingDamage(view, at, actions, terrain, { ...facts, expectation: true });
   const unknown = new Set<string>();
   if (terrain !== undefined && standingOnHarm(view, terrain, at)) unknown.add("terrain-damage");
@@ -515,7 +581,7 @@ export function forecastExposure(view: AgentView, at: Loc = view.player().grid, 
   }
   if (view.apiVersion.startsWith("2.") && monstersWithTimedEffects(view, facts.monsters)) unknown.add("timed-expiry");
   if (upper.uncertainty > 0 && unknown.size === 0) unknown.add("capability");
-  return { mean: Math.min(upper.damage, mean.damage), upper: upper.damage, status: upper.status, unknown: [...unknown] };
+  return { mean: mean.damage, upper: upper.damage, worst: unknown.size > 0 ? null : worst.damage, status: upper.status, unknown: [...unknown] };
 }
 
 function monstersWithTimedEffects(view: AgentView, monsters: readonly MonsterView[] = view.monsters()): boolean {

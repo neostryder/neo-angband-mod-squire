@@ -21,6 +21,34 @@ import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 
 const CORRIDOR = ["########", "#.@....#", "#.#### #", "########"];
 
+describe("round 8 quiet tactics", () => {
+  it("caps endure after three undamaged commands even while fear persists", () => {
+    const w = world({ map: ["###", "#@#", "###"], player: { depth: 1, hp: 6, maxHp: 13, status: { afraid: 10 } } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, focus: () => new Set(["endure"]) });
+    for (let i = 0; i < 3; i++) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      expect(offered(q)).toContain("endure");
+      const choice = p.choose(pick("endure"), q.context, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      expect(choice.plan.step(w.view, w.act)?.code).toBe("hold");
+      w.advance(10);
+      choice.plan.end?.(w.view);
+    }
+    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
+  });
+
+  it("does not flee a fast creature with a known harmless blow on DL1", () => {
+    const w = suppliedWorld({ map: ["#########", "#<@....,#", "#########"], player: { depth: 1, level: 1, maxLevel: 1, hp: 13, maxHp: 13 },
+      monsters: [{ grid: { x: 4, y: 1 }, race: "village idiot", level: 0, speed: 120,
+        knownCombat: { blows: [{ method: "DROOL", effect: "NONE", damage: null }], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+    const q = planner(w).p.ask(w.view);
+    expect(offered(q)).not.toContain("leave_level");
+    expect(offered(q)).not.toContain("retreat");
+    expect(offered(q)).not.toContain("endure");
+  });
+});
+
 describe("round 7 early survival", () => {
   const classes = ["Warrior", "Mage", "Priest", "Rogue", "Ranger", "Paladin", "Druid", "Necromancer", "Blackguard"];
 
@@ -860,7 +888,7 @@ describe("combat safety action guards", () => {
   it("keeps a dangerous cure when every available action remains dangerous", () => {
     const w = world({ map: CORRIDOR, player: { hp: 1, maxHp: 14 }, monsters: [grip], pack: ["a Potion of Cure Light Wounds"] });
     const q = asked(planner(w).p.ask(w.view));
-    expect(q.context.offers.find((o) => o.goal === "heal")).toMatchObject({ risk: 1, survival: -14 });
+    expect(q.context.offers.find((o) => o.goal === "heal")).toMatchObject({ risk: 1, survival: -10 });
   });
 
   it("compares heal-then-escape with an immediate phase below the health line", () => {
@@ -915,7 +943,7 @@ describe("combat safety action guards", () => {
     w.advance(10);
     const q = asked(p.ask(w.view));
     expect(offered(q)).not.toContain("rest");
-    expect(String(q.request.state["incoming"])).toContain("Up to 8 HP damage");
+    expect(String(q.request.state["incoming"])).toContain("Up to 2 HP damage");
     w.advance(51);
     expect(offered(p.ask(w.view))).toContain("rest");
   });
@@ -1071,9 +1099,9 @@ describe("goal planner", () => {
     expect(logged.some((line) => line.includes("widens its choices"))).toBe(true);
   });
 
-  it("tries another step when remembered ground cannot reach a known staircase", () => {
+  it("uses a carried escape when remembered town ground cannot reach a known staircase", () => {
     const w = suppliedWorld({ map: ["#######", "#.@.#>#", "#######"], player: { depth: 0, maxDepth: 0, gold: 0 } });
-    expect(offered(planner(w).p.ask(w.view))).toContain("step_aside");
+    expect(offered(planner(w).p.ask(w.view))).toContain("phase");
   });
 
   it("waits on a shop entrance by resting, since holding there opens the shop", () => {
@@ -2349,14 +2377,14 @@ describe("soak findings", () => {
     expect(offered(p.ask(w.view))).toContain("retreat");
   });
 
-  it("rechecks a plan when one more worm of a known mass can reach the character", () => {
+  it("keeps exploring when another weak worm leaves a health reserve", () => {
     const worm = (x: number, y: number) => ({ grid: { x, y }, race: "white worm mass", level: 1, raceFlags: ["MULTIPLY"], asleep: true });
     const w = suppliedWorld({ map: ["###########", "#<@....... ", "#........##", "#........#", "##########"], player: { depth: 1 }, monsters: [worm(6, 3)] });
     const { p } = planner(w);
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
     if (!("plan" in choice)) throw new Error("expected a plan");
     w.setMonsters([worm(6, 3), worm(3, 2)]);
-    expect(p.trigger(w.view, choice.plan)).not.toBeNull();
+    expect(p.trigger(w.view, choice.plan)).toBeNull();
   });
 
   it("rests rather than waits while a recall is pending, hurt and out of mana", () => {
@@ -3191,7 +3219,7 @@ describe("tactical safety", () => {
 
   it("stops an errand once a creature already in view can kill the character before its next action", () => {
     const brute = { grid: { x: 10, y: 3 }, race: "cave orc", raceIndex: 4, level: 7, hp: 30, maxHp: 30, asleep: true };
-    const w = suppliedWorld({ map: ["############", "#,@........#", "#..........#", "#..........#", "############"], player: { depth: 2, level: 3, hp: 30, maxHp: 30 }, monsters: [brute], monsterRecall: () => "It can hit to hurt (4d8)." });
+    const w = suppliedWorld({ map: ["############", "#,@........#", "#..........#", "#..........#", "############"], player: { depth: 2, level: 3, hp: 30, maxHp: 30 }, monsters: [brute], monsterRecall: () => "It can hit to hurt (6d8)." });
     const { p } = planner(w);
     expect(offered(p.ask(w.view))).toContain("explore");
     const choice = p.choose(pick("explore"), asked(p.ask(w.view)).context, w.view);
@@ -3252,7 +3280,7 @@ describe("tactical safety", () => {
     const w = world({ map: ROOM, player: { depth: 2, cls: "Mage", hp: 20, maxHp: 20, sp: 6, maxSp: 8 }, monsters: [{ grid: { x: 4, y: 2 }, race: "kobold", raceIndex: 7, level: 2 }], monsterRecall: () => "It can hit to hurt (1d8)." });
     const state = asked(planner(w).p.ask(w.view)).request.state;
     expect(state["mana"]).toBe("over half: 6 of 8");
-    expect(String(state["incoming"])).toMatch(/^Up to 8 HP damage in one action \(a quarter to half of current HP\)/);
+    expect(String(state["incoming"])).toMatch(/^Up to 7 HP damage in one action \(a quarter to half of current HP\)/);
   });
 
   it("stops offering to explore a town it has walked end to end", () => {
@@ -3264,7 +3292,7 @@ describe("tactical safety", () => {
       w.moveTo({ x, y: 1 });
       p.ask(w.view);
     }
-    expect(offered(p.ask(w.view))).not.toContain("explore");
+    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
   });
 
   it("withholds a walk to the stairs that a creature in view can end in one round", () => {
@@ -3474,13 +3502,13 @@ describe("tactical pack scenarios", () => {
 
   it("burning ground on the shortest way to the stairs: the state names it, and the walk out goes round it and never onto it", () => {
     const q = asked(planner(burning()).p.ask(burning().view));
-    expect(offered(q)).toEqual(["fight", "leave_level", "retreat", "descend"]);
+    expect(offered(q)).toEqual(["fight", "heal", "leave_level", "retreat", "descend"]);
     expect(q.context.pack?.pruned).toEqual([{ goal: "phase", by: "leave_level" }]);
     expect(String(q.request.state["geometry"])).toContain("Hazards on the way: burning ground 1 step (adjacent) east");
     expect(answer(burning(), choice({ fight: 0.6, leave_level: 0.4 }), 0.2).goal).toBe("fight");
     const w = burning();
     const out = answer(w, choice({ fight: 0.6, leave_level: 0.4 }), 0.9);
-    expect(out.pack?.gate).toMatchObject({ band: "get_out", allowed: ["leave_level", "retreat"] });
+    expect(out.pack?.gate).toMatchObject({ band: "get_out", allowed: ["heal", "leave_level", "retreat"] });
     expect(out.goal).toBe("leave_level");
     const walked: string[] = [];
     let command = out.plan.step(w.view, w.act);
@@ -4143,7 +4171,7 @@ describe("lab stall regressions", () => {
     expect(item?.name).toContain(descent ? "Deep Descent" : "Phase Door");
   });
 
-  it("keeps a turn-consuming fallback after three healthy waits when no move or escape exists", () => {
+  it("ends quiet waiting after three decisions when no route or escape exists", () => {
     const w = suppliedWorld({ map: ["###", "#@#", "###"], player: stalledPlayer });
     w.setPack(["5 Rations of Food", "2 Wooden Torches (5000 turns)"]);
     const { p } = planner(w);
@@ -4153,8 +4181,7 @@ describe("lab stall regressions", () => {
       w.advance(10);
       expect(wait.step(w.view, w.act)).toBeNull();
     }
-    const fallback = execute(w, p, "endure");
-    expect(fallback.step(w.view, w.act)).toEqual({ code: "hold" });
+    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
   });
 
   it("does not replace a refused wait with random swings when there is no unseen attacker", () => {
