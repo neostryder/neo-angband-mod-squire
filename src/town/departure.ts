@@ -117,6 +117,14 @@ export function createDeparture() {
 
   return {
     status,
+    supplyAffordable(view: AgentView, kind: "food" | "healing" | "phase" | "light" | "oil"): boolean {
+      if (view.player().gold < PRICE_FLOOR[kind]) return false;
+      const stores = [...shelves.values()].filter((store) => storesFor(kind).includes(store.featName));
+      const pattern = kind === "food" ? /Ration|Food|Waybread|Mushroom/i : kind === "healing" ? /Cure (Light|Serious|Critical) Wounds/i :
+        kind === "phase" ? /Phase Door|Teleport/i : kind === "light" ? /Torch|Torches|Lantern|Oil/i : /Flasks? of Oil/i;
+      return stores.length === 0 || stores.some((store) => store.stock.some((item) => item.number > 0 && item.price !== undefined &&
+        item.price > 0 && item.price <= view.player().gold && pattern.test((item as { name?: string }).name ?? "")));
+    },
     reserveAffordable(view: AgentView): boolean {
       const gold = view.player().gold;
       if (gold < PRICE_FLOOR.phase) return false;

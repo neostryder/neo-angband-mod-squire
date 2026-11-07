@@ -719,14 +719,21 @@ describe("viewWorld under API 2", () => {
     expect(choice.plan.step(adapted, w.act)?.code).toBe("eat");
   });
 
-  it("reads a lit torch as out of fuel, which API 1 does not", async () => {
-    /* The known item carries no fuel, only a charging count, which a torch never has (docs/API2-MIGRATION.md, request 26). */
+  it("reads displayed torch fuel when an older snapshot omits the fuel field", async () => {
     const w = world({ map: ["#####", "#@..#", "#####"], worn: ["a Wooden Torch (2500 turns)"] });
     const one = viewWorld1(api1Host(w));
     const two = await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api);
     const light = (v: typeof one) => v?.equipment().find((item) => item?.tval === TV.LIGHT);
     expect(light(one)?.timeout).toBe(2500);
-    expect(light(two)?.timeout).toBe(0);
+    expect(light(two)?.timeout).toBe(2500);
+  });
+
+  it.each([0, 1200])("uses the public fuel field %i ahead of a light's displayed name", async (fuel) => {
+    const w = world({ map: ["#####", "#@..#", "#####"], worn: ["a Wooden Torch (2500 turns)"] });
+    const known = knownFrom(w, []);
+    const snapshot = { ...known, equipment: known.equipment?.map((item) => item === null ? null : { ...item, fuel }) ?? null };
+    const two = await viewWorld(fakeApi({ world: snapshot, records: records() }).api);
+    expect(two?.equipment().find((item) => item?.tval === TV.LIGHT)?.timeout).toBe(fuel);
   });
 
   it("is null when the known world or the player cannot be read, as API 1 is without a game", async () => {

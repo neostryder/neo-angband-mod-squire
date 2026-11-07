@@ -21,6 +21,8 @@ export interface Supplies {
   readonly fuel: number;
   readonly lastingLight: boolean;
   readonly workingLight: boolean;
+  readonly lightTurns: number;
+  readonly flasks: number;
 }
 
 function namedCount(view: AgentView, pattern: RegExp): number {
@@ -66,12 +68,14 @@ export function supplies(view: AgentView): Supplies {
   const player = view.player();
   const light = view.equipment().find((item) => item !== null && item.tval === TV.LIGHT) ?? null;
   const permanent = light !== null && (light.artifact || light.flags.includes("NO_FUEL"));
-  const workingLight = light !== null && (light.timeout > 0 || permanent);
+  const lightTurns = light?.timeout ?? 0;
+  const workingLight = light !== null && (lightTurns > 0 || permanent);
   /* A lantern refills from flasks of oil; a torch is replaced by a spare torch. */
   const lantern = light !== null && /\bLantern\b/i.test(shownName(light) ?? "");
   const pack = readPack(view);
   const reliable = pack.escapeSpell.filter((spell) => spell.fail <= RELIABLE_FAIL);
-  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL") || permanent;
+  const lastingLight = player.classFlags.includes("UNLIGHT") || player.objectFlags.includes("NO_FUEL") || permanent ||
+    light === null && player.light > 0 && player.objectFlags.some((flag) => flag === "LIGHT_2" || flag === "LIGHT_3");
   return {
     cures: namedCount(view, HEALING_POTION),
     critical: namedCount(view, /\bPotions? of Cure Critical Wounds\b/i),
@@ -88,23 +92,29 @@ export function supplies(view: AgentView): Supplies {
     }, 0),
     lastingLight,
     workingLight,
+    lightTurns,
+    flasks: inventory.reduce((sum, item) => sum + (item.tval === TV_FLASK ? item.number : 0), 0),
   };
 }
 
 /**
- * A prepared trip down requires lasting light or working light with spare fuel.
- * The departure guard also permits a bounded earning trip with enough current fuel.
+ * Current fuel can cover a shallow trip without a spare torch or oil flask.
  * Escapes are not trips: a staircase taken to survive is never held back by it.
  */
 export function tripLight(view: AgentView, persona: Persona | null = null): boolean {
   const stock = supplies(view);
-  return stock.lastingLight || stock.workingLight && stock.fuel >= descentPolicy(persona).reserve;
+  return stock.lastingLight || stock.workingLight && (stock.fuel >= descentPolicy(persona).reserve ||
+    view.player().depth < 5 && stock.lightTurns >= lightBudget(persona));
+}
+
+export function lightBudget(persona: Persona | null): number {
+  return Math.ceil(500 * descentPolicy(persona).scale);
 }
 
 export interface Requirement {
   readonly kind: "level" | "hp" | "light" | "food" | "healing" | "phase" | "recall" | "protection";
   readonly reason: string;
-  /** A survival shortfall cannot be waived by readiness or stagnation. */
+  /** Immediate survival and deeper preparation retain their guard during ordinary readiness answers. */
   readonly severe?: true;
 }
 
@@ -153,6 +163,60 @@ function classFloor(cls: string, depth: number, persona: Persona | null): readon
 
 export function descentWait(persona: Persona | null): number {
   return descentPolicy(persona).trainMinutes;
+}
+
+export interface PreparationSource {
+  readonly satisfiable: boolean;
+  readonly why: string;
+}
+
+export interface DescentContext {
+  readonly minutes: number;
+  readonly turns: number;
+  readonly overdue: boolean;
+  readonly sources: Partial<Record<Requirement["kind"], PreparationSource>>;
+}
+
+/** Waiting for unavailable preparation spends the persona's patience, even while XP or loot grows. */
+export function assessDescent(view: AgentView, depth: number, persona: Persona | null, context: DescentContext) {
+  const policy = descentPolicy(persona);
+  const player = view.player();
+  const stock = supplies(view);
+  const minutes = Math.max(context.minutes, context.turns / 600);
+  const restlessness = minutes / (1 + 4 * (1 - policy.appetite) ** 2);
+  const normal = missingPreparation(view, depth, persona, context.minutes);
+  const checks = shallowDiveChecks(view, persona);
+  const train = checks.ranged || policy.appetite > 0.85 || context.minutes >= policy.trainMinutes;
+  const levers = "ambition,boldness,impulsiveness,patience,selfpreservation,paranoia,escapes,levelfeel,optimism,towntrips,quirks";
+  const rows = [
+    { name: "level", kind: "level", value: player.maxLevel, threshold: checks.levelFloor + (train ? 0 : Math.ceil(2 * policy.scale)) },
+    { name: "maxHp", kind: "hp", value: player.maxHp, threshold: Math.ceil(checks.maxHpFloor * (train ? 1 : 1.25)) },
+    { name: "light", kind: "light", value: stock.lastingLight || stock.workingLight && stock.fuel >= policy.reserve ? lightBudget(persona) : stock.lightTurns, threshold: lightBudget(persona) },
+    { name: "food", kind: "food", value: hungry(view) ? 0 : stock.food, threshold: policy.food },
+    { name: "healing", kind: "healing", value: stock.cures, threshold: policy.reserve },
+    { name: "escapes", kind: "phase", value: canRead(view) || reliableEscapeSpell(view) ? stock.phase + stock.escapes : 0, threshold: policy.reserve },
+    { name: "ranged", kind: "protection", value: checks.ranged || !["Mage", "Necromancer"].includes(player.cls) || player.maxLevel >= 8 * policy.scale || policy.appetite > 0.85 ? 1 : 0, threshold: 1 },
+  ] as const;
+  const requirements = rows.map((row) => {
+    const source = context.sources[row.kind] ?? { satisfiable: false, why: "no checked source on this level" };
+    const relaxation = depth <= 10 ? context.overdue ? 1 : Math.min(1, restlessness * (source.satisfiable ? 0.35 : 1)) : 0;
+    const effective = row.threshold * (1 - relaxation);
+    return { ...row, effective, levers, ...source, met: row.value >= row.threshold, accepted: row.value >= effective };
+  });
+  const remaining = depth <= 10 ? normal.filter((gap) => {
+    if (gap.reason === "clear status before a planned descent") return true;
+    return !requirements.some((row) => row.kind === gap.kind && row.accepted);
+  }) : normal;
+  const light = requirements.find((row) => row.name === "light")!;
+  if (depth <= 10 && !light.accepted && !remaining.some((gap) => gap.kind === "light")) remaining.push({ kind: "light", reason: "light for the trip" });
+  const hard = remaining.filter((gap) => HARD_GAPS.has(gap.kind) || gap.severe === true);
+  const statusClear = [player.status.poisoned, player.status.cut, player.status.blind, player.status.confused, player.status.afraid, player.status.stun].every((value) => value === 0);
+  const immediate = [
+    { name: "currentHp", value: player.hp, threshold: player.maxHp * policy.hpShare, levers, satisfiable: true, why: "safe recovery can restore current HP; route safety is checked separately", met: player.hp >= player.maxHp * policy.hpShare, accepted: player.hp >= player.maxHp * policy.hpShare },
+    { name: "statusClear", value: Number(statusClear), threshold: 1, levers: "immediate survival", satisfiable: true, why: "recovery or a usable cure must clear harmful status", met: statusClear, accepted: statusClear },
+  ];
+  return { hard, soft: remaining.filter((gap) => !hard.includes(gap)), requirements: [...requirements, ...immediate], restlessness,
+    override: depth <= 10 && context.overdue, relaxed: requirements.some((row) => !row.met && row.accepted) };
 }
 
 export function earlyDescentReady(view: AgentView, reserves = 2, hpFraction = 1): boolean {
@@ -333,7 +397,7 @@ export function supplyMargin(view: AgentView, persona: Persona | null = null): s
   const policy = descentPolicy(persona);
   if (player.depth <= 10) {
     if (stock.food < policy.food || hungry(view)) return "food";
-    if (!stock.lastingLight && (!stock.workingLight || stock.fuel < policy.reserve)) return "light and fuel";
+    if (!tripLight(view, persona)) return "light and fuel";
     if (player.depth <= 2) return stock.cures < policy.reserve || stock.phase + stock.escapes < policy.reserve ? "healing and Phase Door" : null;
     if (stock.cures < policy.reserve) return "healing";
     return stock.phase + stock.escapes < policy.reserve ? "Phase Door" : null;

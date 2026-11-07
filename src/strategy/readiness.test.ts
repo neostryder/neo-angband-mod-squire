@@ -2,10 +2,40 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
-import { basketWants, descentPolicy, descentGaps, descentWait, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin, shallowDiveReady } from "./readiness.js";
+import { assessDescent, basketWants, descentPolicy, descentGaps, descentWait, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin, shallowDiveReady, tripLight } from "./readiness.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
+
+describe("round 13 preparation evidence", () => {
+  it.each(["a Wooden Torch (5000 turns)", "a Lantern (7500 turns)"])("accepts current fuel in %s without spare fuel on DL1 to DL4", (light) => {
+    for (let depth = 1; depth <= 4; depth++) {
+      const w = world({ map: ROOM, player: { depth }, worn: [light] });
+      expect(tripLight(w.view)).toBe(true);
+      expect(supplyMargin(w.view)).not.toBe("light and fuel");
+    }
+  });
+
+  it("keeps a timid persona's fuel margin larger and accepts innate light", () => {
+    const w = world({ map: ROOM, worn: ["a Wooden Torch (600 turns)"] });
+    expect(tripLight(w.view, archetype("coward"))).toBe(false);
+    expect(tripLight(w.view, archetype("berserker"))).toBe(true);
+    w.setPlayer({ classFlags: ["UNLIGHT"] });
+    expect(tripLight(w.view, archetype("coward"))).toBe(true);
+    const innate = world({ map: ROOM, player: { light: 2, objectFlags: ["LIGHT_2"] }, worn: [] });
+    expect(tripLight(innate.view, archetype("coward"))).toBe(true);
+  });
+
+  it("softens a reachable supply more slowly and lets schedule slack override either source", () => {
+    const w = world({ map: ROOM, player: { depth: 1, level: 4, maxLevel: 4, hp: 31, maxHp: 31, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"] });
+    const assess = (satisfiable: boolean, overdue = false) => assessDescent(w.view, 2, defaultPersona(), { minutes: 2.1, turns: 0, overdue, sources: { healing: { satisfiable, why: satisfiable ? "a checked floor potion" : "no town, gold or floor potion" } } });
+    expect(assess(false).soft.some((gap) => gap.kind === "healing")).toBe(false);
+    expect(assess(true).soft.some((gap) => gap.kind === "healing")).toBe(true);
+    expect(assess(true, true).soft.some((gap) => gap.kind === "healing")).toBe(false);
+    w.setPlayer({ status: { confused: 5 } });
+    expect(assess(false, true).hard.map((gap) => gap.reason)).toContain("clear status before a planned descent");
+  });
+});
 
 describe("arrival supply consistency", () => {
   it.each(["Warrior", "Blackguard", "Rogue", "Priest", "Druid", "Paladin", "Ranger", "Mage", "Necromancer"])("lets a prepared %s stay on DL6 and DL10", (cls) => {

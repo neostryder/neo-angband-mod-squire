@@ -19,15 +19,15 @@ export function stairLeash(level: number, persona: Persona | null = null): numbe
 }
 
 export const DIVE_SCHEDULE = [
-  { depth: 2, minutes: 2 },
-  { depth: 3, minutes: 4.5 },
-  { depth: 4, minutes: 7 },
-  { depth: 5, minutes: 9.5 },
-  { depth: 6, minutes: 12 },
-  { depth: 7, minutes: 15 },
-  { depth: 8, minutes: 18 },
-  { depth: 9, minutes: 21 },
-  { depth: 10, minutes: 24 },
+  { depth: 2, minutes: 4 },
+  { depth: 3, minutes: 7.5 },
+  { depth: 4, minutes: 11 },
+  { depth: 5, minutes: 15 },
+  { depth: 6, minutes: 18 },
+  { depth: 7, minutes: 21 },
+  { depth: 8, minutes: 24 },
+  { depth: 9, minutes: 27 },
+  { depth: 10, minutes: 30 },
 ] as const;
 
 /** Small gains and stair visits must not restart the overall depth deadline. */
@@ -36,7 +36,8 @@ export function diveSchedule(minutes: number, depth: number, persona: Persona | 
   const target = DIVE_SCHEDULE.find((step) => step.depth > Math.max(1, depth));
   const next = target === undefined ? undefined : { depth: target.depth, minutes: target.minutes * scale };
   const late = next === undefined ? -1 : minutes - next.minutes;
-  return { minutes, next: next ?? null, stage: late < 0 ? 0 : late < 3 * scale ? 1 : 2 };
+  const slack = 3 * scale * scale;
+  return { minutes, next: next ?? null, slack, late, stage: late < 0 ? 0 : late < slack ? 1 : 2 };
 }
 
 export function createLevelPacing() {

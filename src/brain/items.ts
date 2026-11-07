@@ -22,6 +22,7 @@ import { shownName } from "../town/needs.js";
 import { mightBeSpecial } from "../town/shop.js";
 import type { Persona } from "../persona/persona.js";
 import { lookReach } from "../persona/quirks.js";
+import { hungry } from "./pack.js";
 
 /** TV_GOLD, as Angband 4.2 numbers it. */
 const TV_GOLD = 1;
@@ -170,6 +171,8 @@ export function floorTarget(view: AgentView, terrain: Terrain, saving: boolean, 
   const memory = view;
   const remembered = typeof memory.knownFloorItems === "function";
   let best: FloorTarget | null = null;
+  const foodUrgent = hungry(view);
+  const isFood = (name: string) => /Ration|Food|Waybread|Mushroom/i.test(name);
   for (let y = 0; y < bounds.height; y++) {
     for (let x = 0; x < bounds.width; x++) {
       const cell = view.cell(x, y);
@@ -185,7 +188,8 @@ export function floorTarget(view: AgentView, terrain: Terrain, saving: boolean, 
         const fetch = wanted(verdict, saving);
         const look = !fetch && remembered && looksAt(verdict, saving, persona, away);
         if (!fetch && !look) continue;
-        if (best === null || away < best.away) best = {
+        if (best === null || foodUrgent && isFood(verdict.name) && !isFood(best.name) ||
+          (!foodUrgent || isFood(verdict.name) === isFood(best.name)) && away < best.away) best = {
           at: here, name: verdict.name, away, gold: verdict.gold, sellable: verdict.sellable, useful: verdict.useful, value: verdict.value,
           ...(remembered ? { known: true, look, sensed: verdict.sensed } : {}),
         };
