@@ -35,6 +35,21 @@ describe("target HP intervals", () => {
 });
 
 describe("resource-limited TTK", () => {
+  it("charges retaliation on misses when a hit clears the learned HP interval", () => {
+    const w = world({ map: ROOM, player: { hp: 30, maxHp: 30, blows: 100 }, worn: ["a Dagger (2d4) (+0,+0)"],
+      monsters: [{ grid: { x: 3, y: 2 }, knownCombat: { averageHp: 1, health: "unhurt", blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 2, mBonus: 0 } }], status: [], spellFrequency: null, innateFrequency: null } }] });
+    const target = w.view.monsters()[0]!;
+    const frame = tacticalFrame(w.view, { terrain: w.terrain });
+    const attack = attackOptions(w.view, target, "fight")[0]!;
+    const fight = forecastFight(frame, target, attack);
+    expect(fight.hp.exact).toBe(false);
+    expect(attack.minimum).toBeGreaterThanOrEqual(fight.hp.high);
+    expect(fight.loss.mean).toBeGreaterThan(0);
+    expect(fight.loss.mean).toBeCloseTo(frame.one.mean * attack.failure / (1 - attack.failure));
+    expect(fight.loss.upper).toBeGreaterThanOrEqual(fight.loss.mean);
+    expect(fight.unknown).toContain("hp-spread");
+  });
+
   it("matches an independently enumerated two-hit oil expectation", () => {
     const law = [[0, 0.5], [3, 0.125], [6, 0.125], [9, 0.125], [12, 0.125]] as const;
     // At HP 4, a roll of 3 needs another successful hit and a miss restarts the attempt.

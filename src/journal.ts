@@ -56,8 +56,9 @@ export function createEncounterCapture(now: () => number = () => performance.now
       if (event.kind === "boundary") generation++;
     },
     frame(world: KnownWorldData, character: string | null, prepared?: PreparedReads): void {
+      /* API 2 owns each immutable snapshot; copying on export keeps recording off the tick's clone path. */
       frames.push({ character, floor: world.level === null ? null : `${character ?? "unknown"}:${String(generation)}:${String(world.level.levelId)}`,
-        elapsedMs: Math.max(0, now() - start), world: structuredClone(world), events, ...(prepared === undefined ? {} : { prepared: structuredClone(prepared) }) });
+        elapsedMs: Math.max(0, now() - start), world, events, ...(prepared === undefined ? {} : { prepared }) });
       events = [];
       if (frames.length > Math.max(1, limit)) frames.shift();
     },

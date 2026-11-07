@@ -35,7 +35,7 @@ describe("round 8 quiet tactics", () => {
       w.advance(10);
       choice.plan.end?.(w.view);
     }
-    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
+    expect(reflexed(p.ask(w.view)).plan.step(w.view, w.act)).not.toBeNull();
   });
 
   it("does not flee a fast creature with a known harmless blow on DL1", () => {
@@ -1417,6 +1417,8 @@ describe("refusals", () => {
     w.advance(10);
     expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
     w.advance(300);
+    expect(offered(asked(p.ask(w.view)))).not.toContain("fetch");
+    w.moveTo({ x: 3, y: 1 });
     expect(offered(asked(p.ask(w.view)))).toContain("fetch");
   });
 
@@ -1966,8 +1968,8 @@ describe("fear, swarms and refused commands", () => {
     expect(offered).not.toContain("retreat");
   });
 
-  it("offers to leave the level once breeders fill the room", () => {
-    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, pack: ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"], monsters: worms(3) }))).not.toContain("leave_level");
+  it("offers to leave when the clearing forecast exceeds the loss budget", () => {
+    expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, pack: ["3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"], monsters: worms(3) }))).toContain("leave_level");
     expect(goals(world({ map: ROOM, player: { depth: 2, level: 6 }, monsters: worms(4) }))).toContain("leave_level");
   });
 
@@ -3292,7 +3294,7 @@ describe("tactical safety", () => {
       w.moveTo({ x, y: 1 });
       p.ask(w.view);
     }
-    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
+    expect(reflexed(p.ask(w.view)).plan.step(w.view, w.act)).not.toBeNull();
   });
 
   it("withholds a walk to the stairs that a creature in view can end in one round", () => {
@@ -4181,7 +4183,7 @@ describe("lab stall regressions", () => {
       w.advance(10);
       expect(wait.step(w.view, w.act)).toBeNull();
     }
-    expect(p.ask(w.view)).toMatchObject({ handBack: "No executable route or survival action remains after repeated waiting." });
+    expect(reflexed(p.ask(w.view)).plan.step(w.view, w.act)).not.toBeNull();
   });
 
   it("does not replace a refused wait with random swings when there is no unseen attacker", () => {

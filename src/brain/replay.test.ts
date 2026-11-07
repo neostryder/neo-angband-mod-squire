@@ -5,6 +5,94 @@ import { attackOptions } from "./combat-kit.js";
 import { createGoalPlanner } from "./goals.js";
 import { DIRECTIONS } from "../grid.js";
 import { Session } from "node:inspector/promises";
+import { createBrain, type Planner } from "./brain.js";
+import type { GoalDigest } from "./goals.js";
+import { JEV } from "./backend.js";
+import { createTally } from "./tally.js";
+import { archetype, defaultPersona } from "../persona/persona.js";
+import { breedersOverwhelm } from "../strategy/journey.js";
+
+describe("round 10 command liveness", () => {
+  it.each([{}, { afraid: 10 }, { confused: 10 }, { blind: 10 }, { poisoned: 10 }, { paralyzed: 10 }])("logs empty goals and issues recovery on the next tick at status %j", (status) => {
+    const w = suppliedWorld({ map: ["###", "#@#", "###"], player: { depth: 2, level: 3, hp: 30, maxHp: 30, status } });
+    const logs: string[] = [];
+    const source = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (line) => logs.push(line), now: () => 0 });
+    let decisions = 0;
+    const empty = () => ({ reflex: "empty replay", plan: { label: `empty ${String(++decisions)}`, step: () => null }, context: { depth: 2, newCreatures: 0, offers: [] }, answers: {} });
+    const p: Planner<GoalDigest> = { ...source, ask: empty, rules: empty, watchdog: () => null, trigger: () => null };
+    const brain = createBrain({ backend: JEV, rulesOnly: true, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => { throw new Error("The replay uses rules."); }, token: () => null, now: () => 0, log: (line) => logs.push(line), status: () => {} });
+    for (let tick = 0; tick < 4; tick++) {
+      const before = logs.length;
+      expect(brain.controller(w.view, w.act)).toBeNull();
+      expect(logs.slice(before).some((line) => line.includes("controller issued no command"))).toBe(true);
+    }
+    expect(brain.noOpGoals()).toEqual({ last100: 3, consecutive: 3 });
+    expect(brain.controller(w.view, w.act)).not.toBeNull();
+    expect(brain.noOpGoals().consecutive).toBe(0);
+  });
+
+  it("replays a blocked frontier, an unreachable dog and a missing town reserve without dormancy", () => {
+    const w = suppliedWorld({ map: ["############", "#<@....,..##", "#......#####", "##########.#", "############"],
+      player: { depth: 2, level: 3, maxLevel: 3, hp: 30, maxHp: 30 },
+      pack: ["5 Rations of Food", "2 Wooden Torches (5000 turns)"],
+      monsters: [{ id: 1, grid: { x: 10, y: 3 }, race: "Grip, Farmer Maggot's Dog", raceFlags: ["UNIQUE"], speed: 120 }] });
+    const logs: string[] = [];
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: (line) => logs.push(line), now: () => 1234, rng: () => 0.5 });
+    const brain = createBrain({ backend: JEV, rulesOnly: true, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => { throw new Error("The replay uses rules."); }, token: () => ({ epoch: 1, revision: 1 }), now: () => 1234, log: (line) => logs.push(line), status: () => {},
+      gauge: (view) => ({ turn: view.turn(), hp: view.player().hp, depth: view.player().depth }) });
+    let commands = 0;
+    let moved = false;
+    let refused = false;
+    for (let tick = 0; tick < 60; tick++) {
+      const before = logs.length;
+      const command = brain.controller(w.view, w.act);
+      if (command === null) {
+        expect(logs.slice(before).some((line) => /no command|ended without a command/.test(line))).toBe(true);
+        continue;
+      }
+      commands++;
+      if (command.code === "walk") {
+        if (!refused) { refused = true; continue; }
+        const direction = DIRECTIONS.find((dir) => dir.key === command.dir)!;
+        const to = { x: w.at().x + direction.dx, y: w.at().y + direction.dy };
+        if (w.view.cell(to.x, to.y)?.passable) { w.moveTo(to); moved = true; }
+      }
+      w.advance(10);
+    }
+    expect(refused).toBe(true);
+    expect(moved).toBe(true);
+    expect(commands).toBeGreaterThan(10);
+    expect(brain.stoppedBecause()).toBeNull();
+  });
+
+  it.each([3, 5])("keeps a group of %i mice executable and prices the swarm through the persona", (count) => {
+    const decisions: string[] = [];
+    const pressures: boolean[] = [];
+    for (const persona of [archetype("coward"), defaultPersona(), archetype("diver")]) {
+      const w = suppliedWorld({ map: ["##########", "#<@.....,#", "#........#", "##########"], player: { depth: 1, level: 2, maxLevel: 2, hp: 13, maxHp: 13, blows: 100, skills: [0, 0, 0, 0, 0, 0, 35] }, monsterRecall: () => "It has an armor rating of 6.",
+        worn: ["a Dagger (1d4) (+0,+0)"],
+        monsters: Array.from({ length: count }, (_, i) => i + 3).map((x, i) => ({ id: i + 1, grid: { x, y: 1 }, race: "giant white mouse", level: 1, hp: 1, maxHp: 1, raceFlags: ["MULTIPLY"],
+          knownCombat: { averageHp: 1, health: "unhurt" as const, blows: [{ method: "BITE", effect: "HURT", damage: { base: 0, dice: 1, sides: 2, mBonus: 0 } }], spellFrequency: null, innateFrequency: null, status: [] } })) });
+      Object.assign(w.view, { blowRules: { effects: new Map([["HURT", 60]]), methods: new Map([["BITE", true]]) } });
+      pressures.push(breedersOverwhelm(w.view, w.terrain, persona));
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, persona: () => persona, log: () => {}, now: () => 1234, rng: () => 0.5 });
+      const choice = p.rules!(w.view, "mouse replay");
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+      const command = choice.plan.step(w.view, w.act);
+      expect(command).not.toBeNull();
+      decisions.push(command!.code);
+    }
+    if (count === 3) {
+      expect(pressures).toEqual([true, false, false]);
+      expect(decisions).toEqual(["read", "melee", "melee"]);
+    } else {
+      expect(pressures).toEqual([true, true, false]);
+      expect(decisions).toEqual(["read", "walk", "melee"]);
+    }
+  });
+});
 
 function largeDecision() {
   const grids = Array.from({ length: 66 }, () => Array<string>(198).fill("#"));

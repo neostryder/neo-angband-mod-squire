@@ -24,6 +24,7 @@ function fakeBrain(command: AgentCommand | null): Brain & { calls: number } {
     },
     state: () => "idle" as const,
     stoppedBecause: () => null,
+    noOpGoals: () => ({ last100: 0, consecutive: 0 }),
     drop: () => {},
   };
   return brain;

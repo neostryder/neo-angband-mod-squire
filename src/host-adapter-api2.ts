@@ -338,9 +338,11 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
   }
   const width = known.level?.width ?? 0;
   const height = known.level?.height ?? 0;
-  const level = writable(known.level);
+  const level = known.level as Writable<typeof known.level>;
   const cells = new Map<number, NonNullable<KnownWorldData["level"]>["cells"][number]>();
   for (const cell of known.level?.cells ?? []) cells.set(cell.y * width + cell.x, cell);
+  const occupants = new Map(monsters.map((monster) => [monster.grid.y * width + monster.grid.x, monster.id]));
+  const cellViews = new Map<number, CellView>();
   const passable = (feat: number): boolean => terrain?.[feat]?.flags.has("PASSABLE") ?? false;
   /* Under API 1, CellView.trap is the check the disarm command makes before it spends a turn: a visible trap whose kind carries TRAP and that is not disabled. The known world lists only visible traps, so the kind's TRAP flag decides here. A door lock, a web, a glyph of warding and a decoy carry no TRAP, so none of them counts. */
   const playerTrap = (index: number): boolean => recordFlags(trapKinds[index]?.["flags"]).has("TRAP");
@@ -352,7 +354,10 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
 
   const cell = (x: number, y: number): CellView | null => {
     if (x < 0 || y < 0 || x >= width || y >= height) return null;
-    const occupant = player.grid.x === x && player.grid.y === y ? -1 : (monsters.find((m) => m.grid.x === x && m.grid.y === y)?.id ?? 0);
+    const index = y * width + x;
+    const prior = cellViews.get(index);
+    if (prior !== undefined) return prior;
+    const occupant = player.grid.x === x && player.grid.y === y ? -1 : (occupants.get(index) ?? 0);
     const remembered = cells.get(y * width + x);
     if (remembered === undefined) {
       return { x, y, feat: 0, passable: false, inView: false, known: false, monster: occupant, objectCount: 0, knownObjectCount: 0, glow: false, trap: false };
@@ -371,6 +376,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
       trap: remembered.remembered.traps.some((trap) => !trap.disabled && playerTrap(trap.index)),
     };
     if (remembered.remembered.featCode !== undefined) view.featCode = remembered.remembered.featCode;
+    cellViews.set(index, view);
     return view;
   };
 

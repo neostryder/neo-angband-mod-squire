@@ -47,6 +47,7 @@ export interface Plan {
   /** The next command, or null when the plan is finished and a new decision is due. */
   step(view: AgentView, act: AgentActions): AgentCommand | null;
   end?(view?: AgentView): void;
+  refusal?(): string | null;
 }
 
 /** What a planner decides with. */
@@ -70,6 +71,7 @@ export interface Reflex<C> {
 
 /** The game-specific half of the brain: what to ask, and what an answer means. */
 export interface Planner<C> {
+  recover?(view: AgentView, reason: string): Reflex<C>;
   /** Recovery runs before goals, pending answers and plan triggers can keep the controller idle. */
   watchdog?(view: AgentView, decision: boolean): Reflex<C> | null;
   rules?(view: AgentView, reason: string, stuck?: boolean): Reflex<C> | { readonly handBack: string; readonly context?: C };
@@ -171,7 +173,7 @@ const MAX_RETRY_AFTER_MS = 60_000;
  * Decisions in a row that produced no command. A plan that finishes the moment
  * it starts would otherwise send a request on every tick.
  */
-export const MAX_EMPTY_DECISIONS = 4;
+export const MAX_EMPTY_DECISIONS = 3;
 
 /** Time a running plan can spend without a game turn or depth change. */
 export const MAX_PLAN_IDLE_MS = 30_000;
@@ -210,6 +212,7 @@ export interface Brain {
   state(): "idle" | "asking" | "running" | "waiting" | "stopped";
   /** Why Squire stopped, or null while it is still playing. */
   stoppedBecause(): string | null;
+  noOpGoals(): { readonly last100: number; readonly consecutive: number };
   /**
    * Forget the running plan and any question in flight, because the keyboard
    * changed hands. The next call decides afresh from the game as it is.
@@ -226,8 +229,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   let sent = 0;
   let attempt = 0;
   let emptyDecisions = 0;
-  /* Labels of the plans that ended with no command since the last command. */
-  const emptyLabels = new Set<string>();
+  const noOpHistory: boolean[] = [];
+  let recoveryPending: string | null = null;
   let rulesReason: string | null = null;
   let retryAt = 0;
   let breakLoop = false;
@@ -241,7 +244,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   }
 
   function runningStatus(plan: Plan): void {
-    deps.status(plan.label, rulesReason === null ? (deps.rulesOnly === true ? "Squire plays by its own rules." : undefined) : `Squire plays by its own rules. ${rulesReason}`);
+    const reason = rulesReason === null ? (deps.rulesOnly === true ? "Squire plays by its own rules." : "") : `Squire plays by its own rules. ${rulesReason}`;
+    deps.status(plan.label, `${reason} No-op goals in the last 100 decisions: ${String(noOpHistory.filter(Boolean).length)}; consecutive: ${String(emptyDecisions)}.`.trim());
   }
 
   function newRun(view: AgentView): PlanRun {
@@ -266,6 +270,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       useRules(message);
       breakLoop = true;
       state = { kind: "waiting", until: deps.now() + 1000 };
+      recoveryPending = message;
       deps.status("trying another move", message);
       return null;
     }
@@ -421,10 +426,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     return "planned";
   }
 
-  const controller: AgentController = (view, act) => {
+  const advance: AgentController = (view, act) => {
     if (view.player?.().dead === true || view.player?.().winner === true) return state.kind === "stopped" ? null : stopWith(view.player().dead ? "The character has died." : "The character has won.", view);
     if (state.kind === "stopped") return null;
-    const recovery = planner.watchdog?.(view, decisionPending || state.kind === "waiting" && deps.now() >= state.until) ?? null;
+    const urgent = recoveryPending;
+    recoveryPending = null;
+    const recovery = urgent === null ? planner.watchdog?.(view, decisionPending || state.kind === "waiting" && deps.now() >= state.until) ?? null
+      : planner.recover?.(view, urgent) ?? { reflex: `recovery: ${urgent}`, plan: { label: "spend a turn after an empty decision", step: () => ({ code: "hold" } as AgentCommand) }, context: null as C, answers: {} };
     decisionPending = false;
     if (recovery !== null) {
       if (state.kind === "running") {
@@ -433,8 +441,6 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       }
       sent += 1;
       landed = null;
-      emptyDecisions = 0;
-      emptyLabels.clear();
       breakLoop = false;
       progressAt = deps.now();
       state = { kind: "running", plan: recovery.plan, run: newRun(view) };
@@ -444,10 +450,17 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       /* Recovery commands must get one attempt before ordinary triggers run again. */
       const command = recovery.plan.step(view, act);
       if (command !== null) {
+        emptyDecisions = 0;
         state.run.commands += 1;
         state.run.issuedAt = deps.gauge?.(view).turn ?? null;
         state.run.issuedCode = command.code;
         state.run.issuedDepth = deps.gauge?.(view).depth ?? null;
+      } else {
+        noOpHistory.push(true);
+        if (noOpHistory.length > 100) noOpHistory.shift();
+        emptyDecisions += 1;
+        deps.log(`${recovery.plan.label} ended without a command: ${recovery.plan.refusal?.() ?? "the recovery preconditions refused its next action"}. Recovery escalates on the next tick.`);
+        recoveryPending = "The recovery issued no command.";
       }
       return command;
     }
@@ -501,7 +514,6 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         const command = plan.step(view, act);
         if (command !== null) {
           emptyDecisions = 0;
-          emptyLabels.clear();
           run.commands += 1;
           run.issuedAt = gauge?.turn ?? null;
           run.issuedCode = command.code;
@@ -513,6 +525,9 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         deps.log(`${plan.label}: ${reason}`);
       }
       plan.end?.(view);
+      noOpHistory.push(run.commands === 0);
+      if (noOpHistory.length > 100) noOpHistory.shift();
+      if (run.commands === 0) deps.log(`${plan.label} ended without a command: ${reason ?? plan.refusal?.() ?? "the plan has no executable action in this view"}.`);
       deps.onPlanEnd?.({
         stop: reason === null ? "finished" : "interrupted",
         reason,
@@ -522,19 +537,9 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         hpBefore: run.hpBefore,
         hpAfter: gauge?.hp ?? null,
       });
-      /* A planner trying one different plan after another is still working
-       * through its options; only the same empty plan coming back counts. */
       if (run.commands === 0) {
-        if (emptyLabels.has(plan.label)) emptyDecisions += 1;
-        else emptyLabels.add(plan.label);
-      }
-      if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        emptyDecisions = 0;
-        emptyLabels.clear();
-        breakLoop = true;
-        state = { kind: "waiting", until: deps.now() + 1000 };
-        deps.status("trying another move", "Squire's plans issued no commands. It will wait one second and choose another action.");
-        return null;
+        emptyDecisions += 1;
+        if (emptyDecisions >= MAX_EMPTY_DECISIONS) recoveryPending = "Three consecutive goals issued no command.";
       }
       state = { kind: "idle" };
     }
@@ -543,10 +548,20 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     return null;
   };
 
+  const controller: AgentController = (view, act) => {
+    const command = advance(view, act);
+    if (command === null && state.kind !== "stopped") {
+      const reason = recoveryPending ?? (state.kind === "asking" ? "the decision request is pending; the watchdog remains active" : state.kind === "running" ? "the next plan is ready to execute on the next tick" : state.kind === "waiting" ? "the retry deadline is pending; the watchdog remains active" : "the planner has no running action");
+      deps.log(`controller issued no command: ${reason}.`);
+    }
+    return command;
+  };
+
   return {
     controller,
     state: () => state.kind,
     stoppedBecause: () => (state.kind === "stopped" ? state.message : null),
+    noOpGoals: () => ({ last100: noOpHistory.filter(Boolean).length, consecutive: emptyDecisions }),
     drop(reason) {
       if (state.kind === "stopped") return;
       if (state.kind === "running") {
@@ -557,6 +572,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       sent += 1;
       landed = null;
       breakLoop = false;
+      recoveryPending = null;
+      emptyDecisions = 0;
       state = { kind: "idle" };
     },
   };
