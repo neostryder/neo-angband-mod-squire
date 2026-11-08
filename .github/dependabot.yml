@@ -1,13 +1,43 @@
 version: 2
 updates:
-  - package-ecosystem: npm
-    directory: /
+  - package-ecosystem: "npm"
+    directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Phoenix"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+    cooldown:
+      default-days: 3
+    ignore:
+      - dependency-name: "@rpgm-tools/*"
     groups:
+      toolchain:
+        patterns:
+          - "typescript"
+          - "@typescript/*"
+          - "vitest"
+          - "esbuild"
+          - "@types/*"
       minor-and-patch:
-        update-types: [minor, patch]
-  - package-ecosystem: github-actions
-    directory: /
+        update-types:
+          - "minor"
+          - "patch"
+  - package-ecosystem: "github-actions"
+    directory: "/"
     schedule:
-      interval: weekly
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "America/Phoenix"
+    labels:
+      - "dependencies"
+    cooldown:
+      default-days: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
