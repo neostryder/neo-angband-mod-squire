@@ -35,9 +35,10 @@
     "@rpgm-tools/neo-angband-core": "1.21.1",
     "@rpgm-tools/neo-angband-mod-sdk": "1.21.1",
     "@types/node": "^22.20.1",
+    "@typescript/typescript6": "6.0.2",
     "esbuild": "^0.28.1",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.10"
+    "typescript": "7.0.2",
+    "vitest": "^5.1.0"
   },
   "engines": {
     "node": ">=22"
