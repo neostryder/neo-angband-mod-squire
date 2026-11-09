@@ -1,46 +1,27 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "America/Phoenix"
-    open-pull-requests-limit: 10
-    labels:
-      - "dependencies"
-    cooldown:
-      default-days: 3
-    ignore:
-      - dependency-name: "@rpgm-tools/*"
-      - dependency-name: "@types/node"
-        update-types:
-          - "version-update:semver-major"
-    groups:
-      toolchain:
-        patterns:
-          - "typescript"
-          - "@typescript/*"
-          - "vitest"
-          - "esbuild"
-          - "@types/*"
-      minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "06:00"
-      timezone: "America/Phoenix"
-    labels:
-      - "dependencies"
-    cooldown:
-      default-days: 3
-    groups:
-      actions:
-        patterns:
-          - "*"
+- package-ecosystem: npm
+  directory: /
+  schedule:
+    interval: daily
+  cooldown:
+    default-days: 3
+  open-pull-requests-limit: 20
+  versioning-strategy: increase
+  groups:
+    minor-and-patch:
+      update-types:
+      - minor
+      - patch
+- package-ecosystem: github-actions
+  directory: /
+  schedule:
+    interval: daily
+  cooldown:
+    default-days: 3
+  open-pull-requests-limit: 20
+  groups:
+    minor-and-patch:
+      update-types:
+      - minor
+      - patch
