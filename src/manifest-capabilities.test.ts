@@ -37,4 +37,8 @@ describe("manifest capabilities", () => {
   it("lists each capability once", () => {
     expect(new Set(capabilities()).size).toBe(capabilities().length);
   });
+
+  it("can read object knowledge to retire inherited class wariness", () => {
+    expect(capabilities()).toContain("state:knowledge.read");
+  });
 });

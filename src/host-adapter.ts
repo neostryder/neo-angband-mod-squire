@@ -42,6 +42,7 @@ export interface AgentView extends CoreAgentView {
   quiver?(): ItemView[];
   equipment(): Array<ItemView | null>;
   monsters(): MonsterView[];
+  knownItemKinds?(): readonly { readonly key: string; readonly name: string; readonly group: string }[];
   readonly blowRules?: BlowRules;
 }
 

@@ -4081,6 +4081,29 @@ describe("identifying worn preparation", () => {
     replaced = true;
     expect(choice.plan.step(view, w.act)).toBeNull();
   });
+
+  it.each(["scroll", "spell"] as const)("reconsiders after each %s identification and stops when the runes are known", (source) => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 19, maxLevel: 30, hp: 100, maxHp: 100, sp: 5, maxSp: 5 }, worn: ["a Ring {??}"],
+      pack: source === "scroll" ? ["3 Scrolls of Identify Rune"] : [], spells: source === "spell" ? [{ name: "Identify Rune", sidx: 2, mana: 2 }] : [] });
+    let known = false;
+    const view: AgentView = { ...w.view, equipment: () => w.view.equipment().map((item) => known && item?.handle === 100 ? { ...item, name: "a Ring of Free Action" } : item) };
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 100;
+    persona.sliders.paranoia = 100;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, reflex: false });
+    for (let rune = 0; rune < 2; rune++) {
+      const q = asked(p.ask(view));
+      expect(offered(q)).toContain("identify");
+      const choice = p.choose(pick("identify"), q.context, view);
+      if (!("plan" in choice)) throw new Error("expected identification");
+      expect(choice.plan.step(view, w.act)?.code).toBe(source === "scroll" ? "read" : "cast");
+      w.advance(10);
+      expect(choice.plan.step(view, w.act)).toBeNull();
+    }
+    known = true;
+    w.setPlayer({ objectFlags: ["FREE_ACT"] });
+    expect(offered(asked(p.ask(view)))).not.toContain("identify");
+  });
 });
 
 describe("bound prompt targets", () => {

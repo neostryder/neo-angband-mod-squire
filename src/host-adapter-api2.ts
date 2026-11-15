@@ -308,6 +308,8 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
   const trapKinds = (await valueOf(api.content.records("trap"))) ?? [];
 
   const player = playerView(known.player, floors);
+  const knowledge = api.view.knowledge === undefined ? null : await valueOf(api.view.knowledge("objects"));
+  const knownKinds = knowledge?.lists.objects?.groups.flatMap((group) => group.entries.filter((entry) => entry.known).map((entry) => ({ key: `knowledge:${entry.id}`, name: entry.name, group: group.name }))) ?? [];
   const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? undefined));
   const recalls = new Map<number, Awaited<ReturnType<NonNullable<AgentView["monsterRecall"]>>>>();
   const spells = new Map<number, Awaited<ReturnType<NonNullable<AgentView["spellInfo"]>>>>();
@@ -391,6 +393,7 @@ export async function viewWorld(api: Api2Reads, reads: WorldReads = {}): Promise
     ...(blasts.size === 0 ? {} : { blastArea: (to: { x: number; y: number }, radius: number, arc = 0) => radius === 2 && arc === 0 ? blasts.get(`${String(to.x)},${String(to.y)}`) ?? { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } : { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } }),
     turn: () => known.turn ?? 0,
     player: () => player,
+    knownItemKinds: () => knownKinds,
     monsters: () => monsters,
     cell,
     mapBounds: () => ({ width, height }),

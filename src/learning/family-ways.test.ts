@@ -19,7 +19,7 @@ import { TV } from "../gear/compare.js";
 import type { Milestone } from "./flourishes.js";
 import {
   distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, flourishLines, inheritWays,
-  mayReplaceMotto, nudgeGrounds, observeFlourishes, readFamilyFlourishes, readWays, trophyHandles, unknownUse, usedItem,
+  mayReplaceMotto, nudgeGrounds, nudgeWariness, observeFlourishes, readFamilyFlourishes, readWays, trophyHandles, unknownUse, usedItem, warinessStrength,
   type FamilyFlourishes,
 } from "./family-ways.js";
 import type { Persona } from "../persona/persona.js";
@@ -27,8 +27,10 @@ import type { Persona } from "../persona/persona.js";
 const GRIP = "Grip, Farmer Maggot's Dog";
 const SCROLL = "a Scroll titled 'FOO BAR'";
 const taboo = unknownUse(itemNamed(SCROLL, 1))!;
+const scrollWariness = { key: "class:scroll", name: "unknown scrolls" };
+const potionWariness = { key: "class:potion", name: "unknown potions" };
 const MAP = ["########", "#.@....#", "########"];
-const family = { superstitions: [taboo], darkDeaths: 1, bestFind: { depth: 3, value: 500, name: "a Dagger" }, motto: null, ancestralWeapons: [], cursedDepth: null };
+const family = { superstitions: [scrollWariness], darkDeaths: 1, bestFind: { depth: 3, value: 500, name: "a Dagger" }, motto: null, ancestralWeapons: [], cursedDepth: null };
 const memories = { ...emptyFlourishes(), superstitions: [taboo], darkLesson: true, favouredDepth: 3 };
 const baseLine: Lineage = { name: "Ada", generation: 1, ancestors: [], lore: [], grudges: [], flourishRecord: family };
 
@@ -50,7 +52,7 @@ describe("flourish inheritance", () => {
     const p = parent();
     for (const id of ["inheritedSuperstitions", "darkLessons", "trophies", "favouredGrounds"] as const) expect(p.toggles[id]).toBe(true);
     const born = inherit({ ...baseLine, flourishes: { ...memories, trophies: [{ unique: GRIP, handle: 1, name: "a Dagger" }] } }, p, defaultPersona("Bea"), () => 1);
-    expect(born.lineage.flourishes).toMatchObject({ superstitions: [taboo], darkLesson: true, favouredDepth: 3, trophies: [], uniqueKills: [], bestFind: null, lastUse: null });
+    expect(born.lineage.flourishes).toMatchObject({ superstitions: [scrollWariness], darkLesson: true, favouredDepth: 3, trophies: [], uniqueKills: [], bestFind: null, lastUse: null });
     expect(born.lineage.flourishRecord).toEqual(family);
   });
 
@@ -75,7 +77,7 @@ describe("flourish inheritance", () => {
   it("trims superstitions and samples the single memories at partial inheritance", () => {
     const p = parent();
     p.sliders.inheritance = 25;
-    const record = { ...family, superstitions: Array.from({ length: 6 }, (_, n) => ({ key: String(n), name: "a potion" })) };
+    const record = { ...family, superstitions: ["staff", "wand", "rod", "scroll", "potion", "mushroom"].map((kind) => ({ key: `class:${kind}`, name: `unknown ${kind === "staff" ? "staves" : `${kind}s`}` })) };
     expect(inheritWays(record, p, defaultPersona(), () => 0.5)).toMatchObject({ superstitions: record.superstitions.slice(-2), darkLesson: false, favouredDepth: null });
     expect(inheritWays(family, p, defaultPersona(), () => 0.1)).toMatchObject({ darkLesson: true, favouredDepth: 3 });
   });
@@ -102,15 +104,17 @@ describe("superstitions", () => {
     const run = { ...emptyFlourishes(), superstitions: [use], lastUse: use };
     expect(distrusted(item, run, p)).toBe(true);
     const record = familyAfterDeath(emptyFamilyFlourishes(), run, null, p);
-    expect(record.superstitions).toEqual([]);
+    expect(record.superstitions).toEqual([potionWariness]);
     const next = inheritWays(record, p, defaultPersona("Bea"), () => 0);
     const reshuffled = { ...item, name: "a Blue Potion" };
     expect(distrusted(reshuffled, next, p)).toBe(false);
+    expect(next.superstitions).toEqual([potionWariness]);
+    expect(JSON.stringify(next)).not.toMatch(/Smoky|flavor:7|game:|kind:/);
     const legacy = { key: `${String(item.tval)}:-7`, name: "Smoky Potion" };
     const saved = { ...family, superstitions: [legacy, use, taboo] };
-    expect(readFamilyFlourishes(saved).superstitions).toEqual([taboo]);
-    expect(inheritWays(saved, p, defaultPersona("Bea"), () => 0).superstitions).toEqual([taboo]);
-    expect(familyAfterDeath(saved, emptyFlourishes(), null, p).superstitions).toEqual([taboo]);
+    expect(readFamilyFlourishes(saved).superstitions).toEqual([scrollWariness]);
+    expect(inheritWays(saved, p, defaultPersona("Bea"), () => 0).superstitions).toEqual([scrollWariness]);
+    expect(familyAfterDeath(saved, emptyFlourishes(), null, p).superstitions).toEqual([scrollWariness]);
     expect(readWays({ ...run, superstitions: [legacy, use], lastUse: legacy })).toMatchObject({ superstitions: [use], lastUse: null });
     expect(distrusted(reshuffled, { ...run, superstitions: [legacy] }, p)).toBe(false);
   });
@@ -121,7 +125,8 @@ describe("superstitions", () => {
     const use = usedItem({ code, args: { handle: 1 } }, w.view);
     expect(use).toEqual(unknownUse(w.view.inventory()[0]!));
     const run = { ...emptyFlourishes(), lastUse: use };
-    expect(familyAfterDeath(emptyFamilyFlourishes(), run, w.view, parent()).superstitions).toEqual([use]);
+    const kind = /Scroll/.test(name) ? "scroll" : /Potion/.test(name) ? "potion" : "wand";
+    expect(familyAfterDeath(emptyFamilyFlourishes(), run, w.view, parent()).superstitions).toEqual([{ key: `class:${kind}`, name: `unknown ${kind}s` }]);
     expect(usedItem({ code: "walk", dir: 6 }, w.view)).toBeNull();
   });
 
@@ -145,7 +150,7 @@ describe("superstitions", () => {
     expect(distrustedUse(command, w.view, memories, parent())).toBe(false);
     const next = observeFlourishes(memories, w.view, parent(), [], new Set());
     expect(next.superstitions).toEqual([]);
-    expect(familyAfterDeath(family, { ...memories, lastUse: taboo }, w.view, parent()).superstitions).toEqual([]);
+    expect(familyAfterDeath(family, { ...memories, lastUse: taboo }, w.view, parent()).superstitions).toEqual([scrollWariness]);
   });
 
   it("does not record a superstition with the setting off", () => {
@@ -162,6 +167,146 @@ describe("superstitions", () => {
     w.setPack([...Array.from({ length: 19 }, () => SCROLL), "3 Potions of Cure Light Wounds", "3 Scrolls of Phase Door", "5 Rations of Food", "2 Wooden Torches"]);
     w.setFloor([{ x: 2, y: 1, name: "a Potion of Cure Light Wounds" }]);
     expect(asked(p.ask(w.view)).context.offers.map((o) => o.goal)).not.toContain("pick_up");
+  });
+});
+
+describe("inherited class wariness", () => {
+  const classes = [
+    { kind: "scroll", tval: 25, name: SCROLL, code: "read" },
+    { kind: "potion", tval: 26, name: "a Smoky Potion", code: "quaff" },
+    { kind: "wand", tval: 23, name: "an Ivory Wand", code: "aim" },
+    { kind: "rod", tval: 24, name: "a Copper Rod", code: "zap" },
+    { kind: "staff", tval: 22, name: "an Ashen Staff", code: "use" },
+    { kind: "mushroom", tval: 29, name: "a Blue Mushroom", code: "eat" },
+  ];
+
+  it.each(classes)("passes only $kind wariness after death or severe injury", ({ kind, tval, name, code }) => {
+    const w = world({ map: ["@"], player: { hp: 100, maxHp: 100 }, pack: [name] });
+    const item = { ...w.view.inventory()[0]!, tval, aware: false, sval: -7, kindKey: "flavor:7", objectId: 17 };
+    const view = { ...w.view, inventory: () => [item] };
+    const rt = createRuntime({ log: () => {} }, { store: memoryStore() });
+    rt.saveCharacter({ ...rt.character(), persona: parent() });
+    rt.recordCommand({ code, args: { handle: 1 } }, view);
+    const pending = rt.character().flourishes!;
+    const memory = { key: `class:${kind}`, name: `unknown ${kind === "staff" ? "staves" : `${kind}s`}` };
+    expect(familyAfterDeath(emptyFamilyFlourishes(), pending, view, parent()).superstitions).toEqual([memory]);
+    w.setPlayer({ hp: 50 });
+    w.advance(10);
+    rt.observe(view);
+    const injured = readWays(JSON.parse(JSON.stringify(rt.character().flourishes)));
+    expect(injured.superstitions).toEqual([memory]);
+    expect(injured.lastUse).toBeNull();
+    const record = familyAfterDeath(emptyFamilyFlourishes(), injured, view, parent());
+    const config = readConfig(writeConfig({ ...rt.config(), lineages: { Ada: { ...baseLine, flourishRecord: record } } }));
+    const loaded = config.lineages["Ada"]!.flourishRecord!;
+    expect(loaded.superstitions).toEqual([memory]);
+    const heir = inheritWays(loaded, parent(), defaultPersona("Bea"), () => 0);
+    expect(heir.superstitions).toEqual([memory]);
+    expect(JSON.stringify(loaded.superstitions)).not.toMatch(/flavor|Smoky|Ivory|Copper|Ashen|Blue|FOO|kind:|handle|objectId/);
+    expect(heir.useLearnedKinds).toBeUndefined();
+    const offers = [{ goal: "try_unknown", action: { source: { handle: 1 } } }];
+    expect(nudgeWariness({ try_unknown: 1 }, heir, view, parent(), offers).try_unknown).toBeLessThan(1);
+    expect(nudgeWariness({ try_unknown: 1 }, heir, { ...view, inventory: () => [{ ...item, aware: true }] }, parent(), offers).try_unknown).toBe(1);
+  });
+
+  it("does not blame a later injury or a harmless use", () => {
+    const w = world({ map: ["@"], player: { hp: 100, maxHp: 100 }, pack: ["a Smoky Potion"] });
+    const rt = createRuntime({ log: () => {} }, { store: memoryStore() });
+    rt.saveCharacter({ ...rt.character(), persona: parent() });
+    rt.recordCommand({ code: "quaff", args: { handle: 1 } }, w.view);
+    w.advance(10);
+    rt.observe(w.view);
+    expect(rt.character().flourishes?.superstitions).toEqual([]);
+    w.setPlayer({ hp: 10 });
+    w.advance(10);
+    rt.observe(w.view);
+    expect(rt.character().flourishes?.superstitions).toEqual([]);
+  });
+
+  it.each(["identification", "shop", "recall"])("lifts for this heir after learning a potion by %s", (source) => {
+    const w = world({ map: ["@"], pack: ["a Smoky Potion"] });
+    const run = { ...emptyFlourishes(), superstitions: [potionWariness] };
+    const known = { ...itemNamed("a Potion of Cure Light Wounds", 2), aware: true, kindId: "potion:cure-light", sval: 4 };
+    const view = { ...w.view,
+      inventory: () => source === "identification" ? [known] : w.view.inventory(),
+      stores: () => source === "shop" ? [{ feat: 6, featName: "Alchemist", isHome: false, owner: { name: "Shopkeeper", purse: 1000 }, stock: [{ ...known, index: 0, price: 10 }] }] : [],
+      knownItemKinds: () => source === "recall" ? [{ key: "knowledge:potion:4", name: "Cure Light Wounds", group: "Potions" }] : [],
+    };
+    expect(observeFlourishes(run, w.view, parent(), [], new Set()).superstitions).toEqual([potionWariness]);
+    const next = observeFlourishes(run, view, parent(), [], new Set());
+    expect(next.superstitions).toEqual([]);
+    expect(flourishLines(next, parent())).toEqual([]);
+    const record = { ...emptyFamilyFlourishes(), superstitions: [potionWariness] };
+    expect(familyAfterDeath(record, next, view, parent()).superstitions).toEqual([potionWariness]);
+  });
+
+  it("keeps wariness after use-identification and lifts on a different safely learned kind", () => {
+    const w = world({ map: ["@"], pack: ["a Smoky Potion"] });
+    const unknown = { ...w.view.inventory()[0]!, aware: false, sval: -7, kindKey: "flavor:7", objectId: 17 };
+    const run = { ...emptyFlourishes(), superstitions: [potionWariness], lastUse: { ...unknownUse(unknown)!, hp: 40, turn: w.view.turn() } };
+    const known = { ...unknown, aware: true, name: "a Potion of Cure Light Wounds", sval: 4, kindKey: "kind:4", kindId: "potion:cure-light" };
+    w.advance(10);
+    const used = observeFlourishes(run, { ...w.view, inventory: () => [known] }, parent(), [], new Set());
+    expect(used.superstitions).toEqual([potionWariness]);
+    const loaded = readWays(JSON.parse(JSON.stringify(used)));
+    expect(observeFlourishes(loaded, { ...w.view, inventory: () => [known] }, parent(), [], new Set()).superstitions).toEqual([potionWariness]);
+    const other = { ...known, handle: 2, kindKey: "kind:5", kindId: "potion:speed", name: "a Potion of Speed" };
+    expect(observeFlourishes(loaded, { ...w.view, inventory: () => [known, other] }, parent(), [], new Set()).superstitions).toEqual([]);
+  });
+
+  it("keeps the injury in the family record after the survivor overcomes its wariness", () => {
+    const w = world({ map: ["@"], player: { hp: 100, maxHp: 100 }, pack: ["a Smoky Potion"] });
+    const rt = createRuntime({ log: () => {} }, { store: memoryStore() });
+    rt.saveCharacter({ ...rt.character(), persona: parent() });
+    rt.recordCommand({ code: "quaff", args: { handle: 1 } }, w.view);
+    w.setPlayer({ hp: 50 });
+    w.advance(10);
+    rt.observe(w.view);
+    w.setPack(["a Potion of Cure Light Wounds"]);
+    rt.observe(w.view);
+    const run = readWays(JSON.parse(JSON.stringify(rt.character().flourishes)));
+    expect(run.superstitions).toEqual([]);
+    expect(familyAfterDeath(emptyFamilyFlourishes(), run, w.view, parent()).superstitions).toEqual([potionWariness]);
+  });
+
+  it("changes the chosen unknown use according to the heir's persona", () => {
+    for (const curious of [false, true]) {
+      const w = world({ map: MAP, player: { hp: 2, maxHp: 30 }, pack: ["a Smoky Potion", SCROLL] });
+      const persona = parent();
+      Object.assign(persona.sliders, { curiosity: curious ? 100 : 0, paranoia: curious ? 0 : 100, boldness: 50, selfpreservation: 50, strength: 0, volatility: 0, lawchaos: 0 });
+      const run = { ...emptyFlourishes(), superstitions: [potionWariness] };
+      const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, reflex: false, flourishes: () => run });
+      const q = asked(p.ask(w.view));
+      expect(q.context.offers.map((o) => o.goal)).toEqual(expect.arrayContaining(["quaff_unknown", "read_unknown"]));
+      const choice = p.choose({ goal: { type: "choice", choice: "quaff_unknown", confidence: 1, probabilities: { quaff_unknown: 0.6, read_unknown: 0.4 } } }, q.context, w.view);
+      if (!("plan" in choice)) throw new Error("expected an unknown use");
+      expect(choice.plan.step(w.view, w.act)?.code).toBe(curious ? "quaff" : "read");
+    }
+  });
+
+  it("weights unknown use by persona and keeps known healing and escape available", () => {
+    const w = world({ map: ["@"], pack: ["a Smoky Potion", SCROLL] });
+    const run = { ...emptyFlourishes(), superstitions: [potionWariness, scrollWariness] };
+    const cautious = parent();
+    Object.assign(cautious.sliders, { paranoia: 100, selfpreservation: 100, curiosity: 0, boldness: 0 });
+    const curious = parent();
+    Object.assign(curious.sliders, { paranoia: 0, selfpreservation: 0, curiosity: 100, boldness: 100 });
+    const dist = { quaff_unknown: 0.55, read_unknown: 0.1, heal: 0.2, phase: 0.15 };
+    const careful = nudgeWariness(dist, run, w.view, cautious);
+    const reckless = nudgeWariness(dist, run, w.view, curious);
+    expect(careful.quaff_unknown).toBeGreaterThan(0);
+    expect(careful.quaff_unknown).toBeLessThan(reckless.quaff_unknown!);
+    expect(reckless.quaff_unknown).toBeLessThan(dist.quaff_unknown);
+    expect(warinessStrength(cautious)).toBeGreaterThan(warinessStrength(curious));
+    expect(careful).toMatchObject({ heal: 0.2, phase: 0.15 });
+    cautious.toggles.inheritedSuperstitions = false;
+    expect(nudgeWariness(dist, run, w.view, cautious)).toEqual(dist);
+    const kit = suppliedWorld({ map: MAP, player: { hp: 10, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, level: 4 }] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: kit.terrain, log: () => {}, persona: parent(), reflex: false, flourishes: () => run });
+    const q = asked(p.ask(kit.view));
+    const choice = p.choose({ goal: { type: "choice", choice: "heal", confidence: 1, probabilities: { heal: 1 } } }, q.context, kit.view);
+    if (!("plan" in choice)) throw new Error("expected healing");
+    expect(choice.plan.step(kit.view, kit.act)).toEqual({ code: "quaff", args: { handle: 1 } });
   });
 });
 
@@ -345,7 +490,7 @@ describe("runtime and saved flourishes", () => {
     expect(readFamilyFlourishes({ darkDeaths: NaN, bestFind: { depth: 300 } })).toEqual(emptyFamilyFlourishes());
   });
 
-  it("shows memories, learns a kind for the whole family, and reloads the character record", () => {
+  it("shows memories, clears this character's flavour fear, and reloads the character record", () => {
     const logged: string[] = [];
     let stored: unknown;
     const host = { log: (s: string) => logged.push(s), characterStore: { get: () => stored, set: (s: unknown) => { stored = s; } } };
@@ -356,7 +501,7 @@ describe("runtime and saved flourishes", () => {
     const w = world({ map: ["@"], pack: ["a Scroll of Phase Door"] });
     rt.observe(w.view);
     expect(rt.character().flourishes?.superstitions).toEqual([]);
-    expect(rt.config().lineages["Ada"]?.flourishRecord?.superstitions).toEqual([]);
+    expect(rt.config().lineages["Ada"]?.flourishRecord?.superstitions).toEqual([scrollWariness]);
     expect(logged).toContain("Ada trusts the Scroll titled 'FOO BAR' now.");
     expect(createRuntime(host, { store: memoryStore() }).character().flourishes).toEqual(rt.character().flourishes);
   });
@@ -369,13 +514,13 @@ describe("runtime and saved flourishes", () => {
     const w = world({ map: ["@"], player: { light: 0 }, pack: [SCROLL] });
     rt.observe(w.view);
     rt.recordCommand({ code: "read", args: { handle: 1 } }, w.view);
-    expect(rt.character().flourishes?.lastUse).toEqual(taboo);
+    expect(rt.character().flourishes?.lastUse).toEqual({ ...taboo, hp: w.view.player().hp, turn: w.view.turn() });
     rt.recordCommand({ code: "walk", dir: 6 }, w.view);
     expect(rt.character().flourishes?.lastUse).toBeNull();
     rt.recordCommand({ code: "read", args: { handle: 1 } }, w.view);
     end?.({ name: "Ada", race: "Human", cls: "Warrior", cause: "a cave orc", turn: 10, maxDepth: 1, outcome: "death" } as RunReportLike);
     await new Promise<void>((resolve) => setTimeout(resolve, 20));
-    expect(rt.config().lineages["Ada"]?.flourishRecord).toMatchObject({ superstitions: [taboo], darkDeaths: 1 });
+    expect(rt.config().lineages["Ada"]?.flourishRecord).toMatchObject({ superstitions: [scrollWariness], darkDeaths: 1 });
   });
 
   it("records unique trophies through the kill hook and keeps ordinary kills out", () => {
