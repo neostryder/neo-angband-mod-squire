@@ -82,6 +82,26 @@ describe("flourish inheritance", () => {
 });
 
 describe("superstitions", () => {
+  it("keeps flavour memories in their game and rejects legacy negative-sval records", () => {
+    const p = parent();
+    const item = { ...itemNamed("a Smoky Potion", 1), aware: false, sval: -7, kindKey: "flavor:7" };
+    const use = unknownUse(item)!;
+    const run = { ...emptyFlourishes(), superstitions: [use], lastUse: use };
+    expect(distrusted(item, run, p)).toBe(true);
+    const record = familyAfterDeath(emptyFamilyFlourishes(), run, null, p);
+    expect(record.superstitions).toEqual([]);
+    const next = inheritWays(record, p, defaultPersona("Bea"), () => 0);
+    const reshuffled = { ...item, name: "a Blue Potion" };
+    expect(distrusted(reshuffled, next, p)).toBe(false);
+    const legacy = { key: `${String(item.tval)}:-7`, name: "Smoky Potion" };
+    const saved = { ...family, superstitions: [legacy, use, taboo] };
+    expect(readFamilyFlourishes(saved).superstitions).toEqual([taboo]);
+    expect(inheritWays(saved, p, defaultPersona("Bea"), () => 0).superstitions).toEqual([taboo]);
+    expect(familyAfterDeath(saved, emptyFlourishes(), null, p).superstitions).toEqual([taboo]);
+    expect(readWays({ ...run, superstitions: [legacy, use], lastUse: legacy })).toMatchObject({ superstitions: [use], lastUse: null });
+    expect(distrusted(reshuffled, { ...run, superstitions: [legacy] }, p)).toBe(false);
+  });
+
   it.each([SCROLL, "a Smoky Potion", "an Ivory Wand (3 charges)"])("records an unknown use of %s, without guessing its effect", (name) => {
     const w = world({ map: ["@"], pack: [name] });
     const code = /Scroll/.test(name) ? "read" : /Potion/.test(name) ? "quaff" : "aim-wand";
