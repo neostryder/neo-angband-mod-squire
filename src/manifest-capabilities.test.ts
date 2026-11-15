@@ -39,6 +39,11 @@ describe("manifest capabilities", () => {
     expect(capabilities()).toContain("engine:access");
   });
 
+  it("holds ui:region.create, the grant the game checks before it hands over the panel host", () => {
+    /* The game gives an in-process mod presentation.panels only with ui:region.create, so without it registerPanelKind never runs and the panel silently never appears. The SDK checker does not flag a missing grant, and nothing is logged, so this test is the only guard. */
+    expect(capabilities()).toContain("ui:region.create");
+  });
+
   it("lists each capability once", () => {
     expect(new Set(capabilities()).size).toBe(capabilities().length);
   });

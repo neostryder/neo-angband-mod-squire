@@ -43,6 +43,7 @@
       "event:heal",
       "event:player-command",
       "ui:panel.mount",
+      "ui:region.create",
       "saves:manage",
       "network:local",
       "network:squire.rpgm.tools",
