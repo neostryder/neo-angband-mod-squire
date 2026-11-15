@@ -959,9 +959,10 @@ function unboundTarget(command: AgentCommand, view: AgentView, chosenOn: Map<num
     if (typeof handle !== "number" || handle === 0) continue;
     const then = chosenOn.get(handle);
     const now = gearOf(view).get(handle);
-    /* This SDK has gear handles, so learning a flavour is correlated at the same handle. */
+    /* Older snapshots correlate awareness by handle; API 2.1 also proves object identity. */
     const learned = then !== undefined && now !== undefined && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
-    if (now === undefined || then !== undefined && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === undefined ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
+    const replaced = then !== undefined && now !== undefined && (then.objectId !== undefined || now.objectId !== undefined) && then.objectId !== now.objectId;
+    if (now === undefined || replaced || then !== undefined && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === undefined ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
     chosenOn.set(handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {

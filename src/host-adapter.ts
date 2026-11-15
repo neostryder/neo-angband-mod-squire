@@ -7,8 +7,8 @@
  * vocabulary it is written against has one source.
  */
 
-import type { KnownMonster } from "@rpgm-tools/neo-angband-mod-sdk";
-import type { AgentView as CoreAgentView, MonsterView as CoreMonsterView, InputSnapshot, ModPluginContext } from "@rpgm-tools/neo-angband-core";
+import type { KnownItem, KnownMonster } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { AgentView as CoreAgentView, ItemView as CoreItemView, MonsterView as CoreMonsterView, InputSnapshot, ModPluginContext } from "@rpgm-tools/neo-angband-core";
 import { terrainFromRecords, terrainRecords, type Terrain } from "./terrain.js";
 
 export type {
@@ -17,7 +17,6 @@ export type {
   AgentController,
   CellView,
   CommandFacade,
-  ItemView,
   KnownFloorItemView,
   LoadoutSimulation,
   LoadoutView,
@@ -26,6 +25,8 @@ export type {
   SpellView,
   StoreView,
 } from "@rpgm-tools/neo-angband-core";
+
+export type ItemView = CoreItemView & Pick<KnownItem, "objectId" | "trapKnown">;
 
 export interface MonsterView extends CoreMonsterView {
   readonly knownCombat?: Pick<KnownMonster, "blows" | "spellFrequency" | "innateFrequency" | "averageHp" | "health" | "status">;
@@ -37,6 +38,9 @@ export interface BlowRules {
 }
 
 export interface AgentView extends CoreAgentView {
+  inventory(): ItemView[];
+  quiver?(): ItemView[];
+  equipment(): Array<ItemView | null>;
   monsters(): MonsterView[];
   readonly blowRules?: BlowRules;
 }
