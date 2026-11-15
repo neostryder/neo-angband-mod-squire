@@ -78,6 +78,14 @@ interface Running {
   readonly detach: () => void;
 }
 
+/** The grants without which the game never hands Squire the keyboard or takes its commands. */
+const KEYBOARD_GRANTS = ["input:controller", "input:intent", "input:prompt.reply", "state:interaction.read"] as const;
+
+/** Said once at start when a keyboard grant is missing, so a character that never moves has a reason in the log. */
+function cannotPlayLine(missing: readonly string[]): string {
+  return `Squire cannot play this character because the game has not granted ${missing.join(", ")}. Squire still watches and keeps its panel.`;
+}
+
 let bridge: Bridge | undefined;
 let running: Promise<Running | null> | undefined;
 
@@ -103,6 +111,8 @@ async function begin(mod: ModApi2): Promise<Running | null> {
       ? "Squire is on its stock settings"
       : `Squire's settings differ from stock: ${changed.join(", ")}`,
   );
+  const missing = typeof mod.meta.granted === "function" ? KEYBOARD_GRANTS.filter((grant) => !mod.meta.granted(grant)) : [];
+  if (missing.length > 0) host.log(cannotPlayLine(missing));
   const rt = runtime(host);
   const attached = attachSquire(host, rt, terrain);
   const errands = () => createSquire({ cfg, terrain, log: host.log, status: (reason) => host.controller.setStatus({ label: "Errand ended", reason }), release: (reason: string) => host.controller.release(reason) }).controller;

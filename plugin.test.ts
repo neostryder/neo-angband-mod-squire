@@ -29,7 +29,7 @@ interface Built {
   submitted: unknown[];
 }
 
-function build(options: { withRecords?: boolean; flags?: Record<string, boolean>; input?: Api2InputState } = {}): Built {
+function build(options: { withRecords?: boolean; flags?: Record<string, boolean>; input?: Api2InputState; denied?: readonly string[] } = {}): Built {
   const logged: string[] = [];
   const registered: string[] = [];
   const submitted: unknown[] = [];
@@ -38,6 +38,7 @@ function build(options: { withRecords?: boolean; flags?: Record<string, boolean>
       id: "squire",
       flags: options.flags ?? {},
       controllerArmed: false,
+      granted: (capability: string) => !(options.denied ?? []).includes(capability),
       log: (message: string) => logged.push(message),
       settings: () => ok({}),
     },
@@ -119,6 +120,18 @@ describe("the Squire plugin", () => {
   it("reports a stock configuration as stock", async () => {
     const { logged } = await start();
     expect(logged.join("\n")).toContain("stock settings");
+  });
+
+  it("says once at start that it cannot play when the game has not granted it the keyboard", async () => {
+    const { logged } = await start({ denied: ["input:controller"] });
+    const lines = logged.filter((line) => line.includes("cannot play this character"));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain("input:controller");
+  });
+
+  it("says nothing about the keyboard when every grant it needs is in place", async () => {
+    const { logged } = await start();
+    expect(logged.some((line) => line.includes("cannot play this character"))).toBe(false);
   });
 
   it("registers its order command", async () => {

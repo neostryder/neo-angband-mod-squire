@@ -21396,6 +21396,10 @@ function characterAlreadyAutoplayed(context) {
   const state = context.engine?.state;
   return ((state?.actor?.player?.noscore ?? 0) & NOSCORE_BORG) !== 0;
 }
+var KEYBOARD_GRANTS = ["input:controller", "input:intent", "input:prompt.reply", "state:interaction.read"];
+function cannotPlayLine(missing) {
+  return `Squire cannot play this character because the game has not granted ${missing.join(", ")}. Squire still watches and keeps its panel.`;
+}
 var bridge;
 var running;
 function bridgeFor(mod) {
@@ -21415,6 +21419,8 @@ async function begin(mod) {
   host.log(
     changed.length === 0 ? "Squire is on its stock settings" : `Squire's settings differ from stock: ${changed.join(", ")}`
   );
+  const missing = typeof mod.meta.granted === "function" ? KEYBOARD_GRANTS.filter((grant) => !mod.meta.granted(grant)) : [];
+  if (missing.length > 0) host.log(cannotPlayLine(missing));
   const rt = runtime(host);
   const attached = attachSquire(host, rt, terrain);
   const errands = () => createSquire({ cfg, terrain, log: host.log, status: (reason) => host.controller.setStatus({ label: "Errand ended", reason }), release: (reason) => host.controller.release(reason) }).controller;
