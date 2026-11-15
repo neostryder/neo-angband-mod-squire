@@ -56,7 +56,7 @@ import { descentEscapes, holdDescent } from "../strategy/hold.js";
 import { drive, nudgePursuits, pursuitFacts } from "../strategy/pursuits.js";
 import type { PurchaseKind } from "../strategy/judgment.js";
 import { breedersOverwhelm, createJourney, SEARCH_HP_FRACTION } from "../strategy/journey.js";
-import { gapFacts, missingPreparation, poisonRecovery, readinessThreshold, descentPolicy, restRestoresMana, supplyMargin, shallowDiveReady, shallowDiveChecks } from "../strategy/readiness.js";
+import { gapFacts, identifyPreparation, missingPreparation, poisonRecovery, readinessThreshold, descentPolicy, restRestoresMana, supplyMargin, shallowDiveReady, shallowDiveChecks } from "../strategy/readiness.js";
 import { birthConstraints, createManual, type BirthOption, type BirthRule } from "./manual.js";
 import type { Aim } from "../strategy/aims.js";
 import type { StoreMemory } from "../town/memory.js";
@@ -117,6 +117,7 @@ export type Goal =
   | "close_door"
   | "study"
   | "wear"
+  | "identify"
   | "detect"
   | "see_invisible"
   | "light_room"
@@ -261,7 +262,7 @@ const TAKE_POSITION_MIN_WALLS = 2;
 /** Awake creatures in sight that count as a group. */
 const TAKE_POSITION_GROUP_SIZE = 2;
 /** Goals that read a scroll or book or cast a spell. The game refuses these while the character is blind, confused or in the dark. */
-const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown"]);
+const READS: ReadonlySet<Goal> = new Set<Goal>(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown", "identify"]);
 /** How long a refused goal stays out if nothing else changes, in game turns. After that it gets another try, in case the cause has passed. */
 function refusalHold(view: AgentView, persona: Persona | null): number {
   return turnsPerAction(view.player().speed) * stuckThresholds(persona).repeat;
@@ -910,7 +911,7 @@ const WALKS: ReadonlySet<Goal> = new Set<Goal>(["explore", "fetch", "shop", "des
 
 /* Errands that keep going while nothing new turns up. A creature already in
  * view that can now kill the character before its next action ends one. */
-const ERRANDS: ReadonlySet<Goal> = new Set<Goal>([...WALKS, "rest", "pick_up", "drop_junk", "study", "wear", "eat"]);
+const ERRANDS: ReadonlySet<Goal> = new Set<Goal>([...WALKS, "rest", "pick_up", "drop_junk", "study", "wear", "identify", "eat"]);
 
 /* Commands that take one action, so only these show lost turns. Runs, rests
  * and travel take many actions on their own. The game repeats a failed open,
@@ -953,14 +954,15 @@ function flavoured(item: ItemView): boolean {
  * must still be known and affordable.
  */
 function unboundTarget(command: AgentCommand, view: AgentView, chosenOn: Map<number, ItemView>): string | null {
-  const args = command.args as { readonly handle?: unknown; readonly spell?: unknown } | undefined;
-  if (typeof args?.handle === "number" && args.handle !== 0) {
-    const then = chosenOn.get(args.handle);
-    const now = gearOf(view).get(args.handle);
+  const args = command.args as { readonly handle?: unknown; readonly spell?: unknown; readonly tgtitem?: { readonly handle?: unknown } } | undefined;
+  for (const handle of [args?.handle, args?.tgtitem?.handle]) {
+    if (typeof handle !== "number" || handle === 0) continue;
+    const then = chosenOn.get(handle);
+    const now = gearOf(view).get(handle);
     /* This SDK has gear handles, so learning a flavour is correlated at the same handle. */
     const learned = then !== undefined && now !== undefined && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
     if (now === undefined || then !== undefined && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === undefined ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
-    chosenOn.set(args.handle, now);
+    chosenOn.set(handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {
     const sidx = args.spell;
@@ -1567,6 +1569,8 @@ export function offersFor(s: Situation, cfg: SquireCfg, terrain: Terrain, person
   if (hungry(view) && s.pack.food[0] !== undefined) {
     add("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s), incoming.damage === 0 && incoming.status === 0);
   }
+  const identification = !bleeding && s.awake.length === 0 && !immediateDanger(s) ? identifyPreparation(view, persona) : null;
+  if (identification !== null) add("identify", `Use ${identification.source.name} to identify a rune on ${shownName(identification.target) ?? "worn gear"}; its unknown runes could explain the missing protection.`, 0.02);
   const gear = gearCandidates(view, tieBreakKind).find((g) => !excludedGear.has(g.handle) && (!g.unknown || (persona?.sliders.curiosity ?? 0) >= 50));
   /* Walking in the dark shows nothing, so while a light sits unused in the pack
    * lighting it comes before exploring or the stairs. */
@@ -2960,6 +2964,17 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
         return once("study", view, (ctx) => {
           triedStudies.add(`${String(ctx.view.player().level)}:${String(study.sidx)}`);
           return ctx.act.raw("study", { handle: study.handle, spell: study.sidx });
+        });
+      }
+      case "identify": {
+        const identification = identifyPreparation(view, personaOf());
+        return once("identify worn gear", view, (ctx) => {
+          const now = identifyPreparation(ctx.view, personaOf());
+          if (identification === null || now === null || now.target.handle !== identification.target.handle || immediateDanger(situationNow(ctx.view))) return null;
+          const { source, target } = identification;
+          if (now.source.code !== source.code || ("handle" in now.source ? now.source.handle : now.source.sidx) !== ("handle" in source ? source.handle : source.sidx)) return null;
+          const command = source.code === "read" ? ctx.act.read(source.handle) : ctx.act.cast(source.sidx);
+          return { ...command, args: { ...command.args, tgtitem: { handle: target.handle } } };
         });
       }
       case "wear": {

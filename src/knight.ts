@@ -177,6 +177,7 @@ const LABEL: Readonly<Record<Goal, string>> = {
   eat: "eat",
   study: "learn a spell",
   wear: "wear gear",
+  identify: "identify worn gear",
   detect: "survey the level",
   see_invisible: "see invisible creatures",
   light_room: "light the room",
