@@ -1,7 +1,5 @@
 /**
- * Every fact Squire sends with a decision, filed under one of ten layers. The
- * state is built from the entries in order, and an empty layer adds nothing.
- * The goal planner puts the character's situation first and the rules last.
+ * Every fact Squire sends with a decision, filed under one of eleven layers. The state is built from the entries in order, and an empty layer adds nothing. The goal planner puts the character's situation first and the rules last.
  */
 
 import { estimateTokens } from "./systemone.js";
@@ -24,6 +22,8 @@ export const LAYERS = [
   "near_goal",
   /** How goals ended and what they bought. */
   "outcomes",
+  /** Repeated decisions, progress counts and alternatives still untried. */
+  "stuck",
 ] as const;
 
 export type Layer = (typeof LAYERS)[number];
@@ -106,6 +106,13 @@ export function fitToBudget(context: DecisionContext, budget: number = STATE_TOK
     if (!entries.some((e) => e.layer === layer)) continue;
     entries = entries.filter((e) => e.layer !== layer);
     shed.push(layer);
+  }
+  if (stateTokens(stateOf({ entries })) > budget && entries.some((entry) => entry.key === "tactical")) {
+    entries = entries.map((entry) => {
+      if (entry.layer !== "persona" || entry.value === null || typeof entry.value !== "object" || !("backstory" in entry.value)) return entry;
+      const { backstory: _backstory, ...traits } = entry.value;
+      return Object.freeze({ ...entry, value: traits });
+    });
   }
   return { context: entries === context.entries ? context : Object.freeze({ entries: Object.freeze([...entries]) }), shed, over: stateTokens(stateOf({ entries })) > budget };
 }

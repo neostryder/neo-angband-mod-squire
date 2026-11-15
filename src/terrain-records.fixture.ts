@@ -1,0 +1,30 @@
+/**
+ * The game's terrain records (content/pack/terrain.json), with only the fields Squire reads, in feature-index order. Tests classify terrain from these the way the game composes them.
+ */
+export const GAME_TERRAIN: readonly { readonly code: string; readonly flags?: readonly string[] }[] = [
+  { code: "NONE" },
+  { code: "FLOOR", flags: ["LOS | PROJECT | PASSABLE | FLOOR | OBJECT | EASY | TRAP | TORCH"] },
+  { code: "CLOSED", flags: ["DOOR_ANY | DOOR_CLOSED | INTERESTING"] },
+  { code: "OPEN", flags: ["LOS | PROJECT | PASSABLE | DOOR_ANY | INTERESTING | CLOSABLE | EASY"] },
+  { code: "BROKEN", flags: ["LOS | PROJECT | PASSABLE | DOOR_ANY | INTERESTING | EASY"] },
+  { code: "LESS", flags: ["LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | STAIR | UPSTAIR", "EASY | TORCH"] },
+  { code: "MORE", flags: ["LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | STAIR | DOWNSTAIR", "EASY | TORCH"] },
+  { code: "STORE_GENERAL", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_ARMOR", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_WEAPON", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_BOOK", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_ALCHEMY", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_MAGIC", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "STORE_BLACK", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "HOME", flags: ["SHOP | LOS | PROJECT | PASSABLE | PERMANENT | INTERESTING | EASY"] },
+  { code: "SECRET", flags: ["WALL | ROCK | DOOR_ANY | GRANITE | TORCH"] },
+  { code: "RUBBLE", flags: ["ROCK | NO_SCENT | NO_FLOW | INTERESTING | TORCH"] },
+  { code: "MAGMA", flags: ["WALL | ROCK | NO_SCENT | NO_FLOW | MAGMA | TORCH"] },
+  { code: "QUARTZ", flags: ["WALL | ROCK | NO_SCENT | NO_FLOW | QUARTZ | TORCH"] },
+  { code: "MAGMA_K", flags: ["WALL | ROCK | INTERESTING | NO_SCENT | NO_FLOW | GOLD | MAGMA"] },
+  { code: "QUARTZ_K", flags: ["WALL | ROCK | INTERESTING | NO_SCENT | NO_FLOW | GOLD | QUARTZ"] },
+  { code: "GRANITE", flags: ["WALL | ROCK | GRANITE | NO_SCENT | NO_FLOW | TORCH"] },
+  { code: "PERM", flags: ["WALL | ROCK | PERMANENT | NO_SCENT | NO_FLOW"] },
+  { code: "LAVA", flags: ["LOS | PROJECT | FIERY | PASSABLE | NO_SCENT | BRIGHT"] },
+  { code: "PASS_RUBBLE", flags: ["ROCK | PASSABLE | INTERESTING | TORCH"] },
+];

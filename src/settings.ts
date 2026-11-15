@@ -41,6 +41,12 @@ export interface SquireCfg {
   /** Put the long-term goal on the Squire panel. The model sees the goal either way. */
   revealLongGoal: boolean;
   /**
+   * Let the persona's traits change how an errand from the errand menu is
+   * carried out: the route, the risk it accepts, what it picks up. Never
+   * whether the errand is done. Off, an errand runs the plain way.
+   */
+  personaErrands: boolean;
+  /**
    * The share of maximum hit points at or below which an errand breaks off.
    * Half, which is where a character stops being able to absorb one bad turn.
    */
@@ -76,6 +82,7 @@ export function defaultCfg(): SquireCfg {
     collect: true,
     descend: true,
     revealLongGoal: false,
+    personaErrands: false,
     retreatFraction: DEFAULT_RETREAT_PERCENT / 100,
     errandSteps: DEFAULT_ERRAND_STEPS,
     idleSteps: 3,
@@ -94,6 +101,7 @@ export const RULE_CFG: Readonly<Record<string, keyof SquireCfg>> = {
   "squire.collect": "collect",
   "squire.descend": "descend",
   "squire.revealLongGoal": "revealLongGoal",
+  "squire.personaErrands": "personaErrands",
 };
 
 export const RETREAT_PERCENT_SETTING = "squire.retreatPercent";

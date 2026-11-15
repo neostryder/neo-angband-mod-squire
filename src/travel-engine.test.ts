@@ -94,7 +94,7 @@ describe("engine travel", () => {
     const w = world({
       map: ["#######", "#@....#", "#.....#", "#....>#", "#######"],
       player: { depth: 2, maxDepth: 2 },
-      monsters: [{ grid: { x: 3, y: 1 }, race: "cave orc", level: 10 }],
+      monsters: [{ grid: { x: 5, y: 1 }, race: "cave orc", level: 10 }],
       travelPath: (to: { x: number; y: number }) => [to],
     });
     expect(planFor(w, "descend").step(w.view, w.act)?.code).toBe("walk");

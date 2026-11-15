@@ -4,49 +4,52 @@ import {
   COPY_PROMPT, FALLBACK_HERE, freshName, PROFILES_KEY, registerSquireTitle, TITLE_KEY, TITLE_LABEL,
   WHERE_HERE, WHERE_PROMPT, WHERE_SEPARATE, WHICH_COPY, WHICH_FRESH, WHICH_PROMPT,
 } from "./title.js";
-import type { ModProfile, ModProfiles, ModTitle, ModTitleRow, ProfileResult } from "@rpgm-tools/neo-angband-core";
+import type { Api2Manage, Api2Profile, Api2Title, Api2TitleAction } from "@rpgm-tools/neo-angband-mod-sdk";
+
+type ModProfiles = Api2Manage["profiles"];
 
 interface Fake {
-  readonly title: ModTitle;
+  readonly title: Api2Title;
   readonly profiles: ModProfiles;
-  readonly rows: ModTitleRow[];
+  readonly rows: Api2TitleAction[];
   readonly asked: { title: string; choices: readonly string[] }[];
   readonly calls: string[];
-  readonly profileList: ModProfile[];
+  readonly profileList: Api2Profile[];
 }
 
 /** A host whose prompts answer from `answers` in order, and whose profile calls can be refused by name. */
-function host(answers: (number | null)[], options: { refuse?: Partial<Record<keyof ModProfiles, string>>; profiles?: ModProfile[] } = {}): Fake {
-  const rows: ModTitleRow[] = [];
+function host(answers: (number | null)[], options: { refuse?: Partial<Record<keyof ModProfiles, string>>; profiles?: Api2Profile[] } = {}): Fake {
+  const rows: Api2TitleAction[] = [];
   const asked: Fake["asked"] = [];
   const calls: string[] = [];
-  const profileList: ModProfile[] = options.profiles ?? [{ id: null, name: "Default", active: true }];
-  const refusal = (name: keyof ModProfiles): { ok: false; reason: string } | null => {
-    const reason = options.refuse?.[name];
-    return reason === undefined ? null : { ok: false, reason };
+  const profileList: Api2Profile[] = options.profiles ?? [{ id: null, name: "Default", active: true }];
+  const refusal = (name: keyof ModProfiles): { ok: false; reason: "refused"; code: string; message: string } | null => {
+    const message = options.refuse?.[name];
+    return message === undefined ? null : { ok: false, reason: "refused", code: "refused", message };
   };
-  const ok = <T,>(value: T): ProfileResult<T> => ({ ok: true, value });
+  const ok = <T,>(value: T) => ({ ok: true as const, value });
   return {
     rows,
     asked,
     calls,
     profileList,
     title: {
-      registerRow(row) { rows.push(row); return () => undefined; },
-      choose(title, choices) { asked.push({ title, choices }); return Promise.resolve(answers.shift() ?? null); },
+      registerRow(row) { rows.push(row); return Promise.resolve(ok({ id: row.id })); },
+      removeRow: () => Promise.resolve(ok(null)),
+      choose(title, choices) { asked.push({ title, choices }); return Promise.resolve(ok(answers.shift() ?? null)); },
     },
     profiles: {
-      list: () => refusal("list") ?? ok(profileList),
-      create(name, opts) {
-        calls.push(`create ${name} ${opts !== undefined && "copyFrom" in opts ? `from ${String(opts.copyFrom)}` : "fresh"}`);
+      list: () => Promise.resolve(refusal("list") ?? ok(profileList)),
+      create(name, copyFrom) {
+        calls.push(`create ${name} ${copyFrom === undefined ? "fresh" : `from ${String(copyFrom)}`}`);
         const no = refusal("create");
-        if (no !== null) return no;
+        if (no !== null) return Promise.resolve(no);
         const made = { id: `p${String(profileList.length)}`, name, active: false };
         profileList.push(made);
-        return ok(made);
+        return Promise.resolve(ok(made));
       },
-      setEnabledMods(id, mods) { calls.push(`enable ${id} ${mods.join(",")}`); return refusal("setEnabledMods") ?? ok(undefined); },
-      switchTo(id, action) { calls.push(`switch ${String(id)} ${action?.kind ?? "none"} ${String(action?.armController)}`); return refusal("switchTo") ?? ok(undefined); },
+      setEnabledMods(id, mods) { calls.push(`enable ${id} ${mods.join(",")}`); return Promise.resolve(refusal("setEnabledMods") ?? ok(null)); },
+      switchTo(id, action) { calls.push(`switch ${String(id)} ${action?.kind ?? "none"} ${String(action?.armController)}`); return Promise.resolve(refusal("switchTo") ?? ok(null)); },
     },
   };
 }
@@ -59,6 +62,13 @@ async function pick(fake: Fake, store: KvStore = memoryStore()): Promise<void> {
 }
 
 describe("the Squire title row", () => {
+  it("registers its row under an id the game accepts", () => {
+    /* The game refuses any id outside a lowercase letter then lowercase letters, digits and hyphens, and says so only in its log. */
+    const fake = host([]);
+    registerSquireTitle({ id: "squire", title: fake.title, profiles: fake.profiles }, memoryStore());
+    expect(fake.rows[0]?.id).toMatch(/^[a-z][a-z0-9-]{0,63}$/);
+  });
+
   it("registers nothing without the title and profile seams", () => {
     const fake = host([]);
     expect(registerSquireTitle({}, memoryStore())).toBe(false);

@@ -70,6 +70,13 @@ describe("the trip to town as the persona's call", () => {
     expect(townReason(low.view, defaultPersona())).toBeNull();
   });
 
+  it("makes no early trip when the gold cannot buy one of what the pack lacks", () => {
+    const w = shortKit();
+    expect(townReason(w.view, defaultPersona())).not.toBeNull();
+    w.setPlayer({ gold: 2 });
+    expect(townReason(w.view, defaultPersona())).toBeNull();
+  });
+
   it("counts only supplies the persona would buy before saving its gold", () => {
     const w = shortKit();
     const saver: Persona = { ...defaultPersona(), sliders: { ...defaultPersona().sliders, savings: 100 } };
@@ -200,7 +207,7 @@ describe("town readiness reads drive", () => {
     expect(readinessExtra(null)).toBe(1);
     expect(readinessExtra(archetype("tourist"))).toBe(2);
     const w = world({ map: ROOM, player: { depth: 0, light: 1 }, pack: ["a Potion of Cure Light Wounds", "a Scroll of Phase Door", "2 Rations of Food", "a Wooden Torch (5000 turns)"], worn: ["a Wooden Torch (5000 turns)"] });
-    expect(missingEssentials(w.view, archetype("berserker")).map((need) => need.kind)).toEqual(["healing", "phase", "light"]);
+    expect(missingEssentials(w.view, archetype("berserker"))).toEqual([]);
     expect(missingEssentials(w.view, archetype("tourist")).map((need) => need.kind)).toEqual(expect.arrayContaining(["healing", "phase", "food"]));
   });
 

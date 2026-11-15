@@ -19,8 +19,11 @@ import { readFileSync } from "node:fs";
  * brackets would not match, and the test fails rather than compare nothing.
  */
 describe("the two version sites", () => {
-  const read = (f: string): string =>
-    (JSON.parse(readFileSync(new URL(f, import.meta.url), "utf8")) as { version: string }).version;
+  /* manifest.json is a schema 2 document, so its fields sit under `data`. */
+  const read = (f: string): string => {
+    const doc = JSON.parse(readFileSync(new URL(f, import.meta.url), "utf8")) as { version?: string; data?: { version: string } };
+    return doc.data?.version ?? doc.version ?? "";
+  };
 
   const changelog = (): string => readFileSync(new URL("./CHANGELOG.md", import.meta.url), "utf8");
 

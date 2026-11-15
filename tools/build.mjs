@@ -69,7 +69,7 @@ try {
   execFileSync(
     process.execPath,
     [bin, "--root", fileURLToPath(new URL("../", import.meta.url)), ...process.argv.slice(2)],
-    { stdio: "inherit" },
+    { stdio: "inherit", windowsHide: true },
   );
 } catch (e) {
   process.exit(typeof e.status === "number" ? e.status : 1);

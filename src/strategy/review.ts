@@ -12,6 +12,7 @@
  */
 
 import type { AgentView } from "../host-adapter.js";
+import type { StuckFacts } from "../brain/decision-memory.js";
 import type { AskResult, Backend } from "../brain/backend.js";
 import type { Answer, ChoiceAnswer, SystemOneRequest } from "../brain/systemone.js";
 import { chaosChoice, chaosNote, chaosTold, type ChaosMethod, type ChaosRecord, type ChaosSource } from "../brain/chaos.js";
@@ -116,6 +117,8 @@ export function rankByScore(aims: readonly Aim[], answers: Readonly<Record<strin
 }
 
 export interface StrategyDeps {
+  /** Goal reviews read the tactical record without choosing a replacement in code. */
+  stuck?(view: AgentView): StuckFacts;
   /** The server the tactical planner uses, or null when none is set up. */
   backend(): Backend | null;
   send(request: SystemOneRequest): Promise<AskResult>;
@@ -432,10 +435,11 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
   }
 
-  async function ask(request: SystemOneRequest): Promise<{ readonly answer: Answer | null; readonly why: string; readonly backend: string }> {
+  async function ask(request: SystemOneRequest, view?: AgentView): Promise<{ readonly answer: Answer | null; readonly why: string; readonly backend: string }> {
     const backend = deps.backend();
     if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
     if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
+    if (view !== undefined && deps.stuck !== undefined) request = { ...request, state: { ...request.state, stuck: deps.stuck(view) } };
     let result: AskResult;
     try {
       result = await deps.send(request);
@@ -509,7 +513,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
     /* A goal a check dropped is not offered again for a while, unless nothing else is left. */
     const open = openAims(args.candidates, blocks, args.turn);
     const askAims = open.filter((aim) => aim.kind !== "win").length >= 2;
-    const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, open, pursuitsNow())) : null;
+    const midSent = args.midTrigger !== null && askAims ? await ask(midGoalRequest(args.view, open, pursuitsNow()), args.view) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
     const scored = args.midTrigger === null ? args.candidates
@@ -524,7 +528,7 @@ export function createStrategy(deps: StrategyDeps): Strategy {
       nearReason = "because the mid-term goal changed";
     }
     const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
-    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask(nearGoalRequest(args.view, args.nearList, midLabel)) : null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask(nearGoalRequest(args.view, args.nearList, midLabel), args.view) : null;
     if (args.mine !== generation || seq !== latest) return;
     if (args.midTrigger !== null && args.view.player().depth === args.depth) judge(args.depth, args.judgments);
     if (args.midTrigger !== null) {

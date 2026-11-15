@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import { suppliedWorld, world, type WorldSpec } from "../harness.js";
 import { defaultCfg } from "../settings.js";
 import { archetype } from "../persona/persona.js";
+import { estimateTokens } from "./systemone.js";
 import { createGoalPlanner, type GoalPlannerOptions } from "./goals.js";
+import { createDecisionMemory, stuckThresholds } from "./decision-memory.js";
 import { LAYERS, LAYA_STATE_TOKENS, STATE_TOKEN_CAP, contextOf, entriesOf, fitToBudget, layerOf, stateHash, stateOf, stateTokens } from "./context.js";
 
 type Options = Partial<Omit<GoalPlannerOptions, "terrain" | "log">>;
@@ -35,6 +37,22 @@ const SCENARIOS: readonly [string, () => ReturnType<typeof requestFor>][] = [
 ];
 
 describe("decision context", () => {
+  it("keeps the current loop warning when the outcomes layer is shed", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1 } });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const q = p.ask(w.view);
+      if ("handBack" in q) throw new Error(q.handBack);
+      const choice = p.choose({ goal: { type: "choice", choice: "step_aside", confidence: 1, probabilities: { step_aside: 1 } } }, { ...q.context, offers: [{ goal: "step_aside", criteria: "step", risk: 0.01 }] }, w.view);
+      if (!("plan" in choice)) throw new Error(choice.handBack);
+    }
+    const q = p.ask(w.view);
+    if ("handBack" in q || "reflex" in q || q.context.layers === undefined) throw new Error("expected context layers");
+    const stuck = layerOf(q.context.layers, "stuck");
+    expect(stuck["loop"]).toBeDefined();
+    expect(layerOf(fitToBudget(q.context.layers, 1).context, "stuck")["loop"]).toBe(stuck["loop"]);
+  });
+
   /* A change to one of these state snapshots changes what the trained adapters see. */
   it.each(SCENARIOS)("compiles %s into layers and the same state", (_name, make) => {
     const q = make();
@@ -45,6 +63,26 @@ describe("decision context", () => {
     expect(stateTokens(q.request.state)).toBeLessThan(STATE_TOKEN_CAP);
     expect(Object.fromEntries(LAYERS.map((layer) => [layer, Object.keys(layerOf(context, layer))]))).toMatchSnapshot("layers");
     expect(q.request.state).toMatchSnapshot("state");
+  });
+
+  it.each([LAYA_STATE_TOKENS, STATE_TOKEN_CAP])("protects numeric alternatives, pursuit and descent blockers at %i tokens", (stateTokensCap) => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 2, hp: 25, maxHp: 50, sp: 6, maxSp: 6, blows: 100 }, worn: ["a Dagger (1d4) (+0,+0)"],
+      monsters: [{ grid: { x: 6, y: 2 }, race: "soldier", level: 5 }], pack: ["5 Flasks of Oil", "2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door"] });
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, stateTokens: stateTokensCap,
+      lessons: () => Array.from({ length: 30 }, () => "A distant biography does not replace current combat evidence.") });
+    p.ask(w.view);
+    w.setMonsters([]);
+    w.advance(10);
+    const q = p.ask(w.view);
+    if (!("request" in q)) throw new Error("expected a request");
+    const tactical = q.request.state["tactical"] as { pressure: string; threats: readonly string[]; alternatives: readonly string[]; blocker: string };
+    expect(tactical.pressure).toContain("HP loss mean/scenario");
+    expect(tactical.threats.join(" ")).toContain("remembered");
+    expect(tactical.alternatives.length).toBeGreaterThan(0);
+    expect(tactical.blocker.length).toBeGreaterThan(0);
+    expect(stateTokens(q.request.state)).toBeLessThanOrEqual(stateTokensCap);
+    expect(q.context.requestTokens).toBe(estimateTokens(JSON.stringify(q.request)));
+    expect(q.context.requestTokens).toBeGreaterThan(stateTokens(q.request.state));
   });
 
   it("puts the situation first and the rules primer last", () => {
@@ -103,6 +141,34 @@ describe("decision context", () => {
     expect(stateOf(context)).toEqual({ rules: "r", lessons: "l" });
     expect(layerOf(context, "knowledge")).toEqual({ lessons: "l" });
     expect(() => contextOf([["manual", "rules", 1], ["memory", "rules", 2]])).toThrow(/twice/);
+  });
+
+  it("keeps stuck facts through budget shedding and names untried choices", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 1, hp: 20, maxHp: 40 } });
+    const memory = createDecisionMemory();
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false, decisionMemory: memory });
+    const count = stuckThresholds(null).repeat;
+    for (let i = 0; i < count; i++) {
+      memory.begin("rest", w.view);
+      w.advance(10);
+      memory.finish(w.view);
+    }
+    const q = p.ask(w.view);
+    if ("handBack" in q || "reflex" in q || q.context.layers === undefined) throw new Error("expected context layers");
+    const stuck = layerOf(q.context.layers, "stuck");
+    expect(stuck).toEqual({ stuck: q.request.state["stuck"] });
+    expect(stuck["stuck"]).toMatchObject({ repeated: [{ cycle: ["rest"], repetitions: count, decisions: count }], decisionsSinceProgress: count, turnsSinceProgress: count * 10 });
+    expect(layerOf(fitToBudget(q.context.layers, 1).context, "stuck")).toEqual(stuck);
+  });
+
+  it.each([LAYA_STATE_TOKENS, STATE_TOKEN_CAP])("keeps applicable numeric evidence while shedding a long biography at %i tokens", (budget) => {
+    const evidence = { pressure: "1 action mean 3 scenario 8; 2 actions mean 6 scenario 16", evidence: "soldier observed 8 HP/action", failed_escape: { goal: "phase", damage: 6 }, blocker: "needs a checked route", alternatives: ["oil: loss 6 after 18 viable yes", "phase: landing unknown"] };
+    const context = contextOf([["memory", "tactical", evidence], ["memory", "status", "blind; cannot read"], ["persona", "persona", { name: "Wren", traits: "bold", backstory: "An old biography. ".repeat(1800) }]]);
+    const fitted = fitToBudget(context, budget);
+    expect(fitted.over).toBe(false);
+    expect(stateOf(fitted.context)["tactical"]).toEqual(evidence);
+    expect(stateOf(fitted.context)["status"]).toBe("blind; cannot read");
+    expect(stateOf(fitted.context)["persona"]).toMatchObject({ name: "Wren", traits: "bold" });
   });
 
   it("drops whole layers, least needed first, only when a state is over budget", () => {

@@ -40,14 +40,14 @@ interface ManifestRule {
 interface Manifest {
   id: string;
   version: string;
-  engine: string;
+  engine: { range: string; because: string };
   rules: ManifestRule[];
   settings: { id: string; title: string; description: string; min: number; max: number; step: number; default: number }[];
 }
 
-const manifest = JSON.parse(
+const manifest = (JSON.parse(
   readFileSync(new URL("../manifest.json", import.meta.url), "utf8"),
-) as Manifest;
+) as { data: Manifest }).data;
 
 const pkg = JSON.parse(
   readFileSync(new URL("../package.json", import.meta.url), "utf8"),

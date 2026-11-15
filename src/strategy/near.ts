@@ -19,7 +19,7 @@ import { neededEntrances } from "../town/plan.js";
 import type { HomeStock } from "../town/home.js";
 import type { StoreMemory } from "../town/memory.js";
 import { createJourney } from "./journey.js";
-import { descentGaps, supplyMargin } from "./readiness.js";
+import { descentGaps, restRestoresMana, supplyMargin } from "./readiness.js";
 import type { Aim } from "./aims.js";
 
 export const NEAR_ORDER = ["explore", "rest", "down", "leave", "recall", "shop", "try", "position"] as const;
@@ -81,12 +81,12 @@ function awake(view: AgentView): boolean {
 
 function hurt(view: AgentView): boolean {
   const player = view.player();
-  return player.hp < player.maxHp || (player.maxSp > 0 && player.sp < player.maxSp);
+  return player.hp < player.maxHp || (player.sp < player.maxSp && restRestoresMana(player.cls));
 }
 
 function full(view: AgentView): boolean {
   const player = view.player();
-  return player.hp >= player.maxHp && (player.maxSp === 0 || player.sp >= player.maxSp);
+  return player.hp >= player.maxHp && (!restRestoresMana(player.cls) || player.sp >= player.maxSp);
 }
 
 function unknownInPack(view: AgentView): boolean {

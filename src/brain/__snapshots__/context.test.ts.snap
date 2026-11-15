@@ -12,8 +12,9 @@ exports[`decision context > compiles a breeder level into layers and the same st
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
-    "level",
+    "geometry",
     "status",
     "swarm",
   ],
@@ -25,6 +26,9 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -33,13 +37,38 @@ exports[`decision context > compiles a breeder level into layers and the same st
   "character": "Level 5 (novice) Human Warrior, on dungeon level 2 (shallow); deepest reached 1 (shallow).",
   "creatures": "3 giant white mouse (a few): an easy kill each, the nearest 2 steps away (close)",
   "gaps": "The character is prepared for dungeon level 3 (shallow).",
+  "geometry": "Next to the character: north floor, north-east floor, east floor, south-east floor, south floor, south-west floor, west floor, north-west floor. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 5 steps (near) away, 6 turns (a short wait) to reach and take. Choke points: 2 steps (close) north-west (a corridor), 2 turns (soon); 3 steps (close) south-west (a corridor), 3 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
-  "level": "The level is explored. A down staircase is known.",
+  "incoming": "Up to 0 HP damage in one action (none) and 12 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "take_position",
+      "leave_level",
+    ],
+  },
   "swarm": "3 giant white mouse (a few) in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.",
+  "tactical": {
+    "alternatives": [],
+    "blocker": "Squire must leave this breeder level, but it has no checked exit or safe Recall wait.",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=6/12; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d2 HP~20..20 speed110 loss2=4",
+      "m2 seen d2 HP~20..20 speed110 loss2=4",
+      "m3 seen d2 HP~20..20 speed110 loss2=4",
+    ],
+  },
 }
 `;
 
@@ -57,6 +86,7 @@ exports[`decision context > compiles a cautious persona with lessons into layers
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -71,6 +101,9 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -81,17 +114,37 @@ exports[`decision context > compiles a cautious persona with lessons into layers
   "gaps": "The character is prepared for dungeon level 2 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "lessons": "Floating eyes paralyse in melee. Grip is fast.",
   "level": "The level is explored. A down staircase is known.",
   "persona": {
     "name": "Coward",
     "play_rule": "retreats at the first real loss of hit points",
     "quirks": "craven",
-    "traits": "Boldness: very timid; Paranoia: very sees danger everywhere; Self-preservation: very survival first; Escape readiness: very keeps many; Retreat threshold: very leaves early",
+    "traits": "Boldness: very timid; Paranoia: very sees danger everywhere; Self-preservation: very survival first; Town trips: somewhat rarely returns; Escape readiness: very keeps many; Retreat threshold: very leaves early",
   },
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "descend",
+    ],
+  },
+  "tactical": {
+    "alternatives": [],
+    "blocker": "none",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=0; status=0; unknown=none",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [],
+  },
 }
 `;
 
@@ -107,6 +160,7 @@ exports[`decision context > compiles a hungry character in the dark into layers 
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -120,6 +174,9 @@ exports[`decision context > compiles a hungry character in the dark into layers 
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -127,14 +184,34 @@ exports[`decision context > compiles a hungry character in the dark into layers 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 1 (shallow); deepest reached 1 (shallow).",
   "creatures": "No creatures in sight.",
-  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; five food units and no hunger.",
+  "gaps": "For dungeon level 2 (shallow) the character still lacks: working light; 2 food units and no hunger; 1 healing potion; 1 usable escape.",
   "ground": "Safe ground.",
   "health": "full: 40 of 40 hit points",
   "hunger": "The character is hungry.",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "Too dark here to read scrolls or cast spells.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "step_aside",
+    ],
+  },
+  "tactical": {
+    "alternatives": [],
+    "blocker": "working light; 2 food units and no hunger; 1 healing potion; 1 usable escape",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=0; status=0; unknown=none",
+    "reserves": "usable cure=0 phase=0 teleport=0 escapeSpells=0",
+    "threats": [],
+  },
 }
 `;
 
@@ -152,6 +229,7 @@ exports[`decision context > compiles a mage with spells and mana into layers and
     "mana",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -164,6 +242,9 @@ exports[`decision context > compiles a mage with spells and mana into layers and
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -171,15 +252,41 @@ exports[`decision context > compiles a mage with spells and mana into layers and
 {
   "character": "Level 5 (novice) Human Mage, on dungeon level 2 (shallow); deepest reached 1 (shallow).",
   "creatures": "kobold: an easy kill, 4 steps away (near)",
-  "gaps": "For dungeon level 3 (shallow) the character still lacks: maximum character level 11.",
+  "gaps": "The character is prepared for dungeon level 3 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "mana": "over half: 6 of 8",
   "mechanics": "A Mage casts arcane spells with Intelligence.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "fight",
+      "cast_attack",
+      "descend",
+    ],
+  },
+  "tactical": {
+    "alternatives": [
+      "fight:m1/- a~unknown loss~3/6 after~54 viable=no",
+    ],
+    "blocker": "the next route square is blocked",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d4 HP~20..20 speed110 loss2=0",
+    ],
+  },
 }
 `;
 
@@ -195,6 +302,7 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -208,6 +316,9 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -215,14 +326,41 @@ exports[`decision context > compiles a pack of faster creatures into layers and 
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 6 (shallow); deepest reached 1 (shallow).",
   "creatures": "3 jackal (a few): an easy kill each, the nearest 3 steps away (close), faster than the character",
-  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 7; one usable Word of Recall.",
+  "gaps": "For dungeon level 7 (shallow) the character still lacks: maximum character level 6.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 12 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "fight",
+      "take_position",
+    ],
+  },
   "swarm": "3 jackal (a few) in sight. More of one kind can keep coming, so fighting them all may not end; leaving the level does.",
+  "tactical": {
+    "alternatives": [
+      "fight:m1/- a~unknown loss~unknown/unknown after~unknown viable=no",
+    ],
+    "blocker": "maximum character level 6",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=6/12; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d3 HP~20..20 speed120 loss2=8",
+      "m2 seen d4 HP~20..20 speed120 loss2=4",
+      "m3 seen d5 HP~20..20 speed120 loss2=0",
+    ],
+  },
 }
 `;
 
@@ -238,6 +376,7 @@ exports[`decision context > compiles a persona with a grudge into layers and the
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -252,6 +391,9 @@ exports[`decision context > compiles a persona with a grudge into layers and the
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -259,19 +401,44 @@ exports[`decision context > compiles a persona with a grudge into layers and the
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 4 (shallow); deepest reached 1 (shallow).",
   "creatures": "cave spider: an easy kill, 3 steps away (close)",
-  "gaps": "For dungeon level 5 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
+  "gaps": "The character is prepared for dungeon level 5 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "persona": {
     "believes": "the cave spider killed two of the family, and the family hates it, which can call for vengeance or for caution.",
     "name": "Berserker",
     "play_rule": "closes to melee and presses every fight",
-    "traits": "Boldness: very bold; Impulsiveness: very rash; Pride: very glory-seeking; Self-preservation: somewhat reckless; Engagement range: very melee",
+    "traits": "Boldness: very bold; Impulsiveness: very rash; Pride: very glory-seeking; Self-preservation: somewhat reckless; Ambition: somewhat set on winning; Town trips: somewhat rarely returns; Engagement range: very melee",
   },
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "fight",
+      "descend",
+    ],
+  },
+  "tactical": {
+    "alternatives": [
+      "fight:m1/- a~unknown loss~6/10 after~50 viable=no",
+    ],
+    "blocker": "none",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d3 HP~20..20 speed110 loss2=0",
+    ],
+  },
 }
 `;
 
@@ -287,6 +454,7 @@ exports[`decision context > compiles a sleeping monster into layers and the same
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -299,6 +467,9 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -309,10 +480,35 @@ exports[`decision context > compiles a sleeping monster into layers and the same
   "gaps": "The character is prepared for dungeon level 4 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "fight",
+      "descend",
+    ],
+  },
+  "tactical": {
+    "alternatives": [
+      "fight:m1/- a~unknown loss~17.5/30 after~30 viable=no",
+    ],
+    "blocker": "the route would wake a nearby creature",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=unknown; status=0; unknown=blows,wake-or-release",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d4 HP~20..20 speed110 loss2=0",
+    ],
+  },
 }
 `;
 
@@ -328,6 +524,7 @@ exports[`decision context > compiles a stationary floating eye into layers and t
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -340,20 +537,45 @@ exports[`decision context > compiles a stationary floating eye into layers and t
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
 exports[`decision context > compiles a stationary floating eye into layers and the same state > state 1`] = `
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 1 (shallow); deepest reached 1 (shallow).",
-  "creatures": "floating eye: an easy kill, 1 steps away (adjacent)",
+  "creatures": "floating eye: an easy kill, 1 steps away (adjacent), never moves",
   "gaps": "The character is prepared for dungeon level 2 (shallow).",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 11 HP damage in one action (under a quarter of current HP) and 22 in two (a quarter to half of current HP). Status danger 0 (none); uncertainty 11 HP (under a quarter of current HP). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 4 HP damage in one action (under a quarter of current HP) and 8 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 4 HP (under a quarter of current HP). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "step_aside",
+    ],
+  },
+  "tactical": {
+    "alternatives": [],
+    "blocker": "no unblocked known route reaches the staircase",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=2/4 2a=4/8; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d1 HP~20..20 speed110 loss2=8",
+    ],
+  },
 }
 `;
 
@@ -369,6 +591,7 @@ exports[`decision context > compiles a unique in view into layers and the same s
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "geometry",
     "status",
@@ -381,6 +604,9 @@ exports[`decision context > compiles a unique in view into layers and the same s
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -388,13 +614,39 @@ exports[`decision context > compiles a unique in view into layers and the same s
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 5 (shallow); deepest reached 1 (shallow).",
   "creatures": "Bullroarer the Hobbit: deadly, 4 steps away (near), unique, faster than the character",
-  "gaps": "For dungeon level 6 (shallow) the character still lacks: maximum character level 6; one usable Word of Recall.",
+  "gaps": "The character is prepared for dungeon level 6 (shallow).",
   "geometry": "Next to the character: north floor, north-east floor, east floor, south-east floor, south floor, south-west floor, west floor, north-west floor. Line of sight: no square within two steps is hidden from the awake creatures in view. Stairs: no up staircase is known; the nearest down staircase is 5 steps (near) away, 6 turns (a short wait) to reach and take. Choke points: 2 steps (close) north-west (a corridor), 2 turns (soon); 2 steps (close) south-west (a corridor), 2 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 38 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 33 in two (over half of current HP). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "fight",
+      "retreat",
+    ],
+  },
+  "tactical": {
+    "alternatives": [
+      "fight:m1/- a~unknown loss~unknown/unknown after~unknown viable=no",
+      "retreat a~1 loss~0/0 after~60 viable=no",
+    ],
+    "blocker": "the checked route loses its HP reserve or permits a disabling attack",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=19/33; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d4 HP~20..20 speed120 loss2=33",
+    ],
+  },
 }
 `;
 
@@ -410,6 +662,7 @@ exports[`decision context > compiles an unseen attacker into layers and the same
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "geometry",
     "status",
@@ -422,6 +675,9 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -433,9 +689,35 @@ exports[`decision context > compiles an unseen attacker into layers and the same
   "geometry": "Next to the character: north wall, north-east wall, east floor, south-east wall, south wall, south-west wall, west floor, north-west wall. Line of sight: no awake creature in view can see the character. Stairs: the nearest up staircase is 2 steps (close) away, 3 turns (soon) to reach and take; no down staircase is known. The character stands in a choke point now. Choke points: 1 step (adjacent) east (a corridor), 1 turn (at once); 1 step (adjacent) west (a corridor), 1 turn (at once); 2 steps (close) east (a corridor), 2 turns (soon). Hazards: none known within 5 steps.",
   "ground": "Safe ground.",
   "health": "full: 56 of 60 hit points",
-  "incoming": "Up to 4 HP damage in one action (under a quarter of current HP) and 8 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 4 HP (under a quarter of current HP). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 4 HP damage in one action (under a quarter of current HP) and 8 in two (under a quarter of current HP). Status danger 0 (none); uncertainty 4 HP (under a quarter of current HP). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 10,
+    "turnsWithoutExperience": 10,
+    "untried": [
+      "leave_level",
+      "swing_unseen",
+      "phase",
+      "retreat",
+      "explore",
+    ],
+  },
+  "tactical": {
+    "alternatives": [
+      "phase:m-/i2 a~1 loss~4/6 after~50 viable=yes",
+    ],
+    "blocker": "blindness, confusion or an unexplained hit prevents a checked walk",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=4/4 2a=8/8; worst1=unknown; status=0; unknown=capability",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [],
+  },
 }
 `;
 
@@ -451,6 +733,7 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -463,20 +746,45 @@ exports[`decision context > compiles poisoned at low HP with no potions into lay
   "purpose": [
     "gaps",
   ],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
 exports[`decision context > compiles poisoned at low HP with no potions into layers and the same state > state 1`] = `
 {
   "character": "Level 5 (novice) Human Warrior, on dungeon level 3 (shallow); deepest reached 1 (shallow).",
-  "creatures": "Grip, Farmer Maggot's Dog: a fair fight, 2 steps away (close)",
-  "gaps": "For dungeon level 4 (shallow) the character still lacks: 50 maximum hit points; working light; five food units and no hunger; two Cure Light, Serious or Critical Wounds potions.",
+  "creatures": "Grip, Farmer Maggot's Dog: an easy kill, 2 steps away (close)",
+  "gaps": "For dungeon level 4 (shallow) the character still lacks: clear status before a planned descent; working light; 2 food units and no hunger; 1 healing potion; 1 usable escape.",
   "ground": "Safe ground.",
   "health": "near death: 6 of 30 hit points",
-  "incoming": "Up to 1 HP damage in one action (under a quarter of current HP) and 16 in two (enough to kill). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 1 HP damage in one action (under a quarter of current HP) and 8 in two (enough to kill). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "Poisoned, losing a few hit points each turn.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "endure",
+    ],
+  },
+  "tactical": {
+    "alternatives": [],
+    "blocker": "clear status before a planned descent; working light; 2 food units and no hunger; 1 healing potion; 1 usable escape",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=1/1 2a=5/8; worst1=unknown; status=0; unknown=blows",
+    "reserves": "usable cure=0 phase=0 teleport=0 escapeSpells=0",
+    "threats": [
+      "m1 seen d2 HP~20..20 speed110 loss2=8",
+    ],
+  },
 }
 `;
 
@@ -492,6 +800,7 @@ exports[`decision context > compiles town with a full pack into layers and the s
     "health",
     "creatures",
     "incoming",
+    "tactical",
     "ground",
     "level",
     "status",
@@ -502,6 +811,9 @@ exports[`decision context > compiles town with a full pack into layers and the s
   "outcomes": [],
   "persona": [],
   "purpose": [],
+  "stuck": [
+    "stuck",
+  ],
 }
 `;
 
@@ -511,9 +823,29 @@ exports[`decision context > compiles town with a full pack into layers and the s
   "creatures": "No creatures in sight.",
   "ground": "Safe ground.",
   "health": "full: 60 of 60 hit points",
-  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are conservative bounds, not death probabilities.",
+  "incoming": "Up to 0 HP damage in one action (none) and 0 in two (none). Status danger 0 (none); uncertainty 0 HP (none). These are plausible damage scenarios, not absolute bounds or death probabilities.",
   "level": "The level is explored. A down staircase is known.",
   "rules": "Killing creatures earns experience, and experience makes the character stronger. Going deeper too early is a common way to die, but waking a sleeping creature just to clear a level is not worth the risk; once a level has nothing safe left to do, the stairs are the way on. Resting with an awake creature in sight gets interrupted. When the character could die before its next useful action, getting away matters more than dealing damage. Healing potions are worth drinking before hit points get too low to survive one more round. Phase Door jumps a short random distance, Teleportation moves far across the same level, Teleport Level leaves the level, and Teleport Other sends one creature far away instead. A creature that cannot see the character cannot cast at it or shoot it, so a corner between them buys time. Missiles, thrown oil, wands and attack spells hurt a creature before it can reach the character. A mage under level 10 dies fast in melee; Magic Missile or a flask of oil thrown from a few steps away kills most early creatures before they arrive. Worm masses, lice and giant white mice split in two every few turns, so a room of them grows faster than a level 5 character can kill it; taking the nearest stairs leaves every one of them behind. While the character is afraid, the game refuses every melee blow without using a turn, but arrows, spells and wands still hit.",
   "status": "No status effects.",
+  "stuck": {
+    "cooling": [],
+    "decisionsSinceProgress": 0,
+    "recent": [],
+    "repeated": [],
+    "turnsSinceProgress": 0,
+    "turnsWithoutExperience": 0,
+    "untried": [
+      "descend",
+    ],
+  },
+  "tactical": {
+    "alternatives": [],
+    "blocker": "descent permission is held",
+    "interpretation": "a=100 energy; scenario uses the persona's damage quantile; unknown capabilities leave the absolute worst case unknown",
+    "omitted": 0,
+    "pressure": "HP loss mean/scenario: 1a=0/0 2a=0/0; worst1=0; status=0; unknown=none",
+    "reserves": "usable cure=3 phase=3 teleport=0 escapeSpells=0",
+    "threats": [],
+  },
 }
 `;

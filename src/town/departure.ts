@@ -1,26 +1,41 @@
 /** A missing basket can fund a short shallow trip only after local buying is exhausted. */
 
 import type { AgentView, StoreView } from "../host-adapter.js";
+import { TV } from "../gear/compare.js";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
 import type { Terrain } from "../terrain.js";
 import { basketWants, missingEssentials, supplies } from "../strategy/readiness.js";
-import { matchesSupplyName, supplyNeeds, type SupplyNeed } from "./needs.js";
+import { matchesSupplyName, PRICE_FLOOR, supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shopEntrances } from "./plan.js";
 import { storesFor } from "./shop.js";
 
 export const EARNING_TURNS = 1000;
+/** The longest an earning trip runs for the most driven persona, in game turns. */
+export const EARNING_TURNS_MAX = 6000;
+
+/**
+ * How long an earning trip runs before the character goes back up. A cautious
+ * persona keeps the short trip; a bold, ambitious one that rarely goes home stays
+ * on level 1 long enough to earn the gold and the levels it came for.
+ */
+export function earningTurns(persona: Persona | null): number {
+  if (persona === null) return EARNING_TURNS;
+  const { boldness, ambition, towntrips } = persona.sliders;
+  const drive = Math.min(1, Math.max(0, (boldness + ambition + (100 - towntrips)) / 300));
+  return Math.round(EARNING_TURNS + (EARNING_TURNS_MAX - EARNING_TURNS) * drive * drive);
+}
 export const EARNING_LEASH = 6;
 
-/** Optional stock and gear wait until the whole survival basket is present. */
+/** A small oil reserve lets a caster earn the gold for its missing survival basket. */
 export function basketNeeds(view: AgentView, needs: readonly SupplyNeed[], persona: Persona | null = null): SupplyNeed[] {
   if (missingEssentials(view, persona).length === 0) return [...needs];
   const stock = supplies(view);
   const wants = basketWants(persona);
-  return needs.filter((need) => ["healing", "phase", "food", "light"].includes(need.kind)).map((need) => ({
+  return needs.filter((need) => (["healing", "phase", "food", "light"].includes(need.kind) || need.kind === "oil")).map((need) => ({
     ...need,
     have: need.kind === "healing" ? stock.cures : need.kind === "phase" ? stock.phase : need.have,
-    want: wants[need.kind as keyof typeof wants],
+    want: need.kind === "oil" ? 15 : need.kind === "food" ? 5 : wants[need.kind as keyof typeof wants],
   }));
 }
 
@@ -28,8 +43,11 @@ export function createDeparture() {
   const shelves = new Map<number, StoreView>();
   let previousDepth = -1;
   let lastTurn = -1;
-  let earning: { turn: number; gold: number; target: number | null; wide: boolean } | null = null;
+  let earning: { turn: number; gold: number; target: number | null; wide: boolean; limit: number } | null = null;
   let failedAtGold: number | null = null;
+  let failedTurn = -1;
+  let townPack = "";
+  let townGold = 0;
 
   function observe(view: AgentView, terrain: Terrain): void {
     const player = view.player();
@@ -37,13 +55,25 @@ export function createDeparture() {
       shelves.clear();
       earning = null;
       failedAtGold = null;
+      failedTurn = -1;
       previousDepth = -1;
+      townPack = "";
+      townGold = 0;
     }
     lastTurn = view.turn();
     if (player.depth === 0 && previousDepth > 0) {
-      if (earning !== null && player.gold <= earning.gold) failedAtGold = player.gold;
+      if (earning !== null && player.gold <= earning.gold) {
+        failedAtGold = player.gold;
+        failedTurn = view.turn();
+      }
       earning = null;
-      shelves.clear();
+      /* An empty refresh cannot fund a purchase that was already too expensive. */
+      const pack = JSON.stringify(view.inventory().map((item) => [item.handle, item.number]));
+      if (pack !== townPack || player.gold > townGold) shelves.clear();
+    }
+    if (player.depth === 0) {
+      townPack = JSON.stringify(view.inventory().map((item) => [item.handle, item.number]));
+      townGold = player.gold;
     }
     /* The trip's clock starts on level 1. A descent begun in town can be
      * interrupted by townspeople for hundreds of turns, and the soak's Priest
@@ -67,7 +97,7 @@ export function createDeparture() {
     if (missing.length === 0) return { ready: true, earning: false, reason: "", target: null };
     const needs = basketNeeds(view, supplyNeeds(view, readPack(view), persona), persona).filter((need) => need.have < need.want);
     const shops = shopEntrances(view, terrain);
-    const unknown = player.gold > 0 && shops.some((shop) => !visited.has(shop.feat) && needs.some((need) => storesFor(need.kind).includes(shop.name)));
+    const unknown = shops.some((shop) => !visited.has(shop.feat) && !shelves.has(shop.feat) && needs.some((need) => need.have < need.want && player.gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(shop.name)));
     let total = 0;
     let priced = true;
     let affordable = false;
@@ -81,22 +111,38 @@ export function createDeparture() {
       }
     }
     const stock = supplies(view);
-    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && stock.fuel >= 1) && (failedAtGold === null || player.gold > failedAtGold);
+    const canEarn = !unknown && !affordable && player.hp === player.maxHp && player.status.poisoned === 0 && player.status.cut === 0 && player.status.blind === 0 && player.status.confused === 0 && stock.food >= 1 && (stock.lastingLight || stock.workingLight && (stock.fuel >= 1 || view.equipment().some((item) => item !== null && item.tval === TV.LIGHT && item.timeout >= earningTurns(persona)))) && (failedAtGold === null || player.gold > failedAtGold || view.turn() - failedTurn >= earningTurns(persona));
     return { ready: false, earning: canEarn, reason: missing.map((requirement) => requirement.reason).join(", "), target: priced ? total : null };
   }
 
   return {
     status,
-    begin(view: AgentView, target: number | null): void {
+    supplyAffordable(view: AgentView, kind: "food" | "healing" | "phase" | "light" | "oil"): boolean {
+      if (view.player().gold < PRICE_FLOOR[kind]) return false;
+      const stores = [...shelves.values()].filter((store) => storesFor(kind).includes(store.featName));
+      const pattern = kind === "food" ? /Ration|Food|Waybread|Mushroom/i : kind === "healing" ? /Cure (Light|Serious|Critical) Wounds/i :
+        kind === "phase" ? /Phase Door|Teleport/i : kind === "light" ? /Torch|Torches|Lantern|Oil/i : /Flasks? of Oil/i;
+      return stores.length === 0 || stores.some((store) => store.stock.some((item) => item.number > 0 && item.price !== undefined &&
+        item.price > 0 && item.price <= view.player().gold && pattern.test((item as { name?: string }).name ?? "")));
+    },
+    reserveAffordable(view: AgentView): boolean {
+      const gold = view.player().gold;
+      if (gold < PRICE_FLOOR.phase) return false;
+      const stores = [...shelves.values()].filter((store) => store.featName === "Alchemy Shop");
+      return stores.length === 0 || stores.some((store) => store.stock.some((item) => item.number > 0 &&
+        item.price !== undefined && item.price > 0 && item.price <= gold && /Cure (Light|Serious|Critical) Wounds|Phase Door|Teleport/i.test((item as { name?: string }).name ?? "")));
+    },
+    end(): void { earning = null; },
+    begin(view: AgentView, target: number | null, persona: Persona | null = null): void {
       /* A goal already met would end the trip on arrival; the soak's Rogue, with
        * 2 gold, climbed straight back 161 times. The turn limit still ends it. */
-      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold };
+      earning = { turn: view.turn(), gold: view.player().gold, target: target !== null && target > view.player().gold ? target : null, wide: failedAtGold !== null && view.player().gold <= failedAtGold, limit: earningTurns(persona) };
     },
     active: () => earning !== null,
     /** True when the last earning trip came back with no more gold than it set out with. A trip under way keeps the answer it started with. */
     cameBackEmpty: (view: AgentView) => earning !== null ? earning.wide : failedAtGold !== null && view.player().gold <= failedAtGold,
     finished(view: AgentView): boolean {
-      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= EARNING_TURNS || earning.target !== null && view.player().gold >= earning.target);
+      return earning !== null && (view.player().depth > 1 || view.turn() - earning.turn >= earning.limit || earning.target !== null && view.player().gold >= earning.target);
     },
     observe,
   };

@@ -55,7 +55,7 @@ interface Failure {
 export const REPEAT_RUN = 3;
 /** Decisions looked back over for a walk back and forth. */
 const CYCLE_WINDOW = 8;
-const CYCLE_MAX_GRIDS = 3;
+export const CYCLE_MAX_GRIDS = 3;
 const CYCLE_MIN_MOVES = 5;
 /** Decisions looked back over for going up and down between two levels. */
 const FLIP_WINDOW = 6;
@@ -69,7 +69,7 @@ export const REGION_SIZE = 10;
 /** Separate visits to one block, with nothing new in between, that count as a loop. */
 export const REGION_VISITS = 3;
 /** Decisions kept for the revisit check. */
-const REGION_WINDOW = 24;
+export const REGION_WINDOW = 24;
 /** The same refused sequence this many times inside the window is a loop. */
 export const FAILED_RUN = 3;
 /** Game turns a refused sequence is remembered for. */

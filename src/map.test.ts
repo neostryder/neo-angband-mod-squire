@@ -8,8 +8,32 @@ import {
   isRoutable,
   isWalkable,
   knownDownStairs,
+  knownStairs,
   standingOnHarm,
 } from "./map.js";
+
+describe("snapshot map lists", () => {
+  it("reuses scans and refreshes them after a same-turn reveal", () => {
+    const w = world({ map: ["########", "#<@..>,#", "########"] });
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const front = frontiers(w.view, w.terrain);
+    const stairs = knownStairs(w.view, w.terrain);
+    const down = knownDownStairs(w.view, w.terrain);
+    expect(reads).toBeGreaterThan(0);
+    reads = 0;
+    expect(frontiers(w.view, w.terrain)).toEqual(front);
+    expect(knownStairs(w.view, w.terrain)).toEqual(stairs);
+    expect(knownDownStairs(w.view, w.terrain)).toEqual(down);
+    expect(reads).toBe(0);
+    stairs.pop();
+    expect(knownStairs(w.view, w.terrain)).toHaveLength(2);
+    w.reveal({ x: 6, y: 1 });
+    expect(frontiers(w.view, w.terrain)).toEqual([]);
+    expect(reads).toBeGreaterThan(0);
+  });
+});
 
 describe("reading the map", () => {
   const w = world({
@@ -127,5 +151,39 @@ describe("frontiers on arrival", () => {
   it("count the character's own grid when the map around it is still blank", () => {
     const w = world({ map: ["     ", "  @  ", "     "] });
     expect(frontiers(w.view, w.terrain)).toEqual([{ x: 2, y: 1 }]);
+  });
+});
+
+describe("paralysing gaze routes", () => {
+  const map = ["#########", "#.@....,#", "#########"];
+
+  it.each([
+    { race: "floating eye", memory: "", flags: [] },
+    { race: "known gazer", memory: "It can gaze to paralyze.", flags: [] },
+    { race: "rooted watcher", memory: "It can touch to paralyse.", flags: ["NEVER_MOVE"] },
+  ])("blocks adjacency from known paralysis for $race", ({ race, memory, flags }) => {
+    const w = world({ map, player: { level: 6 }, monsters: [{ grid: { x: 5, y: 1 }, race, raceFlags: flags }], monsterRecall: () => memory });
+    expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(false);
+    expect(isWalkable(w.view, w.terrain, { x: 6, y: 1 })).toBe(false);
+    expect(frontiers(w.view, w.terrain)).not.toContainEqual({ x: 6, y: 1 });
+    w.setPlayer({ objectFlags: ["FREE_ACT"] });
+    expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(true);
+  });
+
+  it("does not classify a radiation eye as paralysing by name", () => {
+    const w = world({ map, player: { level: 6 }, monsters: [{ grid: { x: 5, y: 1 }, race: "radiation eye", raceFlags: ["NEVER_MOVE"] }] });
+    expect(isRoutable(w.view, w.terrain, { x: 4, y: 1 })).toBe(true);
+  });
+});
+
+describe("hazard checks over a whole floor", () => {
+  it("read the creature list once for a flood, not once per grid", () => {
+    const row = `#${".".repeat(30)}#`;
+    const map = ["#".repeat(32), row, row, row, "#".repeat(32)];
+    const w = world({ map, player: { level: 3 }, monsters: [{ grid: { x: 20, y: 2 }, race: "rock lizard", raceFlags: ["NEVER_MOVE"] }] });
+    let reads = 0;
+    const counted = { ...w.view, monsters: () => { reads++; return w.view.monsters(); } };
+    for (let y = 0; y < 5; y++) for (let x = 0; x < 32; x++) isRoutable(counted, w.terrain, { x, y });
+    expect(reads).toBeLessThanOrEqual(2);
   });
 });

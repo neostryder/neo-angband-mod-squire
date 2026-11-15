@@ -25,6 +25,7 @@ import { LAYA_STATE_TOKENS, STATE_TOKEN_CAP } from "./brain/context.js";
 import { CHAOS_METHODS, type ChaosMethod } from "./brain/chaos.js";
 import { GOAL_GATE_MODES, type GoalGateMode } from "./brain/regret.js";
 import { CONFIDENCE_FLOOR } from "./brain/tactics.js";
+import { DEFAULT_ERRAND_KEY, ERRAND_KEYS, type ErrandKey } from "./errands/keys.js";
 
 export const CONFIG_FORMAT = "neo-angband/squire/prefs";
 export const CONFIG_SCHEMA = 1;
@@ -75,6 +76,8 @@ export interface SquireConfig {
   readonly chaosMethod: ChaosMethod;
   /** How the goal gate treats a pick that risks more than a safer option of its class: off, shadow (price and log only), or acting. Stored only; no panel control sets it. */
   readonly goalGate: GoalGateMode;
+  /** The key that opens the errand menu while Squire drives. One no game command uses in either keyset. */
+  readonly errandKey: ErrandKey;
 }
 
 /** The Instructions kept setting: how many the squire holds, and the bounds the setup box allows. */
@@ -107,6 +110,7 @@ export function defaultConfig(): SquireConfig {
     pendingHeir: null,
     chaosMethod: "sampling",
     goalGate: "shadow",
+    errandKey: DEFAULT_ERRAND_KEY,
   };
 }
 
@@ -244,6 +248,7 @@ export function readConfig(stored: unknown): SquireConfig {
     })(),
     chaosMethod: pickOf(data["chaosMethod"], CHAOS_METHODS, base.chaosMethod),
     goalGate: pickOf(data["goalGate"], GOAL_GATE_MODES, base.goalGate),
+    errandKey: pickOf(data["errandKey"], ERRAND_KEYS, base.errandKey),
   };
 }
 

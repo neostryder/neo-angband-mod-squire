@@ -104,6 +104,7 @@ describe("roll-on birth", () => {
 describe("namesake births", () => {
   function waiting(options: { mode?: "like" | "random"; enabled?: boolean; inheritance?: number } = {}) {
     const parent = defaultPersona("Mira");
+    Object.assign(parent.sliders, { boldness: 50, ambition: 50, selfpreservation: 70, towntrips: 50, retreatat: 50 });
     parent.sliders.inheritance = options.inheritance ?? 100;
     parent.toggles.namesakes = options.enabled ?? true;
     const line: Lineage = { name: "Mira", generation: 1, ancestors: [], lore: [], grudges: [], deepest: 20, turns: 40_000, died: { depth: 2, cause: "Grip", turn: 40_000 } };
@@ -120,7 +121,7 @@ describe("namesake births", () => {
     expect(rollOnPresenter(h.host, store, () => 5, () => 0).show(s)).toBe(true);
     expect(calls).toContain("name Mira the Second");
     expect(h.config().pendingHeir?.name).toBe("Mira the Second");
-    expect(h.logged.some((line) => line.includes("Mira the Second: I bear Mira's name."))).toBe(true);
+    expect(h.logged.some((line) => line.includes("Mira the Second: I took Mira's name. I will go deeper than Mira."))).toBe(true);
   });
 
   it.each([{ enabled: false }, { inheritance: 0 }])("keeps the usual name when namesakes cannot pass: %j", (options) => {

@@ -149,7 +149,7 @@ describe("volleys", () => {
 describe("combat outcomes and escape reserves", () => {
   function mage(sp = 5) {
     const w = world({ map: CORRIDOR, player: { cls: "Mage", level: 2, hp: 16, maxHp: 16, sp, maxSp: 5 },
-      monsters: [{ grid: { x: 5, y: 1 }, race: "white worm mass", hp: 30, raceFlags: ["MULTIPLY"] }],
+      monsters: [{ grid: { x: 5, y: 1 }, race: "white worm mass", hp: 30, level: 1, raceFlags: ["MULTIPLY"] }], monsterRecall: () => "It can crawl to hurt (1d1).",
       spells: [{ name: "Magic Missile", sidx: 0, mana: 2 }, { name: "Phase Door", sidx: 1, mana: 1 }], projectionPath: (to) => [to] });
     Object.assign(w.view, { spellInfo: (sidx: number) => ({ description: sidx === 0 ? "Inflicts an average of 7.5 damage (3d4)." : "Teleports you a short distance.", mana: sidx === 0 ? 2 : 1, failChance: 0, canCastNow: true }) });
     return w;

@@ -1,8 +1,33 @@
 import { describe, expect, it } from "vitest";
 import type { AgentView } from "@rpgm-tools/neo-angband-core";
-import { createJournal, emptyJournal, type Journal } from "./journal.js";
+import { createEncounterCapture, createJournal, emptyJournal, type Journal } from "./journal.js";
 import type { LoggedDecision } from "./memory/log.js";
 import { world, type World } from "./harness.js";
+
+describe("encounter capture", () => {
+  it("keeps ordered events, unfinished visits and a null-report boundary", () => {
+    let time = 100;
+    const capture = createEncounterCapture(() => time, 2);
+    const frame = { version: 1, token: { epoch: 1, revision: 1 }, turn: 10, player: null, inventory: null, equipment: null, equipmentSlots: null, quiver: null, floorHere: null, monsters: null, monstersHidden: null, target: null, targetReadable: false, stores: null, spellbooks: null,
+      level: { token: { epoch: 1, revision: 1 }, levelId: 7, depth: 1, width: 3, height: 3, cells: [] } } as const;
+    capture.frame(frame, "hero");
+    capture.event({ kind: "command", value: { code: "hold", phase: "play", token: frame.token } });
+    capture.event({ kind: "combat", value: { attacker: "unseen", target: "player", kind: "melee", hit: true, died: false, grid: { x: 1, y: 1 }, playerDamage: 4 } });
+    capture.event({ kind: "heal", value: { who: "player", grid: { x: 1, y: 1 }, playerAmount: 3 } });
+    capture.event({ kind: "result", value: { code: "hold", ok: true, turnAtSubmit: 10 } });
+    time = 250;
+    capture.frame({ ...frame, turn: 20 }, "hero");
+    expect(capture.frames()[1]).toMatchObject({ elapsedMs: 150, floor: "hero:0:7", events: [{ kind: "command" }, { kind: "combat" }, { kind: "heal" }, { kind: "result" }] });
+    capture.event({ kind: "boundary", value: { report: false } });
+    capture.frame({ ...frame, turn: 21 }, "hero");
+    expect(capture.frames()).toHaveLength(2);
+    expect(capture.frames()[1]).toMatchObject({ floor: "hero:1:7", events: [{ kind: "boundary", value: { report: false } }] });
+    expect(capture.frames()[0]!.world.turn).toBe(20);
+    const exported = capture.frames();
+    (exported[0]!.world as { turn: number }).turn = 999;
+    expect(capture.frames()[0]!.world.turn).toBe(20);
+  });
+});
 
 const MAP = [
   "#########",

@@ -12,7 +12,7 @@
 import type { AgentView } from "../host-adapter.js";
 import { readPack } from "../brain/pack.js";
 import type { Persona } from "../persona/persona.js";
-import { recallItem, RECALL_FROM_DEPTH, supplyNeeds, type SupplyKind } from "../town/needs.js";
+import { PRICE_FLOOR, recallItem, RECALL_FROM_DEPTH, supplyNeeds, type SupplyKind } from "../town/needs.js";
 import { affordable, type Aim } from "./aims.js";
 import { drive, pursuitWeight, type Pursuit } from "./pursuits.js";
 import { missingEssentials, supplyMargin } from "./readiness.js";
@@ -33,7 +33,8 @@ function clamp01(value: number): number {
 /**
  * Why a trip home is worth weighing now, or null when it is not: in the
  * dungeon, above the margin that forces a trip, short of what the persona
- * wants, and with a way home (a Recall scroll, or stairs near the surface).
+ * wants, with the gold to buy at least one of what it lacks, and with a way
+ * home (a Recall scroll, or stairs near the surface).
  */
 /** Supplies the persona would buy before saving its gold; only these can justify an early trip. */
 function wanted(kind: SupplyKind, persona: Persona | null, pursuits: readonly Pursuit[]): boolean {
@@ -45,7 +46,7 @@ export function townReason(view: AgentView, persona: Persona | null, pursuits: r
   if (player.depth === 0 || player.dead || supplyMargin(view) !== null) return null;
   const recall = recallItem(view) !== null;
   if (!recall && player.depth >= RECALL_FROM_DEPTH) return null;
-  const short = supplyNeeds(view, readPack(view), persona).filter((need) => need.kind !== "recall" && need.kind !== "ammo" && need.kind !== "oil" && need.have < need.want && wanted(need.kind, persona, pursuits));
+  const short = supplyNeeds(view, readPack(view), persona).filter((need) => need.kind !== "recall" && need.kind !== "ammo" && need.kind !== "oil" && need.have < need.want && PRICE_FLOOR[need.kind] <= player.gold && wanted(need.kind, persona, pursuits));
   if (short.length === 0) return null;
   const listed = short.map((need) => `${String(need.have)} of ${String(need.want)} ${need.name}`).join(", ");
   return `The pack holds ${listed}. Supplies are above the level that forces a trip home. ${recall ? "A Word of Recall scroll is in the pack." : "The way home is on foot, up the stairs."} The character has ${String(player.gold)} gold.`;

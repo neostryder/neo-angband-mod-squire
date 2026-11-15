@@ -3,7 +3,8 @@ import type { StoreView } from "@rpgm-tools/neo-angband-core";
 import { FEAT, itemNamed, world } from "../harness.js";
 import { readPack } from "../brain/pack.js";
 import { defaultPersona } from "../persona/persona.js";
-import { basketNeeds, createDeparture } from "./departure.js";
+import { archetype } from "../persona/persona.js";
+import { basketNeeds, createDeparture, EARNING_TURNS, EARNING_TURNS_MAX, earningTurns } from "./departure.js";
 import { supplyNeeds, type SupplyNeed } from "./needs.js";
 import { shoppingList } from "./shop.js";
 
@@ -14,8 +15,60 @@ const alchemy: StoreView = { feat: FEAT.ALCHEMY, featName: "Alchemy Shop", isHom
 ] };
 
 describe("the town survival basket", () => {
+  it("checks each requirement against entered stock and actual prices", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 20 }, stores: [{ ...alchemy, stock: alchemy.stock.map((item) => ({ ...item, price: item.index === 0 ? 40 : 18 })) }] });
+    const departure = createDeparture();
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(true);
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(false);
+    expect(departure.supplyAffordable(w.view, "phase")).toBe(true);
+    w.setPlayer({ gold: 40 });
+    expect(departure.supplyAffordable(w.view, "healing")).toBe(true);
+  });
+  it("uses only entered shop prices when deciding whether a reserve can be bought", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 16 }, stores: [alchemy] });
+    const departure = createDeparture();
+    departure.observe(w.view, w.terrain);
+    expect(departure.reserveAffordable(w.view)).toBe(true);
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    w.setPlayer({ depth: 1 });
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+    w.setPlayer({ gold: 18 });
+    expect(departure.reserveAffordable(w.view)).toBe(true);
+    w.setPlayer({ gold: 0 });
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+  });
+
+  it("does not promise reserves from an entered shop with no stock", () => {
+    const w = world({ map: ["#####", "#@.A#", "#####"], player: { depth: 0, gold: 100 }, stores: [{ ...alchemy, stock: [] }] });
+    const departure = createDeparture();
+    w.moveTo({ x: 3, y: 1 });
+    departure.observe(w.view, w.terrain);
+    expect(departure.reserveAffordable(w.view)).toBe(false);
+  });
+  it("retries an empty earning trip after the persona delay", () => {
+    const w = world({ map: ["######", "#@..>#", "######"], player: { depth: 0, gold: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const departure = createDeparture();
+    departure.observe(w.view, w.terrain);
+    departure.begin(w.view, null);
+    w.setPlayer({ depth: 1 });
+    departure.observe(w.view, w.terrain);
+    w.setPlayer({ depth: 0 });
+    expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(false);
+    w.advance(earningTurns(null));
+    expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(true);
+  });
+
+  it("keeps fifteen oil flasks in the starter basket", () => {
+    const w = world({ map: ["@"], player: { maxSp: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+    const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
+    expect(basket.find((need) => need.kind === "oil")?.want).toBe(15);
+  });
+
   it("does not leave when an entered shop still sells an affordable missing essential", () => {
-    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY, stores: [alchemy] });
+    const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 20, light: 0 }, worn: ["a Wooden Torch (5000 turns)"], pack: [...PANTRY, "15 Flasks of Oil"], stores: [alchemy] });
     w.moveTo({ x: 2, y: 1 });
     const departure = createDeparture();
     expect(departure.status(w.view, w.terrain, null, new Set([FEAT.ALCHEMY]))).toMatchObject({ ready: false, earning: false });
@@ -66,7 +119,7 @@ describe("the town survival basket", () => {
     expect(shoppingList(needs, alchemy, 18, null)).toMatchObject([{ kind: "phase", quantity: 1, index: 1 }]);
   });
 
-  it("buys food and fuel reserves before oil top-ups and spending held by savings", () => {
+  it("buys food, fuel and oil reserves before spending held by savings", () => {
     const needs: SupplyNeed[] = [
       { kind: "food", name: "Ration of Food", have: 0, want: 5 },
       { kind: "light", name: "Wooden Torch", have: 0, want: 2 },
@@ -79,13 +132,44 @@ describe("the town survival basket", () => {
     ] };
     const persona = defaultPersona();
     persona.sliders.savings = 100;
-    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["food", "light", "food", "light"]);
+    expect(shoppingList(needs, general, 10, persona).map((purchase) => purchase.kind)).toEqual(["oil"]);
   });
 
   it("holds optional stock across stores while food or fuel is missing", () => {
     const w = world({ map: ["@"], player: { depth: 0 }, pack: ["2 Potions of Cure Light Wounds", "2 Scrolls of Phase Door"] });
     const basket = basketNeeds(w.view, supplyNeeds(w.view, readPack(w.view), null));
     expect(shoppingList(basket, alchemy, 100, null)).toEqual([]);
-    expect(basket.map((need) => need.kind)).not.toContain("oil");
+    expect(basket.find((need) => need.kind === "oil")?.want).toBe(15);
   });
+});
+
+describe("how long an earning trip runs", () => {
+  it("grows with drive and shrinks with a taste for town", () => {
+    expect(earningTurns(null)).toBe(EARNING_TURNS);
+    expect(earningTurns(archetype("tourist"))).toBeLessThan(earningTurns(defaultPersona()));
+    expect(earningTurns(defaultPersona())).toBeLessThan(earningTurns(archetype("berserker")));
+    expect(earningTurns(archetype("berserker"))).toBeLessThanOrEqual(EARNING_TURNS_MAX);
+  });
+});
+
+it("keeps entered prices after an empty refresh instead of treating the shop as unknown", () => {
+  const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 16 }, worn: ["a Wooden Torch (5000 turns)"], pack: [...PANTRY, "15 Flasks of Oil"], stores: [alchemy] });
+  const departure = createDeparture();
+  w.moveTo({ x: 2, y: 1 });
+  expect(departure.status(w.view, w.terrain, null, new Set([FEAT.ALCHEMY]))).toMatchObject({ earning: true, target: 76 });
+  w.moveTo({ x: 4, y: 1 });
+  departure.observe(w.view, w.terrain);
+  w.advance(10);
+  w.setPlayer({ depth: 1 });
+  departure.observe(w.view, w.terrain);
+  w.advance(10);
+  w.setPlayer({ depth: 0 });
+  expect(departure.status(w.view, w.terrain, null, new Set())).toMatchObject({ earning: true, target: 76 });
+  w.setPlayer({ gold: 18 });
+  expect(departure.status(w.view, w.terrain, null, new Set()).earning).toBe(false);
+});
+
+it("does not scout an unknown shop when no needed item meets its minimum price", () => {
+  const w = world({ map: ["######", "#@A.>#", "######"], player: { depth: 0, gold: 2 }, worn: ["a Wooden Torch (5000 turns)"], pack: PANTRY });
+  expect(createDeparture().status(w.view, w.terrain, null, new Set()).earning).toBe(true);
 });

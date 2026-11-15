@@ -21,7 +21,8 @@
  *
  * An answer is used only if the game is still at the input wait the question
  * was asked at. The input token says so. A stale answer is thrown away and the
- * question asked again about the game as it is now.
+ * question asked again about the game as it is now. So is one asked before the
+ * keyboard last changed hands, which the hand-back epoch says.
  */
 
 import type { AgentActions, AgentCommand, AgentController, AgentView } from "../host-adapter.js";
@@ -45,6 +46,8 @@ export interface Plan {
   readonly label: string;
   /** The next command, or null when the plan is finished and a new decision is due. */
   step(view: AgentView, act: AgentActions): AgentCommand | null;
+  end?(view?: AgentView): void;
+  refusal?(): string | null;
 }
 
 /** What a planner decides with. */
@@ -68,6 +71,9 @@ export interface Reflex<C> {
 
 /** The game-specific half of the brain: what to ask, and what an answer means. */
 export interface Planner<C> {
+  recover?(view: AgentView, reason: string): Reflex<C>;
+  /** Recovery runs before goals, pending answers and plan triggers can keep the controller idle. */
+  watchdog?(view: AgentView, decision: boolean): Reflex<C> | null;
   rules?(view: AgentView, reason: string, stuck?: boolean): Reflex<C> | { readonly handBack: string; readonly context?: C };
   /** The question for this moment, a decision that needs no model, or a reason to hand the keyboard back, with the context to log it under when the planner has one. */
   ask(view: AgentView): Question<C> | Reflex<C> | { readonly handBack: string; readonly context?: C };
@@ -149,6 +155,12 @@ export interface BrainDeps<C> {
   onPlanEnd?(end: PlanEnd): void;
   /** Reads the game turn and hit points. Without it, refused commands and hit point changes are not measured. */
   gauge?(view: AgentView): Gauge;
+  /**
+   * The hand-back epoch, which counts every hand-back and every errand start.
+   * An answer asked under an older epoch is dropped. Without it only the input
+   * token decides.
+   */
+  epoch?(): number;
 }
 
 /** Waits between retries, in milliseconds. Later retries use the last wait. */
@@ -161,7 +173,7 @@ const MAX_RETRY_AFTER_MS = 60_000;
  * Decisions in a row that produced no command. A plan that finishes the moment
  * it starts would otherwise send a request on every tick.
  */
-export const MAX_EMPTY_DECISIONS = 4;
+export const MAX_EMPTY_DECISIONS = 3;
 
 /** Time a running plan can spend without a game turn or depth change. */
 export const MAX_PLAN_IDLE_MS = 30_000;
@@ -200,22 +212,31 @@ export interface Brain {
   state(): "idle" | "asking" | "running" | "waiting" | "stopped";
   /** Why Squire stopped, or null while it is still playing. */
   stoppedBecause(): string | null;
+  noOpGoals(): { readonly last100: number; readonly consecutive: number };
+  /**
+   * Forget the running plan and any question in flight, because the keyboard
+   * changed hands. The next call decides afresh from the game as it is.
+   */
+  drop(reason: string): void;
 }
 
 export function createBrain<C>(deps: BrainDeps<C>): Brain {
   const { backend, planner, tally } = deps;
   let state: State<C> = { kind: "idle" };
   /* The settled result of the request in flight, picked up on the next call. */
-  let landed: { readonly result: AskResult; readonly question: Question<C>; readonly token: Token | null } | null = null;
+  let landed: { readonly result: AskResult; readonly question: Question<C>; readonly token: Token | null; readonly epoch: number | null } | null = null;
+  /* Counts the questions sent, so an answer to one that `drop` forgot is ignored when it lands. */
+  let sent = 0;
   let attempt = 0;
   let emptyDecisions = 0;
-  /* Labels of the plans that ended with no command since the last command. */
-  const emptyLabels = new Set<string>();
+  const noOpHistory: boolean[] = [];
+  let recoveryPending: string | null = null;
   let rulesReason: string | null = null;
   let retryAt = 0;
   let breakLoop = false;
   let progressGauge: Gauge | null = null;
   let progressAt = deps.now();
+  let decisionPending = true;
 
   function useRules(reason: string): void {
     if (rulesReason === null) deps.log(`${reason} Squire plays by its own rules, choosing from its current offers.`);
@@ -223,7 +244,8 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   }
 
   function runningStatus(plan: Plan): void {
-    deps.status(plan.label, rulesReason === null ? (deps.rulesOnly === true ? "Squire plays by its own rules." : undefined) : `Squire plays by its own rules. ${rulesReason}`);
+    const reason = rulesReason === null ? (deps.rulesOnly === true ? "Squire plays by its own rules." : "") : `Squire plays by its own rules. ${rulesReason}`;
+    deps.status(plan.label, `${reason} No-op goals in the last 100 decisions: ${String(noOpHistory.filter(Boolean).length)}; consecutive: ${String(emptyDecisions)}.`.trim());
   }
 
   function newRun(view: AgentView): PlanRun {
@@ -248,9 +270,11 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       useRules(message);
       breakLoop = true;
       state = { kind: "waiting", until: deps.now() + 1000 };
+      recoveryPending = message;
       deps.status("trying another move", message);
       return null;
     }
+    if (state.kind === "running") state.plan.end?.(view);
     state = { kind: "stopped", message };
     deps.log(message);
     deps.status("stopped", message);
@@ -268,6 +292,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
   }
 
   function startAsking(view: AgentView): null {
+    decisionPending = true;
     const capped = deps.rulesOnly === true ? null : tally.overCap(backend, deps.now());
     if (capped !== null) useRules(capped.message);
 
@@ -320,13 +345,18 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       return null;
     }
     const token = deps.token();
+    const epoch = deps.epoch?.() ?? null;
+    const serial = ++sent;
     state = { kind: "asking", token, question };
     deps.status("thinking");
     deps.send(question.request).then(
       (result) => {
-        landed = { result, question, token };
+        if (serial === sent) landed = { result, question, token, epoch };
+        /* A forgotten question's answer is not used, but it was still paid for. */
+        else if (result.ok) tally.record(backend, result.usage, deps.now());
       },
       (error: unknown) => {
+        if (serial !== sent) return;
         /* `ask` never rejects; this guards a send that someone else wrote. */
         landed = {
           result: {
@@ -336,6 +366,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
           },
           question,
           token,
+          epoch,
         };
       },
     );
@@ -344,7 +375,7 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
 
   function takeLanded(view: AgentView): null | "planned" {
     if (landed === null) return null;
-    const { result, question, token } = landed;
+    const { result, question, token, epoch } = landed;
     landed = null;
 
     if (!result.ok) {
@@ -356,6 +387,13 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     if (rulesReason !== null) deps.log("Squire resumes model decisions.");
     rulesReason = null;
 
+    if (epoch !== null && deps.epoch !== undefined && epoch !== deps.epoch()) {
+      /* Asked before the keyboard last changed hands: the situation it answers
+       * is not this one, whatever the token says. */
+      deps.log("Squire drops an answer asked before the keyboard changed hands.");
+      state = { kind: "idle" };
+      return null;
+    }
     if (!sameToken(token, deps.token())) {
       /* The game moved while the model was thinking: the player took the
        * keyboard back and gave it again, or a level changed. Ask afresh. */
@@ -388,14 +426,50 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     return "planned";
   }
 
-  const controller: AgentController = (view, act) => {
+  const advance: AgentController = (view, act) => {
     if (view.player?.().dead === true || view.player?.().winner === true) return state.kind === "stopped" ? null : stopWith(view.player().dead ? "The character has died." : "The character has won.", view);
     if (state.kind === "stopped") return null;
+    const urgent = recoveryPending;
+    recoveryPending = null;
+    const recovery = urgent === null ? planner.watchdog?.(view, decisionPending || state.kind === "waiting" && deps.now() >= state.until) ?? null
+      : planner.recover?.(view, urgent) ?? { reflex: `recovery: ${urgent}`, plan: { label: "spend a turn after an empty decision", step: () => ({ code: "hold" } as AgentCommand) }, context: null as C, answers: {} };
+    decisionPending = false;
+    if (recovery !== null) {
+      if (state.kind === "running") {
+        state.plan.end?.(view);
+        deps.onPlanEnd?.({ stop: "interrupted", reason: recovery.reflex, commands: state.run.commands, refused: state.run.refused, hpBefore: state.run.hpBefore, hpAfter: deps.gauge?.(view).hp ?? null });
+      }
+      sent += 1;
+      landed = null;
+      breakLoop = false;
+      progressAt = deps.now();
+      state = { kind: "running", plan: recovery.plan, run: newRun(view) };
+      deps.log(recovery.reflex);
+      deps.onDecision?.({ token: deps.token(), backend: backend.label, request: { state: {}, questions: {} }, context: recovery.context, answers: recovery.answers, usage: { inputTokens: 0, outputTokens: 0, estimated: false }, model: null, latencyMs: 0, outcome: recovery.plan.label, reflex: recovery.reflex });
+      runningStatus(recovery.plan);
+      /* Recovery commands must get one attempt before ordinary triggers run again. */
+      const command = recovery.plan.step(view, act);
+      if (command !== null) {
+        emptyDecisions = 0;
+        state.run.commands += 1;
+        state.run.issuedAt = deps.gauge?.(view).turn ?? null;
+        state.run.issuedCode = command.code;
+        state.run.issuedDepth = deps.gauge?.(view).depth ?? null;
+      } else {
+        noOpHistory.push(true);
+        if (noOpHistory.length > 100) noOpHistory.shift();
+        emptyDecisions += 1;
+        deps.log(`${recovery.plan.label} ended without a command: ${recovery.plan.refusal?.() ?? "the recovery preconditions refused its next action"}. Recovery escalates on the next tick.`);
+        recoveryPending = "The recovery issued no command.";
+      }
+      return command;
+    }
     const current = deps.gauge?.(view);
     if (current !== undefined) {
       if (progressGauge === null || current.turn !== progressGauge.turn || current.depth !== progressGauge.depth) progressAt = deps.now();
       progressGauge = current;
       if ((state.kind === "running" || state.kind === "idle") && deps.now() - progressAt >= MAX_PLAN_IDLE_MS) {
+        if (state.kind === "running") state.plan.end?.(view);
         if (state.kind === "running") deps.onPlanEnd?.({ stop: "interrupted", reason: "Squire made no progress for 30 seconds.", commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: current.hp });
         progressAt = deps.now();
         breakLoop = true;
@@ -440,7 +514,6 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         const command = plan.step(view, act);
         if (command !== null) {
           emptyDecisions = 0;
-          emptyLabels.clear();
           run.commands += 1;
           run.issuedAt = gauge?.turn ?? null;
           run.issuedCode = command.code;
@@ -451,6 +524,10 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
       } else {
         deps.log(`${plan.label}: ${reason}`);
       }
+      plan.end?.(view);
+      noOpHistory.push(run.commands === 0);
+      if (noOpHistory.length > 100) noOpHistory.shift();
+      if (run.commands === 0) deps.log(`${plan.label} ended without a command: ${reason ?? plan.refusal?.() ?? "the plan has no executable action in this view"}.`);
       deps.onPlanEnd?.({
         stop: reason === null ? "finished" : "interrupted",
         reason,
@@ -460,19 +537,9 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
         hpBefore: run.hpBefore,
         hpAfter: gauge?.hp ?? null,
       });
-      /* A planner trying one different plan after another is still working
-       * through its options; only the same empty plan coming back counts. */
       if (run.commands === 0) {
-        if (emptyLabels.has(plan.label)) emptyDecisions += 1;
-        else emptyLabels.add(plan.label);
-      }
-      if (emptyDecisions > MAX_EMPTY_DECISIONS || emptyLabels.size > MAX_EMPTY_DECISIONS * 4) {
-        emptyDecisions = 0;
-        emptyLabels.clear();
-        breakLoop = true;
-        state = { kind: "waiting", until: deps.now() + 1000 };
-        deps.status("trying another move", "Squire's plans issued no commands. It will wait one second and choose another action.");
-        return null;
+        emptyDecisions += 1;
+        if (emptyDecisions >= MAX_EMPTY_DECISIONS) recoveryPending = "Three consecutive goals issued no command.";
       }
       state = { kind: "idle" };
     }
@@ -481,9 +548,33 @@ export function createBrain<C>(deps: BrainDeps<C>): Brain {
     return null;
   };
 
+  const controller: AgentController = (view, act) => {
+    const command = advance(view, act);
+    if (command === null && state.kind !== "stopped") {
+      const reason = recoveryPending ?? (state.kind === "asking" ? "the decision request is pending; the watchdog remains active" : state.kind === "running" ? "the next plan is ready to execute on the next tick" : state.kind === "waiting" ? "the retry deadline is pending; the watchdog remains active" : "the planner has no running action");
+      deps.log(`controller issued no command: ${reason}.`);
+    }
+    return command;
+  };
+
   return {
     controller,
     state: () => state.kind,
     stoppedBecause: () => (state.kind === "stopped" ? state.message : null),
+    noOpGoals: () => ({ last100: noOpHistory.filter(Boolean).length, consecutive: emptyDecisions }),
+    drop(reason) {
+      if (state.kind === "stopped") return;
+      if (state.kind === "running") {
+        state.plan.end?.();
+        deps.onPlanEnd?.({ stop: "interrupted", reason, commands: state.run.commands, refused: state.run.refused, ...(state.run.refused > 0 ? { refusedBy: { ...state.run.refusedBy } } : {}), hpBefore: state.run.hpBefore, hpAfter: null });
+        deps.log(`${state.plan.label}: ${reason}`);
+      }
+      sent += 1;
+      landed = null;
+      breakLoop = false;
+      recoveryPending = null;
+      emptyDecisions = 0;
+      state = { kind: "idle" };
+    },
   };
 }

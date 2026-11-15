@@ -104,6 +104,48 @@ function rig(options: {
 }
 
 describe("brain", () => {
+  it("runs recovery before a pending answer and discards that answer", async () => {
+    let recover = false;
+    const p = planner(() => walks(2));
+    const choose = vi.spyOn(p, "choose");
+    p.watchdog = () => recover ? { reflex: "watchdog recovery", plan: walks(1), context: null, answers: {} } : null;
+    const r = rig({ planner: p, results: [answered(), answered()] });
+    r.tick();
+    await flush();
+    recover = true;
+    expect(r.tick()).toEqual(WALK);
+    expect(choose).not.toHaveBeenCalled();
+    recover = false;
+    r.tick();
+    expect(r.sent).toHaveLength(2);
+    expect(choose).not.toHaveBeenCalled();
+  });
+
+  it("interrupts a running plan and attempts recovery before its ordinary trigger", async () => {
+    let recover = false;
+    const trigger = vi.fn(() => null);
+    const p = planner(() => walks(10), trigger);
+    p.watchdog = () => recover ? { reflex: "watchdog recovery", plan: walks(1), context: null, answers: {} } : null;
+    const r = rig({ planner: p, results: [answered()] });
+    r.tick();
+    await flush();
+    r.tick();
+    const calls = trigger.mock.calls.length;
+    recover = true;
+    expect(r.tick()).toEqual(WALK);
+    expect(trigger).toHaveBeenCalledTimes(calls);
+    expect(r.ends).toContainEqual(expect.objectContaining({ stop: "interrupted", reason: "watchdog recovery", commands: 1 }));
+  });
+
+  it("reports decisions even when a finished plan starts its successor in the same tick", () => {
+    let decisions = 0;
+    const p = planner(() => walks(1));
+    p.rules = () => ({ reflex: "routine", plan: walks(1), context: null, answers: {} });
+    p.watchdog = (_view, decision) => { if (decision) decisions += 1; return null; };
+    const brain = createBrain({ backend: JEV, planner: p, rulesOnly: true, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send: () => { throw new Error("unexpected request"); }, token: () => null, now: () => 0, log: () => {}, status: () => {} });
+    for (let tick = 0; tick < 20; tick += 1) brain.controller(view, act);
+    expect(decisions).toBe(11);
+  });
   it("leaves victory with the host and issues no further command", () => {
     const r = rig({ planner: planner(() => walks(1)), results: [], view: { player: () => ({ dead: false, winner: true }) } as AgentView });
     expect(r.tick()).toBeNull();
@@ -261,16 +303,14 @@ describe("brain", () => {
     expect(r.logs.filter((line) => line.includes("plays by its own rules"))).toHaveLength(1);
   });
 
-  it("pauses an empty-plan loop and tries a different rule choice", async () => {
+  it("escalates three empty decisions on the next tick without a wall-clock wait", async () => {
     let tries = 0;
     const p = planner(() => walks(0));
-    p.rules = () => { tries += 1; return { reflex: "another move", plan: walks(1), context: null, answers: {} }; };
+    p.recover = () => { tries += 1; return { reflex: "another move", plan: walks(1), context: null, answers: {} }; };
     const r = rig({ planner: p, results: Array.from({ length: MAX_EMPTY_DECISIONS + 2 }, () => answered()) });
-    for (let i = 0; i <= MAX_EMPTY_DECISIONS + 1; i += 1) { r.tick(); await flush(); r.tick(); }
-    expect(r.brain.state()).toBe("waiting");
+    for (let i = 0; i < MAX_EMPTY_DECISIONS; i += 1) { r.tick(); await flush(); r.tick(); }
+    expect(r.brain.noOpGoals()).toEqual({ last100: 3, consecutive: 3 });
     expect(r.brain.stoppedBecause()).toBeNull();
-    r.advance(1000);
-    r.tick();
     expect(r.tick()).toEqual(WALK);
     expect(tries).toBe(1);
   });
@@ -290,6 +330,22 @@ describe("brain", () => {
     expect(r.brain.state()).not.toBe("stopped");
   });
 
+  it("bounds no-op status to the last 100 completed decisions", () => {
+    const statuses: string[] = [];
+    let empty = true;
+    const p: Planner<null> = { ask: () => ({ reflex: "test", plan: walks(empty ? 0 : 1), context: null, answers: {} }), choose: () => ({ plan: walks(1) }), trigger: () => null,
+      recover: () => ({ reflex: "recovery", plan: walks(1), context: null, answers: {} }) };
+    const brain = createBrain({ backend: JEV, rulesOnly: true, planner: p, tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }), send: () => { throw new Error("No request is needed."); },
+      token: () => null, now: () => 0, log: () => {}, status: (_label, reason) => statuses.push(reason ?? "") });
+    for (let tick = 0; tick < 5; tick++) brain.controller(view, act);
+    expect(brain.noOpGoals().last100).toBe(3);
+    expect(statuses.some((reason) => reason.includes("No-op goals in the last 100 decisions: 3"))).toBe(true);
+    empty = false;
+    for (let tick = 0; tick < 220; tick++) brain.controller(view, act);
+    expect(brain.noOpGoals()).toEqual({ last100: 0, consecutive: 0 });
+    expect(statuses.at(-1)).toContain("No-op goals in the last 100 decisions: 0");
+  });
+
   it("pauses and retries when the planner has nothing to ask", () => {
     const r = rig({
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
@@ -306,10 +362,10 @@ describe("brain", () => {
       planner: { ask: () => ({ handBack: "Nothing to do here." }), choose: () => ({ handBack: "" }), trigger: () => null },
       results: [], release,
     });
-    r.tick();
-    r.tick();
+    expect(r.tick()).toBeNull();
+    expect(r.tick()).toEqual({ code: "hold" });
     expect(release).not.toHaveBeenCalled();
-    expect(r.logs).toHaveLength(1);
+    expect(r.logs.some((line) => line.includes("controller issued no command"))).toBe(true);
     expect(r.brain.stoppedBecause()).toBeNull();
   });
 
@@ -667,5 +723,80 @@ describe("ask", () => {
     expect(!noHost.ok && noHost.failure.kind).toBe("not-allowed");
     const offline = await ask(net({ ok: false, code: "unreachable", problem: "offline" }), JEV, REQUEST, () => 0);
     expect(!offline.ok && offline.failure).toMatchObject({ kind: "unreachable", retryable: true });
+  });
+});
+
+describe("the hand-back epoch", () => {
+  function epochRig() {
+    let epoch = 0;
+    let settle: ((result: AskResult) => void) | null = null;
+    const logs: string[] = [];
+    const brain = createBrain({
+      backend: JEV,
+      planner: planner(() => walks(1)),
+      tally: createTally({ perSessionUsd: 0, perDayUsd: 0 }),
+      send: () => new Promise<AskResult>((resolve) => { settle = resolve; }),
+      token: () => ({ epoch: 1, revision: 1 }),
+      now: () => 1_000_000,
+      log: (m) => logs.push(m),
+      status: () => {},
+      epoch: () => epoch,
+    });
+    return {
+      brain,
+      logs,
+      tick: () => brain.controller(view, act),
+      land: () => settle?.(answered()),
+      handBack: () => { epoch += 1; },
+    };
+  }
+
+  it("uses an answer asked under the current epoch", async () => {
+    const r = epochRig();
+    expect(r.tick()).toBeNull();
+    r.land();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+  });
+
+  it("drops an answer asked before the keyboard changed hands, even with the same input token", async () => {
+    const r = epochRig();
+    expect(r.tick()).toBeNull();
+    r.handBack();
+    r.land();
+    await flush();
+    expect(r.tick()).toBeNull();
+    expect(r.logs.join("\n")).toContain("asked before the keyboard changed hands");
+    expect(r.brain.state()).toBe("idle");
+    expect(r.tick()).toBeNull();
+    expect(r.brain.state()).toBe("asking");
+  });
+
+  it("forgets a running plan and a question in flight when dropped", async () => {
+    const r = epochRig();
+    r.tick();
+    r.brain.drop("The keyboard went back to the player.");
+    r.land();
+    await flush();
+    expect(r.brain.state()).toBe("idle");
+  });
+});
+
+describe("plan completion hooks", () => {
+  it.each(["finished", "trigger", "timeout", "idle", "drop"])("ends the plan once on %s", async (stop) => {
+    const ended = vi.fn();
+    let fired = false;
+    const r = rig({ planner: planner(() => ({ ...walks(stop === "finished" ? 1 : 100), end: ended }), () => fired ? "stop" : null), results: [answered(), answered()], gauge: () => ({ turn: 1, hp: 60, depth: 1 }) });
+    r.tick();
+    await flush();
+    expect(r.tick()).toEqual(WALK);
+    if (stop === "drop") r.brain.drop("stop");
+    else {
+      if (stop === "trigger") fired = true;
+      if (stop === "timeout") r.advance(60000);
+      if (stop === "idle") r.advance(30000);
+      r.tick();
+    }
+    expect(ended).toHaveBeenCalledTimes(1);
   });
 });

@@ -4,7 +4,9 @@ import type { AgentView, ItemView } from "../host-adapter.js";
 import type { Plan } from "../brain/brain.js";
 import { readPack } from "../brain/pack.js";
 import { PACK_LIMIT } from "../brain/items.js";
-import type { Loc } from "../grid.js";
+import { key, type Loc } from "../grid.js";
+import { flowFrom, stepDown } from "../flow.js";
+import { frontiers, isWalkable } from "../map.js";
 import { newProgress } from "../progress.js";
 import { defaultCfg } from "../settings.js";
 import type { Terrain } from "../terrain.js";
@@ -13,9 +15,9 @@ import type { Persona } from "../persona/persona.js";
 import { affordable, type Aim } from "../strategy/aims.js";
 import { missingEssentials } from "../strategy/readiness.js";
 import { aimPurchase, aimStores, unaimedUpgradePurchase } from "./aims-shop.js";
-import { shownName, supplyNeeds } from "./needs.js";
+import { matchesSupplyName, PRICE_FLOOR, shownName, supplyNeeds } from "./needs.js";
 import { basketNeeds } from "./departure.js";
-import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor } from "./shop.js";
+import { homeSpares, homeWithdrawal, saleFits, sellList, shoppingList, storesFor, STARTER_TARGETS } from "./shop.js";
 import { emptyFlourishes, trophyHandles, type Flourishes } from "../learning/family-ways.js";
 import { stockConfidence, type StoreMemory } from "./memory.js";
 import { createHomeMemory, type HomeStock } from "./home.js";
@@ -58,6 +60,7 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
   const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes.darkLesson), persona);
   const sales = sellList(pack, view, persona, trophyHandles(flourishes, view, persona), flourishes.darkLesson);
   const gold = view.player().gold;
+  const ready = missingEssentials(view, persona).length === 0;
   return shopEntrances(view, terrain).filter((entrance) => {
     if (visited.has(entrance.feat)) return false;
     if (entrance.name === "Home") {
@@ -69,16 +72,25 @@ export function neededEntrances(view: AgentView, terrain: Terrain, persona: Pers
       const spares = homeSpares(view, persona, flourishes.darkLesson).length > 0;
       return covers || spares || !home.entered;
     }
-    const buying = gold > 0 && needs.some((need) => need.have < need.want && storesFor(need.kind).includes(entrance.name));
+    const memory = memories?.find((entry) => entry.feat === entrance.feat && stockConfidence(entry, view.turn()) > 0);
+    const buying = needs.some((need) => {
+      if (need.have >= need.want || !storesFor(need.kind).includes(entrance.name)) return false;
+      const prices = memory?.stock.filter((item) => item.count > 0 && matchesSupplyName(item.name, need.name)).map((item) => item.price);
+      return (prices === undefined ? PRICE_FLOOR[need.kind] : Math.min(...prices)) <= gold;
+    });
     const aiming = aims.some((aim) => (affordable(aim, gold) || gold > 0 && aim.how === "hunt" && (aim.kind === "free-action" || aim.kind === "see-invisible")) && (aim.stock === undefined ? aimStores(aim).includes(entrance.name) : aim.stock.feat === entrance.feat));
-    const exploring = memories !== undefined && !memories.some((memory) => memory.feat === entrance.feat && stockConfidence(memory, view.turn()) > 0);
+    const exploring = memories !== undefined && memory === undefined && (ready || needs.some((need) => need.have < need.want && gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(entrance.name)));
     /* The Black Market buys anything, so it is a trip only for what no other store takes. */
     const selling = entrance.name === "Black Market"
       ? sales.some((sale) => !SPECIALISTS.some((shop) => saleFits(sale.tval, shop)))
       : sales.some((sale) => saleFits(sale.tval, entrance.name));
     return buying || aiming || exploring || selling;
   }).sort((a, b) => {
-    const rank = (shop: ShopEntrance): number => shop.name === "Home" ? -1 : shop.name === "Alchemy Shop" ? 0 : shop.name === "General Store" ? 1 : shop.name === "Black Market" ? 3 : 2;
+    const rank = (shop: ShopEntrance): number => {
+      if (shop.name === "Home") return -1;
+      const starter = Object.entries(STARTER_TARGETS).findIndex(([kind, target]) => needs.some((need) => need.kind === kind && need.have < Math.min(need.want, target) && gold >= PRICE_FLOOR[need.kind] && storesFor(need.kind).includes(shop.name)));
+      return starter >= 0 ? starter : shop.name === "Alchemy Shop" ? 4 : shop.name === "General Store" ? 5 : shop.name === "Black Market" ? 7 : 6;
+    };
     return rank(a) - rank(b);
   });
 }
@@ -103,17 +115,23 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
   const waited = new Map<number, number>();
   /* A buy, sale or withdrawal that left the pack and the gold untouched. */
   let pending: { feat: number; snapshot: string } | null = null;
+  const searched = new Set<string>();
+  const refusedSteps = new Set<string>();
+  let lastWalk: { from: string; to: string } | null = null;
+  let searchSteps = 0;
   return {
     label: "shop for supplies",
     step(view, act) {
       if (view.player().depth !== 0) return null;
       const at = view.player().grid;
+      if (lastWalk !== null && key(at) === lastWalk.from) refusedSteps.add(lastWalk.to);
+      lastWalk = null;
       const cell = view.cell(at.x, at.y);
       const current = strategy?.();
       const currentAims = current?.aims ?? aims;
       const homeNow = homeMemory.current();
       const first = neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory, homeNow)[0];
-      const alchemyFirst = first?.name === "Alchemy Shop" && first.feat !== cell?.feat;
+      const suppliesFirst = (first?.name === "Alchemy Shop" || first?.name === "General Store") && first.feat !== cell?.feat;
       /* A command that moved no item and no gold will not start working on a later step. */
       const unchanged = pending !== null && cell !== null && pending.feat === cell.feat && pending.snapshot === packSnapshot(view);
       pending = null;
@@ -123,12 +141,12 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         return act.shopExit();
       }
       /* Leaving a shop the trip has already finished would be a second exit on the same square. */
-      if (alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat) && !leftShopForSupplies) {
+      if (suppliesFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat) && !leftShopForSupplies) {
         leftShopForSupplies = true;
         return act.shopExit();
       }
-      if (!alchemyFirst) leftShopForSupplies = false;
-      if (!alchemyFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
+      if (!suppliesFirst) leftShopForSupplies = false;
+      if (!suppliesFirst && cell !== null && terrain.isShopEntrance(cell.feat) && !visited.has(cell.feat)) {
         /* stores() exposes the whole town; touch only the matching store's stock. */
         const found = view.stores().find((entry) => entry.feat === cell.feat);
         /* The engine names a store by its terrain code (STORE_ALCHEMY); the
@@ -184,11 +202,13 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
           return trade(act.shopSell(sale.handle, sale.quantity));
         }
         const order = purchaseOrder?.() ?? null;
-        const list = shoppingList(basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona), store, view.player().gold, persona, order);
+        const needs = basketNeeds(view, supplyNeeds(view, pack, persona, flourishes().darkLesson), persona);
+        const starterPending = Object.entries(STARTER_TARGETS).some(([kind, target]) => needs.some((need) => need.kind === kind && need.have < Math.min(need.want, target)));
+        const list = shoppingList(needs, store, view.player().gold, persona, order);
         const purchase = list[0];
         /* With the supplies settled, the gold on hand can fund the top aim, unless the persona chose to keep it. */
         const saving = order !== null && order.includes("save") && order.indexOf("save") < (order.includes("gear") ? order.indexOf("gear") : order.length);
-        const aimed = missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
+        const aimed = starterPending || missingEssentials(view, persona).length > 0 || saving ? null : aimPurchase(currentAims.filter((aim) => !boughtFor.has(aim.label)), store, view.player().gold, view);
         const gearFirst = aimed !== null && order !== null && purchase !== undefined && order.includes("gear") && order.indexOf("gear") < (order.includes(purchase.kind) ? order.indexOf(purchase.kind) : order.length);
         if (purchase !== undefined && !gearFirst) {
           /* One shelf can fill every unit this list already afforded, instead of one command per unit. */
@@ -204,7 +224,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         /* An aim that no aim requested: the gear comparison still knows what is
          * a clear swap, and the gold on hand can fund it, unless the persona
          * ranked saving the gold above gear for this visit. */
-        if (!saving && missingEssentials(view, persona).length === 0) {
+        if (!starterPending && !saving && missingEssentials(view, persona).length === 0) {
           const upgrade = unaimedUpgradePurchase(store, view.player().gold, view);
           if (upgrade !== null && !boughtFor.has(upgrade.aim)) {
             boughtFor.add(upgrade.aim);
@@ -229,6 +249,26 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
         waited.delete(next.feat);
         return travel.command;
       }
+      if (travel.kind === "unreachable" && searchSteps < 100) {
+        /* Mapped shop doors can be disconnected from the streets remembered after a respawn. */
+        const enter = (grid: Loc) => {
+          const square = view.cell(grid.x, grid.y);
+          return square !== null && (square.known || square.inView) && square.passable && !square.trap &&
+            !terrain.isHarmful(square.feat) && !occupied(grid) && !refusedSteps.has(key(grid));
+        };
+        const direct = flowFrom({ goals: [next], canEnter: enter });
+        const candidates = frontiers(view, terrain).filter((grid) => !searched.has(`${String(next.feat)}:${key(grid)}`) && enter(grid));
+        searched.add(`${String(next.feat)}:${key(at)}`);
+        const field = Number.isFinite(direct.distance(at)) ? direct : flowFrom({ goals: candidates.filter((grid) => key(grid) !== key(at)), canEnter: enter });
+        const direction = stepDown(field, at, (grid) => enter(grid) && (isWalkable(view, terrain, grid) || view.cell(grid.x, grid.y)?.inView === true));
+        if (direction !== null) {
+          const to = { x: at.x + direction.dx, y: at.y + direction.dy };
+          lastWalk = { from: key(at), to: key(to) };
+          searchSteps += 1;
+          log(`shop: checking a passable route toward the ${next.name}`);
+          return act.move(direction.key);
+        }
+      }
       /* A townsperson in the only way through usually moves on within a few
        * turns, so the trip waits for it; one that stays, as Farmer Maggot can
        * when he follows the character, crosses that shop off for this visit. */
@@ -242,7 +282,7 @@ export function townTripPlan(terrain: Terrain, persona: Persona | null, visited:
       }
       visited.add(next.feat);
       log(`shop: the ${next.name} is ${travel.kind === "unreachable" ? "out of reach" : "still blocked, so it is skipped this visit"}`);
-      return null;
+      return neededEntrances(view, terrain, persona, visited, currentAims, flourishes(), current?.storeMemory, homeMemory.current()).length > 0 ? act.hold() : null;
     },
   };
 }

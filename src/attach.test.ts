@@ -10,25 +10,34 @@ import type { DecisionRecord } from "./brain/brain.js";
 import type { GoalDigest } from "./brain/goals.js";
 import { defaultCfg } from "./settings.js";
 
+type Handler = (payload: never) => void;
+const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** A host over the harness world, whose event subscriptions the test fires by hand. */
+function hostOver(w: ReturnType<typeof world>, handlers: Map<string, Handler>, extra: Partial<AttachHost> = {}): AttachHost {
+  return {
+    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, settings: { get: () => undefined },
+    character: { key: () => "Mira", onRunEnd: () => {} },
+    viewNow: () => w.view, readWorld: () => Promise.resolve(w.view),
+    events: { on: ((name: string, listener: Handler) => { handlers.set(name, listener); }) as AttachHost["events"]["on"] },
+    ...extra,
+  };
+}
+
 it("persists command evidence and saves an inferred style", async () => {
   const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
   const store = memoryStore();
-  const handlers = new Map<string, (name: string, payload: { code?: string }) => void>();
-  const host: AttachHost = {
-    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, state: {} as NonNullable<AttachHost["state"]>, character: { key: () => "Mira" },
-    core: { createAgentView: () => w.view },
-    events: {
-      on: (name, handler) => { handlers.set(name, (eventName, payload) => handler(eventName as never, payload as never)); },
-      off: () => {},
-    },
-  };
+  const handlers = new Map<string, Handler>();
+  const host = hostOver(w, handlers);
   const rt = createRuntime(host, { store });
-  const lessons = attachSquire(host, rt);
+  const lessons = attachSquire(host, rt, w.terrain);
   await Promise.resolve();
   await Promise.resolve();
-  handlers.get("player-command")?.("player-command", { code: "rest" });
+  handlers.get("player-command")?.({ code: "rest" } as never);
+  await flush();
   w.setPlayer({ hp: 40 });
-  handlers.get("player-command")?.("player-command", { code: "descend" });
+  handlers.get("player-command")?.({ code: "descend" } as never);
+  await flush();
   const saved = await store.get("squire/apprentice") as Apprentice;
   expect(saved.commands).toMatchObject([
     { kind: "rest", hpShare: 0.5, restedToFull: true },
@@ -44,22 +53,16 @@ it("persists command evidence and saves an inferred style", async () => {
 it("learns from a player's command that comes right after one of Squire's", async () => {
   const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
   const store = memoryStore();
-  const handlers = new Map<string, (name: string, payload: { code?: string; dir?: number }) => void>();
-  const host: AttachHost = {
-    log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {}, state: {} as NonNullable<AttachHost["state"]>, character: { key: () => "Mira" },
-    core: { createAgentView: () => w.view },
-    events: {
-      on: (name, handler) => { handlers.set(name, (eventName, payload) => handler(eventName as never, payload as never)); },
-      off: () => {},
-    },
-  };
+  const handlers = new Map<string, Handler>();
+  const host = hostOver(w, handlers);
   const rt = createRuntime(host, { store });
-  attachSquire(host, rt);
+  attachSquire(host, rt, w.terrain);
   await Promise.resolve();
   await Promise.resolve();
   const controller = rt.controllerFor({ ...defaultCfg(), useModel: false }, w.terrain, () => () => ({ code: "walk", dir: 6 }));
   expect(controller(w.view, w.act)).toEqual({ code: "walk", dir: 6 });
-  handlers.get("player-command")?.("player-command", { code: "rest" });
+  handlers.get("player-command")?.({ code: "rest" } as never);
+  await flush();
   const saved = await store.get("squire/apprentice") as Apprentice;
   expect(saved.commands).toMatchObject([{ kind: "rest" }]);
   /* Squire's own command still matches if the game ever reports it. */
@@ -75,12 +78,12 @@ it("stores the exam result after 20 Squire decisions", async () => {
     line: "Noted.", demonstration: false, signature };
   await store.set("squire/apprentice", { entries: Array.from({ length: 40 }, () => entry),
     agreed: 0, total: 40, commands: [], exams: [], examArmed: false, ghostHint: null });
-  const host: AttachHost = { log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {} };
+  const host = hostOver(world({ map: ["###", "#@#", "###"] }), new Map());
   const rt = createRuntime(host, { store });
   const listeners: DecisionListener[] = [];
   const examining = { ...rt, onDecision: (listener: DecisionListener) => { listeners.push(listener); return () => {}; },
     decisionView: () => w.view } satisfies Runtime;
-  const lessons = attachSquire(host, examining);
+  const lessons = attachSquire(host, examining, w.terrain);
   await Promise.resolve();
   await Promise.resolve();
   lessons.takeExam();
@@ -96,7 +99,7 @@ it("stores the exam result after 20 Squire decisions", async () => {
 
 it("saves a Knight's Lessons decision as a Laya row with the knight's goal as its label", async () => {
   const store = memoryStore();
-  const host: AttachHost = { log: () => {}, prefs: { get: () => undefined, set: () => {} }, flags: {} };
+  const host = hostOver(world({ map: ["###", "#@#", "###"] }), new Map());
   const rt = createRuntime(host, { store });
   const request = { state: { character: "Level 1 Human Mage" }, questions: { goal: { type: "choice" as const, instructions: "Which?", criteria: { fight: "Fight.", retreat: "Back off.", none_of_these: null } } } };
   const answers = { goal: { type: "choice" as const, choice: "fight", confidence: 0.7, probabilities: { fight: 0.8, retreat: 0.2 } } };
@@ -104,4 +107,26 @@ it("saves a Knight's Lessons decision as a Laya row with the knight's goal as it
   const rows = (await rt.exportLayaRows()).trim().split("\n").map((line) => JSON.parse(line) as { pilot: string; human?: Record<string, string>; jev: { model: string } });
   expect(rows).toHaveLength(1);
   expect(rows[0]).toMatchObject({ pilot: "squire_goal", human: { goal: "retreat" }, jev: { model: "jev-1.13.0" } });
+});
+
+it("takes its panel kind back out on detach, so a second registration succeeds", () => {
+  const w = world({ map: ["#####", "#@.>#", "#####"], player: { hp: 20, maxHp: 40 } });
+  const kinds = new Set<string>();
+  const host = hostOver(w, new Map(), {
+    ui: {
+      openPanel: () => { throw new Error("no panels here"); },
+      registerPanelKind: (spec) => {
+        if (kinds.has(spec.kind)) throw new Error(`panel kind ${spec.kind} is already registered`);
+        kinds.add(spec.kind);
+        return () => { kinds.delete(spec.kind); };
+      },
+    },
+  });
+  const first = attachSquire(host, createRuntime(host, { store: memoryStore() }), w.terrain);
+  expect([...kinds]).toEqual(["squire"]);
+  first.detach();
+  first.detach();
+  expect(kinds.size).toBe(0);
+  attachSquire(host, createRuntime(host, { store: memoryStore() }), w.terrain);
+  expect([...kinds]).toEqual(["squire"]);
 });

@@ -1,10 +1,257 @@
 import { describe, expect, it } from "vitest";
 import type { AgentView, LoadoutSimulation } from "@rpgm-tools/neo-angband-core";
-import { turnEnergy } from "@rpgm-tools/neo-angband-core";
+import { adjustDamArmor, hitChance, turnEnergy } from "@rpgm-tools/neo-angband-core";
 import { world } from "../harness.js";
-import { assessThreat, bestBallAim, clearShot, incomingDamage, knownCapability, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
+import { armorDamage, castingMixture, forecastExposure, harmlessKind, hitProbability, meleeMoments, assessThreat, bestBallAim, breederBlow, clearShot, incomingDamage, knownCapability, knownSpellFlags, monsterActions, pickAttackSpell, threatWindow, unseenDamageAt } from "./threat-model.js";
 import { createGoalPlanner } from "./goals.js";
 import { defaultCfg } from "../settings.js";
+import { defaultPersona } from "../persona/persona.js";
+import { riskQuantile } from "./threat-model.js";
+import { invalidateHazards } from "../map.js";
+
+describe("snapshot threat reuse", () => {
+  it("answers a second nearby grid without repeating the reach flood", () => {
+    const w = world({ map: Array.from({ length: 11 }, (_, y) => y === 0 || y === 10 ? "###############" : "#.............#"), monsters: [{ grid: { x: 8, y: 5 }, level: 1 }] });
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const first = incomingDamage(w.view, { x: 6, y: 5 }, 2, w.terrain);
+    expect(first.damage).toBeGreaterThan(0);
+    expect(reads).toBeGreaterThan(20);
+    reads = 0;
+    expect(incomingDamage(w.view, { x: 6, y: 6 }, 2, w.terrain).damage).toBe(first.damage);
+    expect(reads).toBeLessThan(20);
+  });
+
+  it("distinguishes changed monster facts at the same id and grid", () => {
+    const w = world({ map: ["######", "#.@..#", "######"], monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
+    const monster = w.view.monsters()[0]!;
+    expect(incomingDamage(w.view, undefined, 1, w.terrain, { monsters: [monster] }).damage).toBe(2);
+    expect(incomingDamage(w.view, undefined, 1, w.terrain, { monsters: [{ ...monster, level: 9 }] }).damage).toBe(35);
+    w.setMonsters([]);
+    expect(incomingDamage(w.view).damage).toBe(0);
+  });
+
+  it("bounds a long remembered pursuit and retains uncertainty at the cap", () => {
+    const w = world({ map: Array.from({ length: 66 }, (_, y) => y === 0 || y === 65 ? "#".repeat(198) : "#" + ".".repeat(196) + "#"), monsters: [{ grid: { x: 30, y: 30 }, visible: false }] });
+    w.advance(1000);
+    const cell = w.view.cell;
+    let reads = 0;
+    Object.assign(w.view, { cell: (x: number, y: number) => { reads++; return cell(x, y); } });
+    const danger = incomingDamage(w.view, { x: 50, y: 30 }, 2, w.terrain, { monsters: w.view.monsters(), lastSeen: new Map([[1, 1]]) });
+    expect(danger.incomplete).toBe(true);
+    expect(reads).toBeLessThan(6000);
+  });
+});
+
+describe("round 8 early creature damage", () => {
+  const races = ["filthy street urchin", "scruffy little dog", "scrawny cat", "village idiot", "blubbering idiot", "mean-looking mercenary", "mangy-looking leper", "rock lizard", "giant white mouse"];
+
+  it.each([0, 1, 2])("does not invent lethal damage from unseen blows at DL%i", (depth) => {
+    for (const race of races) for (const hp of [10, 13, 15]) for (const x of [3, 5]) {
+      const w = world({ map: ["########", "#.@....#", "########"], player: { depth, level: 1, hp, maxHp: hp },
+        monsters: [{ grid: { x, y: 1 }, race, level: race === "rock lizard" || race === "giant white mouse" ? 1 : 0,
+          knownCombat: { blows: [], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+      const exposure = forecastExposure(w.view, w.at(), 1, w.terrain);
+      expect(exposure.upper, `${race} at DL${depth}`).toBeLessThan(hp);
+      if (x === 5) expect(exposure.upper).toBe(0);
+      expect(exposure.unknown).toContain("blows");
+    }
+  });
+
+  it("does not turn a learned begging or stealing touch into HP damage", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 10, maxHp: 10, level: 1 },
+      monsters: [{ grid: { x: 3, y: 1 }, race: "filthy street urchin", level: 0,
+        knownCombat: { blows: [{ method: "BEG", effect: "NONE", damage: null }, { method: "TOUCH", effect: "EAT_GOLD", damage: null }], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+    expect(forecastExposure(w.view).upper).toBe(0);
+  });
+
+  it.each([0, 1, 2])("bounds learned early creature damage by its actual dice at DL%i", (depth) => {
+    const creatures = [
+      ["filthy street urchin", 0, 110, "TOUCH", "EAT_GOLD", 0], ["scruffy little dog", 0, 110, "BITE", "HURT", 1],
+      ["scrawny cat", 0, 110, "CLAW", "HURT", 1], ["village idiot", 0, 120, "DROOL", "NONE", 0],
+      ["blubbering idiot", 0, 110, "DROOL", "NONE", 0], ["mean-looking mercenary", 0, 110, "HIT", "HURT", 10],
+      ["mangy-looking leper", 0, 110, "BEG", "NONE", 0], ["rock lizard", 1, 110, "BITE", "HURT", 1],
+      ["giant white mouse", 1, 110, "BITE", "HURT", 2],
+    ] as const;
+    for (const [race, level, speed, method, effect, sides] of creatures) for (const hp of [10, 13, 15]) {
+      const w = world({ map: ["########", "#.@....#", "########"], player: { depth, level: 1, hp, maxHp: hp },
+        monsters: [{ grid: { x: 3, y: 1 }, race, level, speed,
+          knownCombat: { blows: [{ method, effect, damage: sides === 0 ? null : { base: 0, dice: 1, sides, mBonus: 0 } }], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+      const exposure = forecastExposure(w.view);
+      expect(exposure.upper, race).toBeLessThan(hp);
+      expect(exposure.upper, race).toBeLessThanOrEqual(sides * (speed === 120 ? 2 : 1));
+    }
+  });
+
+  it("retains learned damage from a random-moving town attacker", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { depth: 0 },
+      monsters: [{ grid: { x: 3, y: 1 }, raceFlags: ["RAND_50"], level: 0,
+        knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 10, mBonus: 0 } }], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+    expect(harmlessKind(w.view.monsters()[0]!, w.view, 10)).toBe(false);
+  });
+
+  it("separates expected, persona scenario and known maximum damage", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { hp: 10, maxHp: 10, level: 1, ac: 0 },
+      monsters: [{ grid: { x: 3, y: 1 }, race: "mean-looking mercenary", level: 0,
+        knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 10, mBonus: 0 } }], averageHp: null, health: "unhurt", status: [], spellFrequency: null, innateFrequency: null } }] });
+    Object.assign(w.view, { blowRules: { effects: new Map([["HURT", 40]]), methods: new Map([["HIT", true]]) } });
+    const bold = defaultPersona();
+    bold.sliders.boldness = 100; bold.sliders.selfpreservation = 0; bold.sliders.paranoia = 0;
+    const timid = defaultPersona();
+    timid.sliders.boldness = 0; timid.sliders.selfpreservation = 100; timid.sliders.paranoia = 100;
+    const a = forecastExposure(w.view, w.at(), 1, w.terrain, { quantile: riskQuantile(bold) });
+    const b = forecastExposure(w.view, w.at(), 1, w.terrain, { quantile: riskQuantile(timid) });
+    expect(a.mean).toBeLessThan(a.upper);
+    expect(a.upper).toBeLessThan(b.upper);
+    expect(b.upper).toBeLessThanOrEqual(b.worst!);
+    expect(b.worst).toBe(10);
+  });
+
+  it.each(["cave spider", "Fang, Farmer Maggot's Dog", "Grip, Farmer Maggot's Dog", "jackal"])("retains known %s damage and swarm exposure", (race) => {
+    const w = world({ map: ["#######", "#.....#", "#..@..#", "#.....#", "#######"], player: { hp: 10, maxHp: 10, level: 1 },
+      monsters: [{ grid: { x: 4, y: 2 }, race, level: 2, speed: 120 }], monsterRecall: () => "It can bite to hurt (1d4)." });
+    expect(forecastExposure(w.view).upper).toBe(8);
+    w.setPlayer({ hp: 8 });
+    expect(forecastExposure(w.view).upper).toBeGreaterThanOrEqual(w.view.player().hp);
+    w.setMonsters([{ grid: { x: 4, y: 2 }, race, level: 2, speed: 120 }, { grid: { x: 2, y: 2 }, race, level: 2, speed: 120 }]);
+    expect(forecastExposure(w.view).upper).toBeGreaterThan(10);
+  });
+});
+
+describe("physical forecast parity", () => {
+  it.each([0, 10, 70, 150, 240, 300])("matches Core hit and armor arithmetic at AC %i", (ac) => {
+    for (const toHit of [0, 9, 40, 120]) {
+      const core = hitChance(toHit, ac);
+      expect(hitProbability(toHit, ac)).toBe(core.numerator / core.denominator);
+    }
+    for (let damage = 1; damage <= 60; damage++) expect(armorDamage(damage, ac)).toBe(adjustDamArmor(damage, ac));
+  });
+
+  it("applies armor to every integer die outcome before averaging", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { ac: 100 }, monsters: [{ grid: { x: 3, y: 1 }, level: 2,
+      knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 4, mBonus: 0 } }], health: "unhurt", averageHp: 10, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    Object.assign(w.view, { blowRules: { effects: new Map([["HURT", 40]]), methods: new Map([["HIT", true]]) } });
+    const m = w.view.monsters()[0]!;
+    const first = meleeMoments(w.view, m)!;
+    expect(first.mean).toBeCloseTo((1 + 2 + 3 + 3) / 4 * hitProbability(46, 100));
+    expect(first.upper).toBe(3);
+    expect(first.variance).toBeGreaterThan(0);
+    w.setPlayer({ ac: 0 });
+    expect(meleeMoments(w.view, m)!.mean).toBeGreaterThan(first.mean);
+  });
+
+  it("keeps a physical elemental component through immunity", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { ac: 100, status: { resFire: 1 } }, monsters: [{ grid: { x: 3, y: 1 }, level: 1,
+      knownCombat: { blows: [{ method: "HIT", effect: "FIRE", damage: { base: 12, dice: 0, sides: 0, mBonus: 0 } }], health: "unhurt", averageHp: null, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    Object.assign(w.view, { blowRules: { effects: new Map([["FIRE", 10]]), methods: new Map([["HIT", true]]) },
+      simulateLoadout: () => ({ before: { stats: { resistElements: ["FIRE"], resists: [3] } } }) as unknown as LoadoutSimulation });
+    expect(meleeMoments(w.view, w.view.monsters()[0]!)!.upper).toBe(adjustDamArmor(12, 150));
+  });
+
+  it("keeps unsupported dice components and absent effect definitions uncertain", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, knownCombat: { blows: [{ method: "HIT", effect: "HURT", damage: { base: 0, dice: 1, sides: 4, mBonus: 2 } }], health: "unhurt", averageHp: null, spellFrequency: null, innateFrequency: null, status: [] } }] });
+    expect(meleeMoments(w.view, w.view.monsters()[0]!)!.uncertain).toBe(true);
+    expect(forecastExposure(w.view).unknown).toContain("blows");
+  });
+});
+
+describe("casting mixture", () => {
+  it("tries non-innate before innate and spends failed casting turns", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, knownCombat: { blows: [], health: "unhurt", averageHp: null, spellFrequency: { percent: 20, exact: true }, innateFrequency: { percent: 50, exact: true }, status: [] } }] });
+    const mixture = castingMixture(w.view.monsters()[0]!, ["HOLD", "BR_FIRE"], 1);
+    expect(mixture).toMatchObject({ spell: 0.2, innate: 0.4, damageSpell: 0, melee: 0.4 });
+  });
+
+  it("treats rounded and absent frequencies as uncertain rates", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 } }] });
+    expect(castingMixture(w.view.monsters()[0]!, ["HOLD"])).toMatchObject({ spell: 0.1, high: 0.6 });
+    expect(castingMixture(w.view.monsters()[0]!, [])).toMatchObject({ spell: 0, innate: 0, melee: 1 });
+    const monster = { ...w.view.monsters()[0]!, knownCombat: { blows: [], averageHp: null, health: "unhurt" as const, status: [], spellFrequency: { percent: 20, exact: false }, innateFrequency: null } };
+    expect(castingMixture(monster, ["HOLD"])).toMatchObject({ spell: 0.155, high: 0.4 });
+  });
+});
+
+describe("moving exposure forecast", () => {
+  it("charges a remembered pursuer across a corner and keeps background loss separate", () => {
+    const w = world({ map: ["########", "#.@#...#", "#......#", "########"], player: { status: { poisoned: 5 } }, monsters: [{ id: 1, grid: { x: 5, y: 1 }, visible: false, speed: 120 }], monsterRecall: () => "It can bite to hurt (1d4)." });
+    const facts = { monsters: w.view.monsters(), lastSeen: new Map([[1, 0]]), energy: turnEnergy };
+    w.advance(30);
+    const seen = forecastExposure(w.view, w.at(), 2, w.terrain, facts);
+    expect(seen.upper).toBeGreaterThan(2);
+    expect(seen.unknown).toContain("remembered-position");
+    expect(forecastExposure(w.view, w.at(), 2, w.terrain, { ...facts, monsters: [] }).upper).toBe(2);
+  });
+
+  it("retains an unknown-region threat when remembered reach exhausts its budget", () => {
+    const rows = Array.from({ length: 80 }, () => " ".repeat(80));
+    rows[77] = " ".repeat(76) + ".@." + " ";
+    const w = world({ map: rows, monsters: [{ grid: { x: 1, y: 1 }, id: 1, visible: false }], monsterRecall: () => "It can hit to hurt (1d4)." });
+    w.advance(10000);
+    const exposure = forecastExposure(w.view, w.at(), 1, w.terrain, { monsters: w.view.monsters(), lastSeen: new Map([[1, 0]]), energy: turnEnergy });
+    expect(exposure.upper).toBe(0);
+    expect(exposure.unknown).toContain("position-budget");
+  });
+
+  it("keeps the fractional initiative phase in the expected exposure", () => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], monsters: [{ grid: { x: 3, y: 1 }, speed: 110 }], monsterRecall: () => "It can hit to hurt (1d1)." });
+    const half = forecastExposure(w.view, w.at(), 0.5, w.terrain, { energy: turnEnergy });
+    expect(half.mean).toBe(0.5);
+    expect(half.upper).toBe(1);
+    w.setMonsters([{ grid: { x: 3, y: 1 }, speed: 120 }]);
+    expect(forecastExposure(w.view, w.at(), 0.5, w.terrain, { energy: turnEnergy }).mean).toBe(1);
+  });
+
+  it("queues corridor attackers and increases exposure over two actions", () => {
+    const w = world({ map: ["########", "#.@....#", "########"], monsters: [{ grid: { x: 3, y: 1 } }, { grid: { x: 4, y: 1 } }], monsterRecall: () => "It can bite to hurt (1d4)." });
+    const one = forecastExposure(w.view, w.at(), 1, w.terrain);
+    const two = forecastExposure(w.view, w.at(), 2, w.terrain);
+    expect(one.upper).toBe(4);
+    expect(two.upper).toBe(8);
+    expect(one.mean).toBeLessThan(one.upper);
+    expect(forecastExposure(w.view, w.at(), 1, w.terrain, { monsters: [] }).upper).toBeLessThanOrEqual(one.upper);
+  });
+});
+
+describe("starvation attribution", () => {
+  it.each([[100, 0], [90, 1], [50, 5], [0, 10]])("prices food %i as %i known damage per action", (food, damage) => {
+    const w = world({ map: ["#####", "#.@.#", "#####"], player: { status: { food } } });
+    expect(incomingDamage(w.view).damage).toBe(damage);
+    expect(incomingDamage(w.view, w.at(), 2).damage).toBe(2 * damage);
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain, { creaturesOnly: true }).damage).toBe(0);
+    expect(incomingDamage(w.view).uncertainty).toBe(0);
+  });
+});
+
+describe("breeder damage evidence", () => {
+  it("uses observed one-point blows rather than the unknown-attack ceiling", () => {
+    const w = world({ map: ["######", "#.@..#", "######"], player: { hp: 60, maxHp: 60 }, monsters: [{ grid: { x: 3, y: 1 }, race: "giant white louse", level: 1, raceFlags: ["MULTIPLY"] }] });
+    const m = w.view.monsters()[0]!;
+    const seen = new Map([[m.race, 1]]);
+    expect(breederBlow(w.view, m, seen)).toBe(1);
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain, { observedDamage: seen }).damage).toBe(1);
+    const unknown = incomingDamage(w.view, w.at(), 1, w.terrain).damage;
+    expect(unknown).toBe(4);
+    w.setPlayer({ hp: 20, maxHp: 20 });
+    expect(incomingDamage(w.view, w.at(), 1, w.terrain).damage).toBe(3);
+  });
+
+  it.each(["poison", "acid", "paralyse", "confuse"])("retains danger for a breeder whose recall shows %s", (effect) => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 3, y: 1 }, race: "worm mass", level: 1, raceFlags: ["MULTIPLY"] }], monsterRecall: () => `It can touch to ${effect} (1d1).` });
+    expect(breederBlow(w.view, w.view.monsters()[0]!, new Map([["worm mass", 1]]))).toBeNull();
+  });
+
+  it("does not cap a higher level breeder, a unique or a creature with magic", () => {
+    for (const monster of [
+      { level: 3, raceFlags: ["MULTIPLY"], spellFlags: [] },
+      { level: 1, raceFlags: ["MULTIPLY", "UNIQUE"], spellFlags: [] },
+      { level: 1, raceFlags: ["MULTIPLY"], spellFlags: ["HOLD"] },
+    ]) {
+      const w = world({ map: MAP, monsters: [{ grid: { x: 3, y: 1 }, ...monster, race: "worm mass" }], monsterRecall: () => "It can bite to hurt (1d1)." });
+      expect(breederBlow(w.view, w.view.monsters()[0]!)).toBeNull();
+    }
+  });
+});
 
 const MAP = ["#########", "#.@.....#", "#########"];
 /* The views here are the harness's, which never check an input token. */
@@ -59,11 +306,11 @@ describe("threat model", () => {
     expect(hurt).toBeLessThan(rating().band);
   });
 
-  it("rates unseen blows on half the level ceiling", () => {
+  it("keeps a mild prior for unseen level zero blows", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 10 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
     expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
     w.setPlayer({ hp: 8 });
-    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(1);
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
   });
 
   it("does not call a townsperson with unseen blows dangerous to a lightly hurt priest", () => {
@@ -82,15 +329,16 @@ describe("threat model", () => {
     w.setPlayer({ hp: 3 });
     expect(rate()).toBe(0);
     w.setMonsters([{ grid: { x: 3, y: 1 }, race: "mean-looking mercenary", level: 0 }]);
+    recall(w.view, "He can hit to hurt (1d10).");
     expect(rate()).toBeGreaterThanOrEqual(2);
   });
 
-  it("keeps the dungeon's estimate for a level 0 creature below town", () => {
+  it("keeps the population prior for a level 0 creature below town", () => {
     const w = world({ map: MAP, player: { level: 1, hp: 7, maxHp: 13 }, monsters: [{ grid: { x: 3, y: 1 }, level: 0 }] });
     recall(w.view, "Nothing is known about his attack.");
-    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(1);
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
     w.setPlayer({ hp: 4 });
-    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(2);
+    expect(assessThreat(w.view.monsters()[0]!, w.view.player(), w.view.monsters(), w.view).band).toBe(0);
   });
 
   it("rates each creature alone, so a crowd does not raise a distant one's band", () => {
@@ -113,6 +361,18 @@ describe("threat model", () => {
 });
 
 describe("incoming damage windows", () => {
+  it.each(["floating eye", "grey mold"])("keeps a known stationary %s out of melee range without a learned movement flag", (race) => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 4, y: 1 }, race }], monsterRecall: () => race === "grey mold" ? "It does not deign to chase intruders. It can hit to hurt (1d4)." : "" });
+    expect(incomingDamage(w.view, w.at(), 2, w.terrain)).toMatchObject({ damage: 0, status: 0 });
+    expect(incomingDamage(w.view, { x: 3, y: 1 }, 1, w.terrain).damage).toBeGreaterThan(0);
+  });
+
+  it("uses learned API 2 spell flags without requiring a recall sentence", () => {
+    const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"], spellFlags: ["HOLD"], knownSpellFlags: ["HOLD"] }] });
+    expect(knownSpellFlags(w.view, w.view.monsters()[0]!)).toEqual(["HOLD"]);
+    expect(incomingDamage(w.view).status).toBe(150);
+  });
+
   const grip = { grid: { x: 3, y: 1 }, level: 2, speed: 120, race: "Grip, Farmer Maggot's Dog", raceFlags: ["UNIQUE"] };
 
   it("counts two bites in one action and four in two against the recorded dog", () => {
@@ -186,6 +446,7 @@ describe("incoming damage windows", () => {
     const w = world({ map: MAP, monsters: [{ grid: { x: 6, y: 1 }, raceIndex: 1, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }, { grid: { x: 4, y: 1 }, raceIndex: 2, raceFlags: ["NEVER_BLOW", "NEVER_MOVE"] }], monsterRecall: (index) => index === 1 ? "It may cast spells which produce fire bolts (12)." : "Its attacks are unknown." });
     expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(0);
     Object.assign(w.view, { monsterRecall: (index: number) => ({ text: index === 1 ? "It may breathe fire (12)." : "Its attacks are unknown." }) });
+    invalidateHazards();
     expect(incomingDamage(w.view, undefined, 1, w.terrain).damage).toBe(12);
   });
 
@@ -198,6 +459,7 @@ describe("incoming damage windows", () => {
     w.setPlayer({ status: { resFire: 10 } });
     expect(incomingDamage(w.view).damage).toBe(2);
     resistance = 3;
+    invalidateHazards();
     expect(incomingDamage(w.view).damage).toBe(0);
     resistance = -1;
     w.setPlayer({ status: { resFire: 0 } });
