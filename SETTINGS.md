@@ -195,7 +195,7 @@ Each quirk starts off, with its strength slider at 50.
 | Epitaphs | on | Squire writes an epitaph naming the killer and the character's last choice. |
 | Family milestones | on | The family remembers depth records, unique kills and its first artifact. |
 | Namesakes | on | An heir can take an ancestor's name with a number. |
-| Inherited superstitions | on | An heir avoids the scroll, potion or wand its ancestor used just before dying, until that kind is identified. |
+| Inherited superstitions | on | An heir holds back from trying unknown items of a class that killed or badly hurt an ancestor. |
 | Lessons of the dark | on | An heir carries extra fuel after an ancestor died without light. |
 | Trophies | on | A proud character keeps one item from each unique it kills while the pack has room. |
 | Favoured grounds | on | An heir prefers hunting where the family made its best find, once it is ready for that depth. |

@@ -16,7 +16,7 @@ The world is read fresh for each decision through `viewWorld`, which builds an `
 
 The adapter preserves learned structured blows, spell and innate frequencies, health bands, average HP and temporary monster statuses in the local MonsterView contract. It reads general blow effect powers and method properties from content definitions; it never fills missing monster lore from a race record. A missing average HP remains null. Legacy numeric HP readers receive a population estimate, while the fight forecast uses a labeled HP interval.
 
-Each snapshot prepares at most 24 carried or equipped item inspections, eight visible race recalls, 16 learned spell inspections, eight candidate projection paths, three radius-two blast areas and one baseline known-loadout simulation. The synchronous view answers only those prepared reads. An unsupported loadout change returns null, an unprepared projected target has no checked path, and absent item facts retain their name-based fallback. The adapter converts the baseline loadout's player statuses and items into the same view contract as the main snapshot.
+Each snapshot prepares at most 24 carried or equipped item inspections, eight visible race recalls, 16 learned spell inspections, eight candidate projection paths, three radius-two blast areas and one baseline known-loadout simulation. The synchronous view answers only those prepared reads. An unsupported loadout change returns null, an unprepared projected target has no checked path, and absent item facts retain their name-based fallback. The adapter converts the baseline loadout's player statuses and items into the same view contract as the main snapshot. Each snapshot also prepares the public known-object entries, the facts the game tells every player about item kinds, so Squire can tell when a kind is known without using one.
 
 Fight, healing and short escape forecasts compare normal-action energy, HP loss estimates, resource limits and an HP reserve. The offers retain the chosen target and source binding, and the decision log retains that binding, its forecast and the estimated size of the complete request. Both backend state caps protect numeric alternatives, remembered pressure and the descent blocker. These are bounded estimates; the current implementation supplies no calibrated death probability or p95 guarantee. SOL-REPORT.md lists the remaining gaps and validation limits.
 
@@ -34,9 +34,9 @@ The known world says less than the API 1 view did, and `viewWorld` fills the gap
 
 - A monster's exact HP and maximum HP remain unknown. Its health band constrains a learned average or an explicit population prior; the forecast keeps an interval instead of certifying a kill from the display estimate.
 - A square the character has never seen is impassable, with no feature and no trap.
-- A trap the character has disabled still reads as a trap.
-- No square glows.
-- `floorItems` answers only for the character's own square.
+- A trap the character has disabled reads as disabled.
+- Each square reports the glow the character remembers there.
+- `floorItems` returns remembered floor items on other squares as well as on the character's own.
 - A timed effect reads as the lowest duration in the grade the status line names, so a check against a grade boundary answers as API 1 did and a check inside a grade does not.
 - Recall and Deep Descent read 1 while active and 0 otherwise.
 - A light uses the public fuel field. Older snapshots without that field use the displayed turns in the item name.
@@ -61,8 +61,8 @@ On build `8d450eedb`, with Squire enabled through the Mods screen and a characte
 
 ## Checking a build
 
-The build runs against a local SDK pack for Core 1.22.0 with API 2, pinned through `file:` lines in `package.json`. Registry versions replace those lines when an SDK with API 2 is published.
+The build uses the published 1.23.0-beta.4 packages of `@rpgm-tools/neo-angband-core`, `@rpgm-tools/neo-angband-content`, and `@rpgm-tools/neo-angband-mod-sdk` from npm, which provide mod API 2.1.0.
 
-Run `pnpm verify`. It runs the type check, the tests (113 test files and 1683 tests), the plugin builder's check, and the checker, `neo-angband-mod-check --first-party`, and all four must pass. `src/manifest-capabilities.test.ts` checks that every grant in the manifest matches a use in the code.
+Run `pnpm verify`. It runs the type check, the tests (116 test files and 2364 tests, two of them skipped), the plugin builder's check, and the checker, `neo-angband-mod-check --first-party`, and all four must pass. `src/manifest-capabilities.test.ts` checks that every grant in the manifest matches a use in the code.
 
 Then play it in a lab build. Set the localStorage key `neo-angband:log-level` to `debug` so Squire's log lines show (SQ-7), enable Squire on the Mods screen, and start a character from the "New Squire character" title row. Squire should take the keyboard and play. Take the keyboard back once with Escape and, in a second run, with Ctrl-Z. Until SQ-1 closes, a store door opens the store, the store closes at once, and the log shows the shop commands refused.
