@@ -41,6 +41,8 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
   const pack = readPack(view);
   const detection = detectionSources(view);
   const has = (list: readonly { readonly handle: number }[]) => handle !== null && list.some((i) => i.handle === handle);
+  const target = command.args?.["tgtitem"] as { readonly handle?: unknown } | undefined;
+  const identifies = typeof target?.handle === "number" && [...view.inventory(), ...view.equipment()].some((item) => item?.handle === target.handle);
 
   switch (command.code) {
     case "walk":
@@ -87,6 +89,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (identifies && view.inventory().some((item) => item.handle === handle && /\bScrolls? of Identify(?: Rune)?\b/i.test(item.name ?? item.label ?? ""))) return "identify";
       if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
@@ -102,6 +105,7 @@ export function goalOfCommand(command: PlayerCommand, view: AgentView): Goal | n
     case "cast": {
       const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
       if (spell === null) return null;
+      if (identifies && view.spellbooks().some((book) => book.spells.some((item) => item.sidx === spell && /^Identify(?: Rune)?$/i.test(item.name)))) return "identify";
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
       if (pack.escapeSpell.some((s) => s.sidx === spell)) return "cast_escape";

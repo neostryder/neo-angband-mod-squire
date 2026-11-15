@@ -4046,6 +4046,14 @@ describe("the answer key", () => {
 });
 
 describe("identifying worn preparation", () => {
+  it.each(["scroll", "spell"] as const)("records a player's targeted identification with a %s", (source) => {
+    const w = world({ map: CORRIDOR, worn: ["a Ring {??}"], pack: ["a Scroll of Identify Rune"], spells: [{ name: "Identify Rune", sidx: 2, mana: 2 }] });
+    const command = { code: source === "scroll" ? "read" : "cast", args: { ...(source === "scroll" ? { handle: 1 } : { spell: 2 }), tgtitem: { handle: 100 } } };
+    expect(goalOfCommand(command, w.view)).toBe("identify");
+    expect(goalOfCommand({ ...command, args: { ...command.args, tgtitem: { handle: 999 } } }, w.view)).toBeNull();
+    expect(goalOfCommand({ code: command.code, args: source === "scroll" ? { handle: 1 } : { spell: 2 } }, w.view)).toBeNull();
+  });
+
   it.each(["scroll", "spell"] as const)("identifies unknown worn gear with a known %s", (source) => {
     const w = suppliedWorld({ map: CORRIDOR, player: { depth: 19, maxLevel: 30, hp: 100, maxHp: 100, sp: 5, maxSp: 5 }, worn: ["a Ring {??}"],
       pack: source === "scroll" ? ["a Scroll of Identify Rune"] : [], spells: source === "spell" ? [{ name: "Identify Rune", sidx: 2, mana: 2 }] : [] });
@@ -4078,6 +4086,22 @@ describe("identifying worn preparation", () => {
 describe("bound prompt targets", () => {
   const orc = { grid: { x: 3, y: 1 }, race: "cave orc", level: 7 };
 
+  it("retains a learned key across a volley and rejects a later key change", () => {
+    const w = suppliedWorld({ map: CORRIDOR, pack: ["a Wand of Magic Missile (5 charges)"], monsters: [{ grid: { x: 6, y: 1 }, hp: 100, maxHp: 100, level: 1 }], projectionPath: (to) => [to] });
+    let kindKey = "flavor:7";
+    const view: AgentView = { ...w.view, inventory: () => w.view.inventory().map((item) => item.handle !== 1 ? item : { ...item, objectId: 17, aware: !kindKey.startsWith("flavor:"), kindKey, sval: kindKey.startsWith("flavor:") ? -7 : 4 }) };
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    const choice = p.choose(pick("aim_wand"), asked(p.ask(view)).context, view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    kindKey = "kind:42";
+    expect(choice.plan.step(view, w.act)?.code).toBe("aim");
+    w.advance(10);
+    expect(choice.plan.step(view, w.act)?.code).toBe("aim");
+    w.advance(10);
+    kindKey = "kind:43";
+    expect(choice.plan.step(view, w.act)).toBeNull();
+  });
+
   it("reads the scroll the option was chosen for, and cancels when that scroll is gone", () => {
     const w = world({ map: CORRIDOR, player: { hp: 8, maxHp: 30 }, pack: ["a Scroll of Phase Door"], monsters: [orc] });
     const { p } = planner(w);
@@ -4095,22 +4119,27 @@ describe("bound prompt targets", () => {
     expect(String(asked(p.ask(w.view)).request.state["last"])).toContain("phase away cancelled: the item it was chosen for (a Scroll of Phase Door) is no longer carried.");
   });
 
-  it.each(["potion", "scroll"] as const)("keeps the chosen unknown %s after its flavour becomes known", (kind) => {
+  it.each(["potion", "scroll"] as const)("keeps only the same unknown %s after its flavour becomes known", (kind) => {
     const name = kind === "potion" ? "a Smoky Potion" : "a Scroll titled 'FOO BAR'";
     const known = kind === "potion" ? "a Potion of Cure Light Wounds" : "a Scroll of Phase Door";
     const goal = kind === "potion" ? "quaff_unknown" : "read_unknown";
     const code = kind === "potion" ? "quaff" : "read";
     const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 30 }, pack: [name], monsters: [orc] });
     let aware = false;
-    const view: AgentView = { ...w.view, inventory: () => w.view.inventory().map((item) => ({ ...item, aware, kindKey: aware ? "kind:42" : "flavor:7", sval: aware ? 4 : -7, itemKey: `gear:${String(item.handle)}` })) };
+    let objectId = 17;
+    const view: AgentView = { ...w.view, inventory: () => w.view.inventory().map((item) => ({ ...item, objectId, aware, kindKey: aware ? "kind:42" : "flavor:7", sval: aware ? 4 : -7, itemKey: `gear:${String(item.handle)}` })) };
     const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
     const q = asked(p.ask(view));
     expect(offered(q)).toContain(goal);
     const choice = p.choose(pick(goal), q.context, view);
     if (!("plan" in choice)) throw new Error("expected a plan");
+    const replaced = p.choose(pick(goal), q.context, view);
+    if (!("plan" in replaced)) throw new Error("expected a plan");
     w.setPack([known]);
     aware = true;
     expect(choice.plan.step(view, w.act)).toEqual({ code, args: { handle: 1 } });
+    objectId = 18;
+    expect(replaced.plan.step(view, w.act)).toBeNull();
   });
 
   it("rejects a different unknown flavour at the chosen handle", () => {
