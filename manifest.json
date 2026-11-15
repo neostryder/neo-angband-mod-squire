@@ -35,6 +35,8 @@
       "state:turn.read",
       "state:messages.read",
       "state:interaction.read",
+      "engine:access",
+      "input:controller",
       "input:intent",
       "input:prompt.reply",
       "event:combat-outcome",
