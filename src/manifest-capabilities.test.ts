@@ -29,9 +29,14 @@ describe("manifest capabilities", () => {
     expect(capabilities()).not.toContain("state:*.read");
   });
 
-  it("holds the three grants the game checks before it calls a controller", () => {
-    /* Without state:interaction.read the game never calls the controller, and without the two input grants every intent and prompt answer is refused. Nothing else says so: the SDK checker does not flag their absence, and the failure is a character that holds the keyboard and never moves. */
-    for (const grant of ["state:interaction.read", "input:intent", "input:prompt.reply"]) expect(capabilities()).toContain(grant);
+  it("holds the four grants the game checks before it installs and calls a controller", () => {
+    /* Without input:controller the game never offers Squire the keyboard: it installs a controller only for a mod the player consented to drive the game (input:controller and input:intent), and a character armed from the title row or a roll-on then stands in town with nobody playing it. Without state:interaction.read the game never calls the controller, and without the two other input grants every intent and prompt answer is refused. Nothing else says so: the SDK checker does not flag their absence, and the failure is a character that holds the keyboard and never moves. */
+    for (const grant of ["input:controller", "state:interaction.read", "input:intent", "input:prompt.reply"]) expect(capabilities()).toContain(grant);
+  });
+
+  it("can read the save's autoplayer mark, so Ctrl-Z hands it the keyboard", () => {
+    /* After the player confirms Ctrl-Z the game reloads, and for a mod that runs in the game's own process the controller context does not say it was armed. armed() then offers to play only if it can read NOSCORE_BORG on the save, which the game hands over only through the engine domain, and only with engine:access. */
+    expect(capabilities()).toContain("engine:access");
   });
 
   it("lists each capability once", () => {
