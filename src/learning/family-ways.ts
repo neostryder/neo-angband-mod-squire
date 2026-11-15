@@ -68,8 +68,17 @@ export function emptyFlourishes(): Flourishes {
 }
 
 function itemKey(item: ItemView): string {
-  /* The kind identifies repeat sightings without revealing its unknown effect. */
+  /* Flavours identify a kind only within this game. */
+  if (item.aware === false || item.sval < 0 || item.kindKey?.startsWith("flavor:")) return `game:${String(item.tval)}:${item.kindKey ?? String(item.sval)}`;
   return item.kindId ?? `${String(item.tval)}:${String(item.sval)}`;
+}
+
+function legacyFlavour(key: string): boolean {
+  return /^\d+:-\d+$/.test(key);
+}
+
+function heritable(s: Superstition): boolean {
+  return !s.key.startsWith("game:") && !s.key.startsWith("flavor:") && !legacyFlavour(s.key);
 }
 
 export function unknownUse(item: ItemView): Superstition | null {
@@ -104,7 +113,7 @@ export function inheritWays(family: FamilyFlourishes, parent: Persona, heir: Per
   const enabled = (id: "inheritedSuperstitions" | "darkLessons" | "favouredGrounds" | "favouredWeapons") => parent.toggles[id] && heir.toggles[id];
   const inheritedFavoured = enabled("favouredWeapons") && share > 0 && (share === 1 || rng() < share) ? favouredWeapon(family) : null;
   return { ...emptyFlourishes(),
-    superstitions: enabled("inheritedSuperstitions") ? family.superstitions.slice(-Math.ceil(6 * share)).filter(() => share > 0) : [],
+    superstitions: enabled("inheritedSuperstitions") ? family.superstitions.filter(heritable).slice(-Math.ceil(6 * share)).filter(() => share > 0) : [],
     darkLesson: enabled("darkLessons") && family.darkDeaths > 0 && share > 0 && (share === 1 || rng() < share),
     favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share > 0 && (share === 1 || rng() < share) ? family.bestFind.depth : null,
     favouredKind: inheritedFavoured === null ? null : inheritedFavoured.kind,
@@ -185,8 +194,8 @@ export function familyAfterDeath(family: FamilyFlourishes, run: Flourishes, view
   const last = run.lastUse;
   const known = view?.inventory().some((i) => itemKey(i) === last?.key && unknownUse(i) === null) ?? false;
   const learned = view === null ? [] : learnedSuperstitions(family.superstitions, view);
-  const remembered = family.superstitions.filter((s) => !learned.some((t) => s.key === t.key));
-  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && !known
+  const remembered = family.superstitions.filter((s) => heritable(s) && !learned.some((t) => s.key === t.key));
+  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && heritable(last) && !known
     ? [...remembered.filter((s) => s.key !== last.key), last].slice(-6) : remembered;
   const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
   const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
@@ -346,7 +355,7 @@ function record(raw: unknown): Record<string, unknown> {
 function strings(raw: unknown): Superstition[] {
   return Array.isArray(raw) ? raw.slice(-6).flatMap((s) => {
     const r = record(s);
-    return typeof r["key"] === "string" && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
+    return typeof r["key"] === "string" && !legacyFlavour(r["key"]) && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
   }) : [];
 }
 
@@ -376,7 +385,7 @@ export function readFamilyFlourishes(raw: unknown): FamilyFlourishes {
       : null;
   })();
   return {
-    superstitions: strings(r["superstitions"]),
+    superstitions: strings(r["superstitions"]).filter(heritable),
     darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0,
     bestFind: find(r["bestFind"]),
     motto: mottoEntry,
