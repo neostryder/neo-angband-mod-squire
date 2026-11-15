@@ -9,6 +9,9 @@ import type { Lineage } from "./lineage.js";
 export interface Superstition {
   readonly key: string;
   readonly name: string;
+  readonly handle?: number;
+  readonly tval?: number;
+  readonly objectId?: number;
 }
 
 export interface Find {
@@ -85,7 +88,7 @@ export function unknownUse(item: ItemView): Superstition | null {
   const name = shownName(item);
   if (name === null || !/\b(?:Scrolls?|Potions?|Wands?)\b/i.test(name) || /\b(?:Scrolls?|Potions?|Wands?) of\b/i.test(name)) return null;
   const plain = name.replace(/^(?:an?|the|\d+)\s+/i, "").replace(/\s*\([^)]*\)|\s*\{[^}]*\}/g, "").trim();
-  return { key: itemKey(item), name: plain };
+  return { key: itemKey(item), name: plain, handle: item.handle, tval: item.tval, ...(item.objectId === undefined ? {} : { objectId: item.objectId }) };
 }
 
 export function usedItem(command: AgentCommand, view: AgentView): Superstition | null {
@@ -105,7 +108,8 @@ export function distrustedUse(command: AgentCommand, view: AgentView, run: Flour
 }
 
 export function learnedSuperstitions(superstitions: readonly Superstition[], view: AgentView): Superstition[] {
-  return superstitions.filter((s) => view.inventory().some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+  return superstitions.filter((s) => view.inventory().some((i) => unknownUse(i) === null && (itemKey(i) === s.key ||
+    s.tval === i.tval && (s.objectId !== undefined ? s.objectId === i.objectId : s.handle === i.handle))));
 }
 
 export function inheritWays(family: FamilyFlourishes, parent: Persona, heir: Persona, rng: () => number): Flourishes {
@@ -219,7 +223,8 @@ export function emptyFamilyFlourishes(): FamilyFlourishes {
 
 export function observeFlourishes(run: Flourishes, view: AgentView, persona: Persona | null, uniqueKills: readonly string[], acquired: ReadonlySet<number>): Flourishes {
   const items = view.inventory();
-  const superstitions = run.superstitions.filter((s) => !items.some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+  const learned = learnedSuperstitions(run.superstitions, view);
+  const superstitions = run.superstitions.filter((s) => !learned.includes(s));
   const trophies = run.trophies.flatMap((t) => {
     const item = items.find((i) => i.handle === t.handle);
     return item === undefined ? [] : [{ ...t, name: shownName(item) ?? t.name }];
@@ -355,7 +360,11 @@ function record(raw: unknown): Record<string, unknown> {
 function strings(raw: unknown): Superstition[] {
   return Array.isArray(raw) ? raw.slice(-6).flatMap((s) => {
     const r = record(s);
-    return typeof r["key"] === "string" && !legacyFlavour(r["key"]) && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
+    return typeof r["key"] === "string" && !legacyFlavour(r["key"]) && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100),
+      ...(typeof r["handle"] === "number" ? { handle: r["handle"] } : {}),
+      ...(typeof r["tval"] === "number" ? { tval: r["tval"] } : {}),
+      ...(typeof r["objectId"] === "number" ? { objectId: r["objectId"] } : {}),
+    }] : [];
   }) : [];
 }
 

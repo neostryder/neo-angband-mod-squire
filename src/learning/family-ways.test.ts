@@ -82,6 +82,19 @@ describe("flourish inheritance", () => {
 });
 
 describe("superstitions", () => {
+  it("retires a real flavour memory when the same object becomes known", () => {
+    const w = world({ map: ["@"], pack: ["a Smoky Potion"] });
+    const unknown = { ...w.view.inventory()[0]!, aware: false, sval: -7, kindKey: "flavor:7", objectId: 17 };
+    const use = unknownUse(unknown)!;
+    expect(use.key).toBe("game:26:flavor:7");
+    const run = readWays({ ...emptyFlourishes(), superstitions: [use] });
+    const known = { ...unknown, aware: true, sval: 4, kindKey: "kind:4", kindId: "potion:cure-light", name: "a Potion of Cure Light Wounds" };
+    const next = observeFlourishes(run, { ...w.view, inventory: () => [known] }, parent(), [], new Set());
+    expect(next.superstitions).toEqual([]);
+    expect(flourishLines(next, parent())).toEqual([]);
+    expect(observeFlourishes(run, { ...w.view, inventory: () => [{ ...known, objectId: 18 }] }, parent(), [], new Set()).superstitions).toEqual([use]);
+  });
+
   it("keeps flavour memories in their game and rejects legacy negative-sval records", () => {
     const p = parent();
     const item = { ...itemNamed("a Smoky Potion", 1), aware: false, sval: -7, kindKey: "flavor:7" };
