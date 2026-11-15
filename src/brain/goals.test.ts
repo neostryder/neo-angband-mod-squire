@@ -4045,6 +4045,36 @@ describe("the answer key", () => {
   });
 });
 
+describe("identifying worn preparation", () => {
+  it.each(["scroll", "spell"] as const)("identifies unknown worn gear with a known %s", (source) => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 19, maxLevel: 30, hp: 100, maxHp: 100, sp: 5, maxSp: 5 }, worn: ["a Ring {??}"],
+      pack: source === "scroll" ? ["a Scroll of Identify Rune"] : [], spells: source === "spell" ? [{ name: "Identify Rune", sidx: 2, mana: 2 }] : [] });
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 100;
+    persona.sliders.paranoia = 100;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, reflex: false });
+    const q = asked(p.ask(w.view));
+    expect(q.context.offers.find((offer) => offer.goal === "identify")?.criteria).toContain("unknown runes could explain the missing protection");
+    const choice = p.choose(pick("identify"), q.context, w.view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    expect(choice.plan.step(w.view, w.act)).toEqual({ code: source === "scroll" ? "read" : "cast", args: { ...(source === "scroll" ? { handle: 1 } : { spell: 2 }), tgtitem: { handle: 100 } } });
+  });
+
+  it("cancels identification when the worn target is replaced", () => {
+    const w = suppliedWorld({ map: CORRIDOR, player: { depth: 19, maxLevel: 30, hp: 100, maxHp: 100 }, worn: ["a Ring {??}"], pack: ["a Scroll of Identify Rune"] });
+    let replaced = false;
+    const view: AgentView = { ...w.view, equipment: () => w.view.equipment().map((item) => !replaced || item === null || item.handle !== 100 ? item : { ...item, tval: item.tval + 1 }) };
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 100;
+    persona.sliders.paranoia = 100;
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, persona, reflex: false });
+    const choice = p.choose(pick("identify"), asked(p.ask(view)).context, view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    replaced = true;
+    expect(choice.plan.step(view, w.act)).toBeNull();
+  });
+});
+
 describe("bound prompt targets", () => {
   const orc = { grid: { x: 3, y: 1 }, race: "cave orc", level: 7 };
 

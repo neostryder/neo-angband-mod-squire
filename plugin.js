@@ -4009,6 +4009,7 @@ var LABEL = {
   eat: "eat",
   study: "learn a spell",
   wear: "wear gear",
+  identify: "identify worn gear",
   detect: "survey the level",
   see_invisible: "see invisible creatures",
   light_room: "light the room",
@@ -4591,6 +4592,22 @@ function missingPreparation(view, depth2, persona = null, depthMinutes = 0, earl
     if (player.maxSp > 100) need("healing", namedCount(view, /\bPotions? of Restore Mana\b/i) >= Math.ceil(15 * policy.scale), `${String(Math.ceil(15 * policy.scale))} Restore Mana potions`);
   }
   return out;
+}
+function identifyPreparation(view, persona) {
+  if (persona === null || persona.sliders.curiosity + persona.sliders.paranoia < 100 || !canRead(view) || !missingPreparation(view, view.player().depth + 1, persona).some((gap) => gap.kind === "protection")) return null;
+  const target = view.equipment().find((item) => item !== null && /\{\?\?\}/.test(shownName2(item) ?? ""));
+  if (target === void 0 || target === null) return null;
+  const scroll = view.inventory().find((item) => item.number > 0 && /\bScrolls? of Identify(?: Rune)?\b/i.test(shownName2(item) ?? ""));
+  if (scroll !== void 0) return { target, source: { code: "read", handle: scroll.handle, name: shownName2(scroll) } };
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      const info = view.spellInfo?.(spell.sidx);
+      if (/^Identify(?: Rune)?$/i.test(spell.name) && spell.learned && !spell.forgotten && (info?.mana ?? spell.mana) <= view.player().sp && (info?.failChance ?? spell.fail) <= 50 && info?.canCastNow !== false) {
+        return { target, source: { code: "cast", sidx: spell.sidx, name: spell.name } };
+      }
+    }
+  }
+  return null;
 }
 var HARD_GAPS = /* @__PURE__ */ new Set(["light", "food"]);
 function descentGaps(view, depth2, persona = null, depthMinutes = 0, earlyStair = false, stairEscape = false) {
@@ -9493,7 +9510,7 @@ var TAKE_POSITION_REACH = 3;
 var SIGHT_BREAK_REACH = 2;
 var TAKE_POSITION_MIN_WALLS = 2;
 var TAKE_POSITION_GROUP_SIZE = 2;
-var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown"]);
+var READS = /* @__PURE__ */ new Set(["cast_attack", "cast_heal", "cast_escape", "study", "detect", "recall_town", "recall_dungeon", "deep_descent", "teleport_level", "read_unknown", "identify"]);
 function refusalHold(view, persona) {
   return turnsPerAction(view.player().speed) * stuckThresholds(persona).repeat;
 }
@@ -9803,7 +9820,7 @@ function stayingPut(s) {
   return s.awake.every((m) => neverMoves(s.view, m) || s.stationary.has(m.id) && steps(at, m.grid) > 1) ? "still" : null;
 }
 var WALKS = /* @__PURE__ */ new Set(["explore", "fetch", "shop", "descend"]);
-var ERRANDS = /* @__PURE__ */ new Set([...WALKS, "rest", "pick_up", "drop_junk", "study", "wear", "eat"]);
+var ERRANDS = /* @__PURE__ */ new Set([...WALKS, "rest", "pick_up", "drop_junk", "study", "wear", "identify", "eat"]);
 var SINGLE_ACTION = /* @__PURE__ */ new Set(["walk", "melee", "hold", "quaff", "read", "eat", "wield", "takeoff", "drop", "pickup", "aim-wand", "zap-rod", "use-staff", "activate", "fire", "throw", "cast", "study", "close", "ascend", "descend"]);
 var DANGER_CODES = /* @__PURE__ */ new Set(["quaff", "read", "eat", "aim", "aim-wand", "zap-rod", "use", "use-staff", "activate", "fire", "throw", "cast", "descend", "ascend", "navigate-down", "navigate-up"]);
 var AIMED_CODES = /* @__PURE__ */ new Set(["aim", "aim-wand", "zap-rod", "use", "activate", "fire", "throw", "cast"]);
@@ -9822,12 +9839,13 @@ function flavoured(item) {
 }
 function unboundTarget(command, view, chosenOn) {
   const args = command.args;
-  if (typeof args?.handle === "number" && args.handle !== 0) {
-    const then = chosenOn.get(args.handle);
-    const now = gearOf(view).get(args.handle);
+  for (const handle of [args?.handle, args?.tgtitem?.handle]) {
+    if (typeof handle !== "number" || handle === 0) continue;
+    const then = chosenOn.get(handle);
+    const now = gearOf(view).get(handle);
     const learned = then !== void 0 && now !== void 0 && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
     if (now === void 0 || then !== void 0 && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === void 0 ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
-    chosenOn.set(args.handle, now);
+    chosenOn.set(handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {
     const sidx = args.spell;
@@ -10249,6 +10267,8 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
   if (hungry(view) && s.pack.food[0] !== void 0) {
     add3("eat", `Eat ${s.pack.food[0].name}; the character is hungry.`, exposure(s), incoming.damage === 0 && incoming.status === 0);
   }
+  const identification = !bleeding && s.awake.length === 0 && !immediateDanger(s) ? identifyPreparation(view, persona) : null;
+  if (identification !== null) add3("identify", `Use ${identification.source.name} to identify a rune on ${shownName2(identification.target) ?? "worn gear"}; its unknown runes could explain the missing protection.`, 0.02);
   const gear = gearCandidates(view, tieBreakKind).find((g) => !excludedGear.has(g.handle) && (!g.unknown || (persona?.sliders.curiosity ?? 0) >= 50));
   const unlit = gear !== void 0 && gear.criteria.includes("has no light");
   if (!bleeding && incoming.damage < player.hp && gear !== void 0 && (unlit || !s.awake.some((m) => steps(at, m.grid) <= 3))) {
@@ -11377,6 +11397,17 @@ function createCharacterPlanner(options) {
         return once("study", view, (ctx) => {
           triedStudies.add(`${String(ctx.view.player().level)}:${String(study.sidx)}`);
           return ctx.act.raw("study", { handle: study.handle, spell: study.sidx });
+        });
+      }
+      case "identify": {
+        const identification = identifyPreparation(view, personaOf());
+        return once("identify worn gear", view, (ctx) => {
+          const now = identifyPreparation(ctx.view, personaOf());
+          if (identification === null || now === null || now.target.handle !== identification.target.handle || immediateDanger(situationNow(ctx.view))) return null;
+          const { source, target } = identification;
+          if (now.source.code !== source.code || ("handle" in now.source ? now.source.handle : now.source.sidx) !== ("handle" in source ? source.handle : source.sidx)) return null;
+          const command = source.code === "read" ? ctx.act.read(source.handle) : ctx.act.cast(source.sidx);
+          return { ...command, args: { ...command.args, tgtitem: { handle: target.handle } } };
         });
       }
       case "wear": {

@@ -325,6 +325,31 @@ export function missingPreparation(view: AgentView, depth: number, persona: Pers
   return out;
 }
 
+export interface PreparationIdentification {
+  readonly target: ItemView;
+  readonly source: { readonly code: "read"; readonly handle: number; readonly name: string } | { readonly code: "cast"; readonly sidx: number; readonly name: string };
+}
+
+/** Unlearned worn runes can explain a protection gap without proving any protection. */
+export function identifyPreparation(view: AgentView, persona: Persona | null): PreparationIdentification | null {
+  if (persona === null || persona.sliders.curiosity + persona.sliders.paranoia < 100 || !canRead(view) ||
+    !missingPreparation(view, view.player().depth + 1, persona).some((gap) => gap.kind === "protection")) return null;
+  const target = view.equipment().find((item) => item !== null && /\{\?\?\}/.test(shownName(item) ?? ""));
+  if (target === undefined || target === null) return null;
+  const scroll = view.inventory().find((item) => item.number > 0 && /\bScrolls? of Identify(?: Rune)?\b/i.test(shownName(item) ?? ""));
+  if (scroll !== undefined) return { target, source: { code: "read", handle: scroll.handle, name: shownName(scroll)! } };
+  for (const book of view.spellbooks()) {
+    for (const spell of book.spells) {
+      const info = view.spellInfo?.(spell.sidx);
+      if (/^Identify(?: Rune)?$/i.test(spell.name) && spell.learned && !spell.forgotten &&
+        (info?.mana ?? spell.mana) <= view.player().sp && (info?.failChance ?? spell.fail) <= 50 && info?.canCastNow !== false) {
+        return { target, source: { code: "cast", sidx: spell.sidx, name: spell.name } };
+      }
+    }
+  }
+  return null;
+}
+
 /** Food and light remain mandatory when pacing lowers early preparation floors. */
 const HARD_GAPS: ReadonlySet<Requirement["kind"]> = new Set(["light", "food"]);
 
