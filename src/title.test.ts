@@ -4,7 +4,7 @@ import {
   COPY_PROMPT, FALLBACK_HERE, freshName, PROFILES_KEY, registerSquireTitle, TITLE_KEY, TITLE_LABEL,
   WHERE_HERE, WHERE_PROMPT, WHERE_SEPARATE, WHICH_COPY, WHICH_FRESH, WHICH_PROMPT,
 } from "./title.js";
-import type { Api2Manage, Api2Profile, Api2Title, Api2TitleAction } from "@rpgm-tools/neo-angband-mod-sdk";
+import type { Api2Failure, Api2Manage, Api2Profile, Api2Title, Api2TitleAction } from "@rpgm-tools/neo-angband-mod-sdk";
 
 type ModProfiles = Api2Manage["profiles"];
 
@@ -82,6 +82,30 @@ describe("the Squire title row", () => {
     await pick(fake);
     expect(fake.rows.map((row) => [row.label, row.key])).toEqual([[TITLE_LABEL, TITLE_KEY]]);
     expect(fake.asked).toEqual([{ title: WHERE_PROMPT, choices: [WHERE_SEPARATE, WHERE_HERE] }]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it.each<Api2Failure>([
+    { ok: false, reason: "refused", code: "title", message: "Title choices are unavailable." },
+    { ok: false, reason: "not-granted", capability: "ui:title", message: "The title permission was revoked." },
+    { ok: false, reason: "unavailable", message: "This front end has no title choices." },
+  ])("logs a failed title choice with its code and message: $reason", async (answer) => {
+    const fake = host([]);
+    const logs: string[] = [];
+    const title = { ...fake.title, choose: () => Promise.resolve(answer) };
+    registerSquireTitle({ title, profiles: fake.profiles, log: (message) => logs.push(message) }, memoryStore());
+    await fake.rows[0]!.run();
+    const code = answer.reason === "refused" ? answer.code : answer.reason;
+    expect(logs).toEqual([`Squire's title choice was refused (${code}): ${answer.message}`]);
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("treats Escape as a quiet cancellation", async () => {
+    const fake = host([null]);
+    const logs: string[] = [];
+    registerSquireTitle({ title: fake.title, profiles: fake.profiles, log: (message) => logs.push(message) }, memoryStore());
+    await fake.rows[0]!.run();
+    expect(logs).toEqual([]);
     expect(fake.calls).toEqual([]);
   });
 
