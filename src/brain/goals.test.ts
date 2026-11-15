@@ -4065,6 +4065,35 @@ describe("bound prompt targets", () => {
     expect(String(asked(p.ask(w.view)).request.state["last"])).toContain("phase away cancelled: the item it was chosen for (a Scroll of Phase Door) is no longer carried.");
   });
 
+  it.each(["potion", "scroll"] as const)("keeps the chosen unknown %s after its flavour becomes known", (kind) => {
+    const name = kind === "potion" ? "a Smoky Potion" : "a Scroll titled 'FOO BAR'";
+    const known = kind === "potion" ? "a Potion of Cure Light Wounds" : "a Scroll of Phase Door";
+    const goal = kind === "potion" ? "quaff_unknown" : "read_unknown";
+    const code = kind === "potion" ? "quaff" : "read";
+    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 30 }, pack: [name], monsters: [orc] });
+    let aware = false;
+    const view: AgentView = { ...w.view, inventory: () => w.view.inventory().map((item) => ({ ...item, aware, kindKey: aware ? "kind:42" : "flavor:7", sval: aware ? 4 : -7, itemKey: `gear:${String(item.handle)}` })) };
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    const q = asked(p.ask(view));
+    expect(offered(q)).toContain(goal);
+    const choice = p.choose(pick(goal), q.context, view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    w.setPack([known]);
+    aware = true;
+    expect(choice.plan.step(view, w.act)).toEqual({ code, args: { handle: 1 } });
+  });
+
+  it("rejects a different unknown flavour at the chosen handle", () => {
+    const w = world({ map: CORRIDOR, player: { hp: 2, maxHp: 30 }, pack: ["a Smoky Potion"], monsters: [orc] });
+    let flavour = 7;
+    const view: AgentView = { ...w.view, inventory: () => w.view.inventory().map((item) => ({ ...item, aware: false, kindKey: `flavor:${String(flavour)}`, sval: -flavour })) };
+    const p = createGoalPlanner({ cfg: defaultCfg(), terrain: w.terrain, log: () => {}, reflex: false });
+    const choice = p.choose(pick("quaff_unknown"), asked(p.ask(view)).context, view);
+    if (!("plan" in choice)) throw new Error("expected a plan");
+    flavour = 8;
+    expect(choice.plan.step(view, w.act)).toBeNull();
+  });
+
   it("cancels a spell the character can no longer pay for", () => {
     const w = world({ map: CORRIDOR, player: { hp: 8, maxHp: 30, sp: 5, maxSp: 5 }, spells: [{ name: "Phase Door", sidx: 2, mana: 2 }], monsters: [orc] });
     const { p } = planner(w);

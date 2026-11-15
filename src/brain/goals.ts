@@ -931,11 +931,19 @@ const AIMED_CODES = new Set(["aim", "aim-wand", "zap-rod", "use", "activate", "f
 const TIMELESS = new Set(["shop-buy", "shop-sell", "shop-exit", "destroy"]);
 
 /** The gear carried, worn and quivered, by handle: what each handle named when it was read. */
-function gearOf(view: AgentView): Map<number, { readonly kindKey: string; readonly name: string }> {
-  const gear = new Map<number, { readonly kindKey: string; readonly name: string }>();
+function gearOf(view: AgentView): Map<number, ItemView> {
+  const gear = new Map<number, ItemView>();
   const items = [...view.inventory(), ...(view.quiver?.() ?? []), ...view.equipment().filter((item): item is ItemView => item !== null)];
-  for (const item of items) if (item.handle !== 0) gear.set(item.handle, { kindKey: `${String(item.tval)}:${String(item.sval)}`, name: item.name ?? "item" });
+  for (const item of items) if (item.handle !== 0) gear.set(item.handle, { ...item });
   return gear;
+}
+
+function itemKind(item: ItemView): string {
+  return item.kindKey ?? item.kindId ?? `${String(item.tval)}:${String(item.sval)}`;
+}
+
+function flavoured(item: ItemView): boolean {
+  return item.aware === false || item.sval < 0 || item.kindKey?.startsWith("flavor:") === true;
 }
 
 /**
@@ -944,12 +952,15 @@ function gearOf(view: AgentView): Map<number, { readonly kindKey: string; readon
  * chosen on, so that handle must still name the same kind of object; a spell
  * must still be known and affordable.
  */
-function unboundTarget(command: AgentCommand, view: AgentView, chosenOn: ReadonlyMap<number, { readonly kindKey: string; readonly name: string }>): string | null {
+function unboundTarget(command: AgentCommand, view: AgentView, chosenOn: Map<number, ItemView>): string | null {
   const args = command.args as { readonly handle?: unknown; readonly spell?: unknown } | undefined;
   if (typeof args?.handle === "number" && args.handle !== 0) {
     const then = chosenOn.get(args.handle);
     const now = gearOf(view).get(args.handle);
-    if (now === undefined || then !== undefined && then.kindKey !== now.kindKey) return `the item it was chosen for${then === undefined ? "" : ` (${then.name})`} is no longer carried.`;
+    /* This SDK has gear handles, so learning a flavour is correlated at the same handle. */
+    const learned = then !== undefined && now !== undefined && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
+    if (now === undefined || then !== undefined && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === undefined ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
+    chosenOn.set(args.handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {
     const sidx = args.spell;
@@ -2841,8 +2852,8 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
       case "quaff_unknown":
       case "read_unknown": {
         const kind = goal === "quaff_unknown" ? "potion" : "scroll";
+        const item = unknownFlavours(view, kind)[0];
         return once(goal === "quaff_unknown" ? "drink an unknown potion" : "read an unknown scroll", view, (ctx) => {
-          const item = unknownFlavours(ctx.view, kind)[0];
           if (item === undefined || kind === "scroll" && !canRead(ctx.view)) return null;
           return kind === "potion" ? ctx.act.quaff(item.handle) : ctx.act.read(item.handle);
         });

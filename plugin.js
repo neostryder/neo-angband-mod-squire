@@ -9811,15 +9811,23 @@ var TIMELESS = /* @__PURE__ */ new Set(["shop-buy", "shop-sell", "shop-exit", "d
 function gearOf(view) {
   const gear = /* @__PURE__ */ new Map();
   const items = [...view.inventory(), ...view.quiver?.() ?? [], ...view.equipment().filter((item) => item !== null)];
-  for (const item of items) if (item.handle !== 0) gear.set(item.handle, { kindKey: `${String(item.tval)}:${String(item.sval)}`, name: item.name ?? "item" });
+  for (const item of items) if (item.handle !== 0) gear.set(item.handle, { ...item });
   return gear;
+}
+function itemKind(item) {
+  return item.kindKey ?? item.kindId ?? `${String(item.tval)}:${String(item.sval)}`;
+}
+function flavoured(item) {
+  return item.aware === false || item.sval < 0 || item.kindKey?.startsWith("flavor:") === true;
 }
 function unboundTarget(command, view, chosenOn) {
   const args = command.args;
   if (typeof args?.handle === "number" && args.handle !== 0) {
     const then = chosenOn.get(args.handle);
     const now = gearOf(view).get(args.handle);
-    if (now === void 0 || then !== void 0 && then.kindKey !== now.kindKey) return `the item it was chosen for${then === void 0 ? "" : ` (${then.name})`} is no longer carried.`;
+    const learned = then !== void 0 && now !== void 0 && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
+    if (now === void 0 || then !== void 0 && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === void 0 ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
+    chosenOn.set(args.handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {
     const sidx = args.spell;
@@ -11275,8 +11283,8 @@ function createCharacterPlanner(options) {
       case "quaff_unknown":
       case "read_unknown": {
         const kind = goal === "quaff_unknown" ? "potion" : "scroll";
+        const item = unknownFlavours(view, kind)[0];
         return once(goal === "quaff_unknown" ? "drink an unknown potion" : "read an unknown scroll", view, (ctx) => {
-          const item = unknownFlavours(ctx.view, kind)[0];
           if (item === void 0 || kind === "scroll" && !canRead(ctx.view)) return null;
           return kind === "potion" ? ctx.act.quaff(item.handle) : ctx.act.read(item.handle);
         });
