@@ -2,7 +2,7 @@ import type { AgentView } from "@rpgm-tools/neo-angband-core";
 import { describe, expect, it } from "vitest";
 import { suppliedWorld, world } from "../harness.js";
 import { candidateAims } from "./aims.js";
-import { assessDescent, basketWants, descentPolicy, descentGaps, descentWait, gapFacts, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin, shallowDiveReady, tripLight } from "./readiness.js";
+import { assessDescent, basketWants, descentPolicy, descentGaps, descentWait, gapFacts, identifyPreparation, missingEssentials, missingPreparation, readinessThreshold, supplies, supplyMargin, shallowDiveReady, tripLight } from "./readiness.js";
 import { archetype, defaultPersona } from "../persona/persona.js";
 
 const ROOM = ["#####", "#<@>#", "#####"];
@@ -195,6 +195,35 @@ describe("prepared depths", () => {
     w.setPlayer({ objectFlags: ["SEE_INVIS", "FREE_ACT"] });
     expect(missingPreparation(w.view, 20)).toEqual([]);
     expect(missingPreparation(w.view, 21).map((need) => need.reason)).toContain("fire resistance and two other basic resistances");
+  });
+
+  it("offers identification for unknown worn runes without crediting hidden protection", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 19, maxLevel: 30, objectFlags: ["SEE_INVIS"] }, worn: ["a Ring {??}"], pack: ["a Scroll of Identify Rune"] });
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 100;
+    persona.sliders.paranoia = 100;
+    expect(missingPreparation(w.view, 20, persona).map((need) => need.reason)).toContain("Free Action");
+    expect(identifyPreparation(w.view, persona)).toMatchObject({ target: { handle: 100 }, source: { code: "read", handle: 1 } });
+    persona.sliders.curiosity = 0;
+    persona.sliders.paranoia = 0;
+    expect(identifyPreparation(w.view, persona)).toBeNull();
+    persona.sliders.paranoia = 100;
+    expect(identifyPreparation(w.view, persona)).not.toBeNull();
+    w.setPlayer({ status: { blind: 1 } });
+    expect(identifyPreparation(w.view, persona)).toBeNull();
+    w.setPlayer({ depth: 1, status: { blind: 0 }, objectFlags: ["SEE_INVIS", "FREE_ACT"] });
+    expect(missingPreparation(w.view, 2, persona).filter((need) => need.kind === "protection")).toEqual([]);
+    expect(identifyPreparation(w.view, persona)).toBeNull();
+  });
+
+  it("uses only an affordable learned identification spell when no scroll is carried", () => {
+    const w = suppliedWorld({ map: ROOM, player: { depth: 19, maxLevel: 30, sp: 5, maxSp: 5 }, worn: ["a Ring {??}"], spells: [{ name: "Identify Rune", sidx: 2, mana: 2 }] });
+    const persona = defaultPersona();
+    persona.sliders.curiosity = 100;
+    persona.sliders.paranoia = 100;
+    expect(identifyPreparation(w.view, persona)).toMatchObject({ target: { handle: 100 }, source: { code: "cast", sidx: 2 } });
+    w.setPlayer({ sp: 1 });
+    expect(identifyPreparation(w.view, persona)).toBeNull();
   });
 
   it("reads a list of inspected elemental resistances and keeps missing inspection conservative", () => {
