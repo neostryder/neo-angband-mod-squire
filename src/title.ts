@@ -37,12 +37,6 @@ export const GIVE_UP = "Back to the title";
 
 const ARMED: Api2ProfileAction = { kind: "create-character", armController: true };
 
-/** The player's choice, or null for Escape or a game that cannot ask. */
-async function ask(title: Api2Title, label: string, choices: readonly string[]): Promise<number | null> {
-  const answer = await title.choose(label, choices);
-  return answer.ok ? answer.value : null;
-}
-
 async function remembered(store: KvStore): Promise<string[]> {
   const saved = await store.get(PROFILES_KEY).catch(() => undefined);
   return Array.isArray(saved) ? saved.filter((id): id is string => typeof id === "string") : [];
@@ -65,16 +59,26 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
   }
   const self = ctx.id ?? "squire";
 
+  /** The player's choice, or null for Escape or a game that cannot ask. */
+  async function ask(label: string, choices: readonly string[]): Promise<number | null> {
+    const answer = await title!.choose(label, choices);
+    if (!answer.ok) {
+      const code = answer.reason === "refused" ? answer.code : answer.reason;
+      ctx.log?.(`Squire's title choice was refused (${code}): ${answer.message}`);
+    }
+    return answer.ok ? answer.value : null;
+  }
+
   async function here(): Promise<void> {
     const active = await profiles!.list();
     const id = active.ok ? active.value.find((profile) => profile.active)?.id ?? null : null;
     const started = await profiles!.switchTo(id, ARMED);
-    if (!started.ok) await ask(title!, `Squire could not start the character: ${started.message}`, [GIVE_UP]);
+    if (!started.ok) await ask(`Squire could not start the character: ${started.message}`, [GIVE_UP]);
   }
 
   /** A refusal on the way to a separate profile falls back to this one. */
   async function refused(reason: string): Promise<void> {
-    const answer = await ask(title!, `Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
+    const answer = await ask(`Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
     if (answer === 0) await here();
   }
 
@@ -84,7 +88,7 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
     const all = listed.value;
     const ours = new Set(await remembered(store));
     const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
-    const which = await ask(title!, WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
+    const which = await ask(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
     if (which === null) return;
     let target: Api2Profile;
     if (which >= 2) {
@@ -94,7 +98,7 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
     } else {
       let copyFrom: string | null | undefined;
       if (which === 1) {
-        const source = await ask(title!, COPY_PROMPT, all.map((profile) => profile.name));
+        const source = await ask(COPY_PROMPT, all.map((profile) => profile.name));
         if (source === null) return;
         const picked = all[source];
         if (picked === undefined) return;
@@ -120,7 +124,7 @@ export function registerSquireTitle(ctx: TitleCtx, store: KvStore): boolean {
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
-      const where = await ask(title, WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
+      const where = await ask(WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
       if (where === 0) await separate();
       else if (where === 1) await here();
     },

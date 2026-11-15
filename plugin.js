@@ -14365,7 +14365,7 @@ function createStrategy(deps) {
     inherited = stillInherited(inherited, own, view.player().maxDepth, wieldsMagicWeapon(view));
     return withAvenge(withInherited(own, inherited), deps.feelings?.() ?? []);
   }
-  async function ask3(request2, view) {
+  async function ask2(request2, view) {
     const backend = deps.backend();
     if (backend === null) return { answer: null, why: "no model server is set up", backend: "" };
     if (deps.tally.overCap(backend, deps.now()) !== null) return { answer: null, why: "the spend limit is reached", backend: backend.label };
@@ -14404,7 +14404,7 @@ function createStrategy(deps) {
     if (args.longDue !== null) {
       let longSent;
       try {
-        longSent = await ask3(longGoalRequest(args.view, args.pursuits));
+        longSent = await ask2(longGoalRequest(args.view, args.pursuits));
       } finally {
         if (args.mine === generation) longAsking = false;
       }
@@ -14423,7 +14423,7 @@ function createStrategy(deps) {
     if (!ranks || args.mine !== generation) return;
     const open = openAims(args.candidates, blocks, args.turn);
     const askAims = open.filter((aim) => aim.kind !== "win").length >= 2;
-    const midSent = args.midTrigger !== null && askAims ? await ask3(midGoalRequest(args.view, open, pursuitsNow()), args.view) : null;
+    const midSent = args.midTrigger !== null && askAims ? await ask2(midGoalRequest(args.view, open, pursuitsNow()), args.view) : null;
     const midAnswer = midSent?.answer?.type === "choice" ? midSent.answer : null;
     const midModel = midSent !== null && midSent.why === "" && midAnswer !== null && midAnswer.choice !== "none_of_these";
     const scored = args.midTrigger === null ? args.candidates : guardAims(midModel && midAnswer !== null ? rankByScore(args.candidates, { mid_goal: midAnswer }) : inFixedOrder(args.candidates), blocks, args.turn);
@@ -14436,7 +14436,7 @@ function createStrategy(deps) {
       nearReason = "because the mid-term goal changed";
     }
     const midLabel = (args.midTrigger !== null ? rankedPreview[0]?.label : midHold?.label) ?? null;
-    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask3(nearGoalRequest(args.view, args.nearList, midLabel), args.view) : null;
+    const nearSent = nearReason !== null && args.nearList.length > 0 ? await ask2(nearGoalRequest(args.view, args.nearList, midLabel), args.view) : null;
     if (args.mine !== generation || seq !== latest) return;
     if (args.midTrigger !== null && args.view.player().depth === args.depth) judge2(args.depth, args.judgments);
     if (args.midTrigger !== null) {
@@ -14493,7 +14493,7 @@ function createStrategy(deps) {
     const run = (async () => {
       let sent;
       try {
-        sent = await ask3(request2);
+        sent = await ask2(request2);
       } finally {
         if (mine === generation) reviseAsking = false;
       }
@@ -20443,10 +20443,6 @@ var COPY_PROMPT = "Copy which profile? Its options, mods and mod settings come a
 var FALLBACK_HERE = "Start the character in this profile";
 var GIVE_UP = "Back to the title";
 var ARMED = { kind: "create-character", armController: true };
-async function ask2(title, label, choices) {
-  const answer2 = await title.choose(label, choices);
-  return answer2.ok ? answer2.value : null;
-}
 async function remembered2(store) {
   const saved = await store.get(PROFILES_KEY).catch(() => void 0);
   return Array.isArray(saved) ? saved.filter((id) => typeof id === "string") : [];
@@ -20464,14 +20460,22 @@ function registerSquireTitle(ctx, store) {
     return false;
   }
   const self = ctx.id ?? "squire";
+  async function ask2(label, choices) {
+    const answer2 = await title.choose(label, choices);
+    if (!answer2.ok) {
+      const code = answer2.reason === "refused" ? answer2.code : answer2.reason;
+      ctx.log?.(`Squire's title choice was refused (${code}): ${answer2.message}`);
+    }
+    return answer2.ok ? answer2.value : null;
+  }
   async function here() {
     const active2 = await profiles.list();
     const id = active2.ok ? active2.value.find((profile) => profile.active)?.id ?? null : null;
     const started = await profiles.switchTo(id, ARMED);
-    if (!started.ok) await ask2(title, `Squire could not start the character: ${started.message}`, [GIVE_UP]);
+    if (!started.ok) await ask2(`Squire could not start the character: ${started.message}`, [GIVE_UP]);
   }
   async function refused(reason) {
-    const answer2 = await ask2(title, `Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
+    const answer2 = await ask2(`Squire could not use a separate profile: ${reason}`, [FALLBACK_HERE]);
     if (answer2 === 0) await here();
   }
   async function separate() {
@@ -20480,7 +20484,7 @@ function registerSquireTitle(ctx, store) {
     const all = listed.value;
     const ours = new Set(await remembered2(store));
     const made = all.filter((profile) => profile.id !== null && ours.has(profile.id));
-    const which = await ask2(title, WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
+    const which = await ask2(WHICH_PROMPT, [WHICH_FRESH, WHICH_COPY, ...made.map((profile) => `Use ${profile.name}`)]);
     if (which === null) return;
     let target;
     if (which >= 2) {
@@ -20490,7 +20494,7 @@ function registerSquireTitle(ctx, store) {
     } else {
       let copyFrom;
       if (which === 1) {
-        const source = await ask2(title, COPY_PROMPT, all.map((profile) => profile.name));
+        const source = await ask2(COPY_PROMPT, all.map((profile) => profile.name));
         if (source === null) return;
         const picked2 = all[source];
         if (picked2 === void 0) return;
@@ -20514,7 +20518,7 @@ function registerSquireTitle(ctx, store) {
     label: TITLE_LABEL,
     key: TITLE_KEY,
     async run() {
-      const where2 = await ask2(title, WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
+      const where2 = await ask2(WHERE_PROMPT, [WHERE_SEPARATE, WHERE_HERE]);
       if (where2 === 0) await separate();
       else if (where2 === 1) await here();
     }
