@@ -44,7 +44,7 @@ import { dreadedRaces } from "./learning/lessons.js";
 import { feelingLine, feelingLog, remembered, settle, settledLine, type Feeling } from "./learning/grudges.js";
 import { addMilestone, epitaphFor, familyVoice, milestoneFact, milestoneId, recallMilestones, type Milestone } from "./learning/flourishes.js";
 import type { Lineage } from "./learning/lineage.js";
-import { celebrationLine, cursedGroundLine, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, firstKillBoast, flourishLines, heirloomRecognition, heirloomNames, learnedSuperstitions, mottoLine, observeFlourishes, readWays, usedItem, weaponKind, type Flourishes } from "./learning/family-ways.js";
+import { celebrationLine, cursedGroundLine, emptyFamilyFlourishes, emptyFlourishes, familyAfterDeath, firstKillBoast, flourishLines, heirloomRecognition, heirloomNames, mottoLine, observeFlourishes, readWays, usedItem, weaponKind, type Flourishes } from "./learning/family-ways.js";
 import { installId } from "./memory/install.js";
 import { normalize, type Persona } from "./persona/persona.js";
 import type { SquireCfg } from "./settings.js";
@@ -819,16 +819,12 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     for (const line of flourishLines(next, character.persona)) if (!before.includes(line)) host.log(line);
     const forgotten = run.superstitions.filter((s) => !next.superstitions.some((t) => t.key === s.key));
     for (const s of forgotten) {
-      if (character.persona?.toggles.inheritedSuperstitions) host.log(`${character.persona.name} trusts the ${s.name} now.`);
+      if (character.persona?.toggles.inheritedSuperstitions) host.log(s.key.startsWith("class:")
+        ? `${character.persona.name} is willing to try ${s.name} now.`
+        : `${character.persona.name} trusts the ${s.name} now.`);
     }
     const lineageName = character.lineage?.trim();
     const lineage = lineageName === undefined ? undefined : config.lineages[lineageName];
-    if (lineageName !== undefined && lineage?.flourishRecord !== undefined) {
-      const family = lineage.flourishRecord;
-      const learned = learnedSuperstitions(family.superstitions, view);
-      if (learned.length > 0) self.saveConfig({ ...config, lineages: { ...config.lineages, [lineageName]: { ...lineage,
-        flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) } } } });
-    }
     if (character.persona !== null && character.persona.toggles.heirlooms && lineage !== undefined) {
       let names = ancestorNameSets.get(lineage);
       if (names === undefined) {
@@ -881,7 +877,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
     const run = character.flourishes ?? emptyFlourishes();
     const lastUse = usedItem(command, view);
     if (lastUse === null && run.lastUse === null) return;
-    self.saveCharacter({ ...character, flourishes: { ...run, lastUse } });
+    self.saveCharacter({ ...character, flourishes: { ...run, lastUse: lastUse === null ? null : { ...lastUse, hp: view.player().hp, turn: view.turn() } } });
   }
 
   /** A character that kills a unique the family holds a grudge against settles it for every later heir. */

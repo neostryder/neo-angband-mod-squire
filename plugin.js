@@ -3896,6 +3896,8 @@ function goalOfCommand(command, view) {
   const pack = readPack(view);
   const detection = detectionSources(view);
   const has = (list) => handle !== null && list.some((i) => i.handle === handle);
+  const target = command.args?.["tgtitem"];
+  const identifies = typeof target?.handle === "number" && [...view.inventory(), ...view.equipment()].some((item) => item?.handle === target.handle);
   switch (command.code) {
     case "walk":
     case "run":
@@ -3941,6 +3943,7 @@ function goalOfCommand(command, view) {
     case "quaff":
       return has(pack.heal) ? "heal" : null;
     case "read":
+      if (identifies && view.inventory().some((item) => item.handle === handle && /\bScrolls? of Identify(?: Rune)?\b/i.test(item.name ?? item.label ?? ""))) return "identify";
       if (detection.some((source) => source.kind === "read" && source.handle === handle)) return "detect";
       if (handle !== null && recallItem(view)?.handle === handle) return player.depth === 0 ? "recall_dungeon" : "recall_town";
       if (has(pack.phase)) return "phase";
@@ -3956,6 +3959,7 @@ function goalOfCommand(command, view) {
     case "cast": {
       const spell = typeof command.args?.["spell"] === "number" ? command.args["spell"] : null;
       if (spell === null) return null;
+      if (identifies && view.spellbooks().some((book) => book.spells.some((item) => item.sidx === spell && /^Identify(?: Rune)?$/i.test(item.name)))) return "identify";
       if (pack.attackSpell.some((s) => s.sidx === spell)) return "cast_attack";
       if (pack.healSpell.some((s) => s.sidx === spell)) return "cast_heal";
       if (pack.escapeSpell.some((s) => s.sidx === spell)) return "cast_escape";
@@ -6034,17 +6038,36 @@ function itemKey(item) {
 function legacyFlavour(key2) {
   return /^\d+:-\d+$/.test(key2);
 }
+var ITEM_CLASSES = ["staff", "wand", "rod", "scroll", "potion", "mushroom"];
+var CLASS_TVALS = { staff: 22, wand: 23, rod: 24, scroll: 25, potion: 26, mushroom: 29 };
+function itemClass(tval, name = "") {
+  return ITEM_CLASSES.find((kind) => tval === CLASS_TVALS[kind]) ?? ITEM_CLASSES.find((kind) => (kind === "staff" ? /\b(?:staffs?|staves)\b/i : new RegExp(`\\b${kind}s?\\b`, "i")).test(name)) ?? null;
+}
+function classMemory(kind) {
+  return { key: `class:${kind}`, name: `unknown ${kind === "staff" ? "staves" : `${kind}s`}` };
+}
+function classOf(s) {
+  return ITEM_CLASSES.find((kind) => s.key === `class:${kind}`) ?? null;
+}
 function heritable(s) {
-  return !s.key.startsWith("game:") && !s.key.startsWith("flavor:") && !legacyFlavour(s.key);
+  return classOf(s) !== null;
+}
+function familyMemories(superstitions) {
+  const kinds = superstitions.flatMap((s) => {
+    if (s.key.startsWith("game:") || s.key.startsWith("flavor:") || legacyFlavour(s.key)) return [];
+    const kind = classOf(s) ?? itemClass(s.tval, s.name);
+    return kind === null ? [] : [kind];
+  });
+  return [...new Set(kinds)].map(classMemory);
 }
 function unknownUse(item) {
   const name = shownName2(item);
-  if (name === null || !/\b(?:Scrolls?|Potions?|Wands?)\b/i.test(name) || /\b(?:Scrolls?|Potions?|Wands?) of\b/i.test(name)) return null;
+  if (name === null || itemClass(item.tval) === null || item.aware === true || item.aware !== false && !unknownFlavour(item.tval, name)) return null;
   const plain2 = name.replace(/^(?:an?|the|\d+)\s+/i, "").replace(/\s*\([^)]*\)|\s*\{[^}]*\}/g, "").trim();
-  return { key: itemKey(item), name: plain2 };
+  return { key: itemKey(item), name: plain2, handle: item.handle, tval: item.tval, ...item.objectId === void 0 ? {} : { objectId: item.objectId } };
 }
 function usedItem(command, view) {
-  if (!["read", "quaff", "aim-wand"].includes(command.code)) return null;
+  if (!["read", "quaff", "aim", "aim-wand", "zap", "zap-rod", "use", "use-staff", "eat"].includes(command.code)) return null;
   const item = view.inventory().find((i) => i.handle === command.args?.["handle"]);
   return item === void 0 ? null : unknownUse(item);
 }
@@ -6057,7 +6080,35 @@ function distrustedUse(command, view, run, persona) {
   return persona?.toggles.inheritedSuperstitions === true && use !== null && run.superstitions.some((s) => s.key === use.key);
 }
 function learnedSuperstitions(superstitions, view) {
-  return superstitions.filter((s) => view.inventory().some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+  return superstitions.filter((s) => !heritable(s) && view.inventory().some((i) => unknownUse(i) === null && (itemKey(i) === s.key || s.tval === i.tval && (s.objectId !== void 0 ? s.objectId === i.objectId : s.handle === i.handle))));
+}
+function knownKinds(view) {
+  const items = [...view.inventory(), ...view.equipment().filter((i) => i !== null), ...view.stores().flatMap((s) => s.stock)];
+  return [
+    ...items.flatMap((item) => {
+      const kind = itemClass(item.tval);
+      return kind !== null && unknownUse(item) === null ? [{ key: itemKey(item), kind }] : [];
+    }),
+    ...(view.knownItemKinds?.() ?? []).flatMap((entry) => {
+      const kind = itemClass(void 0, `${entry.group} ${entry.name}`);
+      return kind === null ? [] : [{ key: entry.key, kind }];
+    })
+  ];
+}
+function warinessStrength(persona) {
+  return Math.max(0.05, Math.min(0.95, (200 + persona.sliders.paranoia + persona.sliders.selfpreservation - persona.sliders.curiosity - persona.sliders.boldness) / 400));
+}
+function nudgeWariness(dist, run, view, persona, offers = []) {
+  const out = { ...dist };
+  if (!persona?.toggles.inheritedSuperstitions) return out;
+  const wary = new Set(run.superstitions.flatMap((s) => classOf(s) ?? []));
+  for (const goal of Object.keys(out)) {
+    const source = offers.find((offer) => offer.goal === goal)?.action?.source;
+    const item = source !== void 0 && source !== null && "handle" in source ? view.inventory().find((item2) => item2.handle === source.handle) : goal === "quaff_unknown" || goal === "read_unknown" ? view.inventory().find((item2) => item2.tval === CLASS_TVALS[goal === "quaff_unknown" ? "potion" : "scroll"] && unknownUse(item2) !== null) : void 0;
+    const kind = item === void 0 || unknownUse(item) === null ? null : itemClass(item.tval);
+    if (kind !== null && wary.has(kind)) out[goal] = out[goal] * (1 - warinessStrength(persona));
+  }
+  return out;
 }
 function inheritWays(family, parent, heir, rng) {
   const share3 = Math.max(0, Math.min(1, parent.sliders.inheritance / 100));
@@ -6065,7 +6116,7 @@ function inheritWays(family, parent, heir, rng) {
   const inheritedFavoured = enabled("favouredWeapons") && share3 > 0 && (share3 === 1 || rng() < share3) ? favouredWeapon(family) : null;
   return {
     ...emptyFlourishes(),
-    superstitions: enabled("inheritedSuperstitions") ? family.superstitions.filter(heritable).slice(-Math.ceil(6 * share3)).filter(() => share3 > 0) : [],
+    superstitions: enabled("inheritedSuperstitions") ? familyMemories(family.superstitions).slice(-Math.ceil(6 * share3)).filter(() => share3 > 0) : [],
     darkLesson: enabled("darkLessons") && family.darkDeaths > 0 && share3 > 0 && (share3 === 1 || rng() < share3),
     favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share3 > 0 && (share3 === 1 || rng() < share3) ? family.bestFind.depth : null,
     favouredKind: inheritedFavoured === null ? null : inheritedFavoured.kind
@@ -6131,10 +6182,10 @@ function heirloomNames(lineage) {
 }
 function familyAfterDeath(family, run, view, persona) {
   const last = run.lastUse;
-  const known = view?.inventory().some((i) => itemKey(i) === last?.key && unknownUse(i) === null) ?? false;
-  const learned = view === null ? [] : learnedSuperstitions(family.superstitions, view);
-  const remembered3 = family.superstitions.filter((s) => heritable(s) && !learned.some((t) => s.key === t.key));
-  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && heritable(last) && !known ? [...remembered3.filter((s) => s.key !== last.key), last].slice(-6) : remembered3;
+  const remembered3 = familyMemories([...family.superstitions, ...run.mishaps ?? [], ...run.superstitions.filter(heritable)]);
+  const kind = last === null ? null : itemClass(last.tval, last.name);
+  const memory = kind === null ? null : classMemory(kind);
+  const superstitions = persona.toggles.inheritedSuperstitions && memory !== null ? [...remembered3.filter((s) => s.key !== memory.key), memory].slice(-6) : remembered3;
   const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
   const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
   const kinds = Object.entries(run.weaponKills).filter(([, n]) => typeof n === "number" && n > 0);
@@ -6151,7 +6202,23 @@ function emptyFamilyFlourishes() {
 }
 function observeFlourishes(run, view, persona, uniqueKills, acquired) {
   const items = view.inventory();
-  const superstitions = run.superstitions.filter((s) => !items.some((i) => itemKey(i) === s.key && unknownUse(i) === null));
+  const last = run.lastUse;
+  const resolved = last?.turn !== void 0 && view.turn() > last.turn;
+  const usedClass = resolved ? itemClass(last.tval, last.name) : null;
+  const known = knownKinds(view);
+  const useLearnedKinds = [.../* @__PURE__ */ new Set([...run.useLearnedKinds ?? [], ...known.filter((entry) => entry.kind === usedClass).map((entry) => entry.key)])];
+  const safeClasses = new Set(known.filter((entry) => !useLearnedKinds.includes(entry.key)).map((entry) => entry.kind));
+  const learned = learnedSuperstitions(run.superstitions, view);
+  const superstitions = run.superstitions.filter((s) => !learned.includes(s) && !safeClasses.has(classOf(s))).map((s) => {
+    const item = items.find((i) => itemKey(i) === s.key && unknownUse(i) !== null);
+    return item === void 0 ? s : { ...s, ...unknownUse(item) };
+  });
+  const mishaps = [...run.mishaps ?? []];
+  if (persona?.toggles.inheritedSuperstitions && usedClass !== null && last?.hp !== void 0 && (view.player().dead || last.hp - view.player().hp >= view.player().maxHp * 0.25)) {
+    const memory = classMemory(usedClass);
+    if (!superstitions.some((s) => s.key === memory.key)) superstitions.push(memory);
+    if (!mishaps.some((s) => s.key === memory.key)) mishaps.push(memory);
+  }
   const trophies = run.trophies.flatMap((t) => {
     const item = items.find((i) => i.handle === t.handle);
     return item === void 0 ? [] : [{ ...t, name: shownName2(item) ?? t.name }];
@@ -6172,7 +6239,7 @@ function observeFlourishes(run, view, persona, uniqueKills, acquired) {
     if (unique === void 0 || trophies.some((t) => t.unique === unique || t.handle === item.handle)) continue;
     trophies.push({ unique, handle: item.handle, name });
   }
-  return { ...run, superstitions, trophies, bestFind };
+  return { ...run, superstitions, trophies, bestFind, ...resolved ? { lastUse: null } : {}, ...useLearnedKinds.length > 0 ? { useLearnedKinds } : {}, ...mishaps.length > 0 ? { mishaps } : {} };
 }
 function trophyHandles(run, view, persona) {
   if (!persona?.toggles.trophies || persona.sliders.pride < 70 || view.inventory().length >= PACK_LIMIT) return /* @__PURE__ */ new Set();
@@ -6234,7 +6301,7 @@ function cursedGroundLine(persona, depth2) {
 function flourishLines(run, persona) {
   if (persona === null) return [];
   return [
-    ...persona.toggles.inheritedSuperstitions ? run.superstitions.map((s) => `${persona.name} distrusts the ${s.name} until its kind is known.`) : [],
+    ...persona.toggles.inheritedSuperstitions ? run.superstitions.map((s) => heritable(s) ? `${persona.name} hesitates to try ${s.name} after a family mishap, until a kind is learned without using it.` : `${persona.name} distrusts the ${s.name} until its kind is known.`) : [],
     ...persona.toggles.darkLessons && run.darkLesson ? [`${persona.name} wants a spare torch or extra oil after an ancestor died without light.`] : [],
     ...persona.toggles.favouredGrounds && run.favouredDepth !== null ? [`${persona.name} favours hunting at ${String(run.favouredDepth * 50)} ft.`] : [],
     ...persona.toggles.trophies ? run.trophies.map((t) => `${persona.name} keeps a trophy from ${t.unique}: ${t.name} (one item).`) : []
@@ -6269,7 +6336,15 @@ function record3(raw) {
 function strings(raw) {
   return Array.isArray(raw) ? raw.slice(-6).flatMap((s) => {
     const r = record3(s);
-    return typeof r["key"] === "string" && !legacyFlavour(r["key"]) && typeof r["name"] === "string" ? [{ key: r["key"].slice(0, 100), name: r["name"].slice(0, 100) }] : [];
+    return typeof r["key"] === "string" && !legacyFlavour(r["key"]) && typeof r["name"] === "string" ? [{
+      key: r["key"].slice(0, 100),
+      name: r["name"].slice(0, 100),
+      ...typeof r["handle"] === "number" ? { handle: r["handle"] } : {},
+      ...typeof r["tval"] === "number" ? { tval: r["tval"] } : {},
+      ...typeof r["objectId"] === "number" ? { objectId: r["objectId"] } : {},
+      ...typeof r["hp"] === "number" && Number.isFinite(r["hp"]) ? { hp: r["hp"] } : {},
+      ...typeof r["turn"] === "number" && Number.isFinite(r["turn"]) ? { turn: r["turn"] } : {}
+    }] : [];
   }) : [];
 }
 function depth(raw) {
@@ -6291,7 +6366,7 @@ function readFamilyFlourishes(raw) {
     return typeof m["text"] === "string" && typeof m["generation"] === "number" && Number.isInteger(m["generation"]) && m["generation"] >= 1 ? { text: m["text"].slice(0, 120), generation: m["generation"] } : null;
   })();
   return {
-    superstitions: strings(r["superstitions"]).filter(heritable),
+    superstitions: familyMemories(strings(r["superstitions"])),
     darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0,
     bestFind: find(r["bestFind"]),
     motto: mottoEntry,
@@ -6321,6 +6396,8 @@ function readWays(raw) {
     uniqueKills,
     bestFind: find(r["bestFind"]),
     lastUse: strings([r["lastUse"]])[0] ?? null,
+    ...Array.isArray(r["useLearnedKinds"]) ? { useLearnedKinds: r["useLearnedKinds"].filter((key2) => typeof key2 === "string").slice(-1e3).map((key2) => key2.slice(0, 100)) } : {},
+    ...Array.isArray(r["mishaps"]) ? { mishaps: familyMemories(strings(r["mishaps"])) } : {},
     weaponKills,
     celebratedLevels,
     boastedRaces,
@@ -7026,7 +7103,7 @@ var CLASSES = {
   step_aside: "position",
   close_door: "position"
 };
-function classOf(goal) {
+function classOf2(goal) {
   return CLASSES[goal] ?? "errand";
 }
 var ESCAPE_LOW = 0.55;
@@ -7049,8 +7126,8 @@ var SAFE_CLASSES = /* @__PURE__ */ new Set(["escape", "heal", "gamble", "positio
 var OUT_CLASSES = /* @__PURE__ */ new Set(["escape", "heal"]);
 function allowedGoals(band, offers) {
   if (band === "stay") return null;
-  const escapes = offers.filter((o) => OUT_CLASSES.has(classOf(o.goal))).map((o) => o.goal);
-  const safe = offers.filter((o) => SAFE_CLASSES.has(classOf(o.goal))).map((o) => o.goal);
+  const escapes = offers.filter((o) => OUT_CLASSES.has(classOf2(o.goal))).map((o) => o.goal);
+  const safe = offers.filter((o) => SAFE_CLASSES.has(classOf2(o.goal))).map((o) => o.goal);
   const chosen = band === "get_out" && escapes.length > 0 ? escapes : safe;
   return chosen.length === 0 ? null : /* @__PURE__ */ new Set([...chosen, "none_of_these"]);
 }
@@ -7074,7 +7151,7 @@ function compareForecasts(a, b) {
   return a.forecast.actions - b.forecast.actions || a.forecast.meanLoss - b.forecast.meanLoss;
 }
 function safestOf(offers, classes) {
-  return offers.filter((o) => classes.has(classOf(o.goal)) && o.gaps === void 0).sort((a, b) => compareForecasts(a, b) || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
+  return offers.filter((o) => classes.has(classOf2(o.goal)) && o.gaps === void 0).sort((a, b) => compareForecasts(a, b) || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
 }
 function lowConfidencePick(offers, escapeP, lowEdge) {
   if (escapeP !== null && escapeP >= lowEdge) {
@@ -7085,12 +7162,12 @@ function lowConfidencePick(offers, escapeP, lowEdge) {
 }
 var PRUNABLE = /* @__PURE__ */ new Set(["attack", "escape", "heal"]);
 function dominates(a, b, targetAdjacent) {
-  if (classOf(a.goal) !== classOf(b.goal)) return false;
+  if (classOf2(a.goal) !== classOf2(b.goal)) return false;
   if (b.forecast?.viable === true && a.forecast?.viable !== true) return false;
-  if (a.forecast !== void 0 && b.forecast !== void 0 && (a.forecast.scenarioLoss > b.forecast.scenarioLoss || classOf(a.goal) === "attack" && a.forecast.actions > b.forecast.actions)) return false;
+  if (a.forecast !== void 0 && b.forecast !== void 0 && (a.forecast.scenarioLoss > b.forecast.scenarioLoss || classOf2(a.goal) === "attack" && a.forecast.actions > b.forecast.actions)) return false;
   if (a.progress === void 0 || b.progress === void 0 || a.cost === void 0 || b.cost === void 0) return false;
-  if (classOf(a.goal) === "attack" && !targetAdjacent && a.goal === "fight" !== (b.goal === "fight")) return false;
-  const attack = classOf(a.goal) === "attack";
+  if (classOf2(a.goal) === "attack" && !targetAdjacent && a.goal === "fight" !== (b.goal === "fight")) return false;
+  const attack = classOf2(a.goal) === "attack";
   if (!attack && a.uncertain === true && b.uncertain !== true) return false;
   if (a.gaps !== void 0) return false;
   const aSurv = a.survival ?? null;
@@ -7101,7 +7178,7 @@ function dominates(a, b, targetAdjacent) {
   return noWorse && better;
 }
 function pruneDominated(offers, targetAdjacent, keep = /* @__PURE__ */ new Set()) {
-  const beaten = (offer) => PRUNABLE.has(classOf(offer.goal)) && !keep.has(offer.goal) && offer.aim === void 0 ? offers.filter((other) => other !== offer && dominates(other, offer, targetAdjacent)) : [];
+  const beaten = (offer) => PRUNABLE.has(classOf2(offer.goal)) && !keep.has(offer.goal) && offer.aim === void 0 ? offers.filter((other) => other !== offer && dominates(other, offer, targetAdjacent)) : [];
   const out = new Set(offers.filter((offer) => beaten(offer).length > 0));
   const pruned = [];
   for (const offer of out) {
@@ -7150,7 +7227,7 @@ var SERVES_ERRAND = {
 };
 function servesOf(offer, nearKind) {
   if (nearKind !== null && (NEAR_SERVED[nearKind] ?? []).includes(offer.goal)) return `the near goal of ${NEAR_NAMED[nearKind] ?? nearKind}`;
-  return SERVES_ERRAND[offer.goal] ?? SERVES_BY_CLASS[classOf(offer.goal)];
+  return SERVES_ERRAND[offer.goal] ?? SERVES_BY_CLASS[classOf2(offer.goal)];
 }
 function progressWord(progress) {
   return progress >= 0.95 ? "finishes it" : progress >= 0.6 ? "most of the way" : progress >= 0.3 ? "part of the way" : progress > 0 ? "a little" : "none";
@@ -7368,7 +7445,7 @@ function createDecisionMemory(clock = Date.now) {
           if (hold === void 0 || hold.until <= view.turn() && hold.evidence !== evidence) cooling.set(goal, { until: view.turn() + turnsPerAction(view.player().speed) * thresholds.repeat, evidence, where: position(view) });
         }
       }
-      const kept = offers.filter((offer) => classOf(offer.goal) === "escape" || offer.routine === true || (cooling.get(offer.goal)?.until ?? 0) <= view.turn());
+      const kept = offers.filter((offer) => classOf2(offer.goal) === "escape" || offer.routine === true || (cooling.get(offer.goal)?.until ?? 0) <= view.turn());
       const floor = persona === null ? null : applySafetyFloor(Object.fromEntries(offers.map((offer) => [offer.goal, 1])), Object.fromEntries(offers.map((offer) => [offer.goal, offer.risk])), riskCeiling(persona), persona.quirks.deathwish.on);
       return kept.length === 0 || floor !== null && !kept.some((offer) => floor.dist[offer.goal] !== void 0) ? [...offers] : kept;
     }
@@ -9213,8 +9290,8 @@ function marginOf(probabilities) {
   return (sorted[0] ?? 0) - (sorted[1] ?? 0);
 }
 function safestAlternative(offers, pick2) {
-  const kind = classOf(pick2.goal);
-  return offers.filter((o) => o.goal !== pick2.goal && classOf(o.goal) === kind && o.gaps === void 0 && o.risk < pick2.risk).sort((a, b) => a.risk - b.risk || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || (a.cost ?? 0) - (b.cost ?? 0))[0];
+  const kind = classOf2(pick2.goal);
+  return offers.filter((o) => o.goal !== pick2.goal && classOf2(o.goal) === kind && o.gaps === void 0 && o.risk < pick2.risk).sort((a, b) => a.risk - b.risk || Number((b.survival ?? 0) > 0) - Number((a.survival ?? 0) > 0) || (a.cost ?? 0) - (b.cost ?? 0))[0];
 }
 function priceGoal(answer2, offers, pick2, floor) {
   if (answer2?.type !== "choice" || answer2.choice !== pick2) return null;
@@ -9844,7 +9921,8 @@ function unboundTarget(command, view, chosenOn) {
     const then = chosenOn.get(handle);
     const now = gearOf(view).get(handle);
     const learned = then !== void 0 && now !== void 0 && then.tval === now.tval && flavoured(then) && now.aware === true && !flavoured(now);
-    if (now === void 0 || then !== void 0 && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === void 0 ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
+    const replaced = then !== void 0 && now !== void 0 && (then.objectId !== void 0 || now.objectId !== void 0) && then.objectId !== now.objectId;
+    if (now === void 0 || replaced || then !== void 0 && (then.tval !== now.tval || itemKind(then) !== itemKind(now) && !learned)) return `the item it was chosen for${then === void 0 ? "" : ` (${then.name ?? "item"})`} is no longer carried.`;
     chosenOn.set(handle, now);
   }
   if (command.code === "cast" && typeof args?.spell === "number") {
@@ -10287,7 +10365,7 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (trapDirection(view) !== null) add3("disarm", "Disarm the visible trap next to the character before stepping onto it.", exposure(s) * 0.5);
     if (rubbleDirection(view, terrain) !== null) add3("tunnel", "Tunnel through the rubble that blocks the way to the rest of the level.", exposure(s) * 0.5);
   }
-  const hardFight = s.target !== null && !out.some((offer) => classOf(offer.goal) === "attack" && offer.forecast?.viable === true) && frame.two.mean >= player.hp * 0.3;
+  const hardFight = s.target !== null && !out.some((offer) => classOf2(offer.goal) === "attack" && offer.forecast?.viable === true) && frame.two.mean >= player.hp * 0.3;
   if (!bleeding && hardFight) {
     const buff = buffUse(view);
     if (buff !== null) add3("buff", `Use ${buff.name} before the fight: it makes the character stronger for a while.`, exposure(s) * 0.6);
@@ -10397,10 +10475,10 @@ function offersFor(s, cfg, terrain, persona = null, visited = /* @__PURE__ */ ne
     if (poisonEmergency(view) && ["fight", "shoot", "throw_oil", "cast_attack", "aim_wand", "descend", "leave_level", "explore", "rest"].includes(offer.goal)) return false;
     if (offer.goal === "leave_level" && hunt) return false;
     if (unseenLethal && !SURVIVAL_GOALS.has(offer.goal)) return false;
-    if (offer.goal === "fight" && offer.forecast?.viable !== true && player.level <= 5 && (s.hpShare < 0.6 || fastUnique !== void 0) && !(melee !== void 0 && melee.minimum !== null && s.target !== null && melee.minimum >= targetHp(s.target).high && melee.failure <= 0.25) && out.some((other) => other.goal !== "fight" && classOf(other.goal) === "attack")) return false;
-    if (offer.goal === "fight" && offer.forecast?.viable !== true && weakCaster && out.some((other) => other.goal !== "fight" && (classOf(other.goal) === "attack" || classOf(other.goal) === "escape") && (other.survival ?? 0) > 0)) return false;
+    if (offer.goal === "fight" && offer.forecast?.viable !== true && player.level <= 5 && (s.hpShare < 0.6 || fastUnique !== void 0) && !(melee !== void 0 && melee.minimum !== null && s.target !== null && melee.minimum >= targetHp(s.target).high && melee.failure <= 0.25) && out.some((other) => other.goal !== "fight" && classOf2(other.goal) === "attack")) return false;
+    if (offer.goal === "fight" && offer.forecast?.viable !== true && weakCaster && out.some((other) => other.goal !== "fight" && (classOf2(other.goal) === "attack" || classOf2(other.goal) === "escape") && (other.survival ?? 0) > 0)) return false;
     if (offer.goal === "fight" && offer.forecast?.viable !== true && player.depth > 0 && player.level <= 4 && out.some((other) => ["shoot", "throw_oil", "aim_wand", "cast_attack"].includes(other.goal) && (other.survival ?? 0) > 0 && (other.progress ?? 0) > (offer.progress ?? 0))) return false;
-    if (offer.goal === "fight" && offer.forecast?.viable !== true && player.depth > 0 && player.level <= 4 && s.awake.length >= 2 && !isChokeSquare(s, terrain, at) && out.some((other) => (classOf(other.goal) === "escape" || other.goal === "take_position") && (other.survival ?? 0) > 0)) return false;
+    if (offer.goal === "fight" && offer.forecast?.viable !== true && player.depth > 0 && player.level <= 4 && s.awake.length >= 2 && !isChokeSquare(s, terrain, at) && out.some((other) => (classOf2(other.goal) === "escape" || other.goal === "take_position") && (other.survival ?? 0) > 0)) return false;
     if (walksIntoDeath(s, terrain, offer.goal)) return false;
     if (adequate && (offer.goal === "heal" || offer.goal === "cast_heal" || offer.goal === "device") && (offer.survival ?? 0) <= 0) return false;
     return true;
@@ -10749,7 +10827,7 @@ function createCharacterPlanner(options) {
     if (pendingFallback === null) return;
     const p = view.player();
     const lost = p.depth === pendingFallback.depth && p.hp < pendingFallback.hp;
-    if (lost && classOf(pendingFallback.goal) === "escape") lastFailedEscape = { goal: pendingFallback.goal, damage: pendingFallback.hp - p.hp, turn: view.turn() };
+    if (lost && classOf2(pendingFallback.goal) === "escape") lastFailedEscape = { goal: pendingFallback.goal, damage: pendingFallback.hp - p.hp, turn: view.turn() };
     fallbackLosses.set(pendingFallback.goal, [...fallbackLosses.get(pendingFallback.goal) ?? [], lost].slice(-2));
     pendingFallback = null;
   }
@@ -10964,7 +11042,7 @@ function createCharacterPlanner(options) {
   }
   function unsafeStep(goal, command, v) {
     if (WALKS.has(goal) && walksIntoDeath(situationNow(v), terrain, goal)) return "recover or break contact before travel.";
-    if (poisonEmergency(v) && (classOf(goal) === "attack" || goal === "explore")) return "the poison must be treated before fighting or exploring.";
+    if (poisonEmergency(v) && (classOf2(goal) === "attack" || goal === "explore")) return "the poison must be treated before fighting or exploring.";
     if (poisonEmergency(v) && (command.code === "ascend" || command.code === "descend" || command.code === "rest")) return "the poison must be treated before changing level or resting.";
     if (command.code !== "walk" && command.code !== "melee" || command.dir === void 0) return null;
     const p = v.player();
@@ -11651,7 +11729,7 @@ function createCharacterPlanner(options) {
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
     const felt = nudgeGrudges(pursued, digest.offers, grudgesNow(), sighted, riskCeiling(persona));
-    const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
+    const grounded = nudgeGrounds(nudgeWariness(felt, flourishesNow(), view, persona, digest.offers), digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
     const cursed2 = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed2, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const positioned = nudgePosition(unseen, digest.offers, persona);
@@ -11721,12 +11799,12 @@ function createCharacterPlanner(options) {
     }
     const rest = offers.find((offer) => offer.goal === "rest");
     if (rest !== void 0 && s.view.player().hp < s.view.player().maxHp) return { goal: "rest", why: "safe recovery before travel" };
-    const cheap = offers.filter((offer) => classOf(offer.goal) === "attack" && offer.forecast?.viable === true && offer.forecast.actions <= 4 && offer.forecast.scenarioLoss <= s.view.player().hp * 0.25).sort((a, b) => compareForecasts(a, b) || (a.cost ?? 0) - (b.cost ?? 0))[0];
+    const cheap = offers.filter((offer) => classOf2(offer.goal) === "attack" && offer.forecast?.viable === true && offer.forecast.actions <= 4 && offer.forecast.scenarioLoss <= s.view.player().hp * 0.25).sort((a, b) => compareForecasts(a, b) || (a.cost ?? 0) - (b.cost ?? 0))[0];
     if (cheap !== void 0 && !s.swarming && !earlyFlight && s.unseenDamage === 0 && s.view.player().status.confused === 0 && s.view.player().status.blind === 0 && s.view.player().status.poisoned === 0 && s.view.player().status.cut === 0) {
       return { goal: cheap.goal, why: safeHunt(s, persona, terrain) ? "safe experience in sight" : "take the cheap survivable fight" };
     }
     if (s.hpShare < escapeShare(persona, s.view.player().level) || incoming >= s.view.player().hp * (1 - escapeShare(persona, s.view.player().level)) || s.awake.some((monster) => fleeUnique(monster, s.view.player(), persona, s.view))) {
-      const recovery = offers.filter((offer) => (offer.goal === "rest" || classOf(offer.goal) === "escape" || classOf(offer.goal) === "heal") && offer.goal !== "recall_town" && (offer.survival ?? 0) > 0).sort((a, b) => compareForecasts(a, b) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
+      const recovery = offers.filter((offer) => (offer.goal === "rest" || classOf2(offer.goal) === "escape" || classOf2(offer.goal) === "heal") && offer.goal !== "recall_town" && (offer.survival ?? 0) > 0).sort((a, b) => compareForecasts(a, b) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
       if (recovery !== void 0) return { goal: recovery.goal, why: "below the persona's recovery line" };
     }
     const player = s.view.player();
@@ -11744,7 +11822,7 @@ function createCharacterPlanner(options) {
     const ceiling = persona === null ? FORCED_RISK : persona.quirks.deathwish.on ? 1 : riskCeiling(persona);
     const hunt = safeHunt(s, persona, terrain);
     if (hunt) {
-      const attack = offers.filter((offer) => classOf(offer.goal) === "attack" && offer.risk <= ceiling && (offer.survival ?? 0) > 0 && incoming <= player.hp * (1 - escapeShare(persona, player.level))).sort((a, b) => compareForecasts(a, b) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
+      const attack = offers.filter((offer) => classOf2(offer.goal) === "attack" && offer.risk <= ceiling && (offer.survival ?? 0) > 0 && incoming <= player.hp * (1 - escapeShare(persona, player.level))).sort((a, b) => compareForecasts(a, b) || a.risk - b.risk || (a.cost ?? 0) - (b.cost ?? 0))[0];
       if (attack !== void 0 && target !== null) {
         hunting = { id: target.id, race: target.race, depth: player.depth };
         return { goal: attack.goal, why: "safe experience in sight" };
@@ -12111,7 +12189,7 @@ function createCharacterPlanner(options) {
       lastOfferAudit = auditText;
       if (creatureDamageFor(s, player.grid, terrain) >= player.hp) log(lastOfferAudit());
       const ailingNow = player.hp < player.maxHp && (player.status.poisoned > 0 || player.status.cut > 0);
-      const engaged = (s.awake.length > 0 || s.unseenDamage > 0 || ailingNow) && offers.some((o) => ["escape", "heal", "gamble"].includes(classOf(o.goal)));
+      const engaged = (s.awake.length > 0 || s.unseenDamage > 0 || ailingNow) && offers.some((o) => ["escape", "heal", "gamble"].includes(classOf2(o.goal)));
       const pack = engaged ? { pruned, gate: escapeThresholds(persona) } : pruned.length > 0 ? { pruned } : void 0;
       const steeringNow = options.strategy?.();
       const aimList = steeringNow?.aims ?? [];
@@ -12303,7 +12381,7 @@ function createCharacterPlanner(options) {
       const unsure = gate !== void 0 && answer2.confidence < confidenceFloor2 ? lowConfidencePick(allowed === null ? digest.offers : digest.offers.filter((o) => allowed.has(o.goal)), gate.p ?? null, gate.low) : null;
       if (unsure !== null && unsure !== failed) {
         digest.pack.lowConfidence = unsure;
-        log(`goal: ${unsure}, the answer was unsure (${answer2.confidence.toFixed(2)}), so the safest ${classOf(unsure)} option`);
+        log(`goal: ${unsure}, the answer was unsure (${answer2.confidence.toFixed(2)}), so the safest ${classOf2(unsure)} option`);
         const offer2 = digest.offers.find((o) => o.goal === unsure);
         options.orders?.decided(offer2.goal, view);
         return { plan: noteStalls(offer2.goal, build(offer2.goal, view, offer2.action), view) };
@@ -18472,18 +18550,10 @@ function createRuntime(host, options = {}) {
     for (const line of flourishLines(next, character.persona)) if (!before.includes(line)) host.log(line);
     const forgotten = run.superstitions.filter((s) => !next.superstitions.some((t) => t.key === s.key));
     for (const s of forgotten) {
-      if (character.persona?.toggles.inheritedSuperstitions) host.log(`${character.persona.name} trusts the ${s.name} now.`);
+      if (character.persona?.toggles.inheritedSuperstitions) host.log(s.key.startsWith("class:") ? `${character.persona.name} is willing to try ${s.name} now.` : `${character.persona.name} trusts the ${s.name} now.`);
     }
     const lineageName = character.lineage?.trim();
     const lineage = lineageName === void 0 ? void 0 : config.lineages[lineageName];
-    if (lineageName !== void 0 && lineage?.flourishRecord !== void 0) {
-      const family = lineage.flourishRecord;
-      const learned = learnedSuperstitions(family.superstitions, view);
-      if (learned.length > 0) self.saveConfig({ ...config, lineages: { ...config.lineages, [lineageName]: {
-        ...lineage,
-        flourishRecord: { ...family, superstitions: family.superstitions.filter((s) => !learned.some((t) => s.key === t.key)) }
-      } } });
-    }
     if (character.persona !== null && character.persona.toggles.heirlooms && lineage !== void 0) {
       let names = ancestorNameSets.get(lineage);
       if (names === void 0) {
@@ -18532,7 +18602,7 @@ function createRuntime(host, options = {}) {
     const run = character.flourishes ?? emptyFlourishes();
     const lastUse = usedItem(command, view);
     if (lastUse === null && run.lastUse === null) return;
-    self.saveCharacter({ ...character, flourishes: { ...run, lastUse } });
+    self.saveCharacter({ ...character, flourishes: { ...run, lastUse: lastUse === null ? null : { ...lastUse, hp: view.player().hp, turn: view.turn() } } });
   }
   function settleGrudge(race) {
     const line = character.lineage?.trim();
@@ -20830,6 +20900,8 @@ async function viewWorld(api, reads = {}) {
   };
   const trapKinds = await valueOf(api.content.records("trap")) ?? [];
   const player = playerView(known.player, floors);
+  const knowledge = api.view.knowledge === void 0 ? null : await valueOf(api.view.knowledge("objects"));
+  const knownKinds2 = knowledge?.lists.objects?.groups.flatMap((group) => group.entries.filter((entry) => entry.known).map((entry) => ({ key: `knowledge:${entry.id}`, name: entry.name, group: group.name }))) ?? [];
   const monsters = (known.monsters ?? []).map((monster) => monsterView(monster, monster.averageHp ?? void 0));
   const recalls = /* @__PURE__ */ new Map();
   const spells = /* @__PURE__ */ new Map();
@@ -20920,6 +20992,7 @@ async function viewWorld(api, reads = {}) {
     ...blasts.size === 0 ? {} : { blastArea: (to, radius, arc = 0) => radius === 2 && arc === 0 ? blasts.get(`${String(to.x)},${String(to.y)}`) ?? { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } : { token: known.token, grids: [], radius, arc, element: null, wallsStop: true } },
     turn: () => known.turn ?? 0,
     player: () => player,
+    knownItemKinds: () => knownKinds2,
     monsters: () => monsters,
     cell: cell2,
     mapBounds: () => ({ width, height }),
