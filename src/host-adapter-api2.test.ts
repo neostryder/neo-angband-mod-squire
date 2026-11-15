@@ -26,6 +26,7 @@ interface FakeSpec {
   readonly world?: KnownWorldData | null;
   readonly input?: Api2InputState | null;
   readonly records?: Readonly<Record<string, readonly JsonRecord[]>>;
+  readonly knowledge?: Awaited<ReturnType<ModApi2["view"]["knowledge"]>>;
 }
 
 interface Fake {
@@ -39,6 +40,7 @@ function fakeApi(spec: FakeSpec): Fake {
   let next = 0;
   const api = {
     view: {
+      knowledge: () => Promise.resolve(spec.knowledge ?? { ok: false, reason: "unavailable", message: "no knowledge" }),
       world: () => (spec.world === undefined || spec.world === null ? refused() : ok(spec.world)),
       input: () => (spec.input === undefined || spec.input === null ? refused() : ok(spec.input)),
     },
@@ -727,6 +729,19 @@ describe("viewWorld under API 2", () => {
     const choice = p.rules!(adapted, "food replay");
     if (!("plan" in choice)) throw new Error(choice.handBack);
     expect(choice.plan.step(adapted, w.act)?.code).toBe("eat");
+  });
+
+  it("reads only known kinds from the public object knowledge list", async () => {
+    const w = world({ map: ["@"] });
+    const two = await viewWorld(fakeApi({ world: knownFrom(w, []), records: records(), knowledge: { ok: true, value: {
+      categories: [], recall: null, lists: { objects: { title: "Objects", groups: [{ name: "Potions", entries: [
+        { id: "4", name: "Cure Light Wounds", color: "white", known: true },
+        { id: "7", name: "Smoky Potion", color: "white", known: false },
+      ] }] } },
+    } } }).api);
+    expect(two?.knownItemKinds?.()).toEqual([{ key: "knowledge:4", name: "Cure Light Wounds", group: "Potions" }]);
+    const unavailable = await viewWorld(fakeApi({ world: knownFrom(w, []), records: records() }).api);
+    expect(unavailable?.knownItemKinds?.()).toEqual([]);
   });
 
   it("reads displayed torch fuel when an older snapshot omits the fuel field", async () => {

@@ -72,7 +72,7 @@ import { createDecisionMemory, stuckThresholds, type DecisionMemory } from "./de
 import { chokeLine, compass, hazardLine, hazardsNear, neighbourLine, seenBy, sightBreakLine, sightBreaks, stairLine, type SightBreak } from "./geometry.js";
 import { countBand, depthBand, failText, healthBand, levelBand, shareBand, statusDangerBand, stepsBand, stepsText, targetShare, turnsBand } from "./bands.js";
 import { chaosNote, chaosPick, chaosTold, type ChaosMethod, type ChaosRecord } from "./chaos.js";
-import { distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, flourishLines, nudgeCursedGround, nudgeGrounds, type Flourishes, type FamilyFlourishes } from "../learning/family-ways.js";
+import { distrusted, distrustedUse, emptyFamilyFlourishes, emptyFlourishes, flourishLines, nudgeCursedGround, nudgeGrounds, nudgeWariness, type Flourishes, type FamilyFlourishes } from "../learning/family-ways.js";
 
 /** Every option this planner can offer. */
 export type Goal =
@@ -3246,7 +3246,7 @@ function createCharacterPlanner(options: GoalPlannerOptions): Planner<GoalDigest
     const sighted = view.monsters().filter((m) => m.visible).map((m) => m.race);
     const pursued = nudgePursuits(nudgeAims(weighted, digest.offers, persona.sliders.ambition, riskCeiling(persona)), digest.offers, options.strategy?.().pursuits ?? [], view, riskCeiling(persona), descentEscapes(view, badFeeling !== null));
     const felt = nudgeGrudges(pursued, digest.offers, grudgesNow(), sighted, riskCeiling(persona));
-    const grounded = nudgeGrounds(felt, digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
+    const grounded = nudgeGrounds(nudgeWariness(felt, flourishesNow(), view, persona, digest.offers), digest.offers, flourishesNow(), view, persona, riskCeiling(persona));
     const cursed = nudgeCursedGround(grounded, options.familyFlourishes?.() ?? emptyFamilyFlourishes(), view, persona, riskCeiling(persona));
     const unseen = nudgeUnseen(cursed, digest.offers, persona, situationNow(view).unseenDamage, view.player().hp, riskCeiling(persona));
     const positioned = nudgePosition(unseen, digest.offers, persona);

@@ -26,6 +26,7 @@
       "state:floor.read",
       "state:target.read",
       "state:inventory.read",
+      "state:knowledge.read",
       "state:spells.read",
       "state:stores.read",
       "state:constants.read",

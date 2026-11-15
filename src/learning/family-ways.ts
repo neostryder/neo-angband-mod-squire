@@ -1,7 +1,7 @@
 import type { AgentCommand, AgentView, ItemView } from "../host-adapter.js";
 import type { Persona } from "../persona/persona.js";
 import { gearCandidates, TV } from "../gear/compare.js";
-import { PACK_LIMIT } from "../brain/items.js";
+import { PACK_LIMIT, unknownFlavour } from "../brain/items.js";
 import { shownName } from "../town/needs.js";
 import { missingPreparation } from "../strategy/readiness.js";
 import type { Lineage } from "./lineage.js";
@@ -12,6 +12,8 @@ export interface Superstition {
   readonly handle?: number;
   readonly tval?: number;
   readonly objectId?: number;
+  readonly hp?: number;
+  readonly turn?: number;
 }
 
 export interface Find {
@@ -56,6 +58,8 @@ export interface Flourishes {
   readonly uniqueKills: readonly string[];
   readonly bestFind: Find | null;
   readonly lastUse: Superstition | null;
+  readonly useLearnedKinds?: readonly string[];
+  readonly mishaps?: readonly Superstition[];
   /** How many kills the character made with each kind of weapon, for the family record. */
   readonly weaponKills: Readonly<Record<string, number>>;
   /** Levels the character has already spoken about, so a level-up line is never repeated. */
@@ -80,19 +84,46 @@ function legacyFlavour(key: string): boolean {
   return /^\d+:-\d+$/.test(key);
 }
 
+const ITEM_CLASSES = ["staff", "wand", "rod", "scroll", "potion", "mushroom"] as const;
+type ItemClass = typeof ITEM_CLASSES[number];
+const CLASS_TVALS: Readonly<Record<ItemClass, number>> = { staff: 22, wand: 23, rod: 24, scroll: 25, potion: 26, mushroom: 29 };
+
+function itemClass(tval: number | undefined, name = ""): ItemClass | null {
+  return ITEM_CLASSES.find((kind) => tval === CLASS_TVALS[kind]) ?? ITEM_CLASSES.find((kind) =>
+    (kind === "staff" ? /\b(?:staffs?|staves)\b/i : new RegExp(`\\b${kind}s?\\b`, "i")).test(name)) ?? null;
+}
+
+function classMemory(kind: ItemClass): Superstition {
+  return { key: `class:${kind}`, name: `unknown ${kind === "staff" ? "staves" : `${kind}s`}` };
+}
+
+function classOf(s: Superstition): ItemClass | null {
+  return ITEM_CLASSES.find((kind) => s.key === `class:${kind}`) ?? null;
+}
+
 function heritable(s: Superstition): boolean {
-  return !s.key.startsWith("game:") && !s.key.startsWith("flavor:") && !legacyFlavour(s.key);
+  return classOf(s) !== null;
+}
+
+function familyMemories(superstitions: readonly Superstition[]): Superstition[] {
+  const kinds = superstitions.flatMap((s) => {
+    if (s.key.startsWith("game:") || s.key.startsWith("flavor:") || legacyFlavour(s.key)) return [];
+    const kind = classOf(s) ?? itemClass(s.tval, s.name);
+    return kind === null ? [] : [kind];
+  });
+  return [...new Set(kinds)].map(classMemory);
 }
 
 export function unknownUse(item: ItemView): Superstition | null {
   const name = shownName(item);
-  if (name === null || !/\b(?:Scrolls?|Potions?|Wands?)\b/i.test(name) || /\b(?:Scrolls?|Potions?|Wands?) of\b/i.test(name)) return null;
+  if (name === null || itemClass(item.tval) === null || item.aware === true ||
+    item.aware !== false && !unknownFlavour(item.tval, name)) return null;
   const plain = name.replace(/^(?:an?|the|\d+)\s+/i, "").replace(/\s*\([^)]*\)|\s*\{[^}]*\}/g, "").trim();
   return { key: itemKey(item), name: plain, handle: item.handle, tval: item.tval, ...(item.objectId === undefined ? {} : { objectId: item.objectId }) };
 }
 
 export function usedItem(command: AgentCommand, view: AgentView): Superstition | null {
-  if (!["read", "quaff", "aim-wand"].includes(command.code)) return null;
+  if (!["read", "quaff", "aim", "aim-wand", "zap", "zap-rod", "use", "use-staff", "eat"].includes(command.code)) return null;
   const item = view.inventory().find((i) => i.handle === command.args?.["handle"]);
   return item === undefined ? null : unknownUse(item);
 }
@@ -108,8 +139,44 @@ export function distrustedUse(command: AgentCommand, view: AgentView, run: Flour
 }
 
 export function learnedSuperstitions(superstitions: readonly Superstition[], view: AgentView): Superstition[] {
-  return superstitions.filter((s) => view.inventory().some((i) => unknownUse(i) === null && (itemKey(i) === s.key ||
+  return superstitions.filter((s) => !heritable(s) && view.inventory().some((i) => unknownUse(i) === null && (itemKey(i) === s.key ||
     s.tval === i.tval && (s.objectId !== undefined ? s.objectId === i.objectId : s.handle === i.handle))));
+}
+
+function knownKinds(view: AgentView): { readonly key: string; readonly kind: ItemClass }[] {
+  const items = [...view.inventory(), ...view.equipment().filter((i): i is ItemView => i !== null), ...view.stores().flatMap((s) => s.stock)];
+  return [
+    ...items.flatMap((item) => {
+      const kind = itemClass(item.tval);
+      return kind !== null && unknownUse(item) === null ? [{ key: itemKey(item), kind }] : [];
+    }),
+    ...(view.knownItemKinds?.() ?? []).flatMap((entry) => {
+      const kind = itemClass(undefined, `${entry.group} ${entry.name}`);
+      return kind === null ? [] : [{ key: entry.key, kind }];
+    }),
+  ];
+}
+
+export function warinessStrength(persona: Persona): number {
+  return Math.max(0.05, Math.min(0.95, (200 + persona.sliders.paranoia + persona.sliders.selfpreservation - persona.sliders.curiosity - persona.sliders.boldness) / 400));
+}
+
+export function nudgeWariness(dist: Readonly<Record<string, number>>, run: Flourishes, view: AgentView, persona: Persona | null,
+  offers: readonly { readonly goal: string; readonly action?: { readonly source: { readonly handle: number } | { readonly sidx: number } | null } }[] = []): Record<string, number> {
+  const out = { ...dist };
+  if (!persona?.toggles.inheritedSuperstitions) return out;
+  const wary = new Set(run.superstitions.flatMap((s) => classOf(s) ?? []));
+  for (const goal of Object.keys(out)) {
+    const source = offers.find((offer) => offer.goal === goal)?.action?.source;
+    const item = source !== undefined && source !== null && "handle" in source
+      ? view.inventory().find((item) => item.handle === source.handle)
+      : goal === "quaff_unknown" || goal === "read_unknown"
+        ? view.inventory().find((item) => item.tval === CLASS_TVALS[goal === "quaff_unknown" ? "potion" : "scroll"] && unknownUse(item) !== null)
+        : undefined;
+    const kind = item === undefined || unknownUse(item) === null ? null : itemClass(item.tval);
+    if (kind !== null && wary.has(kind)) out[goal] = out[goal]! * (1 - warinessStrength(persona));
+  }
+  return out;
 }
 
 export function inheritWays(family: FamilyFlourishes, parent: Persona, heir: Persona, rng: () => number): Flourishes {
@@ -117,7 +184,7 @@ export function inheritWays(family: FamilyFlourishes, parent: Persona, heir: Per
   const enabled = (id: "inheritedSuperstitions" | "darkLessons" | "favouredGrounds" | "favouredWeapons") => parent.toggles[id] && heir.toggles[id];
   const inheritedFavoured = enabled("favouredWeapons") && share > 0 && (share === 1 || rng() < share) ? favouredWeapon(family) : null;
   return { ...emptyFlourishes(),
-    superstitions: enabled("inheritedSuperstitions") ? family.superstitions.filter(heritable).slice(-Math.ceil(6 * share)).filter(() => share > 0) : [],
+    superstitions: enabled("inheritedSuperstitions") ? familyMemories(family.superstitions).slice(-Math.ceil(6 * share)).filter(() => share > 0) : [],
     darkLesson: enabled("darkLessons") && family.darkDeaths > 0 && share > 0 && (share === 1 || rng() < share),
     favouredDepth: enabled("favouredGrounds") && family.bestFind !== null && share > 0 && (share === 1 || rng() < share) ? family.bestFind.depth : null,
     favouredKind: inheritedFavoured === null ? null : inheritedFavoured.kind,
@@ -196,11 +263,11 @@ export function heirloomNames(lineage: Lineage | undefined): string[] {
 
 export function familyAfterDeath(family: FamilyFlourishes, run: Flourishes, view: AgentView | null, persona: Persona): FamilyFlourishes {
   const last = run.lastUse;
-  const known = view?.inventory().some((i) => itemKey(i) === last?.key && unknownUse(i) === null) ?? false;
-  const learned = view === null ? [] : learnedSuperstitions(family.superstitions, view);
-  const remembered = family.superstitions.filter((s) => heritable(s) && !learned.some((t) => s.key === t.key));
-  const superstitions = persona.toggles.inheritedSuperstitions && last !== null && heritable(last) && !known
-    ? [...remembered.filter((s) => s.key !== last.key), last].slice(-6) : remembered;
+  const remembered = familyMemories([...family.superstitions, ...(run.mishaps ?? []), ...run.superstitions.filter(heritable)]);
+  const kind = last === null ? null : itemClass(last.tval, last.name);
+  const memory = kind === null ? null : classMemory(kind);
+  const superstitions = persona.toggles.inheritedSuperstitions && memory !== null
+    ? [...remembered.filter((s) => s.key !== memory.key), memory].slice(-6) : remembered;
   const dark = view !== null && view.player().depth > 0 && view.player().light <= 0 && !view.player().classFlags.includes("UNLIGHT");
   const bestFind = persona.toggles.favouredGrounds && run.bestFind !== null && run.bestFind.value > (family.bestFind?.value ?? -1) ? run.bestFind : family.bestFind;
   /* Each generation contributes its most-used weapon kind to the family record. */
@@ -223,8 +290,25 @@ export function emptyFamilyFlourishes(): FamilyFlourishes {
 
 export function observeFlourishes(run: Flourishes, view: AgentView, persona: Persona | null, uniqueKills: readonly string[], acquired: ReadonlySet<number>): Flourishes {
   const items = view.inventory();
+  const last = run.lastUse;
+  const resolved = last?.turn !== undefined && view.turn() > last.turn;
+  const usedClass = resolved ? itemClass(last.tval, last.name) : null;
+  const known = knownKinds(view);
+  /* A use can reveal its kind without overcoming an inherited fear of experimentation. */
+  const useLearnedKinds = [...new Set([...(run.useLearnedKinds ?? []), ...known.filter((entry) => entry.kind === usedClass).map((entry) => entry.key)])];
+  const safeClasses = new Set(known.filter((entry) => !useLearnedKinds.includes(entry.key)).map((entry) => entry.kind));
   const learned = learnedSuperstitions(run.superstitions, view);
-  const superstitions = run.superstitions.filter((s) => !learned.includes(s));
+  const superstitions = run.superstitions.filter((s) => !learned.includes(s) && !safeClasses.has(classOf(s)!)).map((s) => {
+    const item = items.find((i) => itemKey(i) === s.key && unknownUse(i) !== null);
+    return item === undefined ? s : { ...s, ...unknownUse(item)! };
+  });
+  const mishaps = [...(run.mishaps ?? [])];
+  if (persona?.toggles.inheritedSuperstitions && usedClass !== null && last?.hp !== undefined &&
+    (view.player().dead || last.hp - view.player().hp >= view.player().maxHp * 0.25)) {
+    const memory = classMemory(usedClass);
+    if (!superstitions.some((s) => s.key === memory.key)) superstitions.push(memory);
+    if (!mishaps.some((s) => s.key === memory.key)) mishaps.push(memory);
+  }
   const trophies = run.trophies.flatMap((t) => {
     const item = items.find((i) => i.handle === t.handle);
     return item === undefined ? [] : [{ ...t, name: shownName(item) ?? t.name }];
@@ -245,7 +329,7 @@ export function observeFlourishes(run: Flourishes, view: AgentView, persona: Per
     if (unique === undefined || trophies.some((t) => t.unique === unique || t.handle === item.handle)) continue;
     trophies.push({ unique, handle: item.handle, name });
   }
-  return { ...run, superstitions, trophies, bestFind };
+  return { ...run, superstitions, trophies, bestFind, ...(resolved ? { lastUse: null } : {}), ...(useLearnedKinds.length > 0 ? { useLearnedKinds } : {}), ...(mishaps.length > 0 ? { mishaps } : {}) };
 }
 
 export function trophyHandles(run: Flourishes, view: AgentView, persona: Persona | null): ReadonlySet<number> {
@@ -320,7 +404,9 @@ export function cursedGroundLine(persona: Persona, depth: number): string {
 export function flourishLines(run: Flourishes, persona: Persona | null): string[] {
   if (persona === null) return [];
   return [
-    ...(persona.toggles.inheritedSuperstitions ? run.superstitions.map((s) => `${persona.name} distrusts the ${s.name} until its kind is known.`) : []),
+    ...(persona.toggles.inheritedSuperstitions ? run.superstitions.map((s) => heritable(s)
+      ? `${persona.name} hesitates to try ${s.name} after a family mishap, until a kind is learned without using it.`
+      : `${persona.name} distrusts the ${s.name} until its kind is known.`) : []),
     ...(persona.toggles.darkLessons && run.darkLesson ? [`${persona.name} wants a spare torch or extra oil after an ancestor died without light.`] : []),
     ...(persona.toggles.favouredGrounds && run.favouredDepth !== null ? [`${persona.name} favours hunting at ${String(run.favouredDepth * 50)} ft.`] : []),
     ...(persona.toggles.trophies ? run.trophies.map((t) => `${persona.name} keeps a trophy from ${t.unique}: ${t.name} (one item).`) : []),
@@ -364,6 +450,8 @@ function strings(raw: unknown): Superstition[] {
       ...(typeof r["handle"] === "number" ? { handle: r["handle"] } : {}),
       ...(typeof r["tval"] === "number" ? { tval: r["tval"] } : {}),
       ...(typeof r["objectId"] === "number" ? { objectId: r["objectId"] } : {}),
+      ...(typeof r["hp"] === "number" && Number.isFinite(r["hp"]) ? { hp: r["hp"] } : {}),
+      ...(typeof r["turn"] === "number" && Number.isFinite(r["turn"]) ? { turn: r["turn"] } : {}),
     }] : [];
   }) : [];
 }
@@ -394,7 +482,7 @@ export function readFamilyFlourishes(raw: unknown): FamilyFlourishes {
       : null;
   })();
   return {
-    superstitions: strings(r["superstitions"]).filter(heritable),
+    superstitions: familyMemories(strings(r["superstitions"])),
     darkDeaths: typeof r["darkDeaths"] === "number" && Number.isFinite(r["darkDeaths"]) ? Math.max(0, Math.round(r["darkDeaths"])) : 0,
     bestFind: find(r["bestFind"]),
     motto: mottoEntry,
@@ -427,6 +515,8 @@ export function readWays(raw: unknown): Flourishes {
     uniqueKills,
     bestFind: find(r["bestFind"]),
     lastUse: strings([r["lastUse"]])[0] ?? null,
+    ...(Array.isArray(r["useLearnedKinds"]) ? { useLearnedKinds: r["useLearnedKinds"].filter((key): key is string => typeof key === "string").slice(-1000).map((key) => key.slice(0, 100)) } : {}),
+    ...(Array.isArray(r["mishaps"]) ? { mishaps: familyMemories(strings(r["mishaps"])) } : {}),
     weaponKills,
     celebratedLevels,
     boastedRaces,
