@@ -22,8 +22,8 @@ describe("the errand text table", () => {
   });
 
   it("matches the manifest's copy of the persona setting", () => {
-    const manifest = JSON.parse(readFileSync(new URL("../../manifest.json", import.meta.url), "utf8")) as { rules: { flag: string; title: string; description: string; default: boolean }[] };
-    const rule = manifest.rules.find((r) => r.flag === "squire.personaErrands");
+    const manifest = JSON.parse(readFileSync(new URL("../../manifest.json", import.meta.url), "utf8")) as { data: { rules: { flag: string; title: string; description: string; default: boolean }[] } };
+    const rule = manifest.data.rules.find((r) => r.flag === "squire.personaErrands");
     expect(rule).toMatchObject({ title: ERRAND_TEXT.colourTitle, description: ERRAND_TEXT.colourHelp, default: false });
   });
 });

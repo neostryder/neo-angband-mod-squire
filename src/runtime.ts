@@ -958,7 +958,7 @@ export function createRuntime(host: SquireHost, options: { readonly store?: KvSt
         decisionMemory,
         cfg,
         terrain,
-        ...(engineTurnEnergy(host) === undefined ? {} : { speedEnergy: engineTurnEnergy(host)! }),
+        speedEnergy: turnEnergy,
         log: host.log,
         persona: () => (coloured ? character.persona : null),
         chaos: coloured,
