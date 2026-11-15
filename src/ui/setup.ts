@@ -57,8 +57,17 @@ export function mountSetup(body: HTMLElement, rt: Runtime, done: () => void): ()
         h(
           "div",
           { class: "row" },
-          h("button", { class: "act", onclick: async () => say(keyLine, await rt.setJevKey(key.value), true) }, "Save key"),
+          /* The environment route never puts the key in the page, so it comes first. */
           h("button", { class: "act", onclick: async () => say(keyLine, await rt.jevKeyFromEnv()) }, "Use key from environment"),
+          h("button", {
+            class: "act",
+            onclick: async () => {
+              /* Empty the field before the async hand-off so other page scripts cannot read it there. */
+              const value = key.value;
+              key.value = "";
+              say(keyLine, await rt.setJevKey(value), true);
+            },
+          }, "Save key"),
         ),
         keyLine,
         h("p", { class: "muted" }, "To get a key, sign up at typesafe.ai and create an API key there. In the desktop app, Squire can instead read TYPESAFE_API_KEY or JEV_API_KEY from your environment after you agree."),
